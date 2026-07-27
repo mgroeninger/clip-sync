@@ -18,7 +18,8 @@ use crate::domain::patch_anchor::AnchorSearchPrior;
 use crate::domain::policies::SeamResidualVerdict;
 use crate::domain::pcm::interleaved_to_mono;
 use crate::domain::policies::{
-    fill_repeat_correlations, fill_seam_correlations, fill_seam_correlations_band,
+    fill_repeat_correlations, fill_repeat_correlations_band, fill_seam_correlations,
+    fill_seam_correlations_band,
     fill_seam_correlations_with_channels, fill_splice_seam_correlations_interleaved,
     seam_score_channels, BorderSeamTemplates, FillAlignment, SeamPlacement, SeamTemplates,
     SpliceSeamContext,
@@ -30,6 +31,19 @@ const LATE_START_PENALTY: f64 = 0.08;
 /// band as buggy and fall back to the naive refine for that gap. f64 FFT round-trip noise is ~1e-10; a real
 /// porting bug diverges far more, so 1e-6 sits well above the noise and far below any signal.
 const FFT_SEAM_DISCREPANCY_TOL: f64 = 1e-6;
+
+/// The belt's agreement test, shared by the seam band (lever 1) and the repeat band (lever 1b(b)) so the two
+/// cannot drift apart in how they treat the edges.
+///
+/// The `naive == band` arm is load-bearing, not a fast path: both bands legitimately produce infinities at
+/// declined placements (the seam band's out-of-bounds `NEG_INFINITY`, the repeat band's empty-channel-set fold),
+/// and `inf − inf` is `NaN`, which no threshold comparison can classify. Two identical infinities agree; a
+/// `NaN` on either side matches neither arm and is therefore reported as a divergence — which is right, because
+/// the naive path never produces one.
+fn band_agrees_with_naive(naive: f64, band: f64) -> bool {
+    naive == band || (naive - band).abs() <= FFT_SEAM_DISCREPANCY_TOL
+}
+
 const REPEAT_CORR_THRESHOLD: f64 = 0.55;
 const REPEAT_SEAM_WEAK: f64 = 0.45;
 const REPEAT_SUM_CEILING: f64 = 1.1;
@@ -39,14 +53,16 @@ const REPEAT_SUM_CEILING: f64 = 1.1;
 /// so its 56.4% is a genuine leaf as far as the span tree can see — but the loop body is not uniform work. It
 /// is four separable pieces, and which one dominates decides where the next optimization lever goes:
 ///
-///   * `structure_us` — `score_pre_for_signature` + `score_post_for_signature` (the bool/energy timeline scan)
-///   * `seam_us`      — the waveform seam pair: an O(1) FFT-band lookup on the lever-1 path, a full naive
-///                      Pearson (`waveform_seams_at_start`) on the fallback/coarse path
-///   * `repeat_us`    — `fill_repeat_correlations` inside the repeat penalty. Lever 1 banded the SEAM
-///                      correlations only; the repeat window is a different window and is still a naive
-///                      per-candidate Pearson (lever 1b(b)). Prime suspect for the post-lever-1 residual.
-///   * `score_us`     — the rest of `unified_fit_score_with_repeat` (arithmetic, anchor prior), i.e. the
-///                      combining math with `repeat_us` already subtracted out.
+///  * `structure_us` — `score_pre_for_signature` + `score_post_for_signature` (the bool/energy timeline scan)
+///  * `seam_us`      — the waveform seam pair: an O(1) FFT-band lookup on the lever-1 path, a full naive
+///    Pearson (`waveform_seams_at_start`) on the fallback/coarse path
+///  * `repeat_us`    — the naive `fill_repeat_correlations` Pearson inside the repeat penalty (timed only on
+///    the `PerCandidate` path). Lever 1b(b) bands the refine-start repeat window: when
+///    `use_fft_repeat_band` is on, this bucket drops toward zero in `unified_refine_start` and the FFT *build*
+///    cost lands in `bracket_unified_search`'s exclusive time (same place as the seam-band build). Coarse,
+///    fine-polish, and flag-off still pay the naive per-candidate rate here.
+///  * `score_us`     — the rest of `unified_fit_score_with_repeat` (arithmetic, anchor prior), i.e. the
+///    combining math with `repeat_us` already subtracted out.
 ///
 /// Sub-spans are deliberately NOT used here: at ~330 µs/candidate and hundreds of candidates per call, a
 /// per-candidate span enter/exit would be a measurable fraction of the thing being measured. These are plain
@@ -336,6 +352,12 @@ struct UnifiedSearchCtx<'a> {
     /// Off ⇒ byte-identical to pre-lever-1. Scoped to the production path only (the dump/oracle keeps naive,
     /// §2.4), so the public `match_gap_fill_unified_in_b` always passes `false`.
     use_fft_seam_search: bool,
+    /// Lever 1b(b) (`TEMP-repeat-band-plan.md`): route the dense start-search *refine* repeat-window
+    /// correlations through [`fill_repeat_correlations_band`] instead of a per-candidate naive Pearson. Same
+    /// scoping rules as `use_fft_seam_search` (production path only, coarse and fine-polish stay naive), but a
+    /// separate switch: the two bands decline independently, and until the exact re-score belt is extended to
+    /// cover the repeat winner (plan §4) this one defaults OFF.
+    use_fft_repeat_band: bool,
 }
 
 fn fill_bracket_placement(
@@ -385,25 +407,26 @@ pub fn unified_fit_score(
     score
 }
 
-/// Lever 1b(a) (TEMP-production-repair-perf-plan.md §2.5): the pre/post seam correlations are passed in — the
-/// caller already computed them (`wave_min = pre_seam.min(post_seam)`) via `waveform_seams_at_start` (naive) or
-/// the FFT band, so recomputing them here with a fresh `fill_seam_correlations` (which also re-ran the hoisted
-/// `seam_score_channel_indices` scan per candidate — undoing lever 2) is pure waste. Only the repeat-window
-/// correlation, which is a *different* window, is still computed here (lever 1b(b) can band it later). Values are
-/// byte-identical to the old `fill_seam_correlations` on the naive path (same `fill_seam_correlations_with_channels`
-/// under the hood, same channel selection); on the FFT path they are the band's ε-approximation, consistent with
-/// the `wave_min` the score already used.
-fn repeat_penalty_at_placement(
+/// The repeat-window correlation pair at one placement — the **expensive** half of the repeat penalty, and the
+/// only half lever 1b(b) accelerates. Kept as a named type (not a bare `(f64, f64)`) so
+/// [`RepeatPenaltySource::Banded`] cannot be confused with [`RepeatPenaltySource::Fixed`], which carries an
+/// already-*combined* penalty. See `TEMP-repeat-band-plan.md` §3.
+#[derive(Clone, Copy)]
+struct RepeatCorrelations {
+    pre: f64,
+    post: f64,
+}
+
+/// Lever 1b(b): the expensive half, split out so the banded path can supply the same pair from an FFT band
+/// lookup instead. Callers must honour the `repeat_penalty_weight <= 0.0 || repeat_window_frames == 0`
+/// early-out themselves — it is **semantic**, not just a perf guard: with `repeat_window_frames == 0`,
+/// `effective_repeat_window_frames` floors the window to 1 and would score a 1-frame Pearson rather than the
+/// 0.0 penalty the disabled path is supposed to produce.
+fn repeat_correlations_at_placement(
     ctx: &WaveformSeamContext<'_>,
     start: usize,
-    pre_seam: f64,
-    post_seam: f64,
     timers: &CandidateTimers,
-) -> f64 {
-    if ctx.repeat_penalty_weight <= 0.0 || ctx.repeat_window_frames == 0 {
-        return 0.0;
-    }
-    let wave_min = pre_seam.min(post_seam);
+) -> RepeatCorrelations {
     let placement = SeamPlacement {
         start,
         gap_frames: ctx.gap_frames,
@@ -411,10 +434,36 @@ fn repeat_penalty_at_placement(
         post_window: ctx.post_window,
     };
     // Level F `repeat_us`: the un-banded per-candidate Pearson, timed on its own.
-    let (repeat_pre, repeat_post) = timers.time(
+    let (pre, post) = timers.time(
         |t| &t.repeat_ns,
         || fill_repeat_correlations(ctx.templates, placement, ctx.repeat_window_frames),
     );
+    RepeatCorrelations { pre, post }
+}
+
+/// The **cheap** half: the branch logic combining the repeat pair with the seam pair. Unchanged from the
+/// original `repeat_penalty_at_placement` body. It is `wave_min`-dependent and therefore genuinely
+/// per-candidate — the banded path must still run it, which is why `Banded` carries correlations rather than a
+/// finished penalty.
+///
+/// Lever 1b(a) (TEMP-production-repair-perf-plan.md §2.5): the pre/post **seam** correlations are passed in —
+/// the caller already computed them (`wave_min = pre_seam.min(post_seam)`) via `waveform_seams_at_start`
+/// (naive) or the FFT band, so recomputing them here with a fresh `fill_seam_correlations` (which also re-ran
+/// the hoisted `seam_score_channel_indices` scan per candidate — undoing lever 2) is pure waste. They are
+/// byte-identical to the old `fill_seam_correlations` on the naive path (same
+/// `fill_seam_correlations_with_channels` under the hood, same channel selection); on the FFT path they are the
+/// band's ε-approximation, consistent with the `wave_min` the score already used. The repeat-window
+/// correlation is a *different* window and is banded separately by lever 1b(b).
+fn repeat_penalty_from_correlations(
+    corr: RepeatCorrelations,
+    pre_seam: f64,
+    post_seam: f64,
+) -> f64 {
+    let wave_min = pre_seam.min(post_seam);
+    let RepeatCorrelations {
+        pre: repeat_pre,
+        post: repeat_post,
+    } = corr;
     let repeat_max = repeat_pre.max(repeat_post);
     let repeat_sum = repeat_pre + repeat_post;
     let asymmetric_post_dup = repeat_post > REPEAT_CORR_THRESHOLD
@@ -429,6 +478,28 @@ fn repeat_penalty_at_placement(
     } else {
         0.0
     }
+}
+
+/// The un-banded composition of the two halves: the original `repeat_penalty_at_placement`, preserved verbatim
+/// in behaviour. Holds the `repeat_penalty_weight <= 0.0 || repeat_window_frames == 0` early-out.
+///
+/// When [`build_repeat_band`] returns `None`, the refine loop passes `precomputed_repeat = None` and lands
+/// here via [`RepeatPenaltySource::PerCandidate`] — that is the intended fallback for *both* `None` meanings
+/// (zero-weight/zero-window early-out, where this fn returns 0.0 immediately, and a non-uniform band-edge
+/// decline, where it pays the naive Pearson). The banded path applies the same early-out at *build* time so
+/// a zero-weight bracket never constructs an FFT it would discard.
+fn repeat_penalty_at_placement(
+    ctx: &WaveformSeamContext<'_>,
+    start: usize,
+    pre_seam: f64,
+    post_seam: f64,
+    timers: &CandidateTimers,
+) -> f64 {
+    if ctx.repeat_penalty_weight <= 0.0 || ctx.repeat_window_frames == 0 {
+        return 0.0;
+    }
+    let corr = repeat_correlations_at_placement(ctx, start, timers);
+    repeat_penalty_from_correlations(corr, pre_seam, post_seam)
 }
 
 struct UnifiedFitCandidate {
@@ -448,9 +519,15 @@ struct UnifiedFitCandidate {
 /// `unified_fit_score_with_repeat` then substitutes the value instead of recomputing an identical one.
 /// The substitution is byte-identical: it replaces `repeat_penalty_at_placement(..)` with the f64 that call
 /// would have returned, under the same `wf > 0.0 && score.is_finite()` guard and the same arithmetic.
+///
+/// `Banded` (lever 1b(b)) carries the **correlations**, not a penalty: the start-dependent repeat window is not
+/// loop-invariant, so only the expensive Pearson pair can be precomputed (by
+/// [`fill_repeat_correlations_band`]). The `wave_min` / `asymmetric_post_dup` branch still runs per candidate
+/// via [`repeat_penalty_from_correlations`] — which is why this variant must not be conflated with `Fixed`.
 #[derive(Clone, Copy)]
 enum RepeatPenaltySource {
     PerCandidate,
+    Banded(RepeatCorrelations),
     Fixed(f64),
 }
 
@@ -478,6 +555,11 @@ fn unified_fit_score_with_repeat(
     if wf > 0.0 && score.is_finite() {
         let penalty = match repeat_source {
             RepeatPenaltySource::Fixed(penalty) => penalty,
+            RepeatPenaltySource::Banded(corr) => repeat_penalty_from_correlations(
+                corr,
+                candidate.wave_pre,
+                candidate.wave_post,
+            ),
             RepeatPenaltySource::PerCandidate => repeat_penalty_at_placement(
                 waveform,
                 candidate.placement.start,
@@ -542,6 +624,35 @@ fn build_wave_seam_band(
     )
 }
 
+/// Lever 1b(b) (`TEMP-repeat-band-plan.md` §3): the repeat-window analogue of [`build_wave_seam_band`].
+/// Precomputes the `(repeat_pre, repeat_post)` pair that [`repeat_correlations_at_placement`] returns for every
+/// start in `[lo, hi]` via one FFT band pass per side per channel, instead of a naive per-candidate Pearson.
+///
+/// Two distinct `None` meanings, both safe for the caller to treat identically as "score this range naively":
+/// the zero-weight/zero-window early-out (where the naive path also yields a 0.0 penalty), and the band
+/// evaluator declining a non-uniform band edge. This band is **independent** of the seam band — either may be
+/// `None` without forcing the other off the FFT path.
+fn build_repeat_band(
+    ctx: &WaveformSeamContext<'_>,
+    lo: usize,
+    hi: usize,
+) -> Option<Vec<(f64, f64)>> {
+    // Semantic, not just perf: `effective_repeat_window_frames` floors a 0 window to 1, so a band built with
+    // `repeat_window_frames == 0` would score a 1-frame Pearson where the disabled path yields 0.0.
+    if ctx.repeat_penalty_weight <= 0.0 || ctx.repeat_window_frames == 0 {
+        return None;
+    }
+    fill_repeat_correlations_band(
+        ctx.templates,
+        ctx.gap_frames,
+        ctx.pre_window,
+        ctx.post_window,
+        ctx.repeat_window_frames,
+        lo,
+        hi,
+    )
+}
+
 /// Result of unified structure+waveform search (Phase B).
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnifiedFillMatch {
@@ -584,8 +695,8 @@ pub fn match_gap_fill_unified_in_b(
             StructureTimeline::Energy(&energy_timeline)
         }
     };
-    // Public entry (dump/fixtures) always keeps the naive seam correlation so the committed corpus/golden stay
-    // byte-exact (§2.4). Only the production caller opts into the FFT band, via `_with_timeline`.
+    // Public entry (dump/fixtures) always keeps the naive seam AND repeat correlations so the committed
+    // corpus/golden stay byte-exact (§2.4). Only the production caller opts into either band, via `_with_timeline`.
     match_gap_fill_unified_in_b_with_timeline(
         input,
         params,
@@ -593,12 +704,14 @@ pub fn match_gap_fill_unified_in_b(
         &structure_timeline,
         None,
         false,
+        false,
     )
 }
 
 /// Like [`match_gap_fill_unified_in_b`] but reuses a pre-built structure timeline (joint grid perf).
 /// `use_fft_seam_search` routes the dense start-search refine through the FFT seam band (lever 1, §2.5);
-/// `false` is byte-identical to the pre-lever-1 naive search.
+/// `false` is byte-identical to the pre-lever-1 naive search. `use_fft_repeat_band` does the same for the
+/// repeat-window correlations (lever 1b(b)); the two are independent switches.
 pub(crate) fn match_gap_fill_unified_in_b_with_timeline(
     input: &UnifiedFillSearchInput<'_>,
     params: &StructureMatchParams,
@@ -606,6 +719,7 @@ pub(crate) fn match_gap_fill_unified_in_b_with_timeline(
     structure_timeline: &StructureTimeline<'_>,
     anchor_prior: Option<AnchorSearchPrior>,
     use_fft_seam_search: bool,
+    use_fft_repeat_band: bool,
 ) -> Option<UnifiedFillMatch> {
     if input.signature.is_empty() || params.gap_frames == 0 || params.bin_frames == 0 {
         return None;
@@ -640,6 +754,7 @@ pub(crate) fn match_gap_fill_unified_in_b_with_timeline(
         nominal_end: input.nominal_fill_end,
         score_channels: &score_channels,
         use_fft_seam_search,
+        use_fft_repeat_band,
     };
 
     let (mut best_start, _) = unified_search_best_fill_start(
@@ -738,6 +853,7 @@ fn unified_search_best_fill_start(
         nominal_end,
         score_channels,
         use_fft_seam_search,
+        use_fft_repeat_band,
     } = *ctx;
     let search_min = nominal_start.saturating_sub(params.search_radius_frames);
     let search_max = (nominal_start + params.search_radius_frames).min(total_frames);
@@ -755,8 +871,12 @@ fn unified_search_best_fill_start(
     // naively in-line (the pre-lever-1 behaviour, exact), `Some((pre, post))` ⇒ use the FFT-band values the
     // refine loop looked up. Passing `None` everywhere is byte-identical to the old closure, so the flag-off path
     // is unchanged. The pair (not just the min) also feeds `repeat_penalty_at_placement` (lever 1b(a)).
+    //
+    // `precomputed_repeat` is the lever 1b(b) analogue for the repeat-window pair, and is INDEPENDENT of
+    // `precomputed_wave`: either band may be absent without forcing the other onto the naive path.
     let consider = |start: usize,
                     precomputed_wave: Option<(f64, f64)>,
+                    precomputed_repeat: Option<(f64, f64)>,
                     best_start: &mut usize,
                     best_score: &mut f64| {
         if start < pre_span || start > search_max {
@@ -809,8 +929,15 @@ fn unified_search_best_fill_start(
                     weights,
                     waveform,
                     anchor_prior,
-                    // `start` moves here, so the repeat window moves with it — no hoist available.
-                    RepeatPenaltySource::PerCandidate,
+                    // `start` moves here, so the repeat window moves with it — no hoist available (unlike the
+                    // end search's lever 1b(c)). Lever 1b(b) instead precomputes the window's *correlations*
+                    // for the whole refine range as an FFT band; the combining branch still runs per candidate.
+                    match precomputed_repeat {
+                        Some((pre, post)) => {
+                            RepeatPenaltySource::Banded(RepeatCorrelations { pre, post })
+                        }
+                        None => RepeatPenaltySource::PerCandidate,
+                    },
                     &timers,
                 )
             },
@@ -844,12 +971,12 @@ fn unified_search_best_fill_start(
     {
         let _e = coarse_span.enter();
         if nominal_start >= pre_span {
-            consider(nominal_start, None, &mut best_start, &mut best_score);
+            consider(nominal_start, None, None, &mut best_start, &mut best_score);
             coarse_n += 1;
         }
         let mut start = search_min;
         while start <= search_max {
-            consider(start, None, &mut best_start, &mut best_score);
+            consider(start, None, None, &mut best_start, &mut best_score);
             coarse_n += 1;
             start = start.saturating_add(coarse_step);
         }
@@ -875,6 +1002,14 @@ fn unified_search_best_fill_start(
     } else {
         None
     };
+    // Lever 1b(b) (`TEMP-repeat-band-plan.md` §3): the same treatment for the repeat window, which the end
+    // search hoists (1b(c)) but the start search cannot — the window moves with `start`. Independent of
+    // `wave_band` in both directions: no shared decline, no shared fallback.
+    let repeat_band = if use_fft_repeat_band {
+        build_repeat_band(waveform, refine_min, refine_max)
+    } else {
+        None
+    };
     let refine_span = candidate_loop_span!("unified_refine_start");
     let mut refine_n = 0u64;
     {
@@ -895,7 +1030,18 @@ fn unified_search_best_fill_start(
                     (f64::NEG_INFINITY, f64::NEG_INFINITY)
                 }
             });
-            consider(start, precomputed, &mut best_start, &mut best_score);
+            // No `placement_in_bounds` gate here, unlike the seam band: the naive counterpart
+            // (`repeat_correlations_at_placement`) does not apply one either — it calls
+            // `fill_repeat_correlations` directly, which does its own per-side length checks. The band mirrors
+            // that, so a plain index is the exact analogue.
+            let precomputed_repeat = repeat_band.as_ref().map(|band| band[start - refine_min]);
+            consider(
+                start,
+                precomputed,
+                precomputed_repeat,
+                &mut best_start,
+                &mut best_score,
+            );
             refine_n += 1;
         }
     }
@@ -908,6 +1054,13 @@ fn unified_search_best_fill_start(
     // refine — correct, unaccelerated — and warn, rather than shipping a bad placement. (The winner's *reported*
     // seam/structure scores are already re-derived naively downstream in
     // `match_gap_fill_unified_in_b_with_timeline`, so no separate reported-value re-score is needed here.)
+    //
+    // Lever 1b(b) (`TEMP-repeat-band-plan.md` §4) extends the belt to the repeat band. Each band is checked
+    // independently — a divergence in either one condemns the winner, because both feed the same score — but
+    // they share ONE fallback: the naive re-refine below passes `None` for both bands, so it is exact for
+    // whichever diverged and for the other one too. Running it once is what keeps a double divergence from
+    // paying for two full re-refines.
+    let mut diverged = false;
     if wave_band.is_some() {
         let naive_wm = waveform_min_at_start(waveform, best_start, score_channels);
         let band_wm = wave_band.as_ref().map_or(f64::NEG_INFINITY, |band| {
@@ -924,8 +1077,7 @@ fn unified_search_best_fill_start(
                 f64::NEG_INFINITY
             }
         });
-        let both_neg_inf = naive_wm == f64::NEG_INFINITY && band_wm == f64::NEG_INFINITY;
-        if !both_neg_inf && (naive_wm - band_wm).abs() > FFT_SEAM_DISCREPANCY_TOL {
+        if !band_agrees_with_naive(naive_wm, band_wm) {
             tracing::warn!(
                 best_start,
                 naive_wm,
@@ -933,15 +1085,42 @@ fn unified_search_best_fill_start(
                 delta = (naive_wm - band_wm).abs(),
                 "fft seam band diverged from naive at the winner — falling back to naive refine for this gap"
             );
-            // Level F: this fallback re-refine's component times land in `timers` with no span left to record
-            // them on, so they are discarded rather than misattributed to the next phase. That is deliberate —
-            // the belt plus this fallback sit inside `bracket_unified_search`'s own time, measured at 0.3% of
-            // root, so the loss is bounded and far below what the buckets are being used to decide.
-            best_start = coarse_best_start;
-            best_score = coarse_best_score;
-            for start in refine_min..=refine_max {
-                consider(start, None, &mut best_start, &mut best_score);
-            }
+            diverged = true;
+        }
+    }
+    if let Some(band) = repeat_band.as_ref() {
+        // Compared PRE-BRANCH — the correlation pair itself, not the penalty
+        // `repeat_penalty_from_correlations` derives from it. The branch is a step function around
+        // `REPEAT_CORR_THRESHOLD` / `REPEAT_SEAM_WEAK`, so a penalty-level comparison would read as agreement
+        // for any FFT error that stays inside one branch and as a large disagreement for a 1e-12 error that
+        // straddles a threshold. Neither tells you about the FFT. The correlations do.
+        let naive = repeat_correlations_at_placement(waveform, best_start, &timers);
+        let (band_pre, band_post) = band[best_start - refine_min];
+        if !band_agrees_with_naive(naive.pre, band_pre)
+            || !band_agrees_with_naive(naive.post, band_post)
+        {
+            tracing::warn!(
+                best_start,
+                naive_pre = naive.pre,
+                naive_post = naive.post,
+                band_pre,
+                band_post,
+                delta_pre = (naive.pre - band_pre).abs(),
+                delta_post = (naive.post - band_post).abs(),
+                "fft repeat band diverged from naive at the winner — falling back to naive refine for this gap"
+            );
+            diverged = true;
+        }
+    }
+    if diverged {
+        // Level F: this fallback re-refine's component times land in `timers` with no span left to record
+        // them on, so they are discarded rather than misattributed to the next phase. That is deliberate —
+        // the belt plus this fallback sit inside `bracket_unified_search`'s own time, measured at 0.3% of
+        // root, so the loss is bounded and far below what the buckets are being used to decide.
+        best_start = coarse_best_start;
+        best_score = coarse_best_score;
+        for start in refine_min..=refine_max {
+            consider(start, None, None, &mut best_start, &mut best_score);
         }
     }
 
@@ -1110,8 +1289,10 @@ fn unified_fine_polish_start(
         nominal_start,
         nominal_end,
         score_channels,
-        // Fine polish stays naive this PR (Level E: 2.5% of the search); FFT covers the refine. See §2.5.
+        // Fine polish stays naive this PR (Level E: 2.5% of the search); FFT covers the refine. See §2.5 and
+        // `TEMP-repeat-band-plan.md` §3 — both bands are scoped to the refine window for the same reason.
         use_fft_seam_search: _,
+        use_fft_repeat_band: _,
     } = *ctx;
     if params.max_fine_adjustment_frames == 0 {
         return start;
@@ -2025,6 +2206,7 @@ mod tests {
             &structure_timeline,
             None,
             false,
+            false,
         )
         .expect("naive search finds a fill");
         let fft = match_gap_fill_unified_in_b_with_timeline(
@@ -2034,6 +2216,7 @@ mod tests {
             &structure_timeline,
             None,
             true,
+            false,
         )
         .expect("fft search finds a fill");
 
@@ -2048,6 +2231,154 @@ mod tests {
             naive.alignment.start_frame,
             true_start,
         );
+    }
+
+    /// Lever 1b(b) placement-diff (plan §6 (2)): the FFT repeat band (flag ON) must pick the SAME fill
+    /// placement as the naive per-candidate repeat correlation (flag OFF). The seam band is held OFF in both
+    /// arms so a divergence can only be attributed to the repeat band.
+    ///
+    /// The templates carry **two channels of unequal border length**, which is the configuration §2.1 #2/#3
+    /// are about: each channel derives its own `w`, while the outer channel gate is keyed on the *mono*
+    /// window. A band that only reproduced the per-channel bounds would score these differently.
+    #[test]
+    fn fft_repeat_band_matches_naive_placement() {
+        let mut seed = 0x00C0_FFEE_9876_5432u64;
+        let mut rng = || {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((seed >> 33) as f64 / (1u64 << 30) as f64) - 1.0
+        };
+
+        let bin_frames = 20usize;
+        let gap_frames = 200usize;
+        let pre_window = 96usize;
+        let post_window = 96usize;
+        let true_start = 1500usize;
+        let total = 3000usize;
+
+        let mut b_mono: Vec<f64> = (0..total).map(|_| rng() * 0.5).collect();
+        let a_pre: Vec<f64> = (0..pre_window).map(|_| rng()).collect();
+        let a_post: Vec<f64> = (0..post_window).map(|_| rng()).collect();
+        b_mono[true_start - pre_window..true_start].copy_from_slice(&a_pre);
+        b_mono[true_start + gap_frames..true_start + gap_frames + post_window]
+            .copy_from_slice(&a_post);
+
+        let b_samples: Vec<f32> = b_mono.iter().map(|&x| x as f32).collect();
+        // Two B channels (same content, so the correlations stay well-conditioned) against two A-side border
+        // templates of DIFFERENT lengths — the unequal-`w` case.
+        let b_ch = vec![b_mono.clone(), b_mono.clone()];
+        let a_pre_ch = vec![a_pre.clone(), a_pre[pre_window - 61..].to_vec()];
+        let a_post_ch = vec![a_post.clone(), a_post[..57].to_vec()];
+        let templates = SeamTemplates {
+            a_pre: &a_pre,
+            a_post: &a_post,
+            a_pre_ch: &a_pre_ch,
+            a_post_ch: &a_post_ch,
+            b_mono: &b_mono,
+            b_ch: &b_ch,
+        };
+        let waveform = WaveformSeamContext {
+            templates: &templates,
+            gap_frames,
+            pre_window,
+            post_window,
+            b_total_frames: total,
+            repeat_window_frames: bin_frames * 3,
+            // Non-zero: with the production default weight the repeat term actually reaches the score, so a
+            // banded/naive mismatch can move the winner. At 0.0 the band is never even built.
+            repeat_penalty_weight: 0.4,
+        };
+        let params = StructureMatchParams {
+            gap_frames,
+            bin_frames,
+            search_radius_frames: 500,
+            fill_length_slack_frames: 40,
+            max_fine_adjustment_frames: 0,
+            silence_peak_fraction: 0.01,
+            absolute_silence_rms: 0.0,
+        };
+        let weights = UnifiedFitWeights {
+            structure_weight: 0.1,
+            waveform_weight: 0.9,
+            ..Default::default()
+        };
+        let signature = GapSignature::Bool(GapContextSignature {
+            pre_bins: vec![true; 8],
+            post_bins: vec![true; 8],
+        });
+        let timeline = gap_structure::ActivityTimeline::build(
+            &b_samples,
+            1,
+            total,
+            bin_frames,
+            params.silence_peak_fraction,
+            params.absolute_silence_rms,
+        );
+        let structure_timeline = StructureTimeline::Bool(&timeline);
+        let input = UnifiedFillSearchInput {
+            signature: &signature,
+            b_samples: &b_samples,
+            channels: 1,
+            waveform: &waveform,
+            nominal_fill_start: true_start - 40,
+            nominal_fill_end: true_start - 40 + gap_frames,
+        };
+
+        let naive = match_gap_fill_unified_in_b_with_timeline(
+            &input,
+            &params,
+            weights,
+            &structure_timeline,
+            None,
+            false,
+            false,
+        )
+        .expect("naive search finds a fill");
+        let banded = match_gap_fill_unified_in_b_with_timeline(
+            &input,
+            &params,
+            weights,
+            &structure_timeline,
+            None,
+            false,
+            true,
+        )
+        .expect("banded search finds a fill");
+
+        assert_eq!(
+            naive.alignment.start_frame, banded.alignment.start_frame,
+            "FFT repeat band must pick the same placement as naive (naive={}, banded={})",
+            naive.alignment.start_frame, banded.alignment.start_frame,
+        );
+        assert!(
+            naive.alignment.start_frame.abs_diff(true_start) <= bin_frames,
+            "search located the planted fill: start={} true={}",
+            naive.alignment.start_frame,
+            true_start,
+        );
+    }
+
+    /// Lever 1b(b) §4: pin the belt's edge semantics, which are the part that cannot be read off the
+    /// threshold. Both bands emit infinities at declined placements, and the naive path never emits `NaN` —
+    /// so identical infinities must AGREE (`inf − inf` is `NaN`, which no threshold can classify) while a
+    /// `NaN` from either side must DIVERGE rather than slip through a `NaN > tol == false` comparison.
+    #[test]
+    fn band_agreement_treats_infinities_as_equal_and_nan_as_divergence() {
+        assert!(band_agrees_with_naive(0.5, 0.5));
+        assert!(band_agrees_with_naive(0.5, 0.5 + FFT_SEAM_DISCREPANCY_TOL * 0.5));
+        assert!(!band_agrees_with_naive(0.5, 0.5 + FFT_SEAM_DISCREPANCY_TOL * 10.0));
+
+        assert!(band_agrees_with_naive(f64::NEG_INFINITY, f64::NEG_INFINITY));
+        assert!(band_agrees_with_naive(f64::INFINITY, f64::INFINITY));
+        // One side declined and the other did not: a real disagreement, not an edge to be excused.
+        assert!(!band_agrees_with_naive(f64::NEG_INFINITY, 0.5));
+        assert!(!band_agrees_with_naive(0.5, f64::NEG_INFINITY));
+        assert!(!band_agrees_with_naive(f64::NEG_INFINITY, f64::INFINITY));
+
+        assert!(!band_agrees_with_naive(f64::NAN, 0.5));
+        assert!(!band_agrees_with_naive(0.5, f64::NAN));
+        assert!(!band_agrees_with_naive(f64::NAN, f64::NAN));
     }
 
     #[test]

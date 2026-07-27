@@ -185,6 +185,11 @@ pub struct Args {
     #[arg(long)]
     pub no_fft_seam_search: bool,
 
+    /// Enable the FFT-accelerated repeat-window band in the unified start-search refine (`fill_mode = fit`
+    /// only). Opt-in while the exact re-score belt is extended to cover it; independent of the seam band.
+    #[arg(long)]
+    pub fft_repeat_band: bool,
+
     /// Override: A-side audio excluded adjacent to the dropout for border templates (seconds)
     /// [default: 0.35].
     #[arg(long, value_name = "SECS")]

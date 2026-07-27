@@ -259,9 +259,8 @@ comparison on a machine whose load we do not control.
 Pair 1 exits 4 on both sides (pre-existing unfillable gap, identical decisions);
 the nonzero exit is not introduced by this change.
 
-**There is still no post-hoist 17-pair sweep.** The 4-pair aggregate above is the
-best current profile; §1/§1a are both pre-hoist. Land a full sweep before quoting
-a post-hoist corpus percentage.
+**Post-hoist 17-pair profile:** [TEMP-repeat-band-plan.md](TEMP-repeat-band-plan.md) §0
+(`fill_length_slack_secs_narrow_perf`, 2026-07-26) — root 5724 s; see also §5 #0.
 
 **If the post seam ever becomes end-dependent** (Phase C of
 [archive/TEMP-fill-placement-axis-plan.md](archive/TEMP-fill-placement-axis-plan.md)), this hoist
@@ -391,13 +390,21 @@ tree; do not size a candidate against it.)
 
 ## 5. Open candidates
 
-0. **Lever 1b(b) — band the *start*-search repeat window.** Promoted to #1 by the
+0. **Lever 1b(b) — band the *start*-search repeat window.**
+   **→ Design: [TEMP-repeat-band-plan.md](TEMP-repeat-band-plan.md) (2026-07-26).**
+   Promoted to #1 by the
    lever 1b(c) spot check: with the end loops gone, `unified_refine_start` is
    **43.1% of root and 99.4% of it is `fill_repeat_correlations`**. Unlike the end
    search this is *not* loop-invariant — the repeat window moves with the
    candidate `start` — so it needs the lever-1 FFT banding treatment
    (`fill_seam_correlations_band`), not a hoist. Largest remaining single target
    by a wide margin.
+
+   **Re-measured on the full 17-pair post-narrowing run (2026-07-26,**
+   `fill_length_slack_secs_narrow_perf`, 1758 brackets, root 5724 s): the figures
+   firm up to **44.4% of root, 99.6% `repeat_us`** (2530 s of 2541 s). `repeat_us`
+   across *all* phases is 2870 s = **50.2%** of root. Supersedes the 43.1/99.4
+   partial above; conclusion unchanged. Full table + design in the plan §0.
 1. **`local_anchor_xcorr` — 358 s (4.23%) on the full corpus, 9.94% post-hoist.**
    This is what the old "`gate_anchor_search` holds 910.8 s (9.9%) of exclusive
    time" entry was actually pointing at. That 910.8 s was an **instrumentation
@@ -413,6 +420,16 @@ tree; do not size a candidate against it.)
    2026-07-20 baseline, and post-hoist it is **~35%** of root (§1b). It is 34
    calls of ~63 s each, not a long tail, and it has **never been investigated**.
    Most plausible next candidate.
+
+   **Confirmed on the 2026-07-26 run: 2145 s = 37.5% of root, and the two decodes
+   are strictly sequential in all 17 pairs** (`patch_decode_b` starts at or after
+   `patch_decode_a` closes). `decode.rs:24-80` does open A → decode all of A →
+   open B → decode all of B; B's track pick is
+   `select_track_for_reference(&track_a, ..)`, which needs only A's track
+   *metadata*, not the decoded `a_pcm` — so the two `extract_interleaved` calls
+   are separable and ~1072 s (~19% of root) is nominally recoverable. Caveat
+   before any refactor: both files sit on one drive, so if decode is I/O-bound
+   rather than CPU-bound the win collapses. **Measure one pair both ways first.**
 3. **Narrow end-search slack (`fill_length_slack_secs` 5.0 → ~1.0 s).** The
    decoupling from B extract is already done (below); only the narrowing is open.
    Fingerprint corpus roll-up (17/17 pairs, 2026-07-26): end-search excursion is

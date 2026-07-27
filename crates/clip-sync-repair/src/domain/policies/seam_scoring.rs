@@ -211,6 +211,192 @@ pub fn fill_repeat_correlations(
     )
 }
 
+/// One side (pre or post) of [`fill_repeat_correlations_band`], mirroring the corresponding half of
+/// [`fill_repeat_correlations`] exactly. `tail = true` is the PRE side (template is `a`'s tail, B base is
+/// `start`); `tail = false` is the POST side (template is `a`'s head, B base is `start + gap_frames − w`).
+/// The base offset is what makes one helper serve both, and it is **per-window**: the mono side offsets by the
+/// mono `w`, each channel by its own.
+///
+/// Returns `None` when a start-dependent bound is not uniform across `[start_lo, start_hi]` (the caller then
+/// scores the band naively), matching [`fill_seam_correlations_band`]'s decline contract.
+#[allow(clippy::too_many_arguments)]
+fn repeat_side_band(
+    a_mono: &[f64],
+    a_ch: &[Vec<f64>],
+    b_mono: &[f64],
+    b_ch: &[Vec<f64>],
+    mono_window: usize,
+    repeat_window_frames: usize,
+    gap_frames: usize,
+    seam_window: usize,
+    tail: bool,
+    start_lo: usize,
+    start_hi: usize,
+    width: usize,
+) -> Option<Vec<f64>> {
+    // The POST side compares A's head against the fill's TAIL, so its B base trails `start` by
+    // `gap_frames − w`; the PRE side reads at `start` itself.
+    let base_offset = |w: usize| if tail { 0 } else { gap_frames.saturating_sub(w) };
+    let mono_offset = base_offset(mono_window);
+
+    // The one start-dependent term shared by the mono scoring gate (`:127` / `:139`) and the OUTER channel gate
+    // (`:155` / `:181`) — both phrased against the MONO window and `b_mono`, even though the outer one gates
+    // per-channel work. Monotonic in `start`, so uniform across the band iff it agrees at both ends.
+    let fit_lo = start_lo + mono_offset + mono_window <= b_mono.len();
+    let fit_hi = start_hi + mono_offset + mono_window <= b_mono.len();
+    if fit_lo != fit_hi {
+        return None;
+    }
+    let fit = fit_lo;
+
+    // Mono band. The remaining conjuncts (`!a.is_empty()`, `w <= a.len()`) are start-independent; when they
+    // fail the naive path yields a literal `0.0` (NOT `NEG_INFINITY` — that value is the channel set's).
+    let score_mono = !a_mono.is_empty() && fit && mono_window <= a_mono.len();
+    let mono_band = if score_mono {
+        let template: &[f64] = if tail {
+            &a_mono[a_mono.len() - mono_window..]
+        } else {
+            &a_mono[..mono_window]
+        };
+        let band = seam_correlation_over_bases(
+            template,
+            b_mono,
+            start_lo + mono_offset,
+            start_hi + mono_offset,
+        );
+        if band.len() != width {
+            return None;
+        }
+        band
+    } else {
+        vec![0.0; width]
+    };
+
+    // `fill_repeat_correlations` returns the mono pair outright for mono/1-channel media (`:151-153`), never
+    // reaching the channel fold — so the band must not synthesize a `NEG_INFINITY` channel term here either.
+    if b_ch.len() <= 1 {
+        return Some(mono_band);
+    }
+
+    // Outer gate failed ⇒ the whole channel set is `NEG_INFINITY` for every start, regardless of whether an
+    // individual channel's (possibly SHORTER) window would have fit. Reproducing that is the point.
+    let ch_band_max: Vec<f64> = if !fit {
+        vec![f64::NEG_INFINITY; width]
+    } else {
+        let mut bands: Vec<Vec<f64>> = Vec::new();
+        for (a_c, b_c) in a_ch.iter().zip(b_ch.iter()) {
+            let border_len = a_c.len();
+            let w = effective_repeat_window_frames(
+                repeat_window_frames,
+                gap_frames,
+                border_len,
+                seam_window,
+            );
+            if w > border_len {
+                continue; // start-independent exclusion — matches the naive `filter_map`
+            }
+            let off = base_offset(w);
+            let lo_ok = start_lo + off + w <= b_c.len();
+            let hi_ok = start_hi + off + w <= b_c.len();
+            if lo_ok != hi_ok {
+                return None; // channel would be scored for some starts, skipped for others
+            }
+            if !hi_ok {
+                continue;
+            }
+            let template: &[f64] = if tail {
+                &a_c[border_len - w..]
+            } else {
+                &a_c[..w]
+            };
+            let band = seam_correlation_over_bases(template, b_c, start_lo + off, start_hi + off);
+            if band.len() != width {
+                return None;
+            }
+            bands.push(band);
+        }
+        (0..width)
+            .map(|i| bands.iter().map(|b| b[i]).fold(f64::NEG_INFINITY, f64::max))
+            .collect()
+    };
+
+    // Mono is a PARTICIPANT in the max here, not a fallback used only when no channel scored — that is the
+    // seam band's `combine_seam_band` rule, and it is the wrong one for repeat.
+    Some(
+        (0..width)
+            .map(|i| best_channel_correlation(&[mono_band[i], ch_band_max[i]]))
+            .collect(),
+    )
+}
+
+/// Lever 1b(b) (`TEMP-repeat-band-plan.md` §2): precompute `(repeat_pre, repeat_post)` for **every** `start` in
+/// `[start_lo, start_hi]` in one FFT band pass per channel per side, mirroring [`fill_repeat_correlations`]
+/// exactly. Entry `i` corresponds to `start_lo + i` and equals the per-start call within FFT ε (≤ 1e-8;
+/// naive-exact below the FFT crossover).
+///
+/// This is the repeat-window twin of [`fill_seam_correlations_band`], which banded the *seam* window only. It
+/// is a separate window, so it needs its own pass — and it differs from the seam band in ways a copy-paste
+/// would get wrong (see `TEMP-repeat-band-plan.md` §2.1): no `score_channels` filter (repeat scores **all**
+/// channels), per-channel window lengths that differ within one call, an outer channel gate phrased against
+/// the mono window, and `0.0`-vs-`NEG_INFINITY` failure values that are not interchangeable.
+///
+/// Returns `None` on the same contract as the seam band: any start-dependent bound that is not uniform across
+/// the band, or a band that does not fit. Correctness is further guaranteed downstream by the exact re-score
+/// of the winning placement.
+// Wired into the production start-search refine by `gap_fill_fit::build_repeat_band` (plan §3).
+pub(crate) fn fill_repeat_correlations_band(
+    templates: &SeamTemplates<'_>,
+    gap_frames: usize,
+    pre_window: usize,
+    post_window: usize,
+    repeat_window_frames: usize,
+    start_lo: usize,
+    start_hi: usize,
+) -> Option<Vec<(f64, f64)>> {
+    if start_hi < start_lo {
+        return None;
+    }
+    let width = start_hi - start_lo + 1;
+    let SeamTemplates { a_pre, a_post, a_pre_ch, a_post_ch, b_mono, b_ch } = *templates;
+
+    // Start-independent (this is the precondition that makes banding possible at all): the effective windows
+    // derive only from the gap/border/seam geometry, none of which moves with `start`.
+    let pre_repeat_window =
+        effective_repeat_window_frames(repeat_window_frames, gap_frames, a_pre.len(), pre_window);
+    let post_repeat_window =
+        effective_repeat_window_frames(repeat_window_frames, gap_frames, a_post.len(), post_window);
+
+    let pre = repeat_side_band(
+        a_pre,
+        a_pre_ch,
+        b_mono,
+        b_ch,
+        pre_repeat_window,
+        repeat_window_frames,
+        gap_frames,
+        pre_window,
+        true,
+        start_lo,
+        start_hi,
+        width,
+    )?;
+    let post = repeat_side_band(
+        a_post,
+        a_post_ch,
+        b_mono,
+        b_ch,
+        post_repeat_window,
+        repeat_window_frames,
+        gap_frames,
+        post_window,
+        false,
+        start_lo,
+        start_hi,
+        width,
+    )?;
+    Some(pre.into_iter().zip(post).collect())
+}
+
 
 
 /// A-side gap bounds for splice-aware seam scoring on decoded PCM.
@@ -973,6 +1159,186 @@ mod tests {
                 "mono start {}: pre {pre} vs {npre}, post {post} vs {npost}",
                 start_lo + i
             );
+        }
+    }
+
+    /// `NEG_INFINITY` (the empty-channel-set sentinel) must match exactly — `inf − inf` is `NaN`, so the ε
+    /// comparison would silently pass for any pair of infinities and, worse, for `NaN` vs `NaN`.
+    fn repeat_eq(a: f64, b: f64) -> bool {
+        if a.is_infinite() || b.is_infinite() {
+            a == b
+        } else {
+            (a - b).abs() < 1e-8
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn assert_repeat_band_matches(
+        templates: &SeamTemplates<'_>,
+        gap_frames: usize,
+        pre_window: usize,
+        post_window: usize,
+        repeat_window_frames: usize,
+        start_lo: usize,
+        start_hi: usize,
+        label: &str,
+    ) {
+        let band = fill_repeat_correlations_band(
+            templates,
+            gap_frames,
+            pre_window,
+            post_window,
+            repeat_window_frames,
+            start_lo,
+            start_hi,
+        )
+        .unwrap_or_else(|| panic!("{label}: band declined but the bounds are uniform"));
+        assert_eq!(band.len(), start_hi - start_lo + 1, "{label}: band width");
+        for (i, &(pre, post)) in band.iter().enumerate() {
+            let start = start_lo + i;
+            let (npre, npost) = fill_repeat_correlations(
+                templates,
+                SeamPlacement { start, gap_frames, pre_window, post_window },
+                repeat_window_frames,
+            );
+            assert!(
+                repeat_eq(pre, npre) && repeat_eq(post, npost),
+                "{label} start {start}: pre {pre} vs {npre}, post {post} vs {npost}"
+            );
+        }
+    }
+
+    /// Lever 1b(b): the repeat band must reproduce the per-start naive `fill_repeat_correlations` at every
+    /// start in the band. Covers both `lag_correlation_curve_auto` branches (**asserted**, not assumed — an
+    /// equivalence test that drifts onto the naive branch proves nothing about the FFT), per-channel windows
+    /// that differ within a single call, and each gate/decline path in `TEMP-repeat-band-plan.md` §2.1.
+    #[test]
+    fn fill_repeat_correlations_band_matches_per_start() {
+        use crate::domain::seam_local::FFT_CROSSOVER_OPS;
+
+        let (gap_frames, pre_window, post_window, repeat_window_frames) = (500, 400, 400, 400);
+        let total_b = 8000usize;
+
+        // Unequal per-channel border lengths ⇒ unequal effective repeat windows within one call
+        // (`effective_repeat_window_frames` caps at `border_len`): 120 / 200 / 260, vs the mono side's 300.
+        let border_lens = [120usize, 200, 260];
+        let a_pre_ch: Vec<Vec<f64>> = border_lens
+            .iter()
+            .enumerate()
+            .map(|(c, &n)| det_noise(100 + c as u64, n))
+            .collect();
+        let a_post_ch: Vec<Vec<f64>> = border_lens
+            .iter()
+            .enumerate()
+            .map(|(c, &n)| det_noise(200 + c as u64, n))
+            .collect();
+        let b_ch: Vec<Vec<f64>> = (0..border_lens.len())
+            .map(|c| det_noise(300 + c as u64, total_b))
+            .collect();
+        let a_pre = det_noise(1, 300);
+        let a_post = det_noise(2, 300);
+        let b_mono = det_noise(3, total_b);
+
+        let templates = SeamTemplates {
+            a_pre: &a_pre,
+            a_post: &a_post,
+            a_pre_ch: &a_pre_ch,
+            a_post_ch: &a_post_ch,
+            b_mono: &b_mono,
+            b_ch: &b_ch,
+        };
+
+        // --- A. FFT branch. Smallest template (120) over a 5001-wide band still clears the crossover. ---
+        let (lo, hi) = (1000usize, 6000usize);
+        assert!(
+            120u64 * (2 * (hi - lo) as u64 + 1) > FFT_CROSSOVER_OPS,
+            "case A must exercise the FFT branch"
+        );
+        assert_repeat_band_matches(
+            &templates, gap_frames, pre_window, post_window, repeat_window_frames, lo, hi, "fft",
+        );
+
+        // --- B. Naive branch. Same data, narrow band: even the largest template (mono 300) stays under. ---
+        let (nlo, nhi) = (1000usize, 1100usize);
+        assert!(
+            300u64 * (2 * (nhi - nlo) as u64 + 1) <= FFT_CROSSOVER_OPS,
+            "case B must exercise the naive branch"
+        );
+        assert_repeat_band_matches(
+            &templates, gap_frames, pre_window, post_window, repeat_window_frames, nlo, nhi, "naive",
+        );
+
+        // --- C. §2.1 #3: the OUTER channel gate is phrased against the MONO window and `b_mono`. With a short
+        // mono buffer it fails for the whole band, so every channel scores `NEG_INFINITY` **even though each
+        // channel's own (shorter) window fits comfortably inside its own full-length `b_ch`**. A band that
+        // only ported the per-channel `start + w <= b_ch.len()` checks returns real correlations here. ---
+        let b_mono_short = det_noise(4, 6100);
+        let short_mono = SeamTemplates { b_mono: &b_mono_short, ..copy_templates(&templates) };
+        assert!(
+            5900 + 300 > b_mono_short.len() && 6000 + 300 > b_mono_short.len(),
+            "case C: the mono gate must fail uniformly across the band"
+        );
+        assert!(
+            6000 + 260 <= b_ch[2].len(),
+            "case C is only meaningful if the per-channel windows would have fit"
+        );
+        assert_repeat_band_matches(
+            &short_mono, gap_frames, pre_window, post_window, repeat_window_frames, 5900, 6000,
+            "outer-gate-fails",
+        );
+
+        // --- D. §2.1 #5: mono's start-independent conjunct fails (empty `a_pre`) ⇒ mono contributes a literal
+        // `0.0`, NOT `NEG_INFINITY`, while the channel set still scores normally. ---
+        let no_pre = SeamTemplates { a_pre: &[], ..copy_templates(&templates) };
+        assert_repeat_band_matches(
+            &no_pre, gap_frames, pre_window, post_window, repeat_window_frames, lo, hi,
+            "empty-a-pre",
+        );
+
+        // --- E. §2.1 #1/#6: mono/1-channel media returns the mono pair outright, never reaching the channel
+        // fold — so no `NEG_INFINITY` channel term is synthesized. ---
+        let one_ch: Vec<Vec<f64>> = vec![b_ch[0].clone()];
+        let a_pre_one: Vec<Vec<f64>> = vec![a_pre_ch[0].clone()];
+        let a_post_one: Vec<Vec<f64>> = vec![a_post_ch[0].clone()];
+        let mono_media = SeamTemplates {
+            a_pre_ch: &a_pre_one,
+            a_post_ch: &a_post_one,
+            b_ch: &one_ch,
+            ..copy_templates(&templates)
+        };
+        assert_repeat_band_matches(
+            &mono_media, gap_frames, pre_window, post_window, repeat_window_frames, lo, hi,
+            "single-channel",
+        );
+
+        // --- F. A per-channel bound that is NOT uniform across the band must decline, not guess: channel 1
+        // (w = 200) fits at `lo` but runs off its short `b_ch` before `hi`. ---
+        let mut ragged = b_ch.clone();
+        ragged[1] = det_noise(5, 3000);
+        assert!(
+            lo + 200 <= ragged[1].len() && hi + 200 > ragged[1].len(),
+            "case F: channel 1 must straddle its bound"
+        );
+        let ragged_templates = SeamTemplates { b_ch: &ragged, ..copy_templates(&templates) };
+        assert!(
+            fill_repeat_correlations_band(
+                &ragged_templates, gap_frames, pre_window, post_window, repeat_window_frames, lo, hi,
+            )
+            .is_none(),
+            "case F: non-uniform per-channel bound must decline"
+        );
+    }
+
+    /// `SeamTemplates` holds shared refs but is not `Copy` (it has no derive), so `..` struct-update in the
+    /// tests above needs an explicit reborrow.
+    fn copy_templates<'a>(t: &SeamTemplates<'a>) -> SeamTemplates<'a> {
+        SeamTemplates {
+            a_pre: t.a_pre,
+            a_post: t.a_post,
+            a_pre_ch: t.a_pre_ch,
+            a_post_ch: t.a_post_ch,
+            b_mono: t.b_mono,
+            b_ch: t.b_ch,
         }
     }
 

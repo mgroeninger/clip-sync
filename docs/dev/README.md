@@ -30,6 +30,8 @@ Build, test, corpus, and design plans. Operator guides and output contracts stay
 ## Plans
 
 - **Active drafts:** `TEMP-*.md` in this folder (e.g. [TEMP-gap-selection-plan.md](TEMP-gap-selection-plan.md)).
+- **Perf, next lever:** [TEMP-repeat-band-plan.md](TEMP-repeat-band-plan.md) — lever 1b(b), band the
+  start-search repeat window (44% of production wall time; successor to lever 1 / 1b(c)).
 - **Review ledger:** [TEMP-rust-review-findings.md](TEMP-rust-review-findings.md) — prioritized correctness / silent-failure / perf findings (2026-07-23).
 - **Shipped:** [archive/](archive/) — historical design records (do not treat as current behavior; links may be stale). Includes closed M-MOD module-split plans (repair policies / analyzer policies / fingerprint / corpus / `patch_audio`), the [`bracket_fill` elimination plan](archive/TEMP-patch-audio-bracket-fill-elimination-plan.md), and the [`RegionCharacterization` collapse plan](archive/TEMP-region-characterization-collapse-plan.md).
 

@@ -111,7 +111,9 @@ pub fn lag_correlation_curve_fft(a: &[f64], b_ctx: &[f64], max_lag: i64) -> Vec<
 /// small-probe regime (±30 ms seam-uniqueness / ±100 ms envelope bins, cost ~1e4) and well below the
 /// production seam-local / baseline sweep regime (±600 ms over a 250 ms–1 s window, cost ~1e8–1e9), so the
 /// boundary never sits near a real call site — perf-plan §3 step 4.
-const FFT_CROSSOVER_OPS: u64 = 1_000_000;
+/// `pub(crate)` so band tests in other modules can assert *which* branch their sizing exercises rather than
+/// assuming it — an FFT-equivalence test that silently drifts onto the naive branch proves nothing.
+pub(crate) const FFT_CROSSOVER_OPS: u64 = 1_000_000;
 
 /// Auto-select between [`lag_correlation_curve`] and [`lag_correlation_curve_fft`] by estimated naive cost
 /// (`n · (2·max_lag+1)`). Equivalence is pinned by `fft_curve_matches_naive_*` below (ε = 1e-8), so callers

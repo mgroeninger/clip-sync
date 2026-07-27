@@ -23,7 +23,8 @@ pub use seam_scoring::{
     SeamChannelDiagnostics, SeamPlacement, SeamTemplates, SpliceSeamContext,
 };
 pub(crate) use seam_scoring::{
-    fill_seam_correlations_band, fill_seam_correlations_with_channels, seam_score_channels,
+    fill_repeat_correlations_band, fill_seam_correlations_band,
+    fill_seam_correlations_with_channels, seam_score_channels,
 };
 pub use seam_splice::{apply_seam_crossfade, effective_seam_crossfade_frames};
 pub use seam_residual::{
