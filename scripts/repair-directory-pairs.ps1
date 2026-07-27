@@ -13,20 +13,21 @@
 #   ./scripts/repair-directory-pairs.ps1 -MediaDir D:\media -ListOnly
 #   ./scripts/repair-directory-pairs.ps1 -MediaDir D:\media -WriteManifest pairs.csv
 #   ./scripts/repair-directory-pairs.ps1 -Manifest pairs.csv
-#   ./scripts/repair-directory-pairs.ps1 -Manifest pairs.csv -RepairArgs "--fft-repeat-band" -KeepWav
-#   ./scripts/repair-directory-pairs.ps1 -Manifest pairs.csv -Mux D:\out\repaired.mkv
-#   ./scripts/repair-directory-pairs.ps1 -MediaDir D:\media -Mux D:\out\muxed -KeepWav
+#   ./scripts/repair-directory-pairs.ps1 -Manifest pairs.csv -RepairArgs "--no-fft-repeat-band" -KeepWav
+#   ./scripts/repair-directory-pairs.ps1 -MediaDir D:\media -Mux D:\out\muxed -MuxExt .mkv
+#   ./scripts/repair-directory-pairs.ps1 -MediaDir D:\media -Mux D:\out\muxed -Force
 #   ./scripts/repair-directory-pairs.ps1 -MediaDir D:\media -Preview
 #
 # Manifest format (CSV or TSV; '#' comments and blank lines ignored): one pair per line, no header
 #     label , path/to/A.mkv , path/to/B.m4v [, extra per-pair repair args]
 # Delimiter is auto-picked from the extension (.tsv => tab, else comma); override with -Delimiter.
 #
-# Default write path is `--wav` (real repair). Pass -Mux PATH for `--mux` instead (or as well,
-# with -KeepWav). -Mux may be a directory (writes <label><A's ext> per pair) or a file path
-# (used as-is for one pair; with multiple pairs the label is inserted before the extension:
-# out.mkv → out.1.mkv). Use -Preview for characterize-only (`--repair-preview`, no splice/write).
-# Shared flags go in -RepairArgs; per-pair `extra` from the manifest is appended after those.
+# Default write path is `--wav` (real repair). Pass -Mux DIR for `--mux` instead (or as well,
+# with -KeepWav). Mux/WAV outputs are named from A: `<stem>.repaired.<ext>`
+# (e.g. movie.m4v → movie.repaired.mkv with -MuxExt .mkv). Existing mux/WAV targets are
+# refused by default; pass -Force to overwrite. Logs stay under -OutDir as `<label>.log`.
+# Use -Preview for characterize-only (`--repair-preview`, no splice/write). Shared flags go
+# in -RepairArgs; per-pair `extra` from the manifest is appended after those.
 #
 # MEDIA HYGIENE: pair lists and logs contain absolute media paths / titles. Neither may be
 # committed. -OutDir defaults outside the repo ($env:TEMP); if you put output under the repo,
@@ -63,13 +64,26 @@ param(
     [Parameter(ParameterSetName = 'RunManifest')]
     [switch]$Preview,
 
-    # Mux patched audio into video A (`--mux`). Directory or file path — see header.
+    # Mux patched audio into video A (`--mux`). Output directory — each pair writes
+    # `<A-stem>.repaired.<ext>` there. If you pass a path with an extension (e.g. D:\out\x.mkv)
+    # the parent directory is used and that extension becomes the default -MuxExt.
     # Implies the `ffmpeg-mux` cargo feature (added automatically if missing from -Features).
     [Parameter(ParameterSetName = 'RunDir')]
     [Parameter(ParameterSetName = 'RunManifest')]
     [string]$Mux = '',
 
-    # Where per-pair logs (and WAVs, if kept) go.
+    # Extension for mux outputs (e.g. '.mkv'). Empty = follow A's extension.
+    [Parameter(ParameterSetName = 'RunDir')]
+    [Parameter(ParameterSetName = 'RunManifest')]
+    [string]$MuxExt = '',
+
+    # Allow overwriting an existing mux/WAV output. Default is to refuse (no-clobber).
+    # Logs are always overwritten.
+    [Parameter(ParameterSetName = 'RunDir')]
+    [Parameter(ParameterSetName = 'RunManifest')]
+    [switch]$Force,
+
+    # Where per-pair logs (and WAVs, if written) go. WAV files are `<A-stem>.repaired.wav`.
     [Parameter(ParameterSetName = 'RunDir')]
     [Parameter(ParameterSetName = 'RunManifest')]
     [string]$OutDir = (Join-Path $env:TEMP 'clip-sync-repair-pairs'),
@@ -127,42 +141,81 @@ $RepoRoot = Split-Path -Parent $PSScriptRoot
 $useMux = $Mux -ne ''
 if ($Preview -and $useMux) { throw "-Preview cannot be combined with -Mux" }
 if ($Preview -and $KeepWav) { throw "-Preview cannot be combined with -KeepWav" }
+if ($MuxExt -ne '' -and -not $useMux) { throw "-MuxExt requires -Mux" }
 if ($useMux -and $Features -notmatch '(^|,)ffmpeg-mux($|,)') {
     $Features = "$Features,ffmpeg-mux"
 }
 
-function Resolve-MuxOutputPath {
+function ConvertTo-FileExtension {
+    param([string]$Ext)
+    if ($Ext -eq '') { return '' }
+    if ($Ext.StartsWith('.')) { return $Ext.ToLowerInvariant() }
+    return ('.' + $Ext).ToLowerInvariant()
+}
+
+# movie.mkv + ext .mkv → movie.repaired.mkv
+function Get-RepairedFileName {
+    param(
+        [string]$APath,
+        [string]$Ext
+    )
+    $stem = [IO.Path]::GetFileNameWithoutExtension($APath)
+    $ext = ConvertTo-FileExtension $Ext
+    if ($ext -eq '') { $ext = '.mkv' }
+    return '{0}.repaired{1}' -f $stem, $ext
+}
+
+# -Mux is an output directory. A path with an extension (D:\out\x.mkv) means: use the parent
+# as the directory and that extension as the default MuxExt when -MuxExt was not given.
+function Resolve-MuxDirectory {
     param(
         [string]$MuxPath,
-        [string]$Label,
-        [string]$APath,
-        [int]$PairCount
+        [string]$ExtOverride
     )
-    $aExt = [IO.Path]::GetExtension($APath)
-    if ($aExt -eq '') { $aExt = '.mkv' }
+    $override = ConvertTo-FileExtension $ExtOverride
+    $pathExt = [IO.Path]::GetExtension($MuxPath)
 
-    # Treat as a directory when it exists as one, or when it has no extension (out\muxed).
-    $asDir = (Test-Path -LiteralPath $MuxPath -PathType Container) -or
-        ([IO.Path]::GetExtension($MuxPath) -eq '' -and -not (Test-Path -LiteralPath $MuxPath -PathType Leaf))
-    if ($asDir) {
-        if (-not (Test-Path -LiteralPath $MuxPath)) {
-            New-Item -ItemType Directory -Force -Path $MuxPath | Out-Null
+    if (Test-Path -LiteralPath $MuxPath -PathType Container) {
+        return [pscustomobject]@{
+            Dir = (Resolve-Path -LiteralPath $MuxPath).Path
+            Ext = $override
         }
-        return (Join-Path ((Resolve-Path -LiteralPath $MuxPath).Path) ($Label + $aExt))
+    }
+    if (Test-Path -LiteralPath $MuxPath -PathType Leaf) {
+        throw "-Mux must be a directory (or a not-yet-created directory path); existing file: $MuxPath"
+    }
+
+    # Not on disk yet: no extension → create as directory; with extension → parent + default ext.
+    if ($pathExt -eq '') {
+        New-Item -ItemType Directory -Force -Path $MuxPath | Out-Null
+        return [pscustomobject]@{
+            Dir = (Resolve-Path -LiteralPath $MuxPath).Path
+            Ext = $override
+        }
     }
 
     $parent = Split-Path -Parent $MuxPath
-    if ($parent -and -not (Test-Path -LiteralPath $parent)) {
+    if (-not $parent) { $parent = (Get-Location).Path }
+    if (-not (Test-Path -LiteralPath $parent)) {
         New-Item -ItemType Directory -Force -Path $parent | Out-Null
     }
-    if ($PairCount -eq 1) { return $MuxPath }
+    $ext = if ($override -ne '') { $override } else { ConvertTo-FileExtension $pathExt }
+    return [pscustomobject]@{
+        Dir = (Resolve-Path -LiteralPath $parent).Path
+        Ext = $ext
+    }
+}
 
-    # Multi-pair file path: insert the label before the extension (out.mkv → out.1.mkv).
-    $dir = if ($parent) { $parent } else { (Get-Location).Path }
-    $stem = [IO.Path]::GetFileNameWithoutExtension($MuxPath)
-    $ext = [IO.Path]::GetExtension($MuxPath)
-    if ($ext -eq '') { $ext = $aExt }
-    return (Join-Path $dir ('{0}.{1}{2}' -f $stem, $Label, $ext))
+function Assert-OutputWritable {
+    param(
+        [string]$Path,
+        [string]$PairLabel,
+        [string]$Kind
+    )
+    if ((Test-Path -LiteralPath $Path) -and -not $Force) {
+        throw ("pair '{0}': {1} output already exists (pass -Force to overwrite): {2}" -f `
+                $PairLabel, $Kind, $Path)
+    }
 }
 
 function Test-ExtensionAllowed {
@@ -386,12 +439,53 @@ $results = [System.Collections.Generic.List[object]]::new()
 # requested when -KeepWav is also set.
 $wantWav = -not $Preview -and ((-not $useMux) -or $KeepWav)
 
+$muxDir = $null
+$muxExtResolved = ''
+if ($useMux) {
+    $muxResolved = Resolve-MuxDirectory -MuxPath $Mux -ExtOverride $MuxExt
+    $muxDir = $muxResolved.Dir
+    $muxExtResolved = $muxResolved.Ext
+}
+
+# Fail early on duplicate output paths (e.g. same A stem under -Recurse).
+$plannedOutputs = @{}
+foreach ($p in $indexed) {
+    if ($wantWav) {
+        $wavPath = Join-Path $OutDir (Get-RepairedFileName -APath $p.A -Ext '.wav')
+        if ($plannedOutputs.ContainsKey($wavPath)) {
+            throw ("WAV output collision: '{0}' and '{1}' both map to {2}" -f `
+                    $plannedOutputs[$wavPath], $p.Label, $wavPath)
+        }
+        $plannedOutputs[$wavPath] = $p.Label
+    }
+    if ($useMux) {
+        $aExt = [IO.Path]::GetExtension($p.A)
+        if ($aExt -eq '') { $aExt = '.mkv' }
+        $ext = if ($muxExtResolved -ne '') { $muxExtResolved } else { $aExt }
+        $muxPath = Join-Path $muxDir (Get-RepairedFileName -APath $p.A -Ext $ext)
+        if ($plannedOutputs.ContainsKey($muxPath)) {
+            throw ("mux output collision: '{0}' and '{1}' both map to {2}" -f `
+                    $plannedOutputs[$muxPath], $p.Label, $muxPath)
+        }
+        $plannedOutputs[$muxPath] = $p.Label
+    }
+}
+
 foreach ($p in $indexed) {
     $log = Join-Path $OutDir "$($p.Label).log"
-    $wav = Join-Path $OutDir "$($p.Label).wav"
+    $wav = $null
+    if ($wantWav) {
+        $wav = Join-Path $OutDir (Get-RepairedFileName -APath $p.A -Ext '.wav')
+        # Only guard kept WAVs; throwaway temps are deleted after the run.
+        if ($KeepWav) { Assert-OutputWritable -Path $wav -PairLabel $p.Label -Kind 'WAV' }
+    }
     $muxOut = $null
     if ($useMux) {
-        $muxOut = Resolve-MuxOutputPath -MuxPath $Mux -Label $p.Label -APath $p.A -PairCount $indexed.Count
+        $aExt = [IO.Path]::GetExtension($p.A)
+        if ($aExt -eq '') { $aExt = '.mkv' }
+        $ext = if ($muxExtResolved -ne '') { $muxExtResolved } else { $aExt }
+        $muxOut = Join-Path $muxDir (Get-RepairedFileName -APath $p.A -Ext $ext)
+        Assert-OutputWritable -Path $muxOut -PairLabel $p.Label -Kind 'mux'
     }
 
     $argList = [System.Collections.Generic.List[string]]::new()
@@ -421,7 +515,7 @@ foreach ($p in $indexed) {
     }
 
     $mode = if ($Preview) { 'preview' } elseif ($useMux) { 'mux' } else { 'repair' }
-    $destNote = if ($useMux) { "; mux -> $muxOut" } else { '' }
+    $destNote = if ($useMux) { "; mux -> $muxOut" } elseif ($wantWav -and $KeepWav) { "; wav -> $wav" } else { '' }
     Write-Host "[$($p.Label)] $mode (log -> $log$destNote)..." -ForegroundColor Cyan
     $prevLog = $env:RUST_LOG
     if (-not $prevLog) { $env:RUST_LOG = 'warn,clip_sync_repair=info' }
@@ -433,7 +527,7 @@ foreach ($p in $indexed) {
     if ($null -eq $prevLog) { Remove-Item Env:\RUST_LOG -ErrorAction SilentlyContinue }
     else { $env:RUST_LOG = $prevLog }
 
-    if ($wantWav -and -not $KeepWav -and (Test-Path -LiteralPath $wav)) {
+    if ($wantWav -and -not $KeepWav -and $null -ne $wav -and (Test-Path -LiteralPath $wav)) {
         Remove-Item -LiteralPath $wav -Force
     }
 
