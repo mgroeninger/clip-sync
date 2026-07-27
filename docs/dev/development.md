@@ -223,6 +223,13 @@ dirs as CLI args instead of the `GAP_FP_DIRS` env var.
 † `pr-repair` runs `cli_mux_integration` when `ffmpeg` is on `PATH` (non-ignored rows only). Ignored
 mux e2e rows run in `.\scripts\test-tier.ps1 -Tier validation` when ffmpeg is on PATH.
 
+**Formatting (local verification; CI runs `cargo fmt --all -- --check` on every push/PR):**
+
+```powershell
+cargo fmt --all
+cargo fmt --all -- --check   # same as CI
+```
+
 **Clippy (local verification; CI runs the PR-equivalent line on every push/PR):**
 
 ```powershell
