@@ -9,7 +9,7 @@ Last updated: 2026-07-26.
 - **Open** — actionable items below (problem / direction kept for open work only).
 - **Plans** — active drafts under `docs/dev/TEMP-*.md`; archive when shipped.
 
-**Next:** [Repair R6](#repair-r6-follow-ups); [Residual gate](#residual-gate-follow-ups); [Narrow fill-length slack](#narrow-fill-length-slack).
+**Next:** [Repair R6](#repair-r6-follow-ups); [Residual gate](#residual-gate-follow-ups).
 
 ---
 
@@ -21,33 +21,9 @@ Last updated: 2026-07-26.
 | [TEMP-nway-donor-alignment-plan.md](docs/dev/TEMP-nway-donor-alignment-plan.md) | N-way donor alignment: repair one damaged copy from multiple donors — draft, not started |
 | [TEMP-rust-review-findings.md](docs/dev/TEMP-rust-review-findings.md) | Workspace Rust review ledger (P0–P3) — open, 2026-07-23 |
 
-**Recently archived:** [TEMP-fill-placement-axis-plan.md](docs/dev/archive/TEMP-fill-placement-axis-plan.md) — Phase A armed, Phase B slack exit → Phase C NO-GO (2026-07-26).
+**Recently archived:** [TEMP-fill-placement-axis-plan.md](docs/dev/archive/TEMP-fill-placement-axis-plan.md) — Phase A armed, Phase B slack exit → Phase C NO-GO (2026-07-26). Search slack narrowed to 1.0 s (extract-tail still 5.0); see [repair-perf.md](docs/dev/repair-perf.md) §5 #3.
 
 ## Open work
-
-### Narrow fill-length slack
-
-From [archive/TEMP-fill-placement-axis-plan.md](docs/dev/archive/TEMP-fill-placement-axis-plan.md) Phase B
-residue; tracked as [repair-perf.md](docs/dev/repair-perf.md) §5 #3.
-
-**Status:** config split **done**. Search slack default **1.0 s**; extract-tail still
-**5.0 s**. Split-at-both-5.0 verified identical (repair A/B + curated goldens). Curated
-goldens still green at 1.0 (`curated_golden_baseline_invariance`,
-`curated_golden_fill_placement_is_armed`). **Next:** fingerprint corpus A/B; then perf
-if clean.
-
-**Why two knobs.** (1) `fill_length_slack_secs` — end-search range (`gap ± slack` /
-`max_fill`). (2) `fill_extract_tail_slack_secs` — B haystack tail
-(`extract_tail.max(margin)` → `b_extract_end` / fingerprint `pad_tail`). Narrowing (1) only
-drops far end candidates (corpus max `|fill − span|` = 388 ms; ±5 s was ~13× that). Narrowing
-(2) shortens `total_frames` and can move start/gate outcomes — separate, optional later.
-Extract shrink does **not** cut full-track decode cost.
-
-| Item | Direction |
-|------|-----------|
-| **Config split** | **Done** — `fill_extract_tail_slack_secs` (CLI `--fill-extract-tail-slack-secs`) wires extract / `pad_tail`; `fill_length_slack_secs` is end-sweep only. |
-| **Phase 1 — narrow search + verify** | **In progress** — `fill_length_slack_secs` default **1.0 s** (extract-tail at 5.0). Curated goldens **OK**. **Next:** fingerprint corpus A/B (haystack unchanged) → spot-listen if anything moves → then `measure-repair-perf.ps1` / `CLIP_SYNC_SPAN_TIMING`. Consider 0.5 s search-only only if 1.0 is clean. |
-| **Phase 2 — extract shrink (optional)** | Lower `fill_extract_tail_slack_secs` only if Phase 1 is clean *and* shorter timelines are still worth chasing. Independent A/B. |
 
 ### Dual-fit confidence axis
 

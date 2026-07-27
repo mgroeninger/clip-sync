@@ -443,12 +443,11 @@ tree; do not size a candidate against it.)
    **Proposed (see [BACKLOG.md](../../BACKLOG.md)):**
    - **Config split — done:** `fill_extract_tail_slack_secs` (default **5.0**) wires
      `b_extract_end` / `pad_tail`; `fill_length_slack_secs` is end-sweep only.
-   - **Phase 1 — in progress:** `fill_length_slack_secs` default **1.0 s** (~2.5×
-     corpus max); extract-tail left at 5.0. Verify goldens → fingerprint corpus A/B →
-     spot-listen if needed → then perf. Consider **0.5 s** on the search key only if
-     1.0 is clean. Do not chase the 388 ms sample max.
-   - **Phase 2:** optionally lower `fill_extract_tail_slack_secs`; independent A/B, only
-     if Phase 1 is clean and shorter timelines are still worth chasing.
+   - **Phase 1 — done:** `fill_length_slack_secs` default **1.0 s**. Behavior
+     identical (goldens + 17-pair fingerprint A/B). Perf vs `perf-gate-hoist`
+     (pairs 1/6/9/14): coarse-end **202 → 42**; end-loop repeat already 0; end-search
+     busy **−40 ms / 4 pairs** — not a meaningful win post-1b(c). Keep 1.0; skip 0.5 s.
+   - **Phase 2:** extract-tail shrink deferred / low priority (no decode win).
 
    **Exit checks (Phase 1):** (1) curated golden A/B — Tier-1 `fill_*` plus
    patch/skip outcome; (2) spot-listen a few largest-excursion patches. A
