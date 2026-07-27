@@ -15,6 +15,7 @@ use crate::domain::cross_check::{
     b_has_energy_in_range, check_gap_offset_agreement_in_overlap,
     mutual_silence_intervals_from_gaps, SilenceInterval,
 };
+use crate::domain::diagnostics::TIME_EPS_SECS;
 use crate::domain::gap::{Gap, GapReport};
 use crate::domain::gap_fill::format_scan_fillable_followup;
 use crate::domain::policies;
@@ -167,7 +168,8 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         let mut last_fed_end_secs: Option<f64> = None;
 
         let mut scan_a = |bucket: InterleavedScanBucket| -> Result<(), MediaError> {
-            if last_fed_end_secs.is_some_and(|prev_end| bucket.start_secs > prev_end + f64::EPSILON)
+            if last_fed_end_secs
+                .is_some_and(|prev_end| bucket.start_secs > prev_end + TIME_EPS_SECS)
             {
                 scanner_a.note_pcm_discontinuity();
             }
@@ -337,7 +339,8 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         let mut last_fed_end_secs: Option<f64> = None;
 
         let mut on_bucket = |bucket: InterleavedScanBucket| -> Result<(), MediaError> {
-            if last_fed_end_secs.is_some_and(|prev_end| bucket.start_secs > prev_end + f64::EPSILON)
+            if last_fed_end_secs
+                .is_some_and(|prev_end| bucket.start_secs > prev_end + TIME_EPS_SECS)
             {
                 scanner.note_pcm_discontinuity();
             }

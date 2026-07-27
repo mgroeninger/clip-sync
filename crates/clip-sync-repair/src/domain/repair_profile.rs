@@ -4,6 +4,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
+use crate::domain::diagnostics::TIME_EPS_SECS;
 use crate::domain::fill_mode::FillMode;
 use crate::domain::gap_anchor_seam::AnchorSeamMode;
 use crate::domain::FillOffsetMode;
@@ -155,7 +156,7 @@ pub fn repair_profile_override_notes(
 ) -> Vec<String> {
     let bundle = profile.bundle();
     let mut notes = Vec::new();
-    if (fill_border_search_secs - bundle.fill_border_search_secs).abs() > f64::EPSILON {
+    if (fill_border_search_secs - bundle.fill_border_search_secs).abs() > TIME_EPS_SECS {
         notes.push(format!(
             "fill_border_search_secs={fill_border_search_secs:.1}"
         ));

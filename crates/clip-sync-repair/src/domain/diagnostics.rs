@@ -1,6 +1,20 @@
-//! Repair-run warnings and thresholds for timeline / duration sanity checks.
+//! Repair-run warnings and thresholds for timeline / duration sanity checks,
+//! plus the shared tolerance for comparing wall-clock second values.
 
 use crate::domain::AudioTimelineSkew;
+
+/// Tolerance for comparing two wall-clock second values that should be equal.
+///
+/// Deliberately **not** `f64::EPSILON`: that is the ULP at 1.0, so for any `t >= 2.0`
+/// the expression `t + f64::EPSILON` evaluates to `t` exactly and the comparison
+/// degenerates to an exact float `>` / `!=`. At an hour-long timestamp the true ULP is
+/// ~4.5e-13, roughly 2000x larger. Use a fixed absolute tolerance instead, since these
+/// values are seconds derived from independent formulas (sample counts / rates /
+/// bucket indices) rather than normalized quantities.
+///
+/// This is for **time** comparisons only. Divide-by-zero and energy guards on
+/// normalized quantities correctly use `f64::EPSILON` and must not be swept into this.
+pub const TIME_EPS_SECS: f64 = 1e-9;
 
 /// Symmetric overlap on A is expected to start near 0:00 on a normal recording.
 pub const OVERLAP_START_WARN_SECS: f64 = 1.0;

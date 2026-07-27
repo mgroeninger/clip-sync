@@ -45,11 +45,20 @@
 > non-zero instead of warning (new `AppError::Output`, shared `clip_sync::write_report_to_stdout`).
 > **L-PUBLISH** closed the same day by owner decision — never publishing to crates.io, so
 > `publish = false` went on all three publishable crates, not the CLI alone.
-> **Open set is now: M-RESAMPLE (P1, partial) + three "Other P2" items
-> (M-GAPKEY, M-EPS, M-HOUND — never actioned, re-verified open 2026-07-27;
-> **M-FRAMES withdrawn 2026-07-27**, premise refuted)
+> **M-EPS fixed 2026-07-27** (P2): `TIME_EPS_SECS = 1e-9` added to `domain/diagnostics.rs` and
+> applied to all 3 genuine wall-clock sites (`scan_gaps.rs` ×2, `repair_profile.rs`); the ~10
+> normalized-quantity `f64::EPSILON` guards deliberately untouched. Behavior-preserving; full
+> `cargo test --workspace` green.
+> **M-GAPKEY + M-HOUND blast radius checked 2026-07-27** (both previously unchecked):
+> **M-GAPKEY confirmed safe and worth doing** — the gap index is already in scope at every
+> producer, the change is compiler-enforced and deletes code; land a unit test for
+> `outcomes_in_report_order` first (it has none). **M-HOUND reframed** — the real string match is
+> at `finalize()`, not the lines cited, and that branch is **unreachable dead code** pre-empted by
+> `validate_pcm_for_wav`; fix is removal, not an enum match. Neither is a latent bug.
+> **Open set is now: M-RESAMPLE (P1, partial) + M-GAPKEY (P2, checked/ready) + M-HOUND
+> (P2, hygiene-only)** (**M-FRAMES withdrawn 2026-07-27**, premise refuted; **M-EPS fixed**)
 > + optional M-SILENT report flags + deferred `align_videos` split / prepare-clone
-> stretch.** No P3 work remains.
+> stretch. No P3 work remains.
 >
 > **Recommendations** for each remaining item (approach, tests, sequencing) are
 > in the P1–P3 sections and **Suggested sequencing** below.
@@ -107,10 +116,10 @@ threaded. Remaining open defects cluster in:
 | # | ID | Sev | One-line | Where |
 |---|----|-----|----------|-------|
 | 1 | M-RESAMPLE | P1 | Group-delay / dual-path normalize (partially open) | refinement |
-| 2 | M-GAPKEY | P2 | Float bit-pattern `HashMap` keys → key by gap index | `patch_audio/log.rs:13` |
+| 2 | M-GAPKEY | P2 | Float bit-pattern keys → gap index; **blast radius checked 2026-07-27, confirmed safe** (3 maps + 1 `position()` search) | `patch_audio/log.rs:12`, `region.rs:167-246` |
 | ~~3~~ | ~~M-FRAMES~~ | — | **withdrawn 2026-07-27** — three correct conversion classes, not one inconsistency | — |
-| 4 | M-EPS | P2 | Inert `f64::EPSILON` time tolerance → named `TIME_EPS_SECS` (3 sites, no-op today) | `scan_gaps.rs:170,340`; `repair_profile.rs:158` |
-| 5 | M-HOUND | P2 | String-formatted `hound::Error` → match enum variants | `wav_writer.rs` |
+| ~~4~~ | ~~M-EPS~~ | — | **fixed 2026-07-27** — `TIME_EPS_SECS` in `domain/diagnostics.rs`, 3 sites | — |
+| 5 | M-HOUND | P2 | String-match on `hound::Error` Display — real, but the branch is **unreachable dead code** (2026-07-27) | `wav_writer.rs:62-72` |
 
 *(**All P3 CLI hygiene is now closed** — L-CLI-DEP / L-PIPE / L-QV / L-EXIT / L-MSG landed
 2026-07-27, and L-PUBLISH closed the same day by owner decision. See the Fixed (P3) table.)*
@@ -118,8 +127,8 @@ threaded. Remaining open defects cluster in:
 *(M-HE + M-FDK-RESET + M-AC3-DRAIN fixed 2026-07-23 — all codec P1s closed. M-SILENT
 effectively closed 2026-07-23 — only optional report flags deferred. **M-FFT closed
 2026-07-23** as hygiene. **M-DEAD closed 2026-07-23**. See Fixed tables. **All P1s are
-now done except M-RESAMPLE and optional report flags; remaining ledger work is the three
-surviving Other-P2 items.** Material *repair*
+now done except M-RESAMPLE and optional report flags; remaining ledger work is M-GAPKEY +
+M-HOUND, both blast-radius-checked 2026-07-27 (M-EPS fixed the same day).** Material *repair*
 wall-time is `unified_refine_*` / lever 1c (~61% of root post–M-CLONE #2), not the
 closed M-CLONE bites. **M-CFG** / **M-MOD** / **M-HARNESS** closed earlier — see
 sections below.)*
@@ -601,10 +610,10 @@ workspace-wide), so fixing these 8 adds noise without changing the baseline.
 
 | ID | Issue | Recommendation |
 |----|-------|----------------|
-| M-GAPKEY | Float bit-pattern `HashMap` keys for gaps | Key by gap index (report is index-parallel elsewhere) — **blast radius not yet checked** |
+| M-GAPKEY | Float bit-pattern `HashMap` keys for gaps | Key by gap index — **blast radius checked 2026-07-27, CONFIRMED SAFE**; index already in scope at every producer, see below |
 | M-FRAMES | ~~Inconsistent floor vs `.round()` in secs→frames~~ | **WITHDRAWN 2026-07-27** — premise refuted, see below |
-| M-EPS | `f64::EPSILON` as wall-clock tolerance | Named `TIME_EPS_SECS` (e.g. `1e-9`) — **3 sites only**, see below |
-| M-HOUND | String-match on `hound::Error` Display | Match enum variants — **blast radius not yet checked**; note `wav_writer.rs:38-44` does not branch on the string, it only *formats* the error into `io::Error::other`, so the "string-match" framing may be as loose as M-FRAMES's was |
+| M-EPS | ~~`f64::EPSILON` as wall-clock tolerance~~ | **done 2026-07-27** — `TIME_EPS_SECS = 1e-9` in `domain/diagnostics.rs`, all 3 sites |
+| M-HOUND | String-match on `hound::Error` Display | **blast radius checked 2026-07-27**: the `:38-44` framing was indeed loose (formats only), but a real match exists at `finalize()` — and that whole branch is **unreachable**, pre-empted by `validate_pcm_for_wav`. Reframe as dead-code removal, see below |
 | M-DEAD | ~~Dead / measurement leftovers~~ | **done 2026-07-23** (§1 B2 + §2) |
 
 ### M-FRAMES — **withdrawn 2026-07-27** (premise refuted by blast-radius check)
@@ -632,7 +641,7 @@ suite because fixture timestamps are frame-aligned, so on real media it would be
 search windows and can tip a boundary decision — with **zero** test coverage either way.
 Not mechanical. Reverted.
 
-### M-EPS — real, but 3 sites, and the epsilon is *inert* rather than merely imprecise
+### M-EPS — **fixed 2026-07-27**
 
 49 `f64::EPSILON` occurrences, but most must **not** be touched: ~10 are divide-by-zero / energy
 guards on normalized quantities (`metrics.rs:25`, `seam_residual.rs:25,65`, `gap_energy.rs:84`,
@@ -660,6 +669,124 @@ the failure is **unreachable today** — the type, not the epsilon, is what prot
 **Verdict: mechanical, effectively zero blast radius** — a no-op today that documents the intent
 and survives someone widening `decode_chunk_secs` to a float. Worth doing; do not oversell it as
 a bug fix, and do not let a blanket find/replace touch the guard sites.
+
+**As landed (2026-07-27).** `TIME_EPS_SECS = 1e-9` added to
+`crates/clip-sync-repair/src/domain/diagnostics.rs` — the module that already owns the
+wall-clock `*_SECS` constants — with a doc comment recording the ULP reasoning and an
+explicit "time comparisons only; the divide-by-zero guards keep `f64::EPSILON`" warning so
+the next reader does not generalize it. Consumers use the full path
+`crate::domain::diagnostics::TIME_EPS_SECS`, matching how `scan_gaps.rs:192` already reaches
+`TIMELINE_SKEW_WARN_SECS`; no `domain::` re-export was added.
+
+All three sites converted, no others touched: `scan_gaps.rs` (both bucket-continuity
+predicates) and `repair_profile.rs` (the override-note comparison). The ~10 normalized-quantity
+guard sites and the test assertions were deliberately left on `f64::EPSILON`.
+
+**Verified:** behavior-preserving by construction (`1e-9` and `f64::EPSILON` both round-trip to
+the same result at every reachable input, since `decode_chunk_secs` is `u64`). `cargo fmt --all
+--check` clean — note the longer name pushed both `scan_gaps` predicates past the width limit, so
+rustfmt re-wrapped them; that is the whole diff at those two sites. `cargo clippy --workspace
+--all-targets` clean. `cargo test -p clip-sync-repair --lib` 391 pass / 1 ignored;
+`cargo test --workspace` fully green (0 failures across all 33 targets).
+
+### M-GAPKEY — blast radius checked 2026-07-27: **premise holds, change is tractable, CONFIRMED SAFE**
+
+Unlike M-FRAMES, this one survives the check. Two corrections to the original framing, then the plan.
+
+**Correction 1 — the finding under-counts the sites.** `gap_key` (`patch_audio/log.rs:12-14`,
+`(start.to_bits(), end.to_bits())`) feeds **three** `HashMap<(u64,u64), _>` in
+`patch_audio/region.rs:167-169` — `status_by_gap`, `tags_by_gap`, `residual_by_gap` — written at
+`region.rs:172,199,222,229-231` and drained at `:236-246`. It is *also* used at `log.rs:148` for
+a `gaps.iter().position(…)` **equality search**, not a map lookup, to number the gap in
+`format_skip_gap_fill_log`. That fourth site is the one an index change actually simplifies.
+
+**Correction 2 — the current code is not broken.** Float keys are only sound if every producer
+holds a bit-identical copy of `gap.video_a_start_secs`, and traced end to end, they do:
+- `build_gap_fill_plan` (`gap_fill.rs:62-64,83-85,92-94,104-106,112-114`) copies
+  `g.video_a_start_secs` verbatim into both `GapFillSkipped` and `FillRegion` — no arithmetic.
+- `FillRegion.a_start_secs` is **never mutated** after construction (only `gain` is, per its doc).
+- `region_results` tuples (`patch_audio/mod.rs:218,285`) push `region.a_start_secs` verbatim.
+- The lookup side (`mod.rs:221`) is `&request.report.gaps`, the *same* `GapReport` that
+  `mod.rs:90` handed to `build_gap_fill_plan`.
+
+The trap that would have made this a live bug is real but avoided: `region.rs:1496-1500` computes
+a **refined** `a_start_secs` (`refined.start_frame as f64 / sample_rate`) and shadows the name.
+Every logging call site nonetheless passes `region.a_start_secs`, not the shadow
+(`region.rs:358, 1641, 1908, 1862`). Had one passed the refined value, its `position()` search
+would silently miss and the warn line would lose its `gap N/M` number. So this is **fragility, not
+a defect** — which is the honest case for fixing it.
+
+**The change is mechanical because the index already exists.** `build_gap_fill_plan` already
+iterates `for (index, g) in report.gaps.iter().enumerate()` (`gap_fill.rs:81`) — it computes
+`index` today for `gap_equivalence_at(index)`. So:
+1. Add `gap_index: usize` to `GapFillSkipped` and `FillRegion`; populate from the in-scope `index`.
+   The one early-return path (`gap_fill.rs:59-71`) needs `.enumerate()` added — trivial.
+2. Key the three maps `HashMap<usize, _>`; drain via `gaps.iter().enumerate()`.
+3. Pass `gap_index` into the log helpers and **delete** `gap_key` plus the `position()` search
+   entirely — `format_skip_gap_fill_log` becomes a direct index format.
+
+**Blast radius is small and fully contained.** `GapFillSkipped` / `FillRegion` are
+`clip-sync-repair`-internal: no `serde` derive (only `Debug, Clone, PartialEq`), no use in
+`clip-sync`, the harness, or the fixtures. Total footprint is `domain/gap_fill.rs`,
+`domain/gap_repair_spec.rs:270` (holds a `Vec<GapFillSkipped>`), `patch_audio/{mod,region,log}.rs`,
+and two test literals (`region.rs:2475`, `log.rs` gap fixtures). Public API impact: two struct
+literals gain a field — a compile error at every site, never a silent one.
+
+**Bonus correctness the swap buys.** Two gaps with identical `(start, end)` currently **collide**:
+the maps are drained with `remove()`, so the second gap would take `NotPlanned/NotFillable`.
+Silence-run scanning emits disjoint ordered runs, so this is unreachable today, but index keying
+removes the class outright rather than relying on that invariant.
+
+**Coverage gap to close while doing it.** `outcomes_in_report_order` has **no direct unit test** —
+it is only exercised transitively through `patch_audio_integration`. Add a table-driven unit test
+(mixed skipped/patched, report order ≠ plan order) *before* the refactor, so the change is
+verified rather than merely compiled.
+
+**Verdict: do it.** Mechanical, compiler-enforced, contained in one crate, and it deletes code
+(`gap_key` + a linear search) rather than adding any. Land the unit test first.
+
+### M-HOUND — blast radius checked 2026-07-27: **the branch it targets is UNREACHABLE**
+
+The ledger's hedge was right about the wrong lines, and the real finding is bigger than the one
+proposed.
+
+**`wav_writer.rs:38-44` is not a string match** — as suspected, those two closures only *format*
+the error into `io::Error::other`. Nothing branches there. That half of the finding is void.
+
+**But a genuine string match does exist**, at `finalize()` (`wav_writer.rs:62-72`):
+`message.contains("not a multiple of the number of channels")`, which drives a "you probably hit
+the 4 GiB WAV limit — use --mux" hint. Verified against hound 3.5.1: that Display string belongs
+uniquely to `hound::Error::UnfinishedSample` (`lib.rs:405-407`), and `Error` is a plain
+`#[derive(Debug)]` enum — **not** `#[non_exhaustive]`. So `matches!(e, hound::Error::UnfinishedSample)`
+is exactly equivalent and can never drift on a locale or wording change. The mechanical swap is safe.
+
+**The larger result: the branch cannot fire.** `WavPatchedAudioWriter::write` calls
+`validate_pcm_for_wav` (`wav_writer.rs:17`) *before* writing anything, and that function already
+rejects both preconditions for `UnfinishedSample`:
+- `validate_pcm_layout` (`pcm.rs:18-28`) rejects `samples.len() % channels != 0` — the only way
+  hound's `(data_bytes_written / bytes_per_sample) % channels != 0` check (`write.rs:501-505`)
+  can trip on an honest write.
+- `validate_pcm_for_wav` (`pcm.rs:37-44`) rejects `data_bytes > u32::MAX` — precisely the overflow
+  that would make hound's `u32` `data_bytes_written` wrap and produce a *spurious*
+  `UnfinishedSample`. This is the actual 4 GiB case, and it already errors with a **better**
+  message ("...exceeds the 4.00 GiB classic WAV limit; use --mux ... instead of --wav").
+
+The writer emits exactly `audio.samples.len()` samples, so `data_bytes_written` is validated
+`<= u32::MAX` *and* a multiple of `channels` — `UnfinishedSample` is unreachable. The `finalize()`
+special case is **dead code duplicating two earlier guards with an inferior message**.
+
+**Coverage:** zero. No test touches the `finalize()` error path (`wav_bit_depth_integration.rs` and
+`patch_audio_integration.rs` only exercise success). The two guards that *do* fire are tested
+(`validate_pcm_layout_rejects_partial_frame`, `validate_pcm_for_wav_rejects_payload_over_limit_{16,24}bit`).
+
+**Verdict: reframe, don't just swap.** The enum match is a safe 1-line improvement, but landing
+only that would preserve dead code and imply the hint is load-bearing. Preferred fix: collapse the
+`finalize()` handler to the plain `write_err` mapping and drop the 4 GiB special case, since
+`validate_pcm_for_wav` owns that message and owns it better. If the hint is kept as
+belt-and-braces, use `matches!(e, hound::Error::UnfinishedSample)` and add a comment saying it is
+unreachable-by-construction — do **not** leave it looking like a live path. Either way this is
+hygiene with no behavioral effect, so it is the lowest-value of the three; the string match is
+not a latent bug.
 
 ### M-DEAD. Dead symbols — **fixed 2026-07-23** (both bites)
 
@@ -824,12 +951,16 @@ module splits are closed (`align_videos` deferred only).
 7. **M-RESAMPLE** group-delay / dual-path normalize when next touching refinement
    *(larger remaining repair wall-time is `unified_refine_*` / lever 1c — Repeat-dominated
    per Level F.)*
-8. **Other P2 remainder**, in this order:
-   **M-EPS** first — verified 2026-07-27 as a genuine no-op-today change across 3 sites
-   (`scan_gaps.rs:170,340`, `repair_profile.rs:158`); safe to land on clippy + lib tests alone.
-   Then **M-GAPKEY**, then **M-HOUND** — both still need the same blast-radius check M-FRAMES
-   got before either is called mechanical. **M-FRAMES is withdrawn, not deferred**: do not
-   re-open it from the original one-line framing.
+8. **Other P2 remainder** — ~~**M-EPS**~~ **done 2026-07-27**. Both survivors have now had the
+   blast-radius check M-FRAMES got:
+   **M-GAPKEY** next — confirmed safe, contained to `clip-sync-repair`, compiler-enforced, and
+   net code removal. Sequence: unit-test `outcomes_in_report_order` first (currently untested),
+   then add `gap_index` to `GapFillSkipped`/`FillRegion`, rekey the three maps, delete `gap_key`
+   and the `position()` search.
+   **M-HOUND** last, and **rescoped**: not an enum-match swap but removal of an unreachable
+   `finalize()` branch that duplicates `validate_pcm_for_wav` with a worse message. Pure hygiene,
+   no behavioral effect — lowest value of the set.
+   **M-FRAMES is withdrawn, not deferred**: do not re-open it from the original one-line framing.
 
 ### Milestone checklist
 
@@ -845,7 +976,9 @@ module splits are closed (`align_videos` deferred only).
    items; no open remainder).
 7. ~~**M-CLONE**~~ — **complete 2026-07-25** (#1+#2+#3; prepare-clone stretch deferred).
 8. ~~**P3 CLI hygiene**~~ — **done 2026-07-27**, all six items including L-PUBLISH. Nothing open.
-9. **Other P2 remainder** — **open**: M-EPS (verified mechanical 2026-07-27), M-GAPKEY, M-HOUND.
+9. **Other P2 remainder** — ~~M-EPS~~ **done 2026-07-27** (`TIME_EPS_SECS`, 3 sites, workspace
+   green). **Open**: M-GAPKEY (blast radius checked — safe, ready, needs a unit test first),
+   M-HOUND (blast radius checked — rescoped to dead-code removal, hygiene only).
    ~~M-FRAMES~~ **withdrawn 2026-07-27** (premise refuted). These were absent from this checklist
    and from the header's open-set line until 2026-07-27; they were never actioned, only overlooked.
 
