@@ -45,8 +45,11 @@
 > non-zero instead of warning (new `AppError::Output`, shared `clip_sync::write_report_to_stdout`).
 > **L-PUBLISH** closed the same day by owner decision — never publishing to crates.io, so
 > `publish = false` went on all three publishable crates, not the CLI alone.
-> **Open set is now: M-RESAMPLE (P1, partial) + optional M-SILENT report flags + deferred
-> `align_videos` split / prepare-clone stretch.** No P3 work remains.
+> **Open set is now: M-RESAMPLE (P1, partial) + three "Other P2" items
+> (M-GAPKEY, M-EPS, M-HOUND — never actioned, re-verified open 2026-07-27;
+> **M-FRAMES withdrawn 2026-07-27**, premise refuted)
+> + optional M-SILENT report flags + deferred `align_videos` split / prepare-clone
+> stretch.** No P3 work remains.
 >
 > **Recommendations** for each remaining item (approach, tests, sequencing) are
 > in the P1–P3 sections and **Suggested sequencing** below.
@@ -104,6 +107,10 @@ threaded. Remaining open defects cluster in:
 | # | ID | Sev | One-line | Where |
 |---|----|-----|----------|-------|
 | 1 | M-RESAMPLE | P1 | Group-delay / dual-path normalize (partially open) | refinement |
+| 2 | M-GAPKEY | P2 | Float bit-pattern `HashMap` keys → key by gap index | `patch_audio/log.rs:13` |
+| ~~3~~ | ~~M-FRAMES~~ | — | **withdrawn 2026-07-27** — three correct conversion classes, not one inconsistency | — |
+| 4 | M-EPS | P2 | Inert `f64::EPSILON` time tolerance → named `TIME_EPS_SECS` (3 sites, no-op today) | `scan_gaps.rs:170,340`; `repair_profile.rs:158` |
+| 5 | M-HOUND | P2 | String-formatted `hound::Error` → match enum variants | `wav_writer.rs` |
 
 *(**All P3 CLI hygiene is now closed** — L-CLI-DEP / L-PIPE / L-QV / L-EXIT / L-MSG landed
 2026-07-27, and L-PUBLISH closed the same day by owner decision. See the Fixed (P3) table.)*
@@ -111,7 +118,8 @@ threaded. Remaining open defects cluster in:
 *(M-HE + M-FDK-RESET + M-AC3-DRAIN fixed 2026-07-23 — all codec P1s closed. M-SILENT
 effectively closed 2026-07-23 — only optional report flags deferred. **M-FFT closed
 2026-07-23** as hygiene. **M-DEAD closed 2026-07-23**. See Fixed tables. **All P1s are
-now done except optional report flags; remaining ledger work is P3.** Material *repair*
+now done except M-RESAMPLE and optional report flags; remaining ledger work is the three
+surviving Other-P2 items.** Material *repair*
 wall-time is `unified_refine_*` / lever 1c (~61% of root post–M-CLONE #2), not the
 closed M-CLONE bites. **M-CFG** / **M-MOD** / **M-HARNESS** closed earlier — see
 sections below.)*
@@ -593,11 +601,65 @@ workspace-wide), so fixing these 8 adds noise without changing the baseline.
 
 | ID | Issue | Recommendation |
 |----|-------|----------------|
-| M-GAPKEY | Float bit-pattern `HashMap` keys for gaps | Key by gap index (report is index-parallel elsewhere) |
-| M-FRAMES | Inconsistent floor vs `.round()` in secs→frames | Standardize on `.round()` (match siblings that already do) |
-| M-EPS | `f64::EPSILON` as wall-clock tolerance | Named `TIME_EPS_SECS` (e.g. `1e-9`) |
-| M-HOUND | String-match on `hound::Error` Display | Match enum variants |
+| M-GAPKEY | Float bit-pattern `HashMap` keys for gaps | Key by gap index (report is index-parallel elsewhere) — **blast radius not yet checked** |
+| M-FRAMES | ~~Inconsistent floor vs `.round()` in secs→frames~~ | **WITHDRAWN 2026-07-27** — premise refuted, see below |
+| M-EPS | `f64::EPSILON` as wall-clock tolerance | Named `TIME_EPS_SECS` (e.g. `1e-9`) — **3 sites only**, see below |
+| M-HOUND | String-match on `hound::Error` Display | Match enum variants — **blast radius not yet checked**; note `wav_writer.rs:38-44` does not branch on the string, it only *formats* the error into `io::Error::other`, so the "string-match" framing may be as loose as M-FRAMES's was |
 | M-DEAD | ~~Dead / measurement leftovers~~ | **done 2026-07-23** (§1 B2 + §2) |
+
+### M-FRAMES — **withdrawn 2026-07-27** (premise refuted by blast-radius check)
+
+"Inconsistent floor vs `.round()`" conflates **three distinct and individually correct** conversion
+classes. There is no inconsistency to standardize away:
+
+1. **Duration → frame count** — `.round()`. `lag_window_secs`, `fill_seam_search_secs`,
+   `border_secs`, `max_refine_secs`, `gap_signature_context_secs` (`measure.rs` 770/978/1070/
+   1362-64/2129-30). Nearest whole frame is the right rounding for a window length.
+2. **Frame → secs → frame round-trip** — `.round()` is **mandatory**, not stylistic.
+   `measure.rs:1380` stores `a_refined_start_secs = refined.start_frame as f64 / rate`;
+   2232-33 and `project.rs:537` recover the integer with `.round()`. Flooring here would be a
+   *bug* (`480/48000*48000` can land on `479.999…` → 479).
+3. **External wall-clock timestamp → frame index** — floor (bare `as usize`).
+   `measure.rs` 2156-57 / 2346-47 and production `patch_audio/region.rs:1484-85`. Floor is the
+   conventional "frame containing time *t*" semantic, and **the diagnostic and production sites
+   already agree** — which is the opposite of what the finding claimed.
+
+**Blast-radius experiment** (applied `.round()` to all six class-3 sites — `measure.rs`
+2156/2157/2346/2347 plus production `region.rs` 1484/1485): `golden_baseline_invariance`, `gap_cell_fixtures`, `patch_audio_integration` — **all pass,
+29 tests**. That is *not* reassurance. It means the change is invisible to the entire committed
+suite because fixture timestamps are frame-aligned, so on real media it would be an unverifiable
+±1-frame (~21 µs at 48 kHz) shift in `reported_start_frame` — which feeds `refine_gap_frames`
+search windows and can tip a boundary decision — with **zero** test coverage either way.
+Not mechanical. Reverted.
+
+### M-EPS — real, but 3 sites, and the epsilon is *inert* rather than merely imprecise
+
+49 `f64::EPSILON` occurrences, but most must **not** be touched: ~10 are divide-by-zero / energy
+guards on normalized quantities (`metrics.rs:25`, `seam_residual.rs:25,65`, `gap_energy.rs:84`,
+`seam_scoring.rs:33`, `seam_splice.rs:29,46`, `gap_borders.rs:248`, `offset_refinement.rs:584`,
+`seam_local.rs:109`, `patch_anchor.rs:200,207`) where `EPSILON` is correct. `patch_anchor.rs:200`
+looks time-valued but guards the `(t1 - t0)` division — leave it. The rest are test assertions.
+
+**Genuine wall-clock sites: 3.** `scan_gaps.rs:170` and `:340`
+(`bucket.start_secs > prev_end + f64::EPSILON`) and `repair_profile.rs:158`.
+
+The sharper statement: `f64::EPSILON` is the ULP at 1.0, so **for any `t ≥ 2.0`, `t + f64::EPSILON
+== t` exactly** (verified numerically; ULP at 3600 s ≈ 4.5e-13, ~2000× larger than EPSILON). The
+tolerance is not merely too small — it is a **no-op**, and both comparisons degenerate to exact
+float `>` / `!=`.
+
+**Why that is currently harmless.** `bucket.end_secs` and the next `bucket.start_secs` come from
+two different formulas (`extract.rs:429-430`: `n*bucket_secs + len/rate` vs `(n+1)*bucket_secs`),
+so a 1-ULP overshoot would spuriously fire `note_pcm_discontinuity()` → `close_open_run()`,
+splitting a silence run across a bucket edge and potentially dropping a real gap. Simulated over
+40 000 buckets: **21% spurious trip rate at `bucket_secs = 0.1`, but 0% at 0.25/0.5/1/2/5.**
+`decode_chunk_secs` is typed `u64` (default 10), so `bucket_secs` is always an exact integer and
+the failure is **unreachable today** — the type, not the epsilon, is what protects this.
+`repair_profile.rs:158` only gates a human-readable override *note* string.
+
+**Verdict: mechanical, effectively zero blast radius** — a no-op today that documents the intent
+and survives someone widening `decode_chunk_secs` to a float. Worth doing; do not oversell it as
+a bug fix, and do not let a blanket find/replace touch the guard sites.
 
 ### M-DEAD. Dead symbols — **fixed 2026-07-23** (both bites)
 
@@ -646,11 +708,13 @@ Batch in a cleanup PR whenever touching CLI / `Cargo.toml`.
 | ID | Issue | Recommendation |
 |----|-------|----------------|
 | L-CLI-DEP | ~~Unused `thiserror` in `clip-sync-cli`~~ | **done 2026-07-27** — dropped from `Cargo.toml` (zero `src` references) |
-| L-PIPE | ~~`println!` panics on broken pipe~~ | **done 2026-07-27** — `write_stdout` helper in both CLIs |
+| L-PIPE | ~~`println!` panics on broken pipe~~ | **done 2026-07-27** — shared `clip_sync::write_report_to_stdout`; non-`BrokenPipe` failures exit 4 |
 | L-QV | ~~`--quiet --verbose` compose incoherently~~ | **done 2026-07-27** — clap `conflicts_with` on both CLIs |
-| L-EXIT | ~~Redundant `NoAudioTracks` exit-code arm~~ | **done 2026-07-27** — shadowed arm deleted (code 3 unchanged) |
+| L-EXIT | ~~Redundant `NoAudioTracks` exit-code arm~~ | **done 2026-07-27** — redundant arm deleted (it did match, but produced the same 3 as the catch-all; code 3 unchanged) |
 | L-MSG | ~~Fingerprinter "greater than 1001" vs check `< MIN`~~ | **done 2026-07-27** — now "at least 1001 Hz" |
 | L-PUBLISH | ~~CLI missing `publish = false`~~ | **done 2026-07-27** — applied to all three publishable crates, not the CLI alone. See below |
+| M-DEAD / L-pregate | ~~Pregate measurement stack~~ | **done 2026-07-23** (B2 full remove) |
+| M-DEAD / L-slide | ~~Unused `slide_template_scores`~~ | **done 2026-07-23** |
 
 ### L-PUBLISH — closed 2026-07-27
 
@@ -720,8 +784,6 @@ exit-code behaviors for the same failure.
   progress half goes through `apply_cli_overrides`, and the diagnostics half through
   `args.verbose` reaching `print_repair_output` directly. Two paths, both real — the help
   describes the observable effect correctly.
-| M-DEAD / L-pregate | ~~Pregate measurement stack~~ | **done 2026-07-23** (B2 full remove) |
-| M-DEAD / L-slide | ~~Unused `slide_template_scores`~~ | **done 2026-07-23** |
 
 ---
 
@@ -762,6 +824,12 @@ module splits are closed (`align_videos` deferred only).
 7. **M-RESAMPLE** group-delay / dual-path normalize when next touching refinement
    *(larger remaining repair wall-time is `unified_refine_*` / lever 1c — Repeat-dominated
    per Level F.)*
+8. **Other P2 remainder**, in this order:
+   **M-EPS** first — verified 2026-07-27 as a genuine no-op-today change across 3 sites
+   (`scan_gaps.rs:170,340`, `repair_profile.rs:158`); safe to land on clippy + lib tests alone.
+   Then **M-GAPKEY**, then **M-HOUND** — both still need the same blast-radius check M-FRAMES
+   got before either is called mechanical. **M-FRAMES is withdrawn, not deferred**: do not
+   re-open it from the original one-line framing.
 
 ### Milestone checklist
 
@@ -777,6 +845,9 @@ module splits are closed (`align_videos` deferred only).
    items; no open remainder).
 7. ~~**M-CLONE**~~ — **complete 2026-07-25** (#1+#2+#3; prepare-clone stretch deferred).
 8. ~~**P3 CLI hygiene**~~ — **done 2026-07-27**, all six items including L-PUBLISH. Nothing open.
+9. **Other P2 remainder** — **open**: M-EPS (verified mechanical 2026-07-27), M-GAPKEY, M-HOUND.
+   ~~M-FRAMES~~ **withdrawn 2026-07-27** (premise refuted). These were absent from this checklist
+   and from the header's open-set line until 2026-07-27; they were never actioned, only overlooked.
 
 ---
 
