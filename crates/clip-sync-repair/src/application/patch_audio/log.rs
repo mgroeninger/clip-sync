@@ -1,6 +1,7 @@
 use clip_sync::{format_time_range_verbose, ProgressReporter};
 
 use crate::domain::fill_offset::FillOffsetMode;
+use crate::domain::gap_fill::FillRegion;
 use crate::domain::gap_fill_fit::FillConfidence;
 use crate::domain::gap_tags::{format_gap_tags_verbose_line, GapTags};
 use crate::domain::patch_result::{
@@ -8,10 +9,6 @@ use crate::domain::patch_result::{
     format_gap_fill_skip_verbose_line, format_gap_patch_skip_warn_reason, GapPatchSkipReason,
 };
 use crate::domain::Gap;
-
-pub(super) fn gap_key(start_secs: f64, end_secs: f64) -> (u64, u64) {
-    (start_secs.to_bits(), end_secs.to_bits())
-}
 
 fn fill_offset_mode_label(mode: FillOffsetMode) -> &'static str {
     match mode {
@@ -136,18 +133,23 @@ pub(super) fn log_gap_fill_result_verbose(
 }
 
 /// Human-readable skip line for stderr (`tracing::warn`) matching the stdout gap table.
+///
+/// `gap_index` is the region's [`FillRegion::gap_index`] — the gap's position in the report.
+/// An out-of-range index drops the `N/M` prefix rather than mislabelling the gap.
 pub(crate) fn format_skip_gap_fill_log(
     gaps: &[Gap],
+    gap_index: usize,
     a_start_secs: f64,
     a_end_secs: f64,
     reason: &str,
 ) -> String {
     let total = gaps.len();
     let range = format_time_range_verbose(a_start_secs, a_end_secs);
-    if let Some(index) = gaps.iter().position(|gap| {
-        gap_key(gap.video_a_start_secs, gap.video_a_end_secs) == gap_key(a_start_secs, a_end_secs)
-    }) {
-        format!("gap {index}/{total} ({range}): {reason}", index = index + 1)
+    if gap_index < total {
+        format!(
+            "gap {index}/{total} ({range}): {reason}",
+            index = gap_index + 1
+        )
     } else {
         format!("gap ({range}): {reason}")
     }
@@ -156,8 +158,7 @@ pub(crate) fn format_skip_gap_fill_log(
 pub(super) fn log_skip_gap_fill(
     progress: &dyn ProgressReporter,
     gaps: &[Gap],
-    a_start_secs: f64,
-    a_end_secs: f64,
+    region: &FillRegion,
     reason: &GapPatchSkipReason,
 ) {
     progress.flush_progress();
@@ -168,8 +169,9 @@ pub(super) fn log_skip_gap_fill(
             "{}",
             format_skip_gap_fill_log(
                 gaps,
-                a_start_secs,
-                a_end_secs,
+                region.gap_index,
+                region.a_start_secs,
+                region.a_end_secs,
                 &format_gap_patch_skip_warn_reason(reason),
             )
         );
@@ -178,6 +180,8 @@ pub(super) fn log_skip_gap_fill(
 
 pub(super) struct MarginalGapFillLog<'a> {
     pub(super) gaps: &'a [Gap],
+    /// Index into `gaps`; see [`FillRegion::gap_index`].
+    pub(super) gap_index: usize,
     pub(super) a_start_secs: f64,
     pub(super) a_end_secs: f64,
     pub(super) pre: f64,
@@ -200,6 +204,7 @@ pub(super) fn log_marginal_gap_fill(progress: &dyn ProgressReporter, log: &Margi
             "{}",
             format_skip_gap_fill_log(
                 log.gaps,
+                log.gap_index,
                 log.a_start_secs,
                 log.a_end_secs,
                 &format_gap_fill_marginal_warn_reason(log.pre, log.post, log.min, log.anchor_seam,),
@@ -316,6 +321,7 @@ mod tests {
         assert_eq!(
             format_skip_gap_fill_log(
                 &gaps,
+                1,
                 6128.25,
                 6360.0,
                 &format_gap_patch_skip_warn_reason(&GapPatchSkipReason::BoundaryAlignmentFailed),

@@ -39,7 +39,7 @@ use crate::domain::{
 
 use super::geometry::repair_patch_config_view;
 use super::log::{
-    gap_key, log_gap_fill_plan_verbose, log_gap_fill_result_verbose, log_marginal_gap_fill,
+    log_gap_fill_plan_verbose, log_gap_fill_result_verbose, log_marginal_gap_fill,
     log_skip_gap_fill, GapFillPlanLog, GapFillResultLog, MarginalGapFillLog,
 };
 use super::{border_frames_from_secs, FillWindowFrames, PatchAudioRequest};
@@ -157,19 +157,25 @@ pub(super) struct RegionPatchOpts<'a> {
     pub(super) anchored_retry_pass: AnchoredRetryPass,
     pub(super) patch_anchors: Option<&'a PatchAnchorTable>,
 }
+/// Join plan skips and per-region results back onto the report's gap list, in report order.
+///
+/// Keyed by `gap_index` (the position in [`GapReport::gaps`]) rather than by the gap's float
+/// timestamps: the patch path refines `a_start_secs` locally, so timestamp identity is a
+/// correctness trap waiting for someone to pass a refined value. The index also makes two gaps
+/// with identical bounds distinguishable, which bit-pattern keys could not.
 pub(super) fn outcomes_in_report_order(
     gaps: &[Gap],
     plan: &GapFillPlan,
-    region_results: &[(f64, f64, RegionPatchOutcome, GapTags)],
+    region_results: &[(usize, RegionPatchOutcome, GapTags)],
     fill_mode: FillMode,
     thresholds: FillTierThresholds,
 ) -> Vec<GapPatchOutcome> {
-    let mut status_by_gap: HashMap<(u64, u64), GapPatchStatus> = HashMap::new();
-    let mut tags_by_gap: HashMap<(u64, u64), GapTags> = HashMap::new();
-    let mut residual_by_gap: HashMap<(u64, u64), policies::SeamResidualVerdict> = HashMap::new();
+    let mut status_by_gap: HashMap<usize, GapPatchStatus> = HashMap::new();
+    let mut tags_by_gap: HashMap<usize, GapTags> = HashMap::new();
+    let mut residual_by_gap: HashMap<usize, policies::SeamResidualVerdict> = HashMap::new();
 
     for skip in &plan.skipped {
-        let key = gap_key(skip.a_start_secs, skip.a_end_secs);
+        let key = skip.gap_index;
         let status = GapPatchStatus::NotPlanned {
             reason: skip.reason.clone(),
         };
@@ -178,7 +184,7 @@ pub(super) fn outcomes_in_report_order(
         tags_by_gap.insert(key, tags);
     }
 
-    for (a_start, a_end, outcome, tags) in region_results {
+    for (gap_index, outcome, tags) in region_results {
         let status = match outcome {
             RegionPatchOutcome::Patched {
                 pre_correlation,
@@ -196,7 +202,7 @@ pub(super) fn outcomes_in_report_order(
                 ..
             } => {
                 if let Some(verdict) = residual {
-                    residual_by_gap.insert(gap_key(*a_start, *a_end), *verdict);
+                    residual_by_gap.insert(*gap_index, *verdict);
                 }
                 let (residual_db, floor_db, headroom_db) =
                     residual_summary_scalar_fields(residual.as_ref());
@@ -219,21 +225,20 @@ pub(super) fn outcomes_in_report_order(
             }
             RegionPatchOutcome::Skipped { reason, residual } => {
                 if let Some(verdict) = residual {
-                    residual_by_gap.insert(gap_key(*a_start, *a_end), *verdict);
+                    residual_by_gap.insert(*gap_index, *verdict);
                 }
                 GapPatchStatus::Skipped {
                     reason: reason.clone(),
                 }
             }
         };
-        let key = gap_key(*a_start, *a_end);
-        status_by_gap.insert(key, status);
-        tags_by_gap.insert(key, tags.clone());
+        status_by_gap.insert(*gap_index, status);
+        tags_by_gap.insert(*gap_index, tags.clone());
     }
 
     gaps.iter()
-        .map(|gap| {
-            let key = gap_key(gap.video_a_start_secs, gap.video_a_end_secs);
+        .enumerate()
+        .map(|(key, gap)| {
             let status = status_by_gap
                 .remove(&key)
                 .unwrap_or(GapPatchStatus::NotPlanned {
@@ -352,13 +357,7 @@ fn seam_failure_outcome(
             Some(residual),
         ),
     };
-    log_skip_gap_fill(
-        progress,
-        &request.report.gaps,
-        region.a_start_secs,
-        region.a_end_secs,
-        &reason,
-    );
+    log_skip_gap_fill(progress, &request.report.gaps, region, &reason);
     let outcome = if let Some(residual) = residual {
         skipped_patch_with_residual(reason, Some(residual))
     } else {
@@ -1635,13 +1634,7 @@ pub(super) fn characterize_region(
         Some(samples) => samples,
         None => {
             let reason = GapPatchSkipReason::BExtractFailed;
-            log_skip_gap_fill(
-                progress,
-                &request.report.gaps,
-                region.a_start_secs,
-                region.a_end_secs,
-                &reason,
-            );
+            log_skip_gap_fill(progress, &request.report.gaps, region, &reason);
             return (
                 skip_region_spec(
                     reason,
@@ -1859,6 +1852,7 @@ pub(super) fn characterize_region(
             progress,
             &MarginalGapFillLog {
                 gaps: &request.report.gaps,
+                gap_index: region.gap_index,
                 a_start_secs: region.a_start_secs,
                 a_end_secs: region.a_end_secs,
                 pre: report_pre,
@@ -1902,13 +1896,7 @@ pub(super) fn characterize_region(
     let b_fill_end_sample = fill_start_sample + alignment.fill_frames * channels;
     if b_fill_end_sample > b_samples.len() {
         let reason = GapPatchSkipReason::AlignedSegmentOutOfRange;
-        log_skip_gap_fill(
-            progress,
-            &request.report.gaps,
-            region.a_start_secs,
-            region.a_end_secs,
-            &reason,
-        );
+        log_skip_gap_fill(progress, &request.report.gaps, region, &reason);
         return (
             skip_region_spec(
                 reason,
@@ -2473,6 +2461,7 @@ mod tests {
         let request: PatchAudioRequest = repair.patch_settings().into_request(report.clone());
 
         let regions = vec![FillRegion {
+            gap_index: 0,
             a_start_secs: g0 as f64 / f64::from(rate),
             a_end_secs: g1 as f64 / f64::from(rate),
             b_start_secs: g0 as f64 / f64::from(rate),
@@ -2821,5 +2810,131 @@ mod tests {
         // Off by default: no residual measurement, matching the ordinary path's `want_residual_measurement`.
         let off_request = dual_fit_test_request(false, crate::domain::ResidualGateMode::Off);
         assert!(measure_dual_fit_residual_verdict(&off_request, &df, &r).is_none());
+    }
+
+    /// **M-GAPKEY — every gap gets its own outcome, in report order, regardless of plan order.**
+    /// `outcomes_in_report_order` joins three differently-ordered sources (plan skips, region
+    /// results, the report's gap list) onto one index-parallel output. This pins the join itself:
+    /// report order is preserved, each of the four provenance classes lands on the *right* gap,
+    /// and a gap absent from both plan and results falls back to `NotPlanned/NotFillable`.
+    ///
+    /// Deliberately feeds the plan and the region results in an order that does **not** match the
+    /// report, so a join that accidentally relied on positional zip would fail here.
+    #[test]
+    fn outcomes_in_report_order_joins_every_gap_by_identity_not_position() {
+        use super::{outcomes_in_report_order, skipped_patch, RegionPatchOutcome};
+        use crate::domain::gap::Gap;
+        use crate::domain::gap_fill::{GapFillPlan, GapFillSkipped};
+        use crate::domain::gap_tags::{derive_gap_tags_from_status, FillTierThresholds};
+        use crate::domain::patch_result::{GapFillSkipReason, GapPatchSkipReason, GapPatchStatus};
+        use crate::domain::FillMode;
+
+        let gap = |start: f64, end: f64| Gap {
+            video_a_start_secs: start,
+            video_a_end_secs: end,
+            video_b_start_secs: Some(start),
+            video_b_end_secs: Some(end),
+            b_has_energy: true,
+        };
+        // Non-round values: these are the bit patterns the old float-keyed join relied on.
+        let gaps = vec![
+            gap(1.1, 2.2),   // g0 — skipped at plan time
+            gap(10.3, 11.7), // g1 — patched
+            gap(20.5, 21.9), // g2 — skipped during region patching
+            gap(30.7, 31.4), // g3 — in neither plan nor results
+        ];
+
+        let fill_mode = FillMode::Fit;
+        let thresholds = FillTierThresholds::DEFAULT;
+
+        // Plan carries only g0, and the region results are pushed g2-before-g1 — both orders
+        // disagree with the report.
+        let plan = GapFillPlan {
+            regions: vec![],
+            skipped: vec![GapFillSkipped {
+                gap_index: 0,
+                a_start_secs: gaps[0].video_a_start_secs,
+                a_end_secs: gaps[0].video_a_end_secs,
+                reason: GapFillSkipReason::NotFillable,
+            }],
+        };
+
+        let patched = RegionPatchOutcome::Patched {
+            pre_correlation: 0.2,
+            post_correlation: 0.9,
+            align_adjustment_secs: 0.01,
+            waveform_adjustment_secs: 0.0,
+            structure_trusted: true,
+            confidence: FillConfidence::High,
+            gap_start_adjust_frames: 0,
+            gap_end_adjust_frames: 0,
+            fit_used_boundary_grid: false,
+            fit_boundary_grid_cells: None,
+            residual: None,
+            anchor_seam_used: false,
+            anchor_bracket_move_frames: 0,
+            dual_fit_used: false,
+        };
+        let tags_for =
+            |status: &GapPatchStatus| derive_gap_tags_from_status(status, fill_mode, thresholds);
+        let placeholder = GapPatchStatus::NotPlanned {
+            reason: GapFillSkipReason::NotFillable,
+        };
+        let region_results = vec![
+            (
+                2,
+                skipped_patch(GapPatchSkipReason::BExtractFailed),
+                tags_for(&placeholder),
+            ),
+            (1, patched, tags_for(&placeholder)),
+        ];
+
+        let outcomes =
+            outcomes_in_report_order(&gaps, &plan, &region_results, fill_mode, thresholds);
+
+        assert_eq!(outcomes.len(), gaps.len(), "one outcome per reported gap");
+        for (i, (outcome, g)) in outcomes.iter().zip(gaps.iter()).enumerate() {
+            assert_eq!(
+                (outcome.a_start_secs, outcome.a_end_secs),
+                (g.video_a_start_secs, g.video_a_end_secs),
+                "outcome {i} must stay aligned with the report's gap order"
+            );
+        }
+
+        assert!(
+            matches!(
+                &outcomes[0].status,
+                GapPatchStatus::NotPlanned {
+                    reason: GapFillSkipReason::NotFillable
+                }
+            ),
+            "g0 takes the plan-time skip, got {:?}",
+            outcomes[0].status
+        );
+        assert!(
+            matches!(&outcomes[1].status, GapPatchStatus::Patched { .. }),
+            "g1 takes the patched result even though it was pushed second, got {:?}",
+            outcomes[1].status
+        );
+        assert!(
+            matches!(
+                &outcomes[2].status,
+                GapPatchStatus::Skipped {
+                    reason: GapPatchSkipReason::BExtractFailed
+                }
+            ),
+            "g2 takes the region skip even though it was pushed first, got {:?}",
+            outcomes[2].status
+        );
+        assert!(
+            matches!(
+                &outcomes[3].status,
+                GapPatchStatus::NotPlanned {
+                    reason: GapFillSkipReason::NotFillable
+                }
+            ),
+            "g3 appears in neither source and must default to NotPlanned, got {:?}",
+            outcomes[3].status
+        );
     }
 }

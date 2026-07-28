@@ -208,14 +208,14 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         };
 
         if kind == PatchRunKind::Preview {
-            let mut region_results: Vec<(f64, f64, RegionPatchOutcome, GapTags)> =
+            let mut region_results: Vec<(usize, RegionPatchOutcome, GapTags)> =
                 Vec::with_capacity(plan.regions.len());
             for ((spec, tag_ctx), region) in characterizations.into_iter().zip(plan.regions.iter())
             {
                 let outcome = outcome_from_spec(&spec, region_ctx.sample_rate);
                 let tags = region_outcome_gap_tags(&outcome, tag_ctx);
                 log_gap_tags_verbose(self.progress, &tags);
-                region_results.push((region.a_start_secs, region.a_end_secs, outcome, tags));
+                region_results.push((region.gap_index, outcome, tags));
             }
             let summary = PatchSummary::from_outcomes(outcomes_in_report_order(
                 &request.report.gaps,
@@ -237,7 +237,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         // Pass 2 — execute patches (skips carry their outcome; nothing to run).
         let mut patches: Vec<RegionPatch> = Vec::new();
         let mut patch_slot_by_gap: Vec<Option<usize>> = Vec::new();
-        let mut region_results: Vec<(f64, f64, RegionPatchOutcome, GapTags)> = Vec::new();
+        let mut region_results: Vec<(usize, RegionPatchOutcome, GapTags)> = Vec::new();
         for ((spec, tag_ctx), (index, region)) in characterizations
             .into_iter()
             .zip(plan.regions.iter().enumerate())
@@ -282,7 +282,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             let tags = region_outcome_gap_tags(&outcome, tag_ctx);
             log_gap_tags_verbose(self.progress, &tags);
             record_patch_gap_span(&gap_span, &outcome);
-            region_results.push((region.a_start_secs, region.a_end_secs, outcome, tags));
+            region_results.push((region.gap_index, outcome, tags));
             if let Some(patch) = patch {
                 let slot = patches.len();
                 patches.push(patch);

@@ -30,13 +30,13 @@ pub(super) fn patch_anchor_policy(request: &PatchAudioRequest) -> PatchAnchorPol
 pub(super) fn build_patch_anchor_candidates(
     request: &PatchAudioRequest,
     regions: &[FillRegion],
-    region_results: &[(f64, f64, RegionPatchOutcome, GapTags)],
+    region_results: &[(usize, RegionPatchOutcome, GapTags)],
 ) -> Vec<PatchAnchorCandidate> {
     regions
         .iter()
         .zip(region_results.iter())
         .enumerate()
-        .filter_map(|(gap_index, (region, (_, _, outcome, _)))| {
+        .filter_map(|(gap_index, (region, (_, outcome, _)))| {
             let RegionPatchOutcome::Patched {
                 pre_correlation,
                 post_correlation,
@@ -73,13 +73,13 @@ pub(super) fn build_patch_anchor_candidates(
 }
 
 fn anchored_retry_gap_indices(
-    region_results: &[(f64, f64, RegionPatchOutcome, GapTags)],
+    region_results: &[(usize, RegionPatchOutcome, GapTags)],
     retry_marginal: bool,
 ) -> Vec<usize> {
     region_results
         .iter()
         .enumerate()
-        .filter_map(|(index, (_, _, outcome, _))| {
+        .filter_map(|(index, (_, outcome, _))| {
             let retry = match outcome {
                 RegionPatchOutcome::Skipped { reason, .. } => is_retryable_patch_skip(reason),
                 RegionPatchOutcome::Patched {
@@ -135,7 +135,7 @@ fn store_anchored_retry_patch(
 pub(super) struct AnchoredRetryState<'a> {
     pub(super) patches: &'a mut Vec<RegionPatch>,
     pub(super) patch_slot_by_gap: &'a mut [Option<usize>],
-    pub(super) region_results: &'a mut [(f64, f64, RegionPatchOutcome, GapTags)],
+    pub(super) region_results: &'a mut [(usize, RegionPatchOutcome, GapTags)],
 }
 
 pub(super) fn run_anchored_retry_pass(
@@ -162,7 +162,7 @@ pub(super) fn run_anchored_retry_pass(
     for index in retry_indices {
         let region = &regions[index];
         let gap_num = index + 1;
-        let prior = &state.region_results[index].2;
+        let prior = &state.region_results[index].1;
         let retry_label = if matches!(
             prior,
             RegionPatchOutcome::Patched {
@@ -208,8 +208,8 @@ pub(super) fn run_anchored_retry_pass(
         log_gap_tags_verbose(progress, &tags);
         record_patch_gap_span(&gap_span, &outcome);
         if should_apply_anchored_retry_outcome(prior, &outcome) {
-            state.region_results[index].2 = outcome;
-            state.region_results[index].3 = tags;
+            state.region_results[index].1 = outcome;
+            state.region_results[index].2 = tags;
             if let Some(patch) = patch {
                 store_anchored_retry_patch(state.patches, state.patch_slot_by_gap, index, patch);
             }
@@ -246,8 +246,7 @@ mod tests {
     fn anchored_retry_gap_indices_includes_skips_and_optional_marginal() {
         let region_results = vec![
             (
-                0.0,
-                1.0,
+                0,
                 RegionPatchOutcome::Patched {
                     pre_correlation: 0.5,
                     post_correlation: 0.5,
@@ -267,8 +266,7 @@ mod tests {
                 dummy_region_tags(),
             ),
             (
-                2.0,
-                3.0,
+                1,
                 RegionPatchOutcome::Patched {
                     pre_correlation: 0.3,
                     post_correlation: 0.28,
@@ -288,8 +286,7 @@ mod tests {
                 dummy_region_tags(),
             ),
             (
-                4.0,
-                5.0,
+                2,
                 skipped_patch(GapPatchSkipReason::CorrelationBelowThreshold {
                     pre_correlation: 0.1,
                     post_correlation: 0.1,

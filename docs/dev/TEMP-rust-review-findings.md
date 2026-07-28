@@ -49,16 +49,18 @@
 > applied to all 3 genuine wall-clock sites (`scan_gaps.rs` ×2, `repair_profile.rs`); the ~10
 > normalized-quantity `f64::EPSILON` guards deliberately untouched. Behavior-preserving; full
 > `cargo test --workspace` green.
-> **M-GAPKEY + M-HOUND blast radius checked 2026-07-27** (both previously unchecked):
-> **M-GAPKEY confirmed safe and worth doing** — the gap index is already in scope at every
-> producer, the change is compiler-enforced and deletes code; land a unit test for
-> `outcomes_in_report_order` first (it has none). **M-HOUND reframed** — the real string match is
-> at `finalize()`, not the lines cited, and that branch is **unreachable dead code** pre-empted by
-> `validate_pcm_for_wav`; fix is removal, not an enum match. Neither is a latent bug.
-> **Open set is now: M-RESAMPLE (P1, partial) + M-GAPKEY (P2, checked/ready) + M-HOUND
-> (P2, hygiene-only)** (**M-FRAMES withdrawn 2026-07-27**, premise refuted; **M-EPS fixed**)
+> **M-GAPKEY + M-HOUND blast radius checked *and* fixed 2026-07-27** (both previously
+> unchecked). **M-GAPKEY**: `gap_index: usize` added to `FillRegion`/`GapFillSkipped`;
+> `outcomes_in_report_order`'s three float-bit-pattern `HashMap`s rekeyed to the index and the
+> `position()` search in `format_skip_gap_fill_log` deleted along with the `gap_key` helper;
+> a characterization test was landed green against the old join first. **M-HOUND**: the real
+> string match was at `finalize()`, not the lines cited, and the branch was **unreachable**
+> (pre-empted by `validate_pcm_for_wav`) — removed rather than swapped to an enum match.
+> Neither was a latent bug; both were fragility/dead code.
+> **Open set is now: M-RESAMPLE (P1, partial)** (**M-FRAMES withdrawn 2026-07-27**, premise
+> refuted; **M-EPS / M-GAPKEY / M-HOUND all fixed 2026-07-27**)
 > + optional M-SILENT report flags + deferred `align_videos` split / prepare-clone
-> stretch. No P3 work remains.
+> stretch. No P2 or P3 work remains.
 >
 > **Recommendations** for each remaining item (approach, tests, sequencing) are
 > in the P1–P3 sections and **Suggested sequencing** below.
@@ -116,10 +118,12 @@ threaded. Remaining open defects cluster in:
 | # | ID | Sev | One-line | Where |
 |---|----|-----|----------|-------|
 | 1 | M-RESAMPLE | P1 | Group-delay / dual-path normalize (partially open) | refinement |
-| 2 | M-GAPKEY | P2 | Float bit-pattern keys → gap index; **blast radius checked 2026-07-27, confirmed safe** (3 maps + 1 `position()` search) | `patch_audio/log.rs:12`, `region.rs:167-246` |
+| ~~2~~ | ~~M-GAPKEY~~ | — | **fixed 2026-07-27** — `gap_index` on `FillRegion`/`GapFillSkipped`; 3 maps rekeyed, `gap_key` + `position()` search deleted | — |
 | ~~3~~ | ~~M-FRAMES~~ | — | **withdrawn 2026-07-27** — three correct conversion classes, not one inconsistency | — |
 | ~~4~~ | ~~M-EPS~~ | — | **fixed 2026-07-27** — `TIME_EPS_SECS` in `domain/diagnostics.rs`, 3 sites | — |
-| 5 | M-HOUND | P2 | String-match on `hound::Error` Display — real, but the branch is **unreachable dead code** (2026-07-27) | `wav_writer.rs:62-72` |
+| ~~5~~ | ~~M-HOUND~~ | — | **fixed 2026-07-27** — unreachable 4 GiB branch removed from `wav_writer.rs` `finalize()` | — |
+
+**M-RESAMPLE is the only remaining ledger item.**
 
 *(**All P3 CLI hygiene is now closed** — L-CLI-DEP / L-PIPE / L-QV / L-EXIT / L-MSG landed
 2026-07-27, and L-PUBLISH closed the same day by owner decision. See the Fixed (P3) table.)*
@@ -127,8 +131,8 @@ threaded. Remaining open defects cluster in:
 *(M-HE + M-FDK-RESET + M-AC3-DRAIN fixed 2026-07-23 — all codec P1s closed. M-SILENT
 effectively closed 2026-07-23 — only optional report flags deferred. **M-FFT closed
 2026-07-23** as hygiene. **M-DEAD closed 2026-07-23**. See Fixed tables. **All P1s are
-now done except M-RESAMPLE and optional report flags; remaining ledger work is M-GAPKEY +
-M-HOUND, both blast-radius-checked 2026-07-27 (M-EPS fixed the same day).** Material *repair*
+now done except M-RESAMPLE and optional report flags; M-EPS, M-GAPKEY and M-HOUND all
+landed 2026-07-27, closing the P2 set.** Material *repair*
 wall-time is `unified_refine_*` / lever 1c (~61% of root post–M-CLONE #2), not the
 closed M-CLONE bites. **M-CFG** / **M-MOD** / **M-HARNESS** closed earlier — see
 sections below.)*
@@ -610,10 +614,10 @@ workspace-wide), so fixing these 8 adds noise without changing the baseline.
 
 | ID | Issue | Recommendation |
 |----|-------|----------------|
-| M-GAPKEY | Float bit-pattern `HashMap` keys for gaps | Key by gap index — **blast radius checked 2026-07-27, CONFIRMED SAFE**; index already in scope at every producer, see below |
+| M-GAPKEY | ~~Float bit-pattern `HashMap` keys for gaps~~ | **done 2026-07-27** — keyed by `gap_index`; `gap_key` + `position()` search deleted, see below |
 | M-FRAMES | ~~Inconsistent floor vs `.round()` in secs→frames~~ | **WITHDRAWN 2026-07-27** — premise refuted, see below |
 | M-EPS | ~~`f64::EPSILON` as wall-clock tolerance~~ | **done 2026-07-27** — `TIME_EPS_SECS = 1e-9` in `domain/diagnostics.rs`, all 3 sites |
-| M-HOUND | String-match on `hound::Error` Display | **blast radius checked 2026-07-27**: the `:38-44` framing was indeed loose (formats only), but a real match exists at `finalize()` — and that whole branch is **unreachable**, pre-empted by `validate_pcm_for_wav`. Reframe as dead-code removal, see below |
+| M-HOUND | ~~String-match on `hound::Error` Display~~ | **done 2026-07-27** — the match was unreachable dead code; branch removed rather than swapped to an enum match, see below |
 | M-DEAD | ~~Dead / measurement leftovers~~ | **done 2026-07-23** (§1 B2 + §2) |
 
 ### M-FRAMES — **withdrawn 2026-07-27** (premise refuted by blast-radius check)
@@ -689,7 +693,7 @@ rustfmt re-wrapped them; that is the whole diff at those two sites. `cargo clipp
 --all-targets` clean. `cargo test -p clip-sync-repair --lib` 391 pass / 1 ignored;
 `cargo test --workspace` fully green (0 failures across all 33 targets).
 
-### M-GAPKEY — blast radius checked 2026-07-27: **premise holds, change is tractable, CONFIRMED SAFE**
+### M-GAPKEY — blast radius checked **and fixed** 2026-07-27
 
 Unlike M-FRAMES, this one survives the check. Two corrections to the original framing, then the plan.
 
@@ -745,7 +749,33 @@ verified rather than merely compiled.
 **Verdict: do it.** Mechanical, compiler-enforced, contained in one crate, and it deletes code
 (`gap_key` + a linear search) rather than adding any. Land the unit test first.
 
-### M-HOUND — blast radius checked 2026-07-27: **the branch it targets is UNREACHABLE**
+**As landed (2026-07-27)** — followed the plan above exactly, in that order:
+
+1. **Characterization test first.** `region.rs::outcomes_in_report_order_joins_every_gap_by_identity_not_position`
+   — four gaps, plan and region-result orders both deliberately disagreeing with the report,
+   covering all four provenance classes (plan skip / patched / region skip / absent-from-both).
+   Verified **green against the old float-keyed join** before any production change.
+2. `gap_index: usize` added to `FillRegion` and `GapFillSkipped`, populated at all five
+   construction sites in `gap_fill.rs`; the early-return path gained the `.enumerate()` it lacked.
+3. The three maps in `outcomes_in_report_order` are now `HashMap<usize, _>`, drained via
+   `gaps.iter().enumerate()`. `region_results` changed shape from
+   `(f64, f64, RegionPatchOutcome, GapTags)` to `(usize, RegionPatchOutcome, GapTags)` — the two
+   float fields existed only to build the key, so the join no longer carries redundant identity.
+4. `gap_key` **deleted**. `format_skip_gap_fill_log` takes `gap_index` and formats directly (an
+   out-of-range index drops the `N/M` prefix rather than mislabelling); `log_skip_gap_fill` now
+   takes `&FillRegion` instead of a loose start/end pair, so the refined-shadow trap described
+   above is no longer expressible at a call site. `MarginalGapFillLog` gained `gap_index`.
+
+Touched beyond the predicted footprint: `patch_audio/anchor_retry.rs` (tuple arity in
+`build_patch_anchor_candidates`, `anchored_retry_gap_indices`, `AnchoredRetryState`, and its
+`.2`/`.3` field writes) — mechanical, and the compiler found every one. Note
+`PatchAnchorCandidate::gap_index` there is a *region* index, unrelated to the new report index;
+left as-is deliberately.
+
+`cargo fmt --all` / `cargo clippy --workspace --all-targets` clean; `cargo test --workspace` green,
+with the new characterization test still passing after the rekey.
+
+### M-HOUND — blast radius checked **and fixed** 2026-07-27: the branch it targeted was UNREACHABLE
 
 The ledger's hedge was right about the wrong lines, and the real finding is bigger than the one
 proposed.
@@ -787,6 +817,12 @@ belt-and-braces, use `matches!(e, hound::Error::UnfinishedSample)` and add a com
 unreachable-by-construction — do **not** leave it looking like a live path. Either way this is
 hygiene with no behavioral effect, so it is the lowest-value of the three; the string match is
 not a latent bug.
+
+**As landed (2026-07-27):** took the preferred fix — `writer.finalize().map_err(write_err)?`, with
+a comment recording *why* there is no special case (both trigger conditions are already rejected by
+`validate_pcm_for_wav`, with a better message). The string comparison is gone entirely, so the
+enum-match question is moot. No behavior change on any reachable input; `cargo test --workspace`
+green.
 
 ### M-DEAD. Dead symbols — **fixed 2026-07-23** (both bites)
 
@@ -951,16 +987,11 @@ module splits are closed (`align_videos` deferred only).
 7. **M-RESAMPLE** group-delay / dual-path normalize when next touching refinement
    *(larger remaining repair wall-time is `unified_refine_*` / lever 1c — Repeat-dominated
    per Level F.)*
-8. **Other P2 remainder** — ~~**M-EPS**~~ **done 2026-07-27**. Both survivors have now had the
-   blast-radius check M-FRAMES got:
-   **M-GAPKEY** next — confirmed safe, contained to `clip-sync-repair`, compiler-enforced, and
-   net code removal. Sequence: unit-test `outcomes_in_report_order` first (currently untested),
-   then add `gap_index` to `GapFillSkipped`/`FillRegion`, rekey the three maps, delete `gap_key`
-   and the `position()` search.
-   **M-HOUND** last, and **rescoped**: not an enum-match swap but removal of an unreachable
-   `finalize()` branch that duplicates `validate_pcm_for_wav` with a worse message. Pure hygiene,
-   no behavioral effect — lowest value of the set.
-   **M-FRAMES is withdrawn, not deferred**: do not re-open it from the original one-line framing.
+8. ~~**Other P2 remainder**~~ — **fully closed 2026-07-27**. ~~M-EPS~~, ~~M-GAPKEY~~ (unit test
+   first, then `gap_index` through `GapFillSkipped`/`FillRegion`, three maps rekeyed, `gap_key`
+   and the `position()` search deleted) and ~~M-HOUND~~ (unreachable `finalize()` branch removed)
+   all landed. **M-FRAMES is withdrawn, not deferred**: do not re-open it from the original
+   one-line framing.
 
 ### Milestone checklist
 
@@ -976,9 +1007,9 @@ module splits are closed (`align_videos` deferred only).
    items; no open remainder).
 7. ~~**M-CLONE**~~ — **complete 2026-07-25** (#1+#2+#3; prepare-clone stretch deferred).
 8. ~~**P3 CLI hygiene**~~ — **done 2026-07-27**, all six items including L-PUBLISH. Nothing open.
-9. **Other P2 remainder** — ~~M-EPS~~ **done 2026-07-27** (`TIME_EPS_SECS`, 3 sites, workspace
-   green). **Open**: M-GAPKEY (blast radius checked — safe, ready, needs a unit test first),
-   M-HOUND (blast radius checked — rescoped to dead-code removal, hygiene only).
+9. ~~**Other P2 remainder**~~ — **done 2026-07-27**: ~~M-EPS~~ (`TIME_EPS_SECS`, 3 sites),
+   ~~M-GAPKEY~~ (index-keyed join + characterization test), ~~M-HOUND~~ (dead 4 GiB branch
+   removed); workspace green after each.
    ~~M-FRAMES~~ **withdrawn 2026-07-27** (premise refuted). These were absent from this checklist
    and from the header's open-set line until 2026-07-27; they were never actioned, only overlooked.
 

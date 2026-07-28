@@ -59,18 +59,10 @@ impl PatchedAudioWriter for WavPatchedAudioWriter {
             }
         }
 
-        writer.finalize().map_err(|e| {
-            let message = e.to_string();
-            if message.contains("not a multiple of the number of channels") {
-                RepairError::Write(io::Error::other(format!(
-                    "{}: WAV finalize failed ({message}); this often indicates patched audio \
-                     exceeds the classic WAV 4 GiB limit — use --mux instead",
-                    path.display()
-                )))
-            } else {
-                RepairError::Write(io::Error::other(format!("{}: {}", path.display(), e)))
-            }
-        })?;
+        // No 4 GiB special case here: `validate_pcm_for_wav` above already rejects both of the
+        // conditions that could reach it (`samples.len() % channels != 0`, and a data chunk over
+        // `u32::MAX` bytes), and does so with a message that names the real limit.
+        writer.finalize().map_err(write_err)?;
 
         Ok(())
     }

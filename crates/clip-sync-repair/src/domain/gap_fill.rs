@@ -4,6 +4,10 @@ use crate::domain::track_match::CompatibilityVerdict;
 
 /// Describes one region where B audio will be spliced into A.
 pub struct FillRegion {
+    /// Index into [`GapReport::gaps`] this region was planned from. The identity used to join
+    /// patch outcomes back onto the report — never re-derive it from `a_start_secs`, which the
+    /// patch path refines locally.
+    pub gap_index: usize,
     pub a_start_secs: f64,
     pub a_end_secs: f64,
     pub b_start_secs: f64,
@@ -16,6 +20,8 @@ pub struct FillRegion {
 /// A gap detected in A that will not be attempted during patching.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GapFillSkipped {
+    /// Index into [`GapReport::gaps`]; see [`FillRegion::gap_index`].
+    pub gap_index: usize,
     pub a_start_secs: f64,
     pub a_end_secs: f64,
     pub reason: GapFillSkipReason,
@@ -59,7 +65,9 @@ pub fn build_gap_fill_plan(
         let skipped = report
             .gaps
             .iter()
-            .map(|g| GapFillSkipped {
+            .enumerate()
+            .map(|(index, g)| GapFillSkipped {
+                gap_index: index,
                 a_start_secs: g.video_a_start_secs,
                 a_end_secs: g.video_a_end_secs,
                 reason: if g.is_fillable() {
@@ -81,6 +89,7 @@ pub fn build_gap_fill_plan(
     for (index, g) in report.gaps.iter().enumerate() {
         if !g.is_fillable() {
             skipped.push(GapFillSkipped {
+                gap_index: index,
                 a_start_secs: g.video_a_start_secs,
                 a_end_secs: g.video_a_end_secs,
                 reason: GapFillSkipReason::NotFillable,
@@ -90,6 +99,7 @@ pub fn build_gap_fill_plan(
 
         if limit_fill_to_mapped_region && report.gap_outside_reference_coverage(g) {
             skipped.push(GapFillSkipped {
+                gap_index: index,
                 a_start_secs: g.video_a_start_secs,
                 a_end_secs: g.video_a_end_secs,
                 reason: GapFillSkipReason::OutsideReferenceCoverage,
@@ -102,6 +112,7 @@ pub fn build_gap_fill_plan(
         // entered for them. Only when `skip_equivalent_gaps`; the classification is advisory otherwise.
         if skip_equivalent_gaps && report.gap_equivalence_at(index).is_some_and(|v| v.drop) {
             skipped.push(GapFillSkipped {
+                gap_index: index,
                 a_start_secs: g.video_a_start_secs,
                 a_end_secs: g.video_a_end_secs,
                 reason: GapFillSkipReason::AlreadyMatchesReference,
@@ -110,6 +121,7 @@ pub fn build_gap_fill_plan(
         }
 
         regions.push(FillRegion {
+            gap_index: index,
             a_start_secs: g.video_a_start_secs,
             a_end_secs: g.video_a_end_secs,
             b_start_secs: g.video_b_start_secs.unwrap(),
