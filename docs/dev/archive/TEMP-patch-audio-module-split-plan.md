@@ -20,7 +20,7 @@ Callers keep `crate::application::patch_audio::{…}` (and the crate-level
 Unit tests stay in each submodule’s `#[cfg(test)]` block (not `tests/` / `*_test.rs`).
 
 **M-MOD context.** This was the **optional `patch_audio` slice** of
-[M-MOD](../TEMP-rust-review-findings.md#m-mod-oversized-modules--closed). Policies,
+[M-MOD](TEMP-rust-review-findings.md#m-mod-oversized-modules--closed). Policies,
 harness corpus, and production `gap_fingerprint` were already done when this
 landed; with P1–P6 complete, the planned M-MOD splits are closed. `align_videos`
 remains **out of scope** (test-inflated orchestrator; already decomposed via
@@ -36,7 +36,7 @@ anchor policy while splitting.
 Companions: [TEMP-policies-module-split-plan.md](TEMP-policies-module-split-plan.md)
 (ground-rules template),
 [TEMP-gap-fingerprint-module-split-plan.md](TEMP-gap-fingerprint-module-split-plan.md),
-[TEMP-rust-review-findings.md](../TEMP-rust-review-findings.md) **M-MOD**,
+[TEMP-rust-review-findings.md](TEMP-rust-review-findings.md) **M-MOD**,
 [gap-fill-modes.md](../../gap-fill-modes.md), [pipeline.md](../../pipeline.md).
 
 ---
@@ -373,7 +373,7 @@ still resolve for composition / config / repair callers.
 
 ## Related
 
-- [TEMP-rust-review-findings.md](../TEMP-rust-review-findings.md) — **M-MOD**
+- [TEMP-rust-review-findings.md](TEMP-rust-review-findings.md) — **M-MOD**
 - [TEMP-policies-module-split-plan.md](TEMP-policies-module-split-plan.md) — ground-rules template (done)
 - [TEMP-gap-fingerprint-module-split-plan.md](TEMP-gap-fingerprint-module-split-plan.md) — sibling production split (done)
 - [TEMP-gap-fingerprint-corpus-module-split-plan.md](TEMP-gap-fingerprint-corpus-module-split-plan.md) — harness sibling (done)

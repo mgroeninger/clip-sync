@@ -1,6 +1,29 @@
 # Rust review findings — prioritized recommendations
 
-> **Status:** Active ledger (updated 2026-07-27). Workspace review of `clip-sync`,
+> # ARCHIVED 2026-07-27 — closed, do not update
+>
+> The open set is empty: **every finding is fixed, withdrawn as refuted, or closed
+> will-not-fix.** This file is retained as a historical record, not a live ledger —
+> its value now is the *rationale*, which does not survive anywhere else:
+>
+> - **What was fixed** and how it actually landed (several items differed from how they
+>   were filed — see the "As landed" notes).
+> - **M-FRAMES — withdrawn, premise refuted** by a blast-radius check. Do not re-open it
+>   from the original one-line framing.
+> - **M-RESAMPLE — P3, will not fix.** Real, exactly measured delay with zero corpus
+>   exposure. Its section carries the retained concern, the pre-derived fix, and three
+>   explicit re-open triggers. That section is the reason this file was kept.
+> - **Withdrawn recommendations** that would be plausible to re-derive and are wrong —
+>   most notably M-RESAMPLE's "run both sides through the same resample path."
+>
+> Elective residue that outlived the ledger, none of it a defect: optional M-SILENT
+> machine-readable report flags, the deferred `align_videos` module split, the
+> prepare-clone perf stretch, and optional hard-fail parse in the harness measurement
+> bins. Live backlog: [../../../BACKLOG.md](../../../BACKLOG.md).
+>
+> New review findings belong in a **new** document.
+
+> **Status:** Closed ledger (final update 2026-07-27; archived same day). Workspace review of `clip-sync`,
 > `clip-sync-repair`, `clip-sync-cli`, `clip-sync-repair-harness`, and
 > `clip-sync-repair-fixtures`. Findings were verified in source where marked
 > **confirmed**.
@@ -57,10 +80,20 @@
 > string match was at `finalize()`, not the lines cited, and the branch was **unreachable**
 > (pre-empted by `validate_pcm_for_wav`) — removed rather than swapped to an enum match.
 > Neither was a latent bug; both were fragility/dead code.
-> **Open set is now: M-RESAMPLE (P1, partial)** (**M-FRAMES withdrawn 2026-07-27**, premise
-> refuted; **M-EPS / M-GAPKEY / M-HOUND all fixed 2026-07-27**)
-> + optional M-SILENT report flags + deferred `align_videos` split / prepare-clone
-> stretch. No P2 or P3 work remains.
+> **M-RESAMPLE measured and DOWNGRADED P1 → P3 by owner decision 2026-07-27; WILL NOT FIX at this
+> time.**
+> The standing recommendation was **withdrawn** (it short-circuits at `rubato.rs:27` and cannot do
+> anything); reach is wider than filed (4 sites, one trigger: A and B differing in source sample
+> rate) and includes `patch_audio/decode.rs:89`, where the shift lands on *spliced audio*. Then the
+> two gating measurements split the verdict: the delay is **real and exact** (2.7–4.0 ms, equal to
+> `output_delay()` to the sample) but the asymmetric path has **zero corpus occurrences** (4008
+> tracks across 1055 artifacts, all 48 kHz). So: no production change, severity down, and the
+> measurement landed as `tests/resample_group_delay.rs`. Also recorded: FFT and linear-fallback
+> paths have **different** group delays, so a rubato failure silently moves the offset.
+> **No open defect work remains at any severity.** M-EPS / M-GAPKEY / M-HOUND fixed 2026-07-27;
+> M-FRAMES withdrawn (premise refuted); M-RESAMPLE downgraded to P3 / will-not-fix. What is left
+> is elective, not outstanding: optional M-SILENT machine-readable report flags, the deferred
+> `align_videos` module split, and the prepare-clone perf stretch.
 >
 > **Recommendations** for each remaining item (approach, tests, sequencing) are
 > in the P1–P3 sections and **Suggested sequencing** below.
@@ -117,13 +150,16 @@ threaded. Remaining open defects cluster in:
 
 | # | ID | Sev | One-line | Where |
 |---|----|-----|----------|-------|
-| 1 | M-RESAMPLE | P1 | Group-delay / dual-path normalize (partially open) | refinement |
+| ~~1~~ | ~~M-RESAMPLE~~ | ~~P1~~ → **P3, will not fix** | Resampler group delay uncompensated. **Measured 2026-07-27**: delay real (2.7–4.0 ms, = `output_delay()` exactly) but **zero corpus occurrences** (all tracks 48 kHz). Latent-only; **downgraded and closed by owner decision** — characterization test landed, fix pre-derived for if a cross-rate pair ever appears | `resample/rubato.rs`, `offset_refinement.rs:420-430`, `patch_audio/decode.rs:89` |
+
+**The priority list is now empty.** Every row above is fixed, withdrawn, or downgraded-and-closed.
 | ~~2~~ | ~~M-GAPKEY~~ | — | **fixed 2026-07-27** — `gap_index` on `FillRegion`/`GapFillSkipped`; 3 maps rekeyed, `gap_key` + `position()` search deleted | — |
 | ~~3~~ | ~~M-FRAMES~~ | — | **withdrawn 2026-07-27** — three correct conversion classes, not one inconsistency | — |
 | ~~4~~ | ~~M-EPS~~ | — | **fixed 2026-07-27** — `TIME_EPS_SECS` in `domain/diagnostics.rs`, 3 sites | — |
 | ~~5~~ | ~~M-HOUND~~ | — | **fixed 2026-07-27** — unreachable 4 GiB branch removed from `wav_writer.rs` `finalize()` | — |
 
-**M-RESAMPLE is the only remaining ledger item.**
+**M-RESAMPLE was the last remaining ledger item; as of 2026-07-27 it is measured, downgraded to
+P3, and closed will-not-fix.** No P0/P1/P2/P3 defect work remains open.
 
 *(**All P3 CLI hygiene is now closed** — L-CLI-DEP / L-PIPE / L-QV / L-EXIT / L-MSG landed
 2026-07-27, and L-PUBLISH closed the same day by owner decision. See the Fixed (P3) table.)*
@@ -131,8 +167,9 @@ threaded. Remaining open defects cluster in:
 *(M-HE + M-FDK-RESET + M-AC3-DRAIN fixed 2026-07-23 — all codec P1s closed. M-SILENT
 effectively closed 2026-07-23 — only optional report flags deferred. **M-FFT closed
 2026-07-23** as hygiene. **M-DEAD closed 2026-07-23**. See Fixed tables. **All P1s are
-now done except M-RESAMPLE and optional report flags; M-EPS, M-GAPKEY and M-HOUND all
-landed 2026-07-27, closing the P2 set.** Material *repair*
+now closed: M-EPS, M-GAPKEY and M-HOUND landed 2026-07-27, closing the P2 set, and
+M-RESAMPLE measured out to latent-only and downgraded to P3/will-not-fix the same day —
+leaving only optional report flags.** Material *repair*
 wall-time is `unified_refine_*` / lever 1c (~61% of root post–M-CLONE #2), not the
 closed M-CLONE bites. **M-CFG** / **M-MOD** / **M-HARNESS** closed earlier — see
 sections below.)*
@@ -349,14 +386,132 @@ machine-readable report flags remain, deferred until an operator needs them.
 
 **Test:** unit for unknown-key warning; existing align/scan tests for warn-only paths.
 
-### M-RESAMPLE. Group delay (count clear done) — **partially open**
+### M-RESAMPLE. Group delay (count clear done) — **P1 → P3, WILL NOT FIX (2026-07-27)**
 
-**Recommendation:** Prefer the cheap correct option: when one side is already at
-the target rate, still run **both** through the same resample path (or document
-that refined offsets are only valid when both sides resample). Full delay
-query/trim is more work for little gain if paths are normalized.
+> **Status: MEASURED, DOWNGRADED P1 → P3, and CLOSED WILL-NOT-FIX by owner decision 2026-07-27.**
+>
+> Both gating measurements are done and they split: the delay is **real and exactly characterized**
+> (2.7–4.0 ms, matching `output_delay()` to the sample), but the asymmetric path **never runs on
+> the corpus** — all 4008 recorded tracks across 1055 artifacts are 48 kHz, zero cross-rate pairs.
+> Per the plan's step 4 this is the M-FRAMES outcome: record the numbers, downgrade the severity,
+> keep the measurement as a characterization test.
+>
+> **The concern is deliberately retained, not dismissed.** It is documented in full below —
+> mechanism, all four affected sites, exact magnitudes, and a pre-derived fix — because the
+> premise is sound and only the *exposure* is absent. This is a bet on the input distribution,
+> and the bet is stated so it can be revisited rather than rediscovered.
+>
+> **Re-open this entry if any of the following becomes true:**
+> - a media pair with **differing source audio sample rates** enters the corpus or is reported by
+>   a user (the single trigger for all four sites);
+> - `tests/resample_group_delay.rs` starts failing (a rubato bump changed the delay or broke the
+>   `output_delay()` equality the fix depends on);
+> - cross-rate repair output is reported as misaligned at fill seams — the
+>   `patch_audio/decode.rs:89` symptom, which is audible rather than merely metrological.
+>
+> Until then: **no production change.** Details in *Measurements* below.
 
-**Test:** asymmetric case (one at target rate, one not) — offset bias should shrink.
+**The previous recommendation was a no-op and is withdrawn.** It read: *"when one side is already
+at the target rate, still run both through the same resample path."* `resample_mono_pcm`
+short-circuits on rate equality (`infrastructure/resample/rubato.rs:27` — `if clip.sample_rate ==
+target_rate { return clip.clone() }`), so routing the already-at-rate side "through the same path"
+returns it unchanged. Making that recommendation real would require forcing a degenerate N→N FFT
+resample purely to incur a *matching* delay — paying an FFT to manufacture an error in order to
+cancel it. Wrong direction; do not re-open from that framing.
+
+**One trigger condition, four sites.** The asymmetry is `offset_refinement.rs:420-430`:
+`target_rate = left.sample_rate.max(right.sample_rate)`, so exactly one side takes `clone()`
+(zero delay) and the other takes the FFT path (nonzero delay). Every instance in the workspace
+reduces to the same precondition — **A and B have differing source audio sample rates**:
+
+| Site | Consequence if delay is uncompensated |
+|------|----------------------------------------|
+| `application/offset_refinement.rs:424,429` (`pcm_cross_correlate_lag`, feeding `refine_holdout_segment_lag`) | constant bias in the refined lag — the finding as originally filed |
+| `application/align_videos.rs:991`; `application/offset_verification.rs:208,212,597,601` | `clip.target_sample_rate` resamples *both* sides, but each short-circuits **independently** — so mismatched sources still land asymmetric here. Setting `target_sample_rate` does **not** imply symmetry |
+| `clip-sync-repair` `application/patch_audio/decode.rs:89` (`resample_interleaved`) | B's spliced **audio content** is time-shifted on every cross-rate fill |
+
+**Re-frame around that last row.** It is not metrology bias — it is a real constant time shift on
+patched output whenever the pair's rates differ, and the seam gate would read it as lag, plausibly
+declining otherwise-good fills on cross-rate pairs. That is a higher-value framing than the
+alignment-only one this entry has carried.
+
+**Second defect, not previously recorded: the two resample paths disagree on delay.**
+`linear_resample_fallback` (`rubato.rs:83-119`, and `linear_resample_f32:191`) is plain linear
+interpolation — essentially zero group delay — while the `FftFixedIn` path is not. A rubato
+init/process failure therefore *silently moves the measured offset*, on a path whose own `warn!`
+presents it as a transparent substitute. This is the argument for compensating **to zero** rather
+than for equalizing delay across the two sides.
+
+**The fix is smaller than "full delay query/trim" assumed.** rubato 0.16.2 exposes
+`Resampler::output_delay()` (delay in output frames); the code never calls it. Dropping that many
+leading output frames inside `resample_mono_pcm` and `resample_f32_plane` makes resampling
+delay-neutral — which fixes all four sites at once, makes symmetric-vs-asymmetric irrelevant, and
+brings the FFT path into agreement with the linear fallback. The prior "more work for little gain"
+judgement was made without this API in view.
+
+### Measurements — 2026-07-27
+
+**1. Delay magnitude — real, and `output_delay()` is exact.** Chirp through
+`RubatoResampler::resample_mono`, cross-correlated against a zero-delay linear reference:
+
+| Rate pair | Measured lag | As time | Peak corr | `output_delay()` |
+|-----------|--------------|---------|-----------|------------------|
+| 44100 → 48000 | 160 samples | 3.333 ms | 0.9993 | **160** |
+| 48000 → 44100 | 147 samples | 3.333 ms | 0.9995 | **147** |
+| 32000 → 48000 | 192 samples | 4.000 ms | 0.9970 | **192** |
+| 48000 → 96000 | 256 samples | 2.667 ms | 0.9994| **256** |
+
+Rubato's reported `output_delay()` equals the measured lag **exactly** at every pair — it is not an
+estimate. That is the load-bearing fact for the fix: dropping `output_delay()` leading frames would
+remove the lag completely, with no residual to tune.
+
+Note the delay is **not constant in time** across pairs (2.667–4.000 ms). Consequence: the
+`clip.target_sample_rate` path (default `Some(11_025)`, `config.rs:12`) resamples *both* sides, but
+the two delays only cancel when the sources share a rate. Mismatched sources leave a **differential**
+delay even there — so it is still the same single trigger, not a second one.
+
+**Materiality if it ever fires:** 3.3 ms against `high_rate_refine_max_adjustment_secs` = 0.1 s is
+~3% of the adjustment budget — a real bias, well above noise, but not budget-breaking. Against
+`fill_seam_search_secs` = 0.25 s it is ~1.3%. The sharper concern remains `patch_audio/decode.rs:89`,
+where it is a fixed shift on spliced audio rather than a metrology error.
+
+**2. Trigger census — the asymmetric path never runs.** Across the full gap-files corpus:
+**1055 artifact files, 4008 recorded `sample_rate` values, every one 48000.** No other rate appears
+under any field name. Since nothing resamples unless the pair's rates differ, the asymmetric path
+has **zero occurrences** in the corpus. The bug is latent, not active.
+
+**Verdict: downgraded to P3 and closed will-not-fix (owner decision 2026-07-27).** The premise
+survives (unlike M-FRAMES) but the exposure does not. Fixing would mean changing four call sites
+and every consumer's sample alignment to correct a bias that no observed input can produce. The
+cheap fix stays documented and ready.
+
+**Caveat on the census — this is a bet, and it is on the input distribution.** The 48 kHz result
+describes *this corpus*, not the space of inputs the tool accepts. A 44.1 kHz web rip paired
+against a 48 kHz broadcast source is entirely plausible in the wild and would trigger every site in
+the table above on first contact. The downgrade says the bug is not worth pre-emptive work, **not**
+that it cannot happen.
+
+**Landed instead:** `crates/clip-sync/tests/resample_group_delay.rs` — two characterization tests
+pinning (a) measured delay == `output_delay()` at four rate pairs, within a 1–10 ms band, and (b)
+the FFT-vs-linear-fallback disagreement. A rubato bump that changes either now fails loudly instead
+of silently shifting offsets.
+
+**If a cross-rate pair ever shows up**, the fix is pre-derived: drop `output_delay()` leading output
+frames in `resample_mono_pcm` and `resample_f32_plane`, then flip
+`fft_and_linear_paths_disagree_on_group_delay` to assert agreement at ~0. Re-read the coupling note
+below before landing it.
+
+**Coupling to know before landing the compensation (deferred).** Trimming `output_delay()` frames shortens output, and
+`holdout_extract_sufficient` / `min_end_clip_decode_fraction` gate on clip length. The delay is
+small against second-scale segments, so this is a footnote rather than a blocker — but a marginal
+clip could cross a threshold.
+
+**Already done:** the "count clear" half — `decoded_sample_count: None` after both resample paths
+(`rubato.rs:79,117`). What remains is purely the delay half.
+
+**Test:** `crates/clip-sync/tests/resample_group_delay.rs` (landed 2026-07-27, 2 tests, green).
+If the compensation is ever implemented, add the asymmetric case (one side at target rate, one not)
+with offset bias asserted at ~0 rather than merely "shrunk".
 
 ---
 
@@ -984,7 +1139,13 @@ module splits are closed (`align_videos` deferred only).
    deferred only.
 6. ~~**P3** CLI hygiene~~ — **fully closed 2026-07-27** (broken-pipe / quiet-verbose / unused dep /
    redundant exit arm / fingerprinter message / `publish = false` on all three publishable crates).
-7. **M-RESAMPLE** group-delay / dual-path normalize when next touching refinement
+7. ~~**M-RESAMPLE**~~ — **measured 2026-07-27; downgraded P1 → P3 and closed will-not-fix.** Both
+   gating measurements done: delay is real and exact (2.7–4.0 ms = `output_delay()`), corpus
+   occurrences are **zero** (all tracks 48 kHz). Characterization test landed
+   (`tests/resample_group_delay.rs`); the `output_delay()` compensation is pre-derived and
+   deferred until a cross-rate pair appears. Re-open triggers are listed in the section. Do
+   **not** re-open from the old "run both sides through the same resample path" recommendation —
+   withdrawn as unimplementable (`rubato.rs:27` short-circuits).
    *(larger remaining repair wall-time is `unified_refine_*` / lever 1c — Repeat-dominated
    per Level F.)*
 8. ~~**Other P2 remainder**~~ — **fully closed 2026-07-27**. ~~M-EPS~~, ~~M-GAPKEY~~ (unit test
@@ -1012,6 +1173,11 @@ module splits are closed (`align_videos` deferred only).
    removed); workspace green after each.
    ~~M-FRAMES~~ **withdrawn 2026-07-27** (premise refuted). These were absent from this checklist
    and from the header's open-set line until 2026-07-27; they were never actioned, only overlooked.
+10. ~~**M-RESAMPLE group delay**~~ — **closed 2026-07-27 as P3 / will not fix.** Measured rather
+    than fixed: delay real and exact (2.7–4.0 ms = `output_delay()`), corpus occurrences zero
+    (4008 recorded track rates across 1055 artifacts, all 48 kHz). Characterization test
+    `crates/clip-sync/tests/resample_group_delay.rs` landed; fix pre-derived; re-open triggers
+    listed in the M-RESAMPLE section. **This was the last open ledger item.**
 
 ---
 
@@ -1020,5 +1186,8 @@ module splits are closed (`align_videos` deferred only).
 Review date: 2026-07-23. Findings synthesized from a full-workspace read-only
 pass (clippy default + pedantic sample, `cargo test --workspace`, and targeted
 source verification of every P0 item). Recommendations for remaining work added
-2026-07-23. This file is the canonical ledger — update Fixed tables and the
-priority list as items land; archive when the open set is closed.
+2026-07-23. This file **was** the canonical ledger — Fixed tables and the priority
+list were updated as items landed, with the standing instruction to archive once the
+open set closed. That happened **2026-07-27**: the last item (M-RESAMPLE) was measured,
+downgraded to P3 and closed will-not-fix, and this file moved to `docs/dev/archive/`.
+It is closed to further edits; file new findings in a new document.

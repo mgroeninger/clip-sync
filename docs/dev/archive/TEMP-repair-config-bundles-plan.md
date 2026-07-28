@@ -1,7 +1,7 @@
 # Repair config bundles — as landed (CLOSED 2026-07-23)
 
 Status: **Closed.** Treats P2 review finding
-[M-CFG](../TEMP-rust-review-findings.md) (four-layer config field copying). Every phase with a
+[M-CFG](TEMP-rust-review-findings.md) (four-layer config field copying). Every phase with a
 correctness argument shipped; the rest is either explicitly declined or trigger-gated with no
 trigger in sight.
 
@@ -137,7 +137,7 @@ silently excluded the evidence**:
 
 ## Related
 
-- [../TEMP-rust-review-findings.md](../TEMP-rust-review-findings.md) — M-CFG (closed by this
+- [TEMP-rust-review-findings.md](TEMP-rust-review-findings.md) — M-CFG (closed by this
   work); M-HARNESS item 1 (closed by P3 step 1)
 - [TEMP-policies-module-split-plan.md](TEMP-policies-module-split-plan.md) — orthogonal
   M-MOD slice (module layout, not config shape)

@@ -21,7 +21,7 @@ lives in
 (same ground rules; do not fold harness phases into this ledger).
 
 **M-MOD context.** This was the **production fingerprint** slice of
-[M-MOD](../TEMP-rust-review-findings.md#m-mod-oversized-modules--closed). Sibling planned M-MOD
+[M-MOD](TEMP-rust-review-findings.md#m-mod-oversized-modules--closed). Sibling planned M-MOD
 splits (policies, harness corpus, `patch_audio`) are also done; `align_videos` remains
 deferred with no plan. Those bites were **out of scope** here.
 
@@ -33,7 +33,7 @@ bundled into behavior-change PRs.
 
 Companions: [TEMP-policies-module-split-plan.md](TEMP-policies-module-split-plan.md) (ground-rules
 template), [TEMP-gap-fingerprint-corpus-module-split-plan.md](TEMP-gap-fingerprint-corpus-module-split-plan.md),
-[TEMP-rust-review-findings.md](../TEMP-rust-review-findings.md) **M-MOD**.
+[TEMP-rust-review-findings.md](TEMP-rust-review-findings.md) **M-MOD**.
 
 ---
 
@@ -213,7 +213,7 @@ Verified in source 2026-07-24: `application/gap_fingerprint/{mod,schema,project,
 
 ## Related
 
-- [TEMP-rust-review-findings.md](../TEMP-rust-review-findings.md) — **M-MOD**
+- [TEMP-rust-review-findings.md](TEMP-rust-review-findings.md) — **M-MOD**
 - [TEMP-policies-module-split-plan.md](TEMP-policies-module-split-plan.md) — prior M-MOD slice (done)
 - [TEMP-gap-fingerprint-corpus-module-split-plan.md](TEMP-gap-fingerprint-corpus-module-split-plan.md) — harness sibling
 - [gap-fingerprint.md](../gap-fingerprint.md) — product docs (update path note when tree lands)

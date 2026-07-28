@@ -48,7 +48,7 @@ and [`TEMP-gap-fingerprint-corpus-module-split-plan.md`](TEMP-gap-fingerprint-co
 9. **Do not reopen companions** — repair policies, fingerprint, corpus splits are closed;
    this plan is maintainability only.
 
-Companions: [TEMP-rust-review-findings.md](../TEMP-rust-review-findings.md) **M-MOD**,
+Companions: [TEMP-rust-review-findings.md](TEMP-rust-review-findings.md) **M-MOD**,
 [TEMP-policies-module-split-plan.md](TEMP-policies-module-split-plan.md) (repair ground-rules
 template), `crates/clip-sync/src/domain/policies/` (current tree).
 
@@ -151,7 +151,7 @@ mod.rs  re-exports all four
 
 ## Related
 
-- [TEMP-rust-review-findings.md](../TEMP-rust-review-findings.md) — **M-MOD**
+- [TEMP-rust-review-findings.md](TEMP-rust-review-findings.md) — **M-MOD**
 - [TEMP-policies-module-split-plan.md](TEMP-policies-module-split-plan.md) — repair policies (done; ground-rules template; explicitly deferred this bite)
 - [TEMP-gap-fingerprint-module-split-plan.md](TEMP-gap-fingerprint-module-split-plan.md) — production fingerprint (done)
 - [TEMP-gap-fingerprint-corpus-module-split-plan.md](TEMP-gap-fingerprint-corpus-module-split-plan.md) — harness corpus (done)

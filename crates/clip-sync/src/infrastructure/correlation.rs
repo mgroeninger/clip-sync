@@ -5,7 +5,7 @@
 //! peak fitting. PCM **discover** search does not use this module — it slides Pearson in
 //! `offset_refinement` so `DISCOVER_*` thresholds stay on that scale.
 //!
-//! **M-CLONE #2** (`docs/dev/TEMP-rust-review-findings.md`): `fft_cross_correlation` reuses a
+//! **M-CLONE #2** (`docs/dev/archive/TEMP-rust-review-findings.md`): `fft_cross_correlation` reuses a
 //! thread-local [`FftPlanner`] so repair's per-lag `local_anchor_xcorr_peak` →
 //! `segment_similarity` path does not allocate a new planner on every call. `FftCorrelator`
 //! stays a ZST (no `Mutex` on the struct). `seam_local` planner reuse is out of scope.

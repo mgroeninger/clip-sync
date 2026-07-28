@@ -18,7 +18,7 @@ Callers keep `crate::domain::policies::{…}`; no import sweep. Unit tests stay 
 submodule’s `#[cfg(test)]` block (not `tests/` / `*_test.rs`).
 
 **M-MOD context.** This was the **policies slice** of
-[M-MOD](../TEMP-rust-review-findings.md#m-mod-oversized-modules--closed). Sibling planned M-MOD
+[M-MOD](TEMP-rust-review-findings.md#m-mod-oversized-modules--closed). Sibling planned M-MOD
 splits (production `gap_fingerprint`, harness `gap_fingerprint_corpus`, `patch_audio`) are
 also done; `align_videos` remains deferred with no plan. Those bites were **out of scope**
 here.
@@ -100,6 +100,6 @@ Verified in source 2026-07-24: `domain/policies/` facade + five submodules; no l
 
 ## Related
 
-- [TEMP-rust-review-findings.md](../TEMP-rust-review-findings.md) — **M-MOD**
+- [TEMP-rust-review-findings.md](TEMP-rust-review-findings.md) — **M-MOD**
 - [TEMP-production-repair-perf-plan.md](TEMP-production-repair-perf-plan.md) — hoist refuted
 - `crates/clip-sync-repair/src/domain/policies/` — current tree

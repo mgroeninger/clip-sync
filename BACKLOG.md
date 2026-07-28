@@ -19,9 +19,8 @@ Last updated: 2026-07-26.
 |------|--------|
 | [TEMP-gap-selection-plan.md](docs/dev/TEMP-gap-selection-plan.md) | Gap selection (subset patching) — draft, not started |
 | [TEMP-nway-donor-alignment-plan.md](docs/dev/TEMP-nway-donor-alignment-plan.md) | N-way donor alignment: repair one damaged copy from multiple donors — draft, not started |
-| [TEMP-rust-review-findings.md](docs/dev/TEMP-rust-review-findings.md) | Workspace Rust review ledger (P0–P3) — open, 2026-07-23 |
 
-**Recently archived:** [TEMP-fill-placement-axis-plan.md](docs/dev/archive/TEMP-fill-placement-axis-plan.md) — Phase A armed, Phase B slack exit → Phase C NO-GO (2026-07-26). Search slack narrowed to 1.0 s (extract-tail still 5.0); see [repair-perf.md](docs/dev/repair-perf.md) §5 #3.
+**Recently archived:** [TEMP-rust-review-findings.md](docs/dev/archive/TEMP-rust-review-findings.md) — workspace Rust review ledger (P0–P3), **closed and archived 2026-07-27**: every finding fixed, withdrawn, or closed will-not-fix. Elective residue that outlived it: optional M-SILENT machine-readable report flags, the deferred `align_videos` module split, and the prepare-clone perf stretch. · [TEMP-fill-placement-axis-plan.md](docs/dev/archive/TEMP-fill-placement-axis-plan.md) — Phase A armed, Phase B slack exit → Phase C NO-GO (2026-07-26). Search slack narrowed to 1.0 s (extract-tail still 5.0); see [repair-perf.md](docs/dev/repair-perf.md) §5 #3.
 
 ## Open work
 

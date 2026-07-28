@@ -30,7 +30,7 @@ Callers keep `clip_sync_repair_harness::gap_fingerprint_corpus::{…}`; no impor
 Unit tests stay in each submodule’s `#[cfg(test)]` block (not `tests/` / `*_test.rs`).
 
 **M-MOD context.** This was the **harness corpus slice** of
-[M-MOD](../TEMP-rust-review-findings.md#m-mod-oversized-modules--closed) (findings L442–443).
+[M-MOD](TEMP-rust-review-findings.md#m-mod-oversized-modules--closed) (findings L442–443).
 Sibling planned M-MOD bites (production `gap_fingerprint`, `patch_audio`) are also done;
 `align_videos` remains deferred. Policies slice is done —
 see [`TEMP-policies-module-split-plan.md`](TEMP-policies-module-split-plan.md).
@@ -150,7 +150,7 @@ Verified in source 2026-07-24: `gap_fingerprint_corpus/{mod,schema,analysis,repo
 
 ## Related
 
-- [TEMP-rust-review-findings.md](../TEMP-rust-review-findings.md) — **M-MOD**
+- [TEMP-rust-review-findings.md](TEMP-rust-review-findings.md) — **M-MOD**
 - [TEMP-policies-module-split-plan.md](TEMP-policies-module-split-plan.md) — prior M-MOD slice (ground-rules template)
 - [TEMP-gap-fingerprint-module-split-plan.md](TEMP-gap-fingerprint-module-split-plan.md) — sibling production fingerprint split
 - `crates/clip-sync-repair-harness/src/gap_fingerprint_corpus/` — live split tree
