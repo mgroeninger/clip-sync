@@ -300,7 +300,6 @@ pub(super) fn region_outcome_gap_tags(
 
 fn seam_failure_outcome(
     progress: &dyn ProgressReporter,
-    request: &PatchAudioRequest,
     region: &FillRegion,
     fail: SeamGateFailure,
     min_structure_match_score: f32,
@@ -357,7 +356,7 @@ fn seam_failure_outcome(
             Some(residual),
         ),
     };
-    log_skip_gap_fill(progress, &request.report.gaps, region, &reason);
+    log_skip_gap_fill(progress, region, &reason);
     let outcome = if let Some(residual) = residual {
         skipped_patch_with_residual(reason, Some(residual))
     } else {
@@ -676,7 +675,6 @@ fn skip_or_dual_fit(
                                     });
                                 let (_, outcome, tag_ctx) = seam_failure_outcome(
                                     progress,
-                                    request,
                                     region,
                                     SeamGateFailure::ResidualHeadroomExceeded {
                                         pre: splice_pre,
@@ -780,7 +778,6 @@ fn skip_or_dual_fit(
     }
     let (_, outcome, tag_ctx) = seam_failure_outcome(
         progress,
-        request,
         region,
         fail,
         min_structure_match_score,
@@ -1634,7 +1631,7 @@ pub(super) fn characterize_region(
         Some(samples) => samples,
         None => {
             let reason = GapPatchSkipReason::BExtractFailed;
-            log_skip_gap_fill(progress, &request.report.gaps, region, &reason);
+            log_skip_gap_fill(progress, region, &reason);
             return (
                 skip_region_spec(
                     reason,
@@ -1851,7 +1848,6 @@ pub(super) fn characterize_region(
         log_marginal_gap_fill(
             progress,
             &MarginalGapFillLog {
-                gaps: &request.report.gaps,
                 gap_index: region.gap_index,
                 a_start_secs: region.a_start_secs,
                 a_end_secs: region.a_end_secs,
@@ -1896,7 +1892,7 @@ pub(super) fn characterize_region(
     let b_fill_end_sample = fill_start_sample + alignment.fill_frames * channels;
     if b_fill_end_sample > b_samples.len() {
         let reason = GapPatchSkipReason::AlignedSegmentOutOfRange;
-        log_skip_gap_fill(progress, &request.report.gaps, region, &reason);
+        log_skip_gap_fill(progress, region, &reason);
         return (
             skip_region_spec(
                 reason,

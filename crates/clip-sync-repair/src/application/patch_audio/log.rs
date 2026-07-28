@@ -8,7 +8,6 @@ use crate::domain::patch_result::{
     format_gap_fill_marginal_verbose_line, format_gap_fill_marginal_warn_reason,
     format_gap_fill_skip_verbose_line, format_gap_patch_skip_warn_reason, GapPatchSkipReason,
 };
-use crate::domain::Gap;
 
 fn fill_offset_mode_label(mode: FillOffsetMode) -> &'static str {
     match mode {
@@ -134,30 +133,21 @@ pub(super) fn log_gap_fill_result_verbose(
 
 /// Human-readable skip line for stderr (`tracing::warn`) matching the stdout gap table.
 ///
-/// `gap_index` is the region's [`FillRegion::gap_index`] — the gap's position in the report.
-/// An out-of-range index drops the `N/M` prefix rather than mislabelling the gap.
+/// `gap_index` is the region's [`FillRegion::gap_index`] — the gap's 0-based position in the report,
+/// rendered as the table's 1-based `#`. This is an *identity*, never a progress count, so it carries
+/// no `/total` (see the gap-index convention: identity and count are never one token).
 pub(crate) fn format_skip_gap_fill_log(
-    gaps: &[Gap],
     gap_index: usize,
     a_start_secs: f64,
     a_end_secs: f64,
     reason: &str,
 ) -> String {
-    let total = gaps.len();
     let range = format_time_range_verbose(a_start_secs, a_end_secs);
-    if gap_index < total {
-        format!(
-            "gap {index}/{total} ({range}): {reason}",
-            index = gap_index + 1
-        )
-    } else {
-        format!("gap ({range}): {reason}")
-    }
+    format!("gap #{} ({range}): {reason}", gap_index + 1)
 }
 
 pub(super) fn log_skip_gap_fill(
     progress: &dyn ProgressReporter,
-    gaps: &[Gap],
     region: &FillRegion,
     reason: &GapPatchSkipReason,
 ) {
@@ -168,7 +158,6 @@ pub(super) fn log_skip_gap_fill(
         tracing::warn!(
             "{}",
             format_skip_gap_fill_log(
-                gaps,
                 region.gap_index,
                 region.a_start_secs,
                 region.a_end_secs,
@@ -178,9 +167,8 @@ pub(super) fn log_skip_gap_fill(
     }
 }
 
-pub(super) struct MarginalGapFillLog<'a> {
-    pub(super) gaps: &'a [Gap],
-    /// Index into `gaps`; see [`FillRegion::gap_index`].
+pub(super) struct MarginalGapFillLog {
+    /// 0-based position in `GapReport.gaps`; see [`FillRegion::gap_index`].
     pub(super) gap_index: usize,
     pub(super) a_start_secs: f64,
     pub(super) a_end_secs: f64,
@@ -190,7 +178,7 @@ pub(super) struct MarginalGapFillLog<'a> {
     pub(super) anchor_seam: bool,
 }
 
-pub(super) fn log_marginal_gap_fill(progress: &dyn ProgressReporter, log: &MarginalGapFillLog<'_>) {
+pub(super) fn log_marginal_gap_fill(progress: &dyn ProgressReporter, log: &MarginalGapFillLog) {
     progress.flush_progress();
     if progress.detailed_extraction_progress() {
         progress.phase_verbose(&format_gap_fill_marginal_verbose_line(
@@ -203,7 +191,6 @@ pub(super) fn log_marginal_gap_fill(progress: &dyn ProgressReporter, log: &Margi
         tracing::warn!(
             "{}",
             format_skip_gap_fill_log(
-                log.gaps,
                 log.gap_index,
                 log.a_start_secs,
                 log.a_end_secs,
@@ -226,7 +213,6 @@ mod tests {
     use crate::domain::fill_offset::FillOffsetMode;
     use crate::domain::gap_fill_fit::FillConfidence;
     use crate::domain::patch_result::GapPatchSkipReason;
-    use crate::domain::Gap;
 
     #[test]
     fn format_gap_fill_plan_lines_shows_mapped_and_search_windows() {
@@ -301,32 +287,16 @@ mod tests {
     fn skip_gap_fill_log_matches_stdout_gap_number() {
         use crate::domain::format_gap_patch_skip_warn_reason;
 
-        let gaps = vec![
-            Gap {
-                video_a_start_secs: 0.0,
-                video_a_end_secs: 8.0,
-                video_b_start_secs: None,
-                video_b_end_secs: None,
-                b_has_energy: false,
-            },
-            Gap {
-                video_a_start_secs: 6128.25,
-                video_a_end_secs: 6360.0,
-                video_b_start_secs: Some(0.0),
-                video_b_end_secs: Some(1.0),
-                b_has_energy: true,
-            },
-        ];
-
+        // `1` is the region's report index; the line renders the table's `#2`. No `/total`:
+        // the number is an identity, not a progress count.
         assert_eq!(
             format_skip_gap_fill_log(
-                &gaps,
                 1,
                 6128.25,
                 6360.0,
                 &format_gap_patch_skip_warn_reason(&GapPatchSkipReason::BoundaryAlignmentFailed),
             ),
-            "gap 2/2 (1:42:08 – 1:46:00): structure alignment failed"
+            "gap #2 (1:42:08 – 1:46:00): structure alignment failed"
         );
     }
 }

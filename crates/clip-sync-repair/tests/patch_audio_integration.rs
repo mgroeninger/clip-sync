@@ -2035,6 +2035,78 @@ fn patch_audio_fit_default_repeat_penalty_patches_clean_fixture() {
     }
 }
 
+/// Regression guard for the gap-index axis defect: `PatchOffsetAnchor::source_gap_index` must be the
+/// donor's position in `GapReport.gaps`, **not** its ordinal within `GapFillPlan.regions`. The two
+/// coincide only when every gap is planned — which is why the sibling anchor assertions passed while
+/// the value was wrong. Making gap #1 unfillable puts one plan-time skip ahead of every donor, so a
+/// region ordinal would land one gap low and point at the skipped gap itself.
+#[test]
+fn patch_anchor_source_gap_index_is_report_index_after_plan_time_skip() {
+    let mut fixture = build_drift_anchor_retry_fixture();
+    // Plan-time skip on the first gap (no B energy → `NotFillable`): `regions` now starts at report 1.
+    fixture.report.gaps[0].b_has_energy = false;
+    let report_gaps = fixture.report.gaps.clone();
+
+    // Match the sibling anchored-retry tests: dual-fit off so pass-1 outcomes stay predictable.
+    let mut opts = anchored_retry_drift_patch_options();
+    opts.dual_fit = false;
+    let patched = run_patch(
+        patch_request_with_options(
+            fixture.report,
+            false,
+            5.0,
+            DRIFT_ANCHOR_MIN_CORRELATION,
+            opts,
+        ),
+        10,
+    );
+
+    assert!(
+        matches!(
+            patched.summary.gaps[0].status,
+            GapPatchStatus::NotPlanned { .. }
+        ),
+        "fixture premise: gap #1 must be skipped at plan time, got {:?}",
+        patched.summary.gaps[0].status
+    );
+
+    let anchors = patched
+        .summary
+        .patch_anchors_used
+        .as_ref()
+        .expect("expected pass-1 anchors to be exported");
+    assert!(
+        !anchors.is_empty(),
+        "fixture premise: pass 1 must produce at least one anchor"
+    );
+
+    for anchor in anchors {
+        // The rendered label is `gap #{source_gap_index + 1}`; it must name a gap that was actually
+        // attempted, never the unfillable one the same run reports as `not planned`.
+        assert_ne!(
+            anchor.source_gap_index, 0,
+            "anchor names the plan-skipped gap #1, so it is carrying a region ordinal: {anchors:?}"
+        );
+        let donor = &patched.summary.gaps[anchor.source_gap_index];
+        assert!(
+            matches!(donor.status, GapPatchStatus::Patched { .. }),
+            "anchor source gap #{} must be a patched gap, got {:?}",
+            anchor.source_gap_index + 1,
+            donor.status
+        );
+        // Axis check independent of status: the anchor sits at its own gap's midpoint on A.
+        let gap = &report_gaps[anchor.source_gap_index];
+        assert!(
+            anchor.a_secs >= gap.video_a_start_secs && anchor.a_secs <= gap.video_a_end_secs,
+            "anchor at {:.3}s is outside report gap #{} ({:.3}–{:.3}s)",
+            anchor.a_secs,
+            anchor.source_gap_index + 1,
+            gap.video_a_start_secs,
+            gap.video_a_end_secs
+        );
+    }
+}
+
 #[test]
 fn patch_audio_anchored_retry_passes_on_clean_single_gap() {
     let temp = tempfile::tempdir().expect("tempdir");

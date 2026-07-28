@@ -83,6 +83,31 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
     print_repair_outcome(&args, &config, outcome)
 }
 
+/// Convert 1-based `--fingerprint-gap` numbers (the repair gap table's `#`) into the 0-based
+/// positions in `GapReport.gaps` that `characterize_gaps_from_decode` expects.
+///
+/// This is the only base conversion for the flag: everything downstream — `select`,
+/// `GapFingerprint::index`, the `g{:03}` filename segment — stays 0-based. `0` is rejected explicitly
+/// because `n - 1` would underflow a `usize` rather than fail.
+#[cfg(feature = "calibration")]
+fn resolve_fingerprint_gap_select(
+    gap_numbers: &[usize],
+    gap_count: usize,
+) -> Result<Vec<usize>, RepairError> {
+    gap_numbers
+        .iter()
+        .map(|&n| match n {
+            0 => Err(RepairError::Config(
+                "gap index 0 is invalid (gap indices are 1-based)".to_string(),
+            )),
+            n if n > gap_count => Err(RepairError::Config(format!(
+                "gap index {n} out of range ({gap_count} gaps detected)"
+            ))),
+            n => Ok(n - 1),
+        })
+        .collect()
+}
+
 /// Diagnostic: decode A/B (shared `decode_ab`), characterize each gap, and write a licensing-safe
 /// corpus directory (`corpus.json` + per-gap files + `manifest.json`). Gaps named via
 /// `--fingerprint-gap` get full detail (per-bracket gate `failure_stage` + lag); the rest summary.
@@ -95,6 +120,7 @@ fn dump_gap_fingerprints(
     dir: &std::path::Path,
 ) -> Result<(), RepairError> {
     progress.phase("characterizing gaps for fingerprinting");
+    let select = resolve_fingerprint_gap_select(&args.fingerprint_gap, report.gaps.len())?;
     let media_reader = SymphoniaMediaReader;
     let decoded = decode_ab(&media_reader, report, progress)?;
     let request = config.repair.patch_settings().into_request(report.clone());
@@ -131,7 +157,7 @@ fn dump_gap_fingerprints(
         &decoded.a_pcm,
         &decoded.b_samples_full,
         &request,
-        &args.fingerprint_gap,
+        &select,
         config.repair.fingerprint_diagnostics,
         progress,
     );
@@ -309,4 +335,45 @@ fn print_repair_outcome(
     )?;
 
     outcome.patch_result.map(|_| ())
+}
+
+#[cfg(all(test, feature = "calibration"))]
+mod tests {
+    use super::resolve_fingerprint_gap_select;
+    use crate::domain::RepairError;
+
+    fn message(err: RepairError) -> String {
+        match err {
+            RepairError::Config(msg) => msg,
+            other => panic!("expected a config error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fingerprint_gap_numbers_convert_to_zero_based_positions() {
+        // `--fingerprint-gap 3` is the table's `#3`, i.e. `report.gaps[2]` — and the corpus file it
+        // writes is `..._g002_....json`. Order is preserved; nothing is deduplicated here.
+        assert_eq!(
+            resolve_fingerprint_gap_select(&[3, 1, 6], 6).expect("in range"),
+            vec![2, 0, 5]
+        );
+        assert_eq!(
+            resolve_fingerprint_gap_select(&[], 6).expect("empty selects all downstream"),
+            Vec::<usize>::new()
+        );
+    }
+
+    #[test]
+    fn fingerprint_gap_zero_is_rejected_rather_than_underflowing() {
+        let err = message(resolve_fingerprint_gap_select(&[1, 0], 6).expect_err("0 is invalid"));
+        assert_eq!(err, "gap index 0 is invalid (gap indices are 1-based)");
+    }
+
+    #[test]
+    fn fingerprint_gap_out_of_range_names_the_detected_count() {
+        let err = message(resolve_fingerprint_gap_select(&[7], 6).expect_err("out of range"));
+        assert_eq!(err, "gap index 7 out of range (6 gaps detected)");
+        // The last valid number is the gap count itself, not `count - 1`.
+        assert_eq!(resolve_fingerprint_gap_select(&[6], 6).expect("in range"), vec![5]);
+    }
 }

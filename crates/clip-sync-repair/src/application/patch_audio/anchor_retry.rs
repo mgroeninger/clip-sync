@@ -35,8 +35,7 @@ pub(super) fn build_patch_anchor_candidates(
     regions
         .iter()
         .zip(region_results.iter())
-        .enumerate()
-        .filter_map(|(gap_index, (region, (_, outcome, _)))| {
+        .filter_map(|(region, (gap_index, outcome, _))| {
             let RegionPatchOutcome::Patched {
                 pre_correlation,
                 post_correlation,
@@ -58,7 +57,7 @@ pub(super) fn build_patch_anchor_candidates(
             )
             .unwrap_or(region.b_start_secs - region.a_start_secs);
             Some(PatchAnchorCandidate {
-                gap_index,
+                gap_index: *gap_index,
                 a_start_secs: region.a_start_secs,
                 a_end_secs: region.a_end_secs,
                 base_gap_offset_secs,
@@ -161,7 +160,7 @@ pub(super) fn run_anchored_retry_pass(
 
     for index in retry_indices {
         let region = &regions[index];
-        let gap_num = index + 1;
+        let region_num = index + 1;
         let prior = &state.region_results[index].1;
         let retry_label = if matches!(
             prior,
@@ -175,12 +174,14 @@ pub(super) fn run_anchored_retry_pass(
             "retry"
         };
         progress.phase_verbose(&format!(
-            "  anchored {retry_label} gap {gap_num}: A {}",
+            "  anchored {retry_label} gap #{}: A {}",
+            region.gap_index + 1,
             format_time_range_verbose(region.a_start_secs, region.a_end_secs)
         ));
         let gap_span = tracing::info_span!(
             "patch_gap",
-            gap_index = gap_num,
+            region_index = region_num as u64,
+            gap_index = region.gap_index,
             region_count = regions.len() as u64,
             a_start_secs = region.a_start_secs,
             a_end_secs = region.a_end_secs,

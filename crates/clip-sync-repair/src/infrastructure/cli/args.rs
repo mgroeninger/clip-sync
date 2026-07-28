@@ -30,9 +30,11 @@ pub struct Args {
     #[arg(long, value_name = "DIR")]
     pub gap_fingerprints: Option<PathBuf>,
 
-    /// Gap index (repeatable). When given, characterize ONLY these gaps; omit to characterize ALL
-    /// gaps. Each characterized gap gets full detail (per-bracket scores + lag). Use the normal repair
-    /// gap table to pick which gaps are worth characterizing. Only meaningful with --gap-fingerprints.
+    /// Gap number (repeatable), 1-based as shown in the repair gap table's `#` column. When given,
+    /// characterize ONLY these gaps; omit to characterize ALL gaps. Each characterized gap gets full
+    /// detail (per-bracket scores + lag). Only meaningful with --gap-fingerprints. Note the emitted
+    /// corpus stays 0-based: `--fingerprint-gap 3` writes `..._g002_....json`; locate files by the
+    /// A-timeline timestamp in the name rather than by counting.
     #[cfg(feature = "calibration")]
     #[arg(long, value_name = "IDX")]
     pub fingerprint_gap: Vec<usize>,

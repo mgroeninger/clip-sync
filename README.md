@@ -180,7 +180,7 @@ clip-sync-repair [OPTIONS] <VIDEO_A> <VIDEO_B>
 | `--no-dual-fit` | — | Disable dual-fit rescue (G6); bracket-only skip path for regression (D6) |
 | `--dual-fit` | on | Re-enable dual-fit after TOML/override; default is on — omit both flags for normal repair |
 | `--gap-fingerprints <DIR>` | — | After repair, write licensing-safe gap-fingerprint corpus (`corpus.json`, per-gap JSON, `manifest.json`) |
-| `--fingerprint-gap <IDX>` | — | Repeatable; full characterization for listed gaps only (**requires** `--gap-fingerprints`) |
+| `--fingerprint-gap <N>` | — | Repeatable; full characterization for the listed gaps only. `N` is **1-based**, as shown in the gap table's `#` column (**requires** `--gap-fingerprints`) |
 | `--fingerprint-diagnostics` | off | Include Tier-3 fingerprint fields (`seam_probe`, `wide_envelope`, diagnostic `lag`, `b_levels`); **requires** `--gap-fingerprints` |
 | `--no-structure-trust` | — | Stricter seams (gate only): always run waveform Pearson; no structure skip/soften; both seams required |
 | `--min-fill-correlation <N>` | `0.35` | Waveform seam floor (`min(pre, post)` in fit; gate threshold when waveform runs) |

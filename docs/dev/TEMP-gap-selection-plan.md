@@ -2,11 +2,33 @@
 
 Status: **not started**.
 
+### Readiness (2026-07-28)
+
+| Phase | Ready? | Gated on |
+|-------|--------|----------|
+| **§0 prep PR** | **Yes — implement now.** All file/line references source-audited; no open decision touches it | — |
+| **v1** | Yes, once §0 merges — *except* one scope split | §12.3 (JSON scan params: a `GapReport` change with a golden revision, independent of selection — **split into its own PR**); §12.11 (JSON document on a selection error) |
+| **v1.5** | No | §12.4 (range ε), §12.7 (containment: full enclosure vs overlap) — both want a real corpus case first |
+| **v2** | No | Depends on v1.5 |
+
+Nothing else in §12 is open: 1, 2, 5, 6, 8, 9, 10 are settled and recorded with reasons.
+
 Refreshed **2026-07-27** against current source (M-GAPKEY, gap equivalence,
 `PatchRequestSettings`, repair-preview, two-pass characterize/execute).
 Wiring / validation / index-base sections corrected **2026-07-28** after a source audit
 (§5.2, §5.4, §5.6, §4, §12) — the earlier draft named a `build_gap_fill_plan` call site that
-does not exist and left index validation homeless.
+does not exist and left index validation homeless. A second audit pass the same day corrected the
+§5.6 blast radius (overstated — one edit, not four crates), named the §5.5 emission site, and added
+the §3 error-ordering caveat.
+
+**§0 prep PR added 2026-07-28** — a gap-index convention (plus one live defect fix) that must merge
+before v1. It absorbs the index-base and progress/span work formerly scoped into v1.
+Its file:line references were re-verified against source **2026-07-28** (third pass): all land; the
+pass corrected the `mod.rs:218`→`:285` arm, added the path-prefix convention, recorded the second
+`--fingerprint-gap` consumer, and retired the json-output changelog item (field is undocumented).
+
+**§2.1 added 2026-07-28** — selection tokens are identities, never counts. Settled ahead of v1.5
+because containment tokens would otherwise make integers ambiguous inside a mixed list.
 
 Companions: [pipeline.md](../pipeline.md) § Orchestration / Fill plan,
 [gap-fill-modes.md](../gap-fill-modes.md), [gap-repair-guide.md](../gap-repair-guide.md),
@@ -18,6 +40,194 @@ Motivating use case: after a full repair run, the user wants to **patch only som
 inputs. Today every fillable (and non-equivalent) gap in the scan report enters
 `GapFillPlan.regions`; there is no way to exclude gaps that are planned but should be left
 untouched on A for this invocation.
+
+---
+
+## 0. Prep PR: gap-index convention (land before v1)
+
+Status: **not started**. Prerequisite — merge before selection work begins.
+
+**Path convention in this section:** unqualified paths are relative to `crates/clip-sync-repair/src/`
+(so `composition.rs` means `crates/clip-sync-repair/src/composition.rs`, **not** the same-named file in
+`clip-sync-cli`); `tests/` is `crates/clip-sync-repair/tests/`. Line numbers re-verified 2026-07-28.
+
+**Why separate.** Selection adds a fifth reason for `plan.regions` to be shorter than `report.gaps`,
+which is the exact condition under which the existing gap-index defects become visible. Landing the
+convention first keeps two mechanical renames and one value fix out of the selection diff, where a
+reviewer could not distinguish a rename from a behavior change.
+
+### 0.1 The rule
+
+> **Data is 0-based and positional; only rendered text and CLI arguments are 1-based.**
+> A gap's identity is always its position in `GapReport.gaps`, named `gap_index`. Anything indexing
+> `plan.regions` is named `region_*` and is never called a gap. Identity and progress counts are
+> never printed as one token.
+
+### 0.2 Current state (source audit, 2026-07-28)
+
+The codebase already follows the data/display split almost everywhere. This is a repair of two
+defects, not a redesign.
+
+| Surface | Base | Status |
+|---------|------|--------|
+| Table `#` column (`cli/output.rs:838`) | 1 | ✅ `i + 1` at the boundary |
+| `(review gap #N)` (`cli/output.rs:331-339`, rendered `:360-363`) | 1 | ✅ `i + 1` |
+| `skipped … (gap #N at …)` (`cli/output.rs:409`, rendered `:423`) | 1 | ✅ `i + 1` |
+| Skip-fill log line (`patch_audio/log.rs:151`) | 1 | ✅ `gap_index + 1` |
+| JSON | — | ✅ no gap-number field exists; pure array position |
+| Internal structs / maps (`FillRegion`, `GapFillSkipped`, `GapFingerprint::index`, `GapRepairSpec`) | 0 | ✅ uniform |
+| `--fingerprint-gap` | 0 | ❌ **defect 2** — the only user-facing gap number not on the table's base |
+| `PatchOffsetAnchor::source_gap_index` | 1-rendered | ❌ **defect 1** — wrong *axis*, not wrong base |
+
+**An all-0-based flip was considered and rejected.** It would change five correct display sites to
+fix two broken ones, silently re-point every historical `gap #N` in the analysis notes and archived
+TEMP docs by one, and would not remove the conversion boundary anyway: progress counts must run
+`1..M` (`gap 0/6` first and `5/6` last is worse), so both bases would still meet on the same line —
+just unlabeled. The footgun is the bare, axis-ambiguous number, which §0.3 D fixes directly.
+
+### 0.3 Required changes
+
+#### A. Fix the axis defect — `source_gap_index` names the wrong gap
+
+`build_patch_anchor_candidates` (`application/patch_audio/anchor_retry.rs:35-39`) enumerates
+`regions.iter().zip(region_results.iter())` and binds the **enumerate ordinal** to a variable named
+`gap_index`, while discarding `region_results.0` — which *is* the report index (populated from
+`region.gap_index` at `patch_audio/mod.rs:285`, the execute arm; the preview arm at `:218` does the
+same but never reaches anchored retry):
+
+```rust
+.filter_map(|(gap_index, (region, (_, outcome, _)))| {
+//             ^^^^^^^^^ region ordinal, misnamed
+//                                    ^ the real report index, discarded
+```
+
+That ordinal flows to `PatchAnchorCandidate::gap_index` → `PatchOffsetAnchor::source_gap_index`
+(`domain/patch_anchor.rs:77`), which is rendered as a report number and serialized.
+
+- **Fix:** take the report index from `region_results.0` (equivalently `region.gap_index` — the same
+  value by construction); the enumerate ordinal has no remaining use in that closure.
+- **Failure today:** the value undercounts by the number of gaps plan-skipped at or before the
+  anchor — always low, never high. With 6 gaps where `#2` is unfillable and `#5` is outside
+  coverage, anchors from report `#3`/`#6` print as `gap #2, gap #4`. The tell: `#2` is the
+  *unfillable* gap, which the same stdout reports as `not planned: not fillable` a few lines above —
+  it was never attempted and cannot be an anchor donor.
+- **Trigger:** any plan-time skip (`NotFillable`, `OutsideReferenceCoverage`,
+  `AlreadyMatchesReference`, and after v1 `GapNotSelected`). With `skip_equivalent_gaps` on by
+  default this fires routinely.
+- **Not a repair-correctness bug.** Anchor math uses `a_secs` / `offset_secs` / `weight` only; every
+  consumer of `source_gap_index` is a label or JSON (`patch_anchor.rs:247`, `:297` → `:331`, serde
+  `PatchAnchorReport`). Offsets applied to media are unaffected.
+- Update the doc comment on `PatchAnchorCandidate::gap_index` (`patch_anchor.rs:47`) to state it is a
+  **report** index. The field name is correct *after* the fix and does not change.
+- **Fingerprint system is not affected** — `PatchAnchorTable` / `PatchOffsetAnchor` appear nowhere in
+  `application/gap_fingerprint/`, and the dump path never runs pass-2 anchored retry. Note the noun
+  collision: "anchor" there means an *editorial seam* anchor (`domain::gap_anchor_seam::AnchorSource`,
+  `AnchorSet`, anchor brackets) — an unrelated type on an unrelated axis.
+- **JSON:** value correction on an existing field, no schema change. `PatchOffsetAnchor` derives
+  `Serialize` and is exported as `PatchSummary::patch_anchors_used` (`patch_result.rs:374`), but
+  **[json-output.md](../json-output.md) does not document that field today** and no golden JSON
+  contains it (verified 2026-07-28). So there is no changelog entry to write: the value fix is
+  invisible to the documented contract. Documenting `patch_anchors_used` is a separate, optional task.
+
+#### B. Retire the `gap_index` name collision
+
+| Site | Now | After |
+|------|-----|-------|
+| `patch_audio/mod.rs:181,245` | `let gap_num = index as u64 + 1` | `let region_num = index as u64 + 1` (stays `u64` — feeds `progress`) |
+| `patch_audio/anchor_retry.rs:164` | `let gap_num = index + 1` | `let region_num = index + 1` (`usize` here, unlike `mod.rs`) |
+| `patch_audio/mod.rs:249` span | `gap_index = gap_num` | `region_index = region_num`, **plus** `gap_index = region.gap_index` (0-based report) |
+| `patch_audio/anchor_retry.rs:183` span | `gap_index = gap_num` | same as above |
+
+Both `patch_gap` spans change together — leaving one behind means a single span name carrying two
+definitions of `gap_index`, which is worse than the status quo. The rename is a *loud* break (log
+queries stop matching and the operator investigates); silently redefining the field would be a quiet
+one.
+
+#### C. `--fingerprint-gap` → 1-based
+
+The flag's own doc comment already tells users to pick from the repair gap table, and that table is
+1-based; today it is consumed 0-based via `select.contains(i)` against `enumerate()` over
+`report.gaps` (`gap_fingerprint/measure.rs:2296,2317`).
+
+- Convert at the boundary in `composition.rs:134` (`dump_gap_fingerprints`); the internal `select`
+  slice stays 0-based.
+- **Reject `0` explicitly** — subtracting 1 from a `usize` underflows. Same message shape as the v1
+  selection validator: `gap index 0 is invalid (gap indices are 1-based)`. Range-check against
+  `report.gaps.len()` too; the report is in scope at that call site (fn param, `composition.rs:93`).
+- **Both checks go at `composition.rs:134`, deliberately — not split.** A second consumer of the flag
+  exists: `validate_fingerprint_flags` (`infrastructure/cli/mod.rs:262-278`) already returns
+  `Result<(), String>` and runs pre-scan, so it *could* host the `0` check and fail before decode.
+  It does not, because splitting them puts two "invalid gap number" messages in two files with only
+  one able to name the gap count. One validator, one message shape. Leave
+  `validate_fingerprint_flags` asserting only flag co-dependence.
+- Doc comment (`cli/args.rs:38`) → "1-based, as shown in the gap table". Update
+  [gap-fingerprint.md](gap-fingerprint.md), [cli-output.md](../cli-output.md), and `README.md`.
+- **Corpus emission is unchanged:** `GapFingerprint::index` and the per-gap filename `g{:03}`
+  (`measure.rs:2407`) stay 0-based array positions. No golden churn, no invalidation of existing
+  corpus dirs, `equivalence-calibration` / `gap-fingerprint-stats` joins keep working.
+- The resulting `--fingerprint-gap 3` → `…_g002_….json` asymmetry is documented, not fixed: the
+  filename already carries the A-timeline timestamp (`…_t01-42-08_g002_…`, `measure.rs:2387,2407`),
+  so files are located by time — which is the stable handle §2 recommends anyway — not by counting.
+
+#### D. Never print identity and count as one token
+
+```text
+  gap 4/6: A 1:42:08 – 1:46:00        # now — is 4 a gap or a position? is 6 gaps or regions?
+  gap #4 (3 of 6 planned): A 1:42:08 – 1:46:00     # after
+```
+
+- Identity is `#`-prefixed and always the report position (`region.gap_index + 1`).
+- Counts are spelled `N of M` and always describe *work* (loop ordinal over planned region count).
+- `progress(...)` bar calls (`mod.rs:183,246`) are pure work counters — **unchanged**, and they keep
+  `region_count` as denominator so the bar never stalls or jumps.
+
+**The `N/M` shape is already overloaded today — this is not a selection-induced problem.** Two sites
+print it with **different meanings for `M`**:
+
+| Site | Now | `M` means | After |
+|------|-----|-----------|-------|
+| `patch_audio/mod.rs:185` | `gap 4/6: A …` | planned region count | `gap #4 (3 of 6 planned): A …` |
+| `patch_audio/anchor_retry.rs:178` | `anchored retry gap 4: A …` | — (identity only, no `/M`) | `anchored retry gap #4: A …` |
+| `patch_audio/log.rs:150` | `gap 2/2 (…): <reason>` | **report total** — identity over total, not a count | `gap #2 (…): <reason>` |
+
+`log.rs:150` is the one that proves the rule is needed: it looks like a progress count and is not one.
+Drop `/total` there entirely — a skip warning gains nothing from the detected-gap total, and removing
+it also retires the out-of-range fallback branch (`log.rs:148,153-155`) that exists only to avoid
+mislabelling `M`.
+
+Churn: the `format_skip_gap_fill_log` doc comment (`log.rs:135-138`) and one exact-string assertion,
+`skip_gap_fill_log_matches_stdout_gap_number` (`log.rs:301-331`, expects `"gap 2/2 (1:42:08 –
+1:46:00): structure alignment failed"`). No other test asserts these strings — audited 2026-07-28.
+
+This is what makes the convention self-enforcing: a new call site cannot blend the two, and an
+operator cannot misread which is which.
+
+### 0.4 Explicitly unchanged
+
+- All internal indices stay 0-based; all human display stays 1-based with `#`.
+- No JSON schema change; no golden JSON revision (`source_gap_index` is a value fix on an existing
+  field).
+- `GapFingerprint::index`, corpus filenames, `gap_equivalence` array parallelism: untouched.
+- `PatchAnchorCandidate::gap_index` keeps its name — it becomes accurate rather than misleading.
+
+### 0.5 Tests
+
+| Case | Assert |
+|------|--------|
+| Anchor donor after a plan-time skip | `summary.gaps[anchor.source_gap_index]` is `Patched`, and the rendered `gap #N` equals that gap's table `#`. **This is the regression guard** — `tests/patch_audio_integration.rs:538-549` passes today only because its fixture plans every gap, so ordinal and report index coincide; it also indexes report-ordered `summary.gaps` with the ordinal, encoding the same conflation |
+| `--fingerprint-gap 0` | Error, no underflow |
+| `--fingerprint-gap N` out of range | Error naming the detected gap count |
+| `--fingerprint-gap N` (valid) | Selects the same gap the table shows as `#N`; emitted corpus `index` is `N - 1` |
+| Verbose patch line | Matches `gap #<report> (<k> of <planned> planned)`; progress-bar args unchanged |
+| Skip warn line | `format_skip_gap_fill_log` → `gap #<report> (<range>): <reason>`; update `skip_gap_fill_log_matches_stdout_gap_number` (`log.rs:301`) and confirm the out-of-range branch is gone |
+| Span fields | `region_index` (ordinal) and `gap_index` (0-based report) both present on both `patch_gap` spans |
+
+### 0.6 What this removes from v1
+
+Landing §0 first collapses several open threads in this plan: §5.4's span rename/redefinition
+negotiation and its numerator/denominator rule table, §4's `--fingerprint-gap` reconciliation and its
+0-token hazard, and §6's "deliberate dual meaning" note on `PatchAnchorCandidate::gap_index`. After
+§0, selection only has to say *which* gaps enter `regions` — never how a gap is numbered.
 
 ---
 
@@ -52,6 +262,46 @@ stability without pretending indices are global IDs.
   `video_a_start_secs` / `video_a_end_secs`) and use a **range token** (v1.5), not a remembered `#`.
 - Do **not** silently remap old indices onto a new scan.
 
+### 2.1 Selection tokens are **identities**, never counts — settled 2026-07-28
+
+This is the same distinction §0.3 D draws in output, applied to input. In output, `#4` is a label and
+`3 of 6 planned` is a count. On input, **`--only-gaps` / `--skip-gaps` take labels only.**
+
+> **Every token names a gap. No token is a position within a derived subset.**
+> Each token resolves independently against the whole `GapReport.gaps` as printed by this run;
+> the results are **unioned**. A token can never narrow the resolution domain of another token.
+
+`--only-gaps 4` means "the gap the table calls #4". It does **not** mean the 4th fillable gap, the 4th
+gap in some window, the 4th planned region, or the 4th of those already selected.
+
+**Consequences (all v1, all testable):**
+
+| Property | Because |
+|----------|---------|
+| Order-insensitive: `5,2` ≡ `2,5` | A set of labels has no sequence |
+| Duplicates are typos → **error**, not "twice" | Naming the same gap twice cannot mean anything under an identity reading. Settles §12.2 |
+| Mixed token kinds compose by **union**, never as a pipeline | `--only-gaps 2,1:42:00..1:50:00` = `{#2} ∪ {gaps in window}`, resolved against the same report |
+| `--skip-gaps` = report set **minus** the union | Same resolution domain as `--only-gaps`; the two differ only in polarity |
+| Validation is `1 ≤ n ≤ report.gaps.len()` | Bounds come from the report, never from a filtered count |
+| `GapSelection` is a `HashSet<usize>` (§5.1) | The data structure already commits: no order, no multiplicity |
+
+**Why this must be settled before v1.5.** The containment token `START..END` turns an interval into a
+*set of gaps* — which creates a second enumeration and, under a count reading, a second meaning for
+integers. `--only-gaps 1:42:00..1:50:00,2` would become ambiguous: gap #2, or the 2nd gap inside the
+window? The identity rule kills the question before it is asked, and it kills it in exactly the same
+way §7.1 keeps a hypothetical `--scan-window` from competing with selection: **there is one gap list,
+the report, and every handle points into it.**
+
+**Deliberate non-capability:** there is no way to say "the Nth gap of a subset", in v1 or v1.5. If that
+is ever wanted, it needs its own syntax and its own justification — not a reinterpretation of integers.
+
+**Stability is a separate axis from identity.** Both token kinds are identities; they differ in how long
+they stay valid. Index tokens are **run-scoped** labels (invalidated by a scan-recipe change, §2 table);
+range tokens are **recipe-stable** identities. Neither is ever a count.
+
+**Vocabulary:** user-facing docs and error messages say *gap number* (matching the `#` column), not
+"gap index". Reserve "index" for the 0-based internal `gap_index` (§5.1).
+
 **Scan params echo (v1):** JSON `GapScanJson` today carries `scan_block_ms` and
 `silence_peak_fraction` but not `min_gap_ms`, `silence_hold_ms`, or `absolute_silence_rms`.
 Those knobs live on `RepairConfig` and are used by `ScanGaps`, but are **not** stored on
@@ -79,6 +329,16 @@ an empty result means the **user's own arguments** selected nothing patchable �
 is indistinguishable from "worked". So: selection-caused emptiness errors (`RepairError::Config`,
 exit **2**), everything else keeps the existing `Ok` + phase-line behavior. This check lives in the
 post-scan resolve step (§5.6), *before* the plan is built, so the error mentions the selection, not the plan.
+
+**Ordering caveat — the report still prints first.** "Before patch/preview" is true of the *plan*, not
+of stdout. The resolve error lands in `RepairRunOutcome::patch_result`, and `print_repair_outcome`
+(`composition.rs:265-311`) prints the full report — including a complete JSON document under
+`--format json` — and only then returns the error. So the user sees a normal-looking scan report,
+then the error, then exit 2. That is acceptable for the human format (the table is genuinely useful
+context for fixing the selection) but questionable for JSON, where a well-formed success document
+accompanied by a nonzero exit invites scripts to parse it and proceed. **Open:** suppress the JSON
+document on a selection error, or leave it and document that JSON consumers must check the exit code.
+Recommend suppressing — see §12.11.
 
 **Status column (write / preview):** unselected gaps that would otherwise be repairable show
 `not planned: gap not selected` (machine: `gap_not_selected`).
@@ -119,29 +379,26 @@ see §12.6.
 TOML numbers are also accepted for ergonomics (`only_gaps = [2, 4, 5]`) via a serde-untagged
 `GapSelectorToken { Index(usize), Token(String) }` if that proves cheap; the string form is normative.
 
-### Index parsing
+### Token parsing
+
+Tokens are **gap numbers** (labels), not positions in a filtered list — §2.1.
 
 - Comma-separated positive integers: `3`, `2,4,5`, ` 2 , 4 `.
-- Validate: `1 ≤ index ≤ report.gaps.len()`; duplicate tokens → **error** (see §12).
-- Out-of-range → fail fast with: `gap index 7 out of range (6 gaps detected)`.
+- Validate: `1 ≤ n ≤ report.gaps.len()`; duplicate tokens → **error** (§2.1, §12.2).
+- Out-of-range → fail fast with: `gap number 7 out of range (6 gaps detected)`.
+- `0` → `gap number 0 is invalid (gap numbers are 1-based)` — same message shape as §0.3 C.
+- Resolution is order-insensitive and unions across tokens.
 - Empty list is **not** the same as absent: `only_gaps = []` (or `--only-gaps ""`) resolves to
   "nothing selected" → the §3 empty-selection error. Absent / `None` → `GapSelectionMode::All`.
 
-### Index base: 1-based, and `--fingerprint-gap` must be reconciled
+### Index base: 1-based
 
-`--only-gaps` is **1-based** (matches the stdout `#` column, `output.rs` `"  #{:<3} …"`).
+`--only-gaps` is **1-based** (matches the stdout `#` column, `output.rs:838`), per the §0.1 rule:
+data is 0-based and positional, CLI arguments and rendered text are 1-based.
 
-The existing calibration flag `--fingerprint-gap` (`cli/args.rs`) is **0-based** — it is consumed as
-`select.contains(i)` against the 0-based `enumerate()` index in
-`gap_fingerprint/measure.rs::characterize_gaps` — even though its own doc comment tells the user to
-"use the normal repair gap table to pick which gaps", and that table is 1-based. So today
-`--fingerprint-gap 3` and the proposed `--only-gaps 3` would name **different gaps**.
-
-**Decision (v1, same PR):** make `--fingerprint-gap` 1-based so every user-facing gap index in the
-tool means the table `#`. It is a calibration-only flag behind the `calibration` feature with no
-golden-output dependency, so the change is cheap; convert at the boundary in `composition.rs`
-(`dump_gap_fingerprints`) rather than inside `characterize_gaps`, keeping the internal `select` slice
-0-based. Update the flag's doc comment to say "1-based, as shown in the gap table".
+Reconciling `--fingerprint-gap` (0-based today) moved to the **§0.3 C prep PR**, together with the
+`0`-token underflow hazard its conversion introduces. By the time v1 lands, every user-facing gap
+number in the tool already means the table `#`.
 
 ### v1.5 extension (same flag, mixed tokens)
 
@@ -316,49 +573,21 @@ gap_num = index + 1   # region ordinal, not report #
 for `progress("patch-characterize" | "patch-gap", …)`, verbose `gap N/M: A …` lines, and the
 tracing span field `gap_index`.
 
-**Fix (v1, same PR):** use `region.gap_index + 1` as the displayed / spanned report `#`.
-
-Recommended verbose shape:
+**Fixed by the §0 prep PR, not by v1.** §0.3 B renames the ordinal (`gap_num` → `region_num`, span
+`gap_index` → `region_index` on both `patch_gap` spans, plus a real `gap_index = region.gap_index`),
+and §0.3 D splits identity from count in the verbose text:
 
 ```text
-gap 4/6 (1:42:08 – 1:46:00): …   # report gap 4 of 6 detected
+gap #4 (3 of 6 planned): A 1:42:08 – 1:46:00
 ```
 
-**Numerator and denominator come from different sources — today they share one variable.** Both loops
-currently derive `gap_num` and the `N/M` denominator from the same `region_count` (`plan.regions.len()`).
-Under selection that produces nonsense like `gap 4/2`. The rule:
+Identity is the report `#`; the count describes *work* (loop ordinal over planned region count), so
+the progress bar and the verbose line no longer disagree and the old `gap 4/2` hazard cannot occur.
+`progress("patch-characterize" / "patch-gap", …)` args and the `Aligning N fill region(s)` phase line
+are unchanged.
 
-| Surface | Numerator | Denominator |
-|---------|-----------|-------------|
-| Verbose `gap N/M: A …` | `region.gap_index + 1` (report `#`) | `report.gaps.len()` (**new** — not `region_count`) |
-| `progress("patch-characterize" / "patch-gap", …)` bar | loop ordinal `index + 1` (**unchanged**) | `region_count` (**unchanged**) |
-| Phase line `Aligning N fill region(s)` | — | planned count (**unchanged**) |
-
-The progress bar must keep counting *work*, not report positions, or it stalls and jumps under selection.
-Only the verbose text switches to report identity, so the two must stop sharing `region_count`.
-
-**Do not repurpose the `patch_gap` span field `gap_index`.** It is currently emitted as the region
-ordinal (`gap_index = gap_num`). Silently changing its meaning breaks any log query keyed on it while
-the field name and type stay identical — the worst kind of break. Instead:
-
-```rust
-tracing::info_span!(
-    "patch_gap",
-    region_index = gap_num,              // renamed: was `gap_index`, same value
-    gap_index = region.gap_index,        // NEW: 0-based report index, matches FillRegion::gap_index
-    report_gap_num = region.gap_index + 1, // report `#` as displayed
-    region_count,
-    …
-)
-```
-
-A rename is a loud break (queries stop matching and the operator investigates); a redefinition is a
-quiet one. If a rename is judged too disruptive, the fallback is to leave `gap_index` alone and add
-only `report_gap_num` — but then note in the span docs that `gap_index` is a region ordinal, since
-that contradicts `FillRegion::gap_index`.
-
-- Do **not** change `PatchAnchorCandidate::gap_index` — that remains a **region** index into
-  `plan.regions` (deliberate dual meaning; see §6).
+**v1 owes nothing here** beyond not regressing it: selection changes which gaps reach `regions`, and
+the display already reports report identity correctly once §0 lands.
 
 ### 5.5 `repairable_count` / scan followup
 
@@ -369,6 +598,12 @@ selection active:
 ```text
 Gap filter: patching 3 of 6 detected gaps (only-gaps: 2,4,5)
 ```
+
+**Emission site:** `run_repair.rs`, immediately after `resolve_gap_selection` succeeds (§5.6) — the
+`progress` handle is already in scope there. Use `progress.phase(...)`, matching the sibling
+`format_scan_fillable_followup` line (`scan_gaps.rs:317-318`): this is an unconditional stderr note,
+not `phase_verbose`. Build the string in `domain/gap_fill.rs` next to that sibling formatter so both
+scan-followup lines live together.
 
 Do not change scan-only `repairable_count` semantics.
 
@@ -414,17 +649,18 @@ earlier and twice: clap `conflicts_with` for the CLI, and `RepairConfig::validat
 (clap cannot see config-file keys). Range/count validation **cannot** live in `validate` — it runs
 pre-scan, where `report.gaps.len()` does not exist yet.
 
-**Blast radius.** `PatchRequestSettings` gains a field, so every literal construction needs it — four
-outside this crate's own module tests:
+**Blast radius is smaller than it looks — corrected 2026-07-28 by source audit.** Adding a field to
+`PatchRequestSettings` costs **one edit**: `RepairConfig::patch_settings()` (`infrastructure/config.rs:610`).
+Nothing else constructs one exhaustively. Both literals in the workspace end in a spread seed —
+`..RepairConfig::default().patch_settings()` (`clip-sync-repair-harness/src/patch_audio.rs:280`,
+`tests/query_reference_integration.rs:174`, both by deliberate design of the config-bundles refactor) —
+and the fixtures crates never build a literal at all; they call `patch_settings()` and attach a report
+(`energy_signature_production.rs:248`, `gap_corpus_fixtures.rs:818`, `fingerprint_corpus_fixtures.rs:136`).
+A new field is inherited everywhere.
 
-- `crates/clip-sync-repair-harness/src/patch_audio.rs`
-- `crates/clip-sync-repair-fixtures/src/gap_corpus_fixtures.rs`
-- `crates/clip-sync-repair-fixtures/src/energy_signature_production.rs` (`patch_request_from_repair`)
-- `crates/clip-sync-repair/tests/query_reference_integration.rs`
-
-plus `build_gap_fill_plan`'s new parameter at ~11 call sites (9 in `domain/gap_fill.rs` tests, 2 in
-`tests/query_reference_integration.rs`). All mechanical (`GapSelectionMode::All` / `GapSelection::all(n)`),
-but it spans four crates — budget for it.
+The real cost is `build_gap_fill_plan`'s new parameter: ~11 call sites (9 in `domain/gap_fill.rs` tests,
+2 in `tests/query_reference_integration.rs`) plus the production caller. All mechanical
+(`GapSelection::all(n)`), single-crate, no cross-crate sweep.
 
 **Diagnostic path is unaffected.** `dump_gap_fingerprints` (`composition.rs`) builds a
 `PatchAudioRequest` but never calls `build_gap_fill_plan` — it goes through
@@ -438,16 +674,17 @@ intents (which gaps to *patch* vs which to *characterize*), and §4 already reco
 
 ### `anchored_retry`
 
-`build_patch_anchor_candidates` still uses `gap_index` as **index into `plan.regions`**, not
-report `#` (`patch_audio/anchor_retry.rs`). That is unrelated to `FillRegion::gap_index` (report
-index). Pass-2 retry only sees gaps that were **planned and attempted** in pass 1.
+After the §0 prep PR, `PatchAnchorCandidate::gap_index` and `PatchOffsetAnchor::source_gap_index` are
+**report** indices (§0.3 A fixes the ordinal that was flowing there); the region ordinal is renamed
+`region_num`. Pass-2 retry still only sees gaps that were **planned and attempted** in pass 1, so
+selection narrows the donor pool.
 
 | Scenario | Behavior |
 |----------|----------|
 | Excluded gap was a strong anchor donor in a prior full run | Not available in this run; pass 2 may recover fewer gaps — **document**. |
 | User excludes gap that would have been retried | Expected; no special case. |
 
-No v1 change to anchor table indexing; optional v2 note if we expose anchor donor by report `#`.
+No v1 change to anchor table indexing — §0 already put it on the report axis.
 
 ### Scan-only
 
@@ -558,7 +795,8 @@ scan, so `--only-gaps` does not spare that cost. The lever for *that* is the v2 
 
 | Phase | Scope |
 |-------|-------|
-| **v1** | `--only-gaps` / `--skip-gaps` (indices only, string-typed tokens); `GapNotSelected`; report `#` on remaining progress/span sites; `--fingerprint-gap` → 1-based; scan params in JSON; user docs; repair-preview applies selection |
+| **§0 prep** | Gap-index convention: `source_gap_index` axis fix; `gap_num`/span renames; `--fingerprint-gap` → 1-based; identity-vs-count display split. **Merge before v1** |
+| **v1** | `--only-gaps` / `--skip-gaps` (indices only, string-typed tokens); `GapNotSelected`; scan params in JSON; user docs; repair-preview applies selection |
 | **v1.5** | Mixed tokens on same flags: `START-END` identity + `START..END` containment; range parser, strict-match and containment tests |
 | **v2** | `--gaps-from` manifest; optional scan-param mismatch error when manifest embeds scan recipe |
 
@@ -590,7 +828,21 @@ Accept full `RepairJsonOutput` as a convenience alias.
 
 ---
 
-## 10. Implementation checklist (v1)
+## 10. Implementation checklist
+
+### §0 prep PR (merge first)
+
+- [ ] `build_patch_anchor_candidates` (`patch_audio/anchor_retry.rs:35-39`): take the report index from `region_results.0` (populated at `mod.rs:285`), drop the misnamed enumerate ordinal; update the `PatchAnchorCandidate::gap_index` doc comment (`domain/patch_anchor.rs:47`) to say **report** index
+- [ ] Regression test: anchor donor after a plan-time skip — `summary.gaps[anchor.source_gap_index]` is `Patched` and the rendered `gap #N` matches the table `#`; fix `tests/patch_audio_integration.rs:538-549`, which encodes the same ordinal/report conflation
+- [ ] `gap_num` → `region_num` (`patch_audio/mod.rs:181,245`, `anchor_retry.rs:164`)
+- [ ] Both `patch_gap` spans (`mod.rs:249`, `anchor_retry.rs:183`): `region_index = region_num` + `gap_index = region.gap_index`
+- [ ] Verbose lines (`mod.rs:185`, `anchor_retry.rs:178`) → `gap #<report> (<k> of <planned> planned)`; `progress(...)` bar args unchanged
+- [ ] `format_skip_gap_fill_log` (`log.rs:139-156`) → `gap #<report> (<range>)`; drop `/total` and the out-of-range branch; update the doc comment and the `log.rs:301` assertion
+- [ ] `--fingerprint-gap` → 1-based: convert at `composition.rs:134`, keep `select` 0-based, reject `0`, range-check against `report.gaps.len()` (both checks here, not in `validate_fingerprint_flags`); doc comment (`cli/args.rs:33-35`, field at `:38`) + [gap-fingerprint.md](gap-fingerprint.md) + [cli-output.md](../cli-output.md) + `README.md`
+- [ ] ~~json-output.md changelog~~ — **not needed**: `patch_anchors_used` / `source_gap_index` is undocumented and absent from every golden (§0.3 A)
+- [ ] Confirm no golden churn — corpus `index` / `g{:03}` filenames unchanged
+
+### v1
 
 - [ ] `RepairConfig`: `only_gaps: Option<Vec<String>>`, `skip_gaps: Option<Vec<String>>` (string tokens, §4); validate mutual exclusivity in `RepairConfig::validate` (TOML path — clap cannot see config keys)
 - [ ] `Args`: `--only-gaps`, `--skip-gaps` (comma-separated, `conflicts_with` each other); wire in `cli/mod.rs`
@@ -599,10 +851,7 @@ Accept full `RepairJsonOutput` as a convenience alias.
 - [ ] `build_gap_fill_plan(..., skip_equivalent_gaps, selection)` + domain tests (incl. precedence vs equivalence / coverage); ~11 call sites updated (§5.6)
 - [ ] **Wiring per §5.6:** `GapSelectionMode` on `PatchRequestSettings` (via `patch_settings()`); resolve in **`run_repair.rs`** both arms; resolved `GapSelection` as a direct field on `PatchAudioRequest` (`measure_residual` precedent). Not composition — the only `build_gap_fill_plan` caller is inside `PatchAudio::run`
 - [ ] Empty-selection error → `RepairError::Config` (exit 2); confirm the non-selection empty plan keeps its current `Ok` + "No gaps planned" behavior (§3)
-- [ ] `PatchRequestSettings` new field in 4 external constructors: repair-harness, both fixtures crates, `query_reference_integration.rs` (§5.6 blast radius)
-- [ ] Report `#` on characterize / execute verbose lines with **`report.gaps.len()` denominator**; progress-bar numerator/denominator unchanged (§5.4 table)
-- [ ] Tracing span: rename `gap_index` → `region_index`, add `gap_index` (0-based report) + `report_gap_num`; leave `PatchAnchorCandidate::gap_index` as region ordinal
-- [ ] `--fingerprint-gap` → 1-based; convert at the `composition.rs` boundary, keep internal `select` 0-based; update its doc comment (§4)
+- [ ] `PatchRequestSettings` new field — **`config.rs:610` only**; all other constructions inherit it via spread seed or `patch_settings()` (§5.6 blast radius)
 - [ ] `GapReport` (+ `GapScanJson`): add `min_gap_ms`, `silence_hold_ms`, `absolute_silence_rms`; populate from scan request / config
 - [ ] `format_unified_gap_report` / patch summary: `not planned: gap not selected`
 - [ ] Golden JSON fixture update per [json-output.md](../json-output.md) revision rules
@@ -615,7 +864,8 @@ Accept full `RepairJsonOutput` as a convenience alias.
 
 | Layer | Cases |
 |-------|-------|
-| **Parse** | `only` / `skip` mutual exclusion (both CLI and TOML paths); out-of-range; non-integer token; duplicates → error; whitespace; `only_gaps = []` errors while absent selects all |
+| **Parse** | `only` / `skip` mutual exclusion (both CLI and TOML paths); out-of-range; `0`; non-integer token; duplicates → error; whitespace; `only_gaps = []` errors while absent selects all |
+| **Identity semantics (§2.1)** | `--only-gaps 5,2` ≡ `2,5` (order-insensitive); a token names the same gap regardless of what else is in the list; bounds validate against `report.gaps.len()`, never against a filtered count; `--skip-gaps` selects exactly the report-set complement of the equivalent `--only-gaps` |
 | **Plan** | All selected; none selected → error; skip all fillable; unfillable gap in `only` list still `not_fillable` not `gap_not_selected` |
 | **Plan-block arm** | Track mismatch + `--only-gaps 2`: every gap reports the block reason, **none** reports `gap_not_selected` (§5.2) |
 | **Selection + coverage** | Gap outside query-reference region: `outside_reference_coverage` beats `gap_not_selected` |
@@ -626,19 +876,23 @@ Accept full `RepairJsonOutput` as a convenience alias.
 | **Regression** | No selection flags ⇒ plan, PCM, JSON, and summary counts byte-identical to pre-change (the `GapSelection::all` default path) |
 | **Index base** | `--fingerprint-gap N` and `--only-gaps N` name the same gap after the 1-based fix (§4) |
 | **v1.5** | `START-END` strict identity: matches one gap, spanning range errors; `START..END` containment selects every fully-enclosed gap; no match → error; mixed token list; overlapping containment tokens select once |
+| **v1.5 identity (§2.1)** | In a mixed list, an integer token still means the report `#` — **never** a position within a containment token's result set (`--only-gaps 1:42:00..1:50:00,2` selects the window's gaps plus report `#2`); each token resolves against the full report independently of the others |
 
 ---
 
 ## 12. Open decisions
 
-1. ~~**Progress denominator**~~ — **settled 2026-07-28.** Verbose lines: report `#` over report total; progress bar keeps loop ordinal over region count. The two currently share `region_count`; they must stop. Rule table in §5.4.
-2. **Duplicate indices in CLI:** error vs last-wins — recommend **error**.
+1. ~~**Progress denominator**~~ — **settled 2026-07-28, then moved to §0.** Verbose lines print identity and count separately (`gap #4 (3 of 6 planned)`); the progress bar keeps loop ordinal over region count. Delivered by the §0 prep PR (§0.3 D), not v1.
+2. ~~**Duplicate indices in CLI**~~ — **settled 2026-07-28 by §2.1: error.** Under an identity reading, naming the same gap twice cannot mean anything, so it is a typo and should say so.
 3. **JSON contract revision:** adding `min_gap_ms` / `silence_hold_ms` / `absolute_silence_rms` to `scan` is additive; bump [json-output.md](../json-output.md) changelog. Requires extending `GapReport` (or an adjacent carrier) — those fields are not on the report today.
 4. **Range ε:** 50 ms default strict match — confirm against corpus edge refine behavior; do not reuse `TIME_EPS_SECS`.
 5. ~~**Where `GapSelectionMode` lives**~~ — **settled 2026-07-28 by source audit.** The old recommendation was not implementable: the sole production `build_gap_fill_plan` caller is inside `PatchAudio::run`, which sees only `request`. Mode rides `PatchRequestSettings`; resolved `GapSelection` is a direct field on `PatchAudioRequest`; resolution happens in `run_repair.rs`. Full flow in §5.6.
 6. ~~**Token type**~~ — **settled 2026-07-28.** `Vec<String>` on both `Args` and `RepairConfig` from v1, even though v1 parses only integers, so v1.5 range tokens do not break the TOML key's type (§4).
 7. **Range token semantics (v1.5):** `START-END` = strict single-gap identity, `START..END` = containment. Open sub-question: containment requires *full* enclosure (recommended) vs mere *overlap*. Decide with a real corpus case before implementing; see §4.
-8. **`--fingerprint-gap` 1-based conversion:** recommended for v1 (§4) so no two gap-index flags disagree. If the calibration workflow has scripted 0-based callers, the alternative is to leave it and document the split loudly — but that is a standing trap.
+8. ~~**`--fingerprint-gap` 1-based conversion**~~ — **settled 2026-07-28: moved to the §0 prep PR** (§0.3 C), along with the `0`-token underflow it introduces and the deliberate flag-vs-filename asymmetry (corpus stays 0-based; files are located by the timestamp already in the name).
+9. **All-0-based alternative** — **rejected 2026-07-28** (§0.2): five correct display sites would change to fix two defects, historical `gap #N` references would silently re-point, and the conversion boundary would survive anyway in the progress counter. Recorded so it is not rediscovered.
+10. ~~**Identity vs count**~~ — **settled 2026-07-28: identity** (§2.1). Tokens name gaps; they are never positions in a derived subset. Forced by v1.5 containment tokens, which would otherwise make integers ambiguous inside a mixed list.
+11. **JSON output on a selection error:** suppress the document, or emit it and rely on the exit code? Recommend **suppress** — a well-formed success document with exit 2 invites scripts to parse and proceed (§3 ordering caveat). Human format keeps printing the table, which is useful context for fixing the selection.
 
 ---
 

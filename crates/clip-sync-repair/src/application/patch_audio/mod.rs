@@ -178,11 +178,12 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         let mut characterizations: Vec<(GapRepairSpec, GapTagsPatchContext)> =
             Vec::with_capacity(plan.regions.len());
         for (index, region) in plan.regions.iter().enumerate() {
-            let gap_num = index as u64 + 1;
+            let region_num = index as u64 + 1;
             self.progress
-                .progress("patch-characterize", gap_num, region_count);
+                .progress("patch-characterize", region_num, region_count);
             self.progress.phase_verbose(&format!(
-                "  gap {gap_num}/{region_count}: A {}",
+                "  gap #{} ({region_num} of {region_count} planned): A {}",
+                region.gap_index + 1,
                 format_time_range_verbose(region.a_start_secs, region.a_end_secs)
             ));
             characterizations.push(characterize_region(
@@ -242,11 +243,12 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             .into_iter()
             .zip(plan.regions.iter().enumerate())
         {
-            let gap_num = index as u64 + 1;
-            self.progress.progress("patch-gap", gap_num, region_count);
+            let region_num = index as u64 + 1;
+            self.progress.progress("patch-gap", region_num, region_count);
             let gap_span = tracing::info_span!(
                 "patch_gap",
-                gap_index = gap_num,
+                region_index = region_num,
+                gap_index = region.gap_index,
                 region_count,
                 a_start_secs = region.a_start_secs,
                 a_end_secs = region.a_end_secs,

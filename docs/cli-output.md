@@ -379,8 +379,10 @@ Details: [gap-fill-modes.md](gap-fill-modes.md) § Dual-fit rescue.
 **Gap-fingerprint dump (`--gap-fingerprints`):** after a normal repair run (align → scan → patch plan →
 patch when write mode), optionally writes a licensing-safe corpus under `DIR`. stderr phase:
 `characterizing gaps for fingerprinting`. Default output is decision/repair (D/R) axes only; add
-`--fingerprint-diagnostics` for Tier-3 analyzer fields. `--fingerprint-gap N` (repeatable) limits full
-per-bracket detail to selected indices; other gaps get summary rows in `corpus.json`. Ignored when
+`--fingerprint-diagnostics` for Tier-3 analyzer fields. `--fingerprint-gap N` (repeatable, **1-based**
+— copy `N` from the gap table's `#` column; `0` and out-of-range are rejected) limits full per-bracket
+detail to the named gaps; other gaps get summary rows in `corpus.json`. Corpus filenames stay 0-based
+(`--fingerprint-gap 3` → `…_g002_….json`). Ignored when
 `--mux` is set (warning). `--fingerprint-gap` / `--fingerprint-diagnostics` without
 `--gap-fingerprints` are rejected at startup. Schema: [gap-fingerprint.md](dev/gap-fingerprint.md).
 

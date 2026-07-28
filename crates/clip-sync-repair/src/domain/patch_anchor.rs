@@ -12,6 +12,7 @@ use crate::domain::GapPatchSkipReason;
 pub struct PatchOffsetAnchor {
     pub a_secs: f64,
     pub offset_secs: f64,
+    /// 0-based position in `GapReport.gaps` of the donor gap; rendered as `gap #{n + 1}`.
     pub source_gap_index: usize,
     /// Interpolation weight from `min(pre, post)` seam scores at anchor time.
     pub weight: f64,
@@ -44,6 +45,9 @@ pub struct PatchAnchorTable {
 /// Input for one gap from a patch pass (application layer).
 #[derive(Debug, Clone, Copy)]
 pub struct PatchAnchorCandidate {
+    /// **Report** index — the donor gap's 0-based position in `GapReport.gaps`
+    /// (`FillRegion::gap_index`), *not* its ordinal within `GapFillPlan.regions`. The two diverge
+    /// whenever any gap is skipped at plan time.
     pub gap_index: usize,
     pub a_start_secs: f64,
     pub a_end_secs: f64,

@@ -21,9 +21,15 @@ clip-sync-repair A.mkv B.m4v --gap-fingerprints gap-files/ [--fingerprint-gap 3]
 - `--gap-fingerprints DIR` — after scan, write a corpus directory: `corpus.json` (all characterized
   gaps), one self-contained single-gap JSON **per gap** (the library), and a non-identifying
   `manifest.json`.
-- `--fingerprint-gap IDX` (repeatable) — characterize **only** these gaps. Omit it to characterize
+- `--fingerprint-gap N` (repeatable) — characterize **only** these gaps. Omit it to characterize
   **all** gaps. Each characterized gap gets full decision/repair detail (per-bracket gate
   `failure_stage`, `baseline_lag`, `splice_dualfit`, …).
+  **`N` is 1-based**, matching the `#` column of the repair gap table (and every other user-facing gap
+  number in the tool). `0` and out-of-range values are rejected.
+  The **emitted corpus stays 0-based**: `GapFingerprint::index` and the `g{:03}` filename segment are
+  array positions, so `--fingerprint-gap 3` writes `…_g002_….json`. This is deliberate — existing
+  corpus dirs and the `equivalence-calibration` / `gap-fingerprint-stats` joins are unaffected. Locate
+  a gap's file by the A-timeline timestamp already in the name (`…_t01-42-08_g002_…`), not by counting.
 - `--fingerprint-diagnostics` — also write the **Tier-3 X-set** (`seam_probe`, `wide_envelope`,
   `b_levels`, diagnostic `lag`). Off by default (decision/repair fields only); slower. Needed for the
   analyzer's seam-probe reports.
