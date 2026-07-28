@@ -339,8 +339,7 @@ fn print_repair_outcome(
 
 #[cfg(all(test, feature = "calibration"))]
 mod tests {
-    use super::resolve_fingerprint_gap_select;
-    use crate::domain::RepairError;
+    use super::{resolve_fingerprint_gap_select, RepairError};
 
     fn message(err: RepairError) -> String {
         match err {
