@@ -36,7 +36,7 @@ pub struct Args {
     /// corpus stays 0-based: `--fingerprint-gap 3` writes `..._g002_....json`; locate files by the
     /// A-timeline timestamp in the name rather than by counting.
     #[cfg(feature = "calibration")]
-    #[arg(long, value_name = "IDX")]
+    #[arg(long, value_name = "N")]
     pub fingerprint_gap: Vec<usize>,
 
     /// Include Tier-3 diagnostic measurements in `--gap-fingerprints` output (`seam_probe`,

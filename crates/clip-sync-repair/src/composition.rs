@@ -373,6 +373,9 @@ mod tests {
         let err = message(resolve_fingerprint_gap_select(&[7], 6).expect_err("out of range"));
         assert_eq!(err, "gap index 7 out of range (6 gaps detected)");
         // The last valid number is the gap count itself, not `count - 1`.
-        assert_eq!(resolve_fingerprint_gap_select(&[6], 6).expect("in range"), vec![5]);
+        assert_eq!(
+            resolve_fingerprint_gap_select(&[6], 6).expect("in range"),
+            vec![5]
+        );
     }
 }

@@ -1,4 +1,4 @@
-use clip_sync::{format_time_range_verbose, ProgressReporter};
+use clip_sync::ProgressReporter;
 
 use crate::domain::{
     fill_mode::FillMode,
@@ -11,7 +11,7 @@ use crate::domain::{
     },
 };
 
-use super::log::log_gap_tags_verbose;
+use super::log::{format_anchored_retry_verbose_line, log_gap_tags_verbose, new_patch_gap_span};
 use super::region::{
     prepare_region_patch, record_patch_gap_span, region_outcome_gap_tags, RegionPatch,
     RegionPatchContext, RegionPatchMedia, RegionPatchOpts, RegionPatchOutcome,
@@ -32,6 +32,11 @@ pub(super) fn build_patch_anchor_candidates(
     regions: &[FillRegion],
     region_results: &[(usize, RegionPatchOutcome, GapTags)],
 ) -> Vec<PatchAnchorCandidate> {
+    // `gap_index` is the **report** index, taken from the results tuple (`region_results.0`, set from
+    // `region.gap_index` when the outcome was recorded). `region.gap_index` is the same value by
+    // construction; the results tuple is used so the index travels with the outcome it describes.
+    // What it must never be is the zip's enumerate ordinal — that is a position in `plan.regions`, and
+    // it silently undercounts by the number of gaps skipped at plan time.
     regions
         .iter()
         .zip(region_results.iter())
@@ -173,25 +178,18 @@ pub(super) fn run_anchored_retry_pass(
         } else {
             "retry"
         };
-        progress.phase_verbose(&format!(
-            "  anchored {retry_label} gap #{}: A {}",
-            region.gap_index + 1,
-            format_time_range_verbose(region.a_start_secs, region.a_end_secs)
+        progress.phase_verbose(&format_anchored_retry_verbose_line(
+            retry_label,
+            region.gap_index,
+            region.a_start_secs,
+            region.a_end_secs,
         ));
-        let gap_span = tracing::info_span!(
-            "patch_gap",
-            region_index = region_num as u64,
-            gap_index = region.gap_index,
-            region_count = regions.len() as u64,
-            a_start_secs = region.a_start_secs,
-            a_end_secs = region.a_end_secs,
-            fill_mode = ?request.fill_mode,
-            anchored_retry = true,
-            outcome = tracing::field::Empty,
-            confidence = tracing::field::Empty,
-            skip_reason = tracing::field::Empty,
-            boundary_grid = tracing::field::Empty,
-            grid_cells = tracing::field::Empty,
+        let gap_span = new_patch_gap_span(
+            region_num as u64,
+            regions.len() as u64,
+            region,
+            request.fill_mode,
+            true,
         );
         let _gap_enter = gap_span.enter();
         let (patch, outcome, tag_ctx) = prepare_region_patch(

@@ -1,6 +1,6 @@
 # Gap selection (subset patching) — plan (DRAFT)
 
-Status: **not started**.
+Status: **§0 implemented (uncommitted); v1 not started**.
 
 ### Readiness (2026-07-28)
 
@@ -45,7 +45,8 @@ untouched on A for this invocation.
 
 ## 0. Prep PR: gap-index convention (land before v1)
 
-Status: **not started**. Prerequisite — merge before selection work begins.
+Status: **implemented, uncommitted** (2026-07-28). Prerequisite — merge before selection work begins.
+See the §10 §0 checklist for what landed and the two deviations from this section as written.
 
 **Path convention in this section:** unqualified paths are relative to `crates/clip-sync-repair/src/`
 (so `composition.rs` means `crates/clip-sync-repair/src/composition.rs`, **not** the same-named file in
@@ -830,17 +831,30 @@ Accept full `RepairJsonOutput` as a convenience alias.
 
 ## 10. Implementation checklist
 
-### §0 prep PR (merge first)
+### §0 prep PR (merge first) — **implemented** (see "deviations" below)
 
-- [ ] `build_patch_anchor_candidates` (`patch_audio/anchor_retry.rs:35-39`): take the report index from `region_results.0` (populated at `mod.rs:285`), drop the misnamed enumerate ordinal; update the `PatchAnchorCandidate::gap_index` doc comment (`domain/patch_anchor.rs:47`) to say **report** index
-- [ ] Regression test: anchor donor after a plan-time skip — `summary.gaps[anchor.source_gap_index]` is `Patched` and the rendered `gap #N` matches the table `#`; fix `tests/patch_audio_integration.rs:538-549`, which encodes the same ordinal/report conflation
-- [ ] `gap_num` → `region_num` (`patch_audio/mod.rs:181,245`, `anchor_retry.rs:164`)
-- [ ] Both `patch_gap` spans (`mod.rs:249`, `anchor_retry.rs:183`): `region_index = region_num` + `gap_index = region.gap_index`
-- [ ] Verbose lines (`mod.rs:185`, `anchor_retry.rs:178`) → `gap #<report> (<k> of <planned> planned)`; `progress(...)` bar args unchanged
-- [ ] `format_skip_gap_fill_log` (`log.rs:139-156`) → `gap #<report> (<range>)`; drop `/total` and the out-of-range branch; update the doc comment and the `log.rs:301` assertion
-- [ ] `--fingerprint-gap` → 1-based: convert at `composition.rs:134`, keep `select` 0-based, reject `0`, range-check against `report.gaps.len()` (both checks here, not in `validate_fingerprint_flags`); doc comment (`cli/args.rs:33-35`, field at `:38`) + [gap-fingerprint.md](gap-fingerprint.md) + [cli-output.md](../cli-output.md) + `README.md`
-- [ ] ~~json-output.md changelog~~ — **not needed**: `patch_anchors_used` / `source_gap_index` is undocumented and absent from every golden (§0.3 A)
-- [ ] Confirm no golden churn — corpus `index` / `g{:03}` filenames unchanged
+- [x] `build_patch_anchor_candidates` (`patch_audio/anchor_retry.rs:35-39`): take the report index from `region_results.0` (populated at `mod.rs:285`), drop the misnamed enumerate ordinal; update the `PatchAnchorCandidate::gap_index` doc comment (`domain/patch_anchor.rs:47`) to say **report** index
+- [x] Regression test: anchor donor after a plan-time skip — `summary.gaps[anchor.source_gap_index]` is `Patched` and the anchor's `a_secs` falls inside *its own* gap's A window. Added as `patch_anchor_source_gap_index_is_report_index_after_plan_time_skip`. **`tests/patch_audio_integration.rs:538-549` needed no fix** — `assert_patch_anchors_exclude_structure_trusted` already indexes `summary.gaps` by `source_gap_index`, which is correct once the axis is; what was missing was a fixture where the two axes diverge
+- [x] `gap_num` → `region_num` (`patch_audio/mod.rs:181,245`, `anchor_retry.rs:164`)
+- [x] Both `patch_gap` spans: `region_index = region_num` + `gap_index = region.gap_index`. Built via a single shared constructor `log::new_patch_gap_span` so the field set cannot drift and a third call site inherits it by construction
+- [x] Verbose characterize line → `gap #<report> (<k> of <planned> planned)`; `progress(...)` bar args unchanged. Extracted to `log::format_patch_characterize_verbose_line` + unit test
+- [x] Verbose retry line → `anchored <label> gap #<report>` — **identity only, no count**: pass 2 iterates a filtered retry subset, so `k of M` there would count within a set the user never sees (§0.3 D table). Extracted to `log::format_anchored_retry_verbose_line` + unit test asserting the absence of a count
+- [x] `format_skip_gap_fill_log` (`log.rs:139-156`) → `gap #<report> (<range>)`; drop `/total` and the out-of-range branch; update the doc comment and the assertion
+- [x] `--fingerprint-gap` → 1-based: convert at `composition.rs:134` via `resolve_fingerprint_gap_select`, keep `select` 0-based, reject `0`, range-check against `report.gaps.len()` (both checks here, not in `validate_fingerprint_flags`); doc comment (`cli/args.rs:33-35`, field at `:38`, `value_name = "N"`) + [gap-fingerprint.md](gap-fingerprint.md) + [cli-output.md](../cli-output.md) + `README.md`
+- [x] ~~json-output.md changelog~~ — **not needed**: `patch_anchors_used` / `source_gap_index` is undocumented and absent from every golden (§0.3 A)
+- [x] Confirm no golden churn — corpus `index` / `g{:03}` filenames unchanged
+
+**Deviations from the plan as written:**
+
+1. **Verbose lines and the span are extracted, not edited in place.** §0.5 asked for verbose-line and span-field
+   assertions. The verbose lines got exactly that (two `log.rs` unit tests, matching the existing
+   `format_skip_gap_fill_log` pattern). The span did **not**: asserting recorded span fields needs a
+   subscriber, and `clip-sync-repair` has no `tracing-subscriber` dev-dependency. Rather than add one,
+   both spans now come from one constructor — a structural guarantee instead of a test. Revisit if a
+   third pass ever needs a *different* field set.
+2. **`crates/clip-sync/src/test_support/mod.rs` cfg gate** (`ac3_pcm_analysis`) — out of §0 scope; four
+   pre-existing dead-code warnings caused by a provider/consumer `cfg(test)` mismatch. Fixed here
+   because the §0 verification runs surfaced them.
 
 ### v1
 

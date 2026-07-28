@@ -1,5 +1,6 @@
 use clip_sync::{format_time_range_verbose, ProgressReporter};
 
+use crate::domain::fill_mode::FillMode;
 use crate::domain::fill_offset::FillOffsetMode;
 use crate::domain::gap_fill::FillRegion;
 use crate::domain::gap_fill_fit::FillConfidence;
@@ -131,6 +132,73 @@ pub(super) fn log_gap_fill_result_verbose(
     progress.phase_verbose(&format_gap_fill_result_line(result));
 }
 
+/// Verbose per-gap header for pass 1 (characterize).
+///
+/// Carries both axes, deliberately as two tokens: `gap #{n}` is the *identity* (the report table's
+/// `#`, from [`FillRegion::gap_index`]) and `{k} of {m} planned` is the *progress count* over
+/// `GapFillPlan.regions`. They diverge whenever a gap is skipped at plan time, which is why they are
+/// never fused into one number.
+pub(crate) fn format_patch_characterize_verbose_line(
+    gap_index: usize,
+    region_num: u64,
+    region_count: u64,
+    a_start_secs: f64,
+    a_end_secs: f64,
+) -> String {
+    format!(
+        "  gap #{} ({region_num} of {region_count} planned): A {}",
+        gap_index + 1,
+        format_time_range_verbose(a_start_secs, a_end_secs)
+    )
+}
+
+/// Verbose per-gap header for the anchored retry pass.
+///
+/// Identity only — no `k of m`. Pass 2 iterates a *filtered* retry subset, so a count here would be a
+/// position within a set the user never sees listed.
+pub(crate) fn format_anchored_retry_verbose_line(
+    retry_label: &str,
+    gap_index: usize,
+    a_start_secs: f64,
+    a_end_secs: f64,
+) -> String {
+    format!(
+        "  anchored {retry_label} gap #{}: A {}",
+        gap_index + 1,
+        format_time_range_verbose(a_start_secs, a_end_secs)
+    )
+}
+
+/// The one construction site for the `patch_gap` tracing span.
+///
+/// Both passes go through here so the field set cannot drift — in particular `region_index`
+/// (1-based ordinal within `GapFillPlan.regions`) and `gap_index` (0-based position in
+/// `GapReport.gaps`) stay distinct fields rather than collapsing into one ambiguous number.
+/// `record_patch_gap_span` fills the `Empty` fields once the outcome is known.
+pub(super) fn new_patch_gap_span(
+    region_num: u64,
+    region_count: u64,
+    region: &FillRegion,
+    fill_mode: FillMode,
+    anchored_retry: bool,
+) -> tracing::Span {
+    tracing::info_span!(
+        "patch_gap",
+        region_index = region_num,
+        gap_index = region.gap_index,
+        region_count,
+        a_start_secs = region.a_start_secs,
+        a_end_secs = region.a_end_secs,
+        fill_mode = ?fill_mode,
+        anchored_retry,
+        outcome = tracing::field::Empty,
+        confidence = tracing::field::Empty,
+        skip_reason = tracing::field::Empty,
+        boundary_grid = tracing::field::Empty,
+        grid_cells = tracing::field::Empty,
+    )
+}
+
 /// Human-readable skip line for stderr (`tracing::warn`) matching the stdout gap table.
 ///
 /// `gap_index` is the region's [`FillRegion::gap_index`] — the gap's 0-based position in the report,
@@ -207,8 +275,9 @@ pub(super) fn log_gap_tags_verbose(progress: &dyn ProgressReporter, tags: &GapTa
 #[cfg(test)]
 mod tests {
     use super::{
-        format_gap_fill_plan_lines, format_gap_fill_result_line, format_skip_gap_fill_log,
-        GapFillPlanLog, GapFillResultLog,
+        format_anchored_retry_verbose_line, format_gap_fill_plan_lines,
+        format_gap_fill_result_line, format_patch_characterize_verbose_line,
+        format_skip_gap_fill_log, GapFillPlanLog, GapFillResultLog,
     };
     use crate::domain::fill_offset::FillOffsetMode;
     use crate::domain::gap_fill_fit::FillConfidence;
@@ -297,6 +366,32 @@ mod tests {
                 &format_gap_patch_skip_warn_reason(&GapPatchSkipReason::BoundaryAlignmentFailed),
             ),
             "gap #2 (1:42:08 – 1:46:00): structure alignment failed"
+        );
+    }
+
+    #[test]
+    fn characterize_verbose_line_separates_report_identity_from_planned_count() {
+        // Report gap 4 (0-based) is the 2nd of 3 *planned* regions — the axes diverge because gaps
+        // ahead of it were skipped at plan time. The line must show `#5` and `2 of 3`, never one
+        // number doing both jobs.
+        assert_eq!(
+            format_patch_characterize_verbose_line(4, 2, 3, 44.0, 46.5),
+            "  gap #5 (2 of 3 planned): A 0:44.000 – 0:46.500"
+        );
+    }
+
+    #[test]
+    fn anchored_retry_verbose_line_is_identity_only() {
+        let line = format_anchored_retry_verbose_line("marginal upgrade", 4, 44.0, 46.5);
+        assert_eq!(
+            line,
+            "  anchored marginal upgrade gap #5: A 0:44.000 – 0:46.500"
+        );
+        // Pass 2 walks a filtered subset, so no `k of m` may appear here.
+        assert!(!line.contains(" of "));
+        assert_eq!(
+            format_anchored_retry_verbose_line("retry", 0, 44.0, 46.5),
+            "  anchored retry gap #1: A 0:44.000 – 0:46.500"
         );
     }
 }

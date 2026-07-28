@@ -1,4 +1,4 @@
-use clip_sync::{format_time_range_verbose, MediaReader, ProgressReporter};
+use clip_sync::{MediaReader, ProgressReporter};
 
 use crate::application::error::RepairError;
 use crate::domain::{
@@ -30,7 +30,7 @@ use anchor_retry::{
 pub(crate) use decode::{decode_ab, DecodedAb};
 pub(crate) use geometry::border_frames_from_secs;
 use geometry::repair_patch_config_view;
-use log::log_gap_tags_verbose;
+use log::{format_patch_characterize_verbose_line, log_gap_tags_verbose, new_patch_gap_span};
 use region::{
     characterize_region, execute_region_spec, outcome_from_spec, outcomes_in_report_order,
     record_patch_gap_span, region_outcome_gap_tags, skip_outcome_from_fields, splice_into_a,
@@ -181,11 +181,14 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             let region_num = index as u64 + 1;
             self.progress
                 .progress("patch-characterize", region_num, region_count);
-            self.progress.phase_verbose(&format!(
-                "  gap #{} ({region_num} of {region_count} planned): A {}",
-                region.gap_index + 1,
-                format_time_range_verbose(region.a_start_secs, region.a_end_secs)
-            ));
+            self.progress
+                .phase_verbose(&format_patch_characterize_verbose_line(
+                    region.gap_index,
+                    region_num,
+                    region_count,
+                    region.a_start_secs,
+                    region.a_end_secs,
+                ));
             characterizations.push(characterize_region(
                 self.progress,
                 &RegionPatchMedia {
@@ -244,22 +247,10 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             .zip(plan.regions.iter().enumerate())
         {
             let region_num = index as u64 + 1;
-            self.progress.progress("patch-gap", region_num, region_count);
-            let gap_span = tracing::info_span!(
-                "patch_gap",
-                region_index = region_num,
-                gap_index = region.gap_index,
-                region_count,
-                a_start_secs = region.a_start_secs,
-                a_end_secs = region.a_end_secs,
-                fill_mode = ?request.fill_mode,
-                anchored_retry = false,
-                outcome = tracing::field::Empty,
-                confidence = tracing::field::Empty,
-                skip_reason = tracing::field::Empty,
-                boundary_grid = tracing::field::Empty,
-                grid_cells = tracing::field::Empty,
-            );
+            self.progress
+                .progress("patch-gap", region_num, region_count);
+            let gap_span =
+                new_patch_gap_span(region_num, region_count, region, request.fill_mode, false);
             let _gap_enter = gap_span.enter();
 
             let media = RegionPatchMedia {
