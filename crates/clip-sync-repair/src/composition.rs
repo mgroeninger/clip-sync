@@ -89,6 +89,9 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
 /// This is the only base conversion for the flag: everything downstream — `select`,
 /// `GapFingerprint::index`, the `g{:03}` filename segment — stays 0-based. `0` is rejected explicitly
 /// because `n - 1` would underflow a `usize` rather than fail.
+///
+/// Errors say *gap number*, never "gap index": "index" is reserved for the 0-based internal axis
+/// (`FillRegion::gap_index`), so an error reading "gap indices are 1-based" would contradict it.
 #[cfg(feature = "calibration")]
 fn resolve_fingerprint_gap_select(
     gap_numbers: &[usize],
@@ -98,10 +101,10 @@ fn resolve_fingerprint_gap_select(
         .iter()
         .map(|&n| match n {
             0 => Err(RepairError::Config(
-                "gap index 0 is invalid (gap indices are 1-based)".to_string(),
+                "gap number 0 is invalid (gap numbers are 1-based)".to_string(),
             )),
             n if n > gap_count => Err(RepairError::Config(format!(
-                "gap index {n} out of range ({gap_count} gaps detected)"
+                "gap number {n} out of range ({gap_count} gaps detected)"
             ))),
             n => Ok(n - 1),
         })
@@ -365,13 +368,13 @@ mod tests {
     #[test]
     fn fingerprint_gap_zero_is_rejected_rather_than_underflowing() {
         let err = message(resolve_fingerprint_gap_select(&[1, 0], 6).expect_err("0 is invalid"));
-        assert_eq!(err, "gap index 0 is invalid (gap indices are 1-based)");
+        assert_eq!(err, "gap number 0 is invalid (gap numbers are 1-based)");
     }
 
     #[test]
     fn fingerprint_gap_out_of_range_names_the_detected_count() {
         let err = message(resolve_fingerprint_gap_select(&[7], 6).expect_err("out of range"));
-        assert_eq!(err, "gap index 7 out of range (6 gaps detected)");
+        assert_eq!(err, "gap number 7 out of range (6 gaps detected)");
         // The last valid number is the gap count itself, not `count - 1`.
         assert_eq!(
             resolve_fingerprint_gap_select(&[6], 6).expect("in range"),

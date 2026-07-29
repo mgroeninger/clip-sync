@@ -7,11 +7,15 @@ Status: **§0 done (2026-07-28); v1 not started**.
 | Phase | Ready? | Gated on |
 |-------|--------|----------|
 | **§0 prep PR** | **Done** (2026-07-28) — implemented; see the §10 §0 checklist | — |
-| **v1** | Yes, once §0 merges — *except* one scope split | §12.3 (JSON scan params: a `GapReport` change with a golden revision, independent of selection — **split into its own PR**); §12.11 (JSON document on a selection error) |
+| **v1** | Yes, once §0 merges — *except* one scope split | §12.3 (JSON scan params: a `GapReport` change with a golden revision, independent of selection — **split into its own PR, land before v1**); §12.11 (JSON document on a selection error) |
 | **v1.5** | No | §12.4 (range ε), §12.7 (containment: full enclosure vs overlap) — both want a real corpus case first |
 | **v2** | No | Depends on v1.5 |
 
-Nothing else in §12 is open: 1, 2, 5, 6, 8, 9, 10 are settled and recorded with reasons.
+Nothing else in §12 is open: 1, 2, 5, 6, 8, 9, 10, 12 are settled and recorded with reasons.
+
+**Scan-params echo is not part of v1.** §12.3 is the plan's only golden revision. It ships as its own
+PR *before* v1 for the same reason §0 did: a reviewer of the selection diff must not have to
+distinguish golden churn from behavior change. §8 and §10 list it separately for that reason.
 
 Refreshed **2026-07-27** against current source (M-GAPKEY, gap equivalence,
 `PatchRequestSettings`, repair-preview, two-pass characterize/execute).
@@ -159,7 +163,7 @@ The flag's own doc comment already tells users to pick from the repair gap table
 - Convert at the boundary in `composition.rs:134` (`dump_gap_fingerprints`); the internal `select`
   slice stays 0-based.
 - **Reject `0` explicitly** — subtracting 1 from a `usize` underflows. Same message shape as the v1
-  selection validator: `gap index 0 is invalid (gap indices are 1-based)`. Range-check against
+  selection validator: `gap number 0 is invalid (gap numbers are 1-based)`. Range-check against
   `report.gaps.len()` too; the report is in scope at that call site (fn param, `composition.rs:93`).
 - **Both checks go at `composition.rs:134`, deliberately — not split.** A second consumer of the flag
   exists: `validate_fingerprint_flags` (`infrastructure/cli/mod.rs:262-278`) already returns
@@ -308,8 +312,11 @@ range tokens are **recipe-stable** identities. Neither is ever a count.
 
 **Vocabulary:** user-facing docs and error messages say *gap number* (matching the `#` column), not
 "gap index". Reserve "index" for the 0-based internal `gap_index` (§5.1).
+**Enforced in code as of 2026-07-28** — `resolve_fingerprint_gap_select` says "gap number" in both
+messages (§12.12). "Index" survives only on internal axes, e.g. the corpus-integrity check in
+`gap_fingerprint_corpus/check.rs`, which really is talking about the 0-based position.
 
-**Scan params echo (v1):** JSON `GapScanJson` today carries `scan_block_ms` and
+**Scan params echo (own prep PR, before v1 — §12.3):** JSON `GapScanJson` today carries `scan_block_ms` and
 `silence_peak_fraction` but not `min_gap_ms`, `silence_hold_ms`, or `absolute_silence_rms`.
 Those knobs live on `RepairConfig` and are used by `ScanGaps`, but are **not** stored on
 `GapReport` today — extend the report (or pass them alongside) when adding the JSON fields so
@@ -392,11 +399,10 @@ Tokens are **gap numbers** (labels), not positions in a filtered list — §2.1.
 
 - Comma-separated positive integers: `3`, `2,4,5`, ` 2 , 4 `.
 - Validate: `1 ≤ n ≤ report.gaps.len()`; duplicate tokens → **error** (§2.1, §12.2).
-- Out-of-range → fail fast with: `gap index 7 out of range (6 gaps detected)`.
-- `0` → `gap index 0 is invalid (gap indices are 1-based)` — **verbatim** the shipped §0.3 C strings
-  (`composition.rs::resolve_fingerprint_gap_select`). This plan previously wrote both with "gap
-  number"; §0 shipped "gap index", so v1 matches §0 rather than the other way round. If "gap number"
-  is preferred as user-facing wording, change **both** together — one message shape, §0.3 C.
+- Out-of-range → fail fast with: `gap number 7 out of range (6 gaps detected)`.
+- `0` → `gap number 0 is invalid (gap numbers are 1-based)` — **verbatim** the shipped §0.3 C strings
+  (`composition.rs::resolve_fingerprint_gap_select`). One message shape across both surfaces; if
+  either is ever reworded, change **both** together (§12.12).
 - Resolution is order-insensitive and unions across tokens.
 - Empty list is **not** the same as absent: `only_gaps = []` (or `--only-gaps ""`) resolves to
   "nothing selected" → the §3 empty-selection error. Absent / `None` → `GapSelectionMode::All`.
@@ -806,7 +812,8 @@ scan, so `--only-gaps` does not spare that cost. The lever for *that* is the v2 
 | Phase | Scope |
 |-------|-------|
 | **§0 prep** | ✅ **Done 2026-07-28.** Gap-index convention: `source_gap_index` axis fix; `gap_num`/span renames; `--fingerprint-gap` → 1-based; identity-vs-count display split |
-| **v1** | `--only-gaps` / `--skip-gaps` (indices only, string-typed tokens); `GapNotSelected`; scan params in JSON; user docs; repair-preview applies selection |
+| **scan-params prep** | `GapReport` + `GapScanJson` gain `min_gap_ms` / `silence_hold_ms` / `absolute_silence_rms`; golden revision + json-output.md changelog. **Own PR, lands before v1** — §12.3. No selection code |
+| **v1** | `--only-gaps` / `--skip-gaps` (indices only, string-typed tokens); `GapNotSelected`; user docs; repair-preview applies selection |
 | **v1.5** | Mixed tokens on same flags: `START-END` identity + `START..END` containment; range parser, strict-match and containment tests |
 | **v2** | `--gaps-from` manifest; optional scan-param mismatch error when manifest embeds scan recipe |
 
@@ -864,6 +871,17 @@ Accept full `RepairJsonOutput` as a convenience alias.
 2. **`crates/clip-sync/src/test_support/mod.rs` cfg gate** (`ac3_pcm_analysis`) — out of §0 scope; four
    pre-existing dead-code warnings caused by a provider/consumer `cfg(test)` mismatch. Fixed here
    because the §0 verification runs surfaced them.
+3. **Follow-up (2026-07-28, after §0 landed): error wording corrected to "gap number."** §0 first
+   shipped `gap index …` in both `resolve_fingerprint_gap_select` messages, contradicting §2.1.
+   Fixed in a follow-up commit — both messages, the doc comment, and the two string assertions.
+   Rationale in §12.12.
+
+### Scan-params prep PR (§12.3 — land before v1, no selection code)
+
+- [ ] `GapReport` (or an adjacent carrier): add `min_gap_ms`, `silence_hold_ms`, `absolute_silence_rms` — these live on `RepairConfig` / `ScanGapsRequest` today and are **not** stored on the report (§2 scan-params echo)
+- [ ] `GapScanJson`: emit them alongside the existing `scan_block_ms` / `silence_peak_fraction`
+- [ ] Golden JSON re-baseline (additive) + [json-output.md](../json-output.md) changelog bump
+- [ ] Sanity: values round-trip from the scan request that produced the report, not from a re-read of config
 
 ### v1
 
@@ -875,9 +893,8 @@ Accept full `RepairJsonOutput` as a convenience alias.
 - [ ] **Wiring per §5.6:** `GapSelectionMode` on `PatchRequestSettings` (via `patch_settings()`); resolve in **`run_repair.rs`** both arms; resolved `GapSelection` as a direct field on `PatchAudioRequest` (`measure_residual` precedent). Not composition — the only `build_gap_fill_plan` caller is inside `PatchAudio::run`
 - [ ] Empty-selection error → `RepairError::Config` (exit 2); confirm the non-selection empty plan keeps its current `Ok` + "No gaps planned" behavior (§3)
 - [ ] `PatchRequestSettings` new field — **`config.rs:610` only**; all other constructions inherit it via spread seed or `patch_settings()` (§5.6 blast radius)
-- [ ] `GapReport` (+ `GapScanJson`): add `min_gap_ms`, `silence_hold_ms`, `absolute_silence_rms`; populate from scan request / config
 - [ ] `format_unified_gap_report` / patch summary: `not planned: gap not selected`
-- [ ] Golden JSON fixture update per [json-output.md](../json-output.md) revision rules
+- [ ] Golden JSON fixture update for the new `plan_skip_reason` value, per [json-output.md](../json-output.md) revision rules (the *scan-params* golden churn is not here — separate PR, below)
 - [ ] Docs: [gap-repair-guide.md](../gap-repair-guide.md) workflow, [cli-output.md](../cli-output.md) flags, [pipeline.md](../pipeline.md) fill-plan paragraph, [gap-fill-modes.md](../gap-fill-modes.md) cross-link
 - [ ] Integration test: 3-gap fixture, `--only-gaps 2`, assert gap 1 and 3 unchanged on A, gap 2 patched, status strings correct
 
@@ -907,7 +924,7 @@ Accept full `RepairJsonOutput` as a convenience alias.
 
 1. ~~**Progress denominator**~~ — **settled 2026-07-28, then moved to §0.** Verbose lines print identity and count separately (`gap #4 (3 of 6 planned)`); the progress bar keeps loop ordinal over region count. Delivered by the §0 prep PR (§0.3 D), not v1.
 2. ~~**Duplicate indices in CLI**~~ — **settled 2026-07-28 by §2.1: error.** Under an identity reading, naming the same gap twice cannot mean anything, so it is a typo and should say so.
-3. **JSON contract revision:** adding `min_gap_ms` / `silence_hold_ms` / `absolute_silence_rms` to `scan` is additive; bump [json-output.md](../json-output.md) changelog. Requires extending `GapReport` (or an adjacent carrier) — those fields are not on the report today.
+3. **JSON contract revision:** adding `min_gap_ms` / `silence_hold_ms` / `absolute_silence_rms` to `scan` is additive; bump [json-output.md](../json-output.md) changelog. Requires extending `GapReport` (or an adjacent carrier) — those fields are not on the report today. **Scope settled 2026-07-28: its own PR, landing before v1** (the plan's only golden revision — keep it out of the selection diff). Content still open only in the sense that nobody has written it.
 4. **Range ε:** 50 ms default strict match — confirm against corpus edge refine behavior; do not reuse `TIME_EPS_SECS`.
 5. ~~**Where `GapSelectionMode` lives**~~ — **settled 2026-07-28 by source audit.** The old recommendation was not implementable: the sole production `build_gap_fill_plan` caller is inside `PatchAudio::run`, which sees only `request`. Mode rides `PatchRequestSettings`; resolved `GapSelection` is a direct field on `PatchAudioRequest`; resolution happens in `run_repair.rs`. Full flow in §5.6.
 6. ~~**Token type**~~ — **settled 2026-07-28.** `Vec<String>` on both `Args` and `RepairConfig` from v1, even though v1 parses only integers, so v1.5 range tokens do not break the TOML key's type (§4).
@@ -916,6 +933,16 @@ Accept full `RepairJsonOutput` as a convenience alias.
 9. **All-0-based alternative** — **rejected 2026-07-28** (§0.2): five correct display sites would change to fix two defects, historical `gap #N` references would silently re-point, and the conversion boundary would survive anyway in the progress counter. Recorded so it is not rediscovered.
 10. ~~**Identity vs count**~~ — **settled 2026-07-28: identity** (§2.1). Tokens name gaps; they are never positions in a derived subset. Forced by v1.5 containment tokens, which would otherwise make integers ambiguous inside a mixed list.
 11. **JSON output on a selection error:** suppress the document, or emit it and rely on the exit code? Recommend **suppress** — a well-formed success document with exit 2 invites scripts to parse and proceed (§3 ordering caveat). Human format keeps printing the table, which is useful context for fixing the selection.
+12. ~~**Error-string wording: "gap index" or "gap number"?**~~ — **settled 2026-07-28: *gap number*,
+    per §2.1.** §0 had shipped `gap index 0 is invalid (gap indices are 1-based)` /
+    `gap index {n} out of range …`, which §4 then bound v1 to match. That was drift, not a decision:
+    the plan specified "gap number" throughout beforehand. Keeping it would have put the word §0.1
+    reserves for the **0-based** axis (`FillRegion::gap_index`) into a message asserting indices are
+    1-based — reintroducing, in the one surface a confused user is certain to read, exactly the
+    axis ambiguity §0 existed to remove. The `#` prefix does not disambiguate here: these messages
+    carry a bare number. **Fixed in `composition.rs::resolve_fingerprint_gap_select`** (both
+    messages, the doc comment, and the two string assertions; 3 unit tests pass). v1's
+    `resolve_gap_selection` now inherits settled wording instead of propagating the drift.
 
 ---
 
