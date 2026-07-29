@@ -12,6 +12,52 @@ hand-built synthetic **Decorrelated** and a real **Tail**; **Residual-veto** and
 plan/execution failures) and are covered by other tests. Background and derivation:
 [TEMP-gap-vocabulary-redesign-plan.md](archive/TEMP-gap-vocabulary-redesign-plan.md).
 
+## Gap numbering (how to *refer* to a gap)
+
+Prior to classifying a gap, you have to name one. There is exactly one rule, and it is crate-wide:
+
+> **Data is 0-based and positional; only rendered text and CLI arguments are 1-based.**
+> A gap's identity is always its position in `GapReport.gaps`, named `gap_index`. Anything indexing
+> `plan.regions` is named `region_*` and is never called a gap. Identity and progress counts are
+> never printed as one token.
+
+| Axis | Base | Name | Examples |
+|------|------|------|----------|
+| **Report position** — a gap's identity | 0 | `gap_index` | `FillRegion::gap_index`, `GapFillSkipped::gap_index`, `GapFingerprint::index`, corpus filenames `g{:03}`, JSON `gaps[]` array position |
+| **Rendered / CLI** — the same identity, displayed | 1 | *gap number*, `#`-prefixed | the table `#` column, `gap #4`, `--only-gaps`, `--fingerprint-gap` |
+| **Plan region ordinal** — work, not identity | 0 internally, 1 displayed | `region_*` | `region_index` span field, `region_num`; the progress-bar numerator |
+
+Consequences worth stating outright:
+
+- **Identity and count never share a token.** `gap #4 (3 of 6 planned)`, never `gap 4/6`. The first
+  number is *which gap*; the second pair is *how far through the work*. They have different bases,
+  different denominators, and are frequently different numbers for the same line.
+- **Say "gap number" to users, "index" only internally.** Error messages and user docs use *gap
+  number* (matching the `#` column). "Index" is reserved for the 0-based axis — putting it in a
+  message that asserts 1-basedness reintroduces exactly the ambiguity this rule removes. Shipped
+  wording, to be reused verbatim by any new gap-number validator:
+
+  ```text
+  gap number 0 is invalid (gap numbers are 1-based)
+  gap number 7 out of range (6 gaps detected)
+  ```
+
+- **`--fingerprint-gap N` → corpus file `g{N-1}` is deliberate, not a bug.** The flag is a CLI
+  argument (1-based); the filename carries a data position (0-based). Files are located by the
+  A-timeline timestamp also in the name, not by counting.
+- **An all-0-based flip was considered and rejected** — it would change five correct display sites to
+  fix two broken ones and would not remove the conversion boundary anyway, since progress counts must
+  run `1..M`.
+
+Provenance and the two defects this repaired:
+[archive/TEMP-gap-index-convention-plan.md](archive/TEMP-gap-index-convention-plan.md) (shipped
+2026-07-28).
+
+**Gap numbers are run-scoped.** A `#` is stable only within one scan recipe — change `min_gap_ms`,
+`silence_hold_ms`, `scan_block_ms`, `silence_peak_fraction`, or `absolute_silence_rms` and the detected
+run list moves. The recipe-stable handle is the A time range (`video_a_start_secs` /
+`video_a_end_secs`). Never silently remap a remembered `#` onto a new scan.
+
 ## Axes (read before the cells)
 
 Each measurement is tagged with the **placement** it's taken at — the same field at a different
