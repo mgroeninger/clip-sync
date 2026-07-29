@@ -25,13 +25,31 @@ clip-sync-repair A.mkv B.mkv --wav out.wav --only-gaps 1,2,4,5
 clip-sync-repair A.mkv B.mkv --wav out2.wav --only-gaps 3 --no-dual-fit   # example retry
 ```
 
-- Copy `#` from **this run's** gap table (or JSON `gaps[]` order). Numbers are **not** stable if you change scan knobs (`min_gap_ms`, hold, block size, silence floor).
-- `--skip-gaps` is the complement polarity (same 1-based labels). The two flags are mutually exclusive.
-- TOML peers use string tokens: `only_gaps = ["1", "3"]` (not bare integers).
-- Empty `only_gaps = []` errors when gaps exist; empty `skip_gaps = []` means skip nothing (all selected).
-- Unselected gaps keep **original A** audio; status shows `not planned: gap not selected`.
-- On scan-only runs the flags do not change output, but invalid gap numbers still error (exit 2).
-- Selection **does** apply with `--repair-preview`.
+**Flags / TOML**
+
+| Surface | Meaning |
+|---------|---------|
+| `--only-gaps <LIST>` / `only_gaps` | Patch **only** these gap numbers |
+| `--skip-gaps <LIST>` / `skip_gaps` | Patch all candidates **except** these |
+| Mutual exclusivity | Both set → error (CLI `conflicts_with`; TOML validate) |
+| Token type | Quoted strings in TOML (`only_gaps = ["1", "3"]`); bare integers fail to load |
+| Modes | Applies to `--wav` / `--mux` **and** `--repair-preview`. Scan-only: tokens are **validated** (bad `#` → exit 2) but the table is unchanged |
+
+**Tokens are labels, not counts.** `--only-gaps 4` means the gap the table calls `#4` — never the 4th fillable gap, 4th planned region, or “4th of some subset”. Each token resolves against the full `gaps[]` / table; the result is a **set** (order does not matter: `5,2` ≡ `2,5`). Duplicate numbers are an error. Bounds are `1…N` for `N` detected gaps. See [gap-vocabulary.md](dev/gap-vocabulary.md) § Gap numbering.
+
+**Identity / stability**
+
+- Copy `#` from **this run's** table (or JSON `gaps[]` order). Do not reuse remembered numbers after changing scan knobs (`min_gap_ms`, hold, block size, silence floor / peak).
+- The tool never remaps stale `#` values onto a new scan. Cross-run handles (time-range tokens) are v1.5 — see [TEMP-gap-selection-ranges-plan.md](dev/TEMP-gap-selection-ranges-plan.md).
+
+**Plan / audio / status**
+
+- Selection filters at **fill-plan** time; the scan still lists every detected gap.
+- Unselected gaps keep **original A** audio (no splice). Human status: `not planned: gap not selected`; JSON `plan_skip_reason`: `gap_not_selected`.
+- Selection is orthogonal to fillability, coverage, and equivalence: an unfillable / outside-coverage / already-equivalent gap still reports **that** reason, not `gap_not_selected`, even if it was in `--only-gaps`.
+- Empty `only_gaps = []` (or an empty `--only-gaps` list) with gaps present → exit **2** (nothing selected). Empty `skip_gaps = []` means skip nothing (all selected). A non-empty selection that later plans zero regions (all unfillable / etc.) stays **Ok** — same as today’s empty plan path.
+- When the filter actually narrows the set, stderr shows e.g. `Gap filter: selected 3 of 6 detected gaps (only-gaps: 2,4,5)` (silent if the list names every gap). `not_planned_count` in the summary includes unselected gaps; the filter note is what disambiguates that.
+- Selection errors: human format still prints the gap table then errors (exit 2); `--format json` prints **nothing** on stdout — [cli-output.md](cli-output.md) / [error-mapping.md](error-mapping.md).
 
 Thresholds below use **production defaults** unless noted: `min_fill_correlation = 0.35`, `fill_marginal_margin = 0.08`, `fill_absolute_floor = 0.12`, `fill_mode = fit`, `dual_fit = true`, repair profile **`default`** (`fit_boundary_search = baseline_only`, `fill_border_search_secs = 10`).
 

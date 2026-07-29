@@ -1,8 +1,8 @@
 # `ScanRecipe` — let a `GapReport` state the recipe that produced it (DRAFT)
 
-Status: **parked until a consumer.** Design is settled; do **not** implement before thin selection v1
-unless the primary pain is script/manifest same-recipe checking. Order:
-[TEMP-gap-selection-sequencing-plan.md](TEMP-gap-selection-sequencing-plan.md).
+Status: **parked until a consumer.** Design is settled; do **not** implement before a real
+same-recipe consumer exists. Sequencing record (archived):
+[archive/TEMP-gap-selection-sequencing-plan.md](archive/TEMP-gap-selection-sequencing-plan.md).
 
 Split out of `TEMP-gap-selection-plan.md` on 2026-07-29. It arrived there as "echo the scan params in
 JSON" but it is not a selection feature: it is a report-provenance fix with its own defect, its own
@@ -11,8 +11,9 @@ only; that gate was dropped — selection has no code dependency on this type, a
 consumer (`--gaps-from`) remains deferred.
 
 **Siblings:**
-[TEMP-gap-selection-sequencing-plan.md](TEMP-gap-selection-sequencing-plan.md) (when to unpark),
-[TEMP-gap-selection-plan.md](TEMP-gap-selection-plan.md) (v1 — implement first),
+[archive/TEMP-gap-selection-sequencing-plan.md](archive/TEMP-gap-selection-sequencing-plan.md) (when to unpark),
+[TEMP-gap-selection-plan.md](TEMP-gap-selection-plan.md) (v1 — **done**),
+[TEMP-gap-selection-ranges-plan.md](TEMP-gap-selection-ranges-plan.md) (v1.5 — implement next),
 [TEMP-gap-selection-deferred.md](TEMP-gap-selection-deferred.md) (the `--gaps-from` manifest, whose
 "same recipe?" check is the main consumer of the `PartialEq`),
 [archive/TEMP-gap-index-convention-plan.md](archive/TEMP-gap-index-convention-plan.md) (shipped).

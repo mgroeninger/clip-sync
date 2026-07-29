@@ -1,8 +1,11 @@
-# Gap selection (subset patching) v1 — plan (DRAFT)
+# Gap selection (subset patching) v1 — plan
 
-Status: **v1 implemented** (thin subset patching). Promote user-facing contract per §11; archive when
-v1.5 ships or is abandoned. Sequencing meta:
-[TEMP-gap-selection-sequencing-plan.md](TEMP-gap-selection-sequencing-plan.md) (archive after this PR).
+Status: **v1 done** (thin subset patching). User-facing contract promoted (§11) into
+[gap-repair-guide.md](../gap-repair-guide.md) § Iterative subset patching,
+[cli-output.md](../cli-output.md), [gap-vocabulary.md](gap-vocabulary.md) § Gap numbering.
+Archive this file when v1.5 ships or is abandoned. Sequencing meta archived:
+[archive/TEMP-gap-selection-sequencing-plan.md](archive/TEMP-gap-selection-sequencing-plan.md).
+
 
 **This document was split on 2026-07-29.** It had grown to ~1200 lines covering four independent
 deliverables, and the cost showed up as repeated false alarms: seven "bugs" were recorded and then
@@ -13,7 +16,7 @@ before the recipe provenance PR.
 | Where it went | What |
 |---------------|------|
 | [archive/TEMP-gap-index-convention-plan.md](archive/TEMP-gap-index-convention-plan.md) | The gap-index prep PR (was §0). **Shipped 2026-07-28.** Its one durable rule now lives in [gap-vocabulary.md](gap-vocabulary.md) § Gap numbering |
-| [TEMP-gap-selection-sequencing-plan.md](TEMP-gap-selection-sequencing-plan.md) | Meta: thin v1 next; recipe parked; archive after v1 PR |
+| [archive/TEMP-gap-selection-sequencing-plan.md](archive/TEMP-gap-selection-sequencing-plan.md) | Meta: thin v1 before recipe — **archived** after promote |
 | [TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md) | `ScanRecipe` on `GapReport` + the JSON scan-params echo. **Not a selection feature**; **parked** (no code dependency from v1) |
 | [TEMP-gap-selection-ranges-plan.md](TEMP-gap-selection-ranges-plan.md) | v1.5 range tokens: `START-END` identity, `START..END` containment, dual ε, straddler diagnostics |
 | [TEMP-gap-selection-deferred.md](TEMP-gap-selection-deferred.md) | `--scan-window` (refused in its cheap form) and the `--gaps-from` manifest (v2) |
@@ -490,7 +493,7 @@ reasoning, shape, and the measurement anyone revisiting it must take first:
 No recipe prerequisite. [TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md) is parked; accept any
 golden churn in this PR (beyond the new `plan_skip_reason` value). Hard scope rule: adjacent scan /
 display / provenance defects discovered during prep go to BACKLOG or a tiny separate PR — see
-[TEMP-gap-selection-sequencing-plan.md](TEMP-gap-selection-sequencing-plan.md) §4 and
+[archive/TEMP-gap-selection-sequencing-plan.md](archive/TEMP-gap-selection-sequencing-plan.md) §4 and
 [BACKLOG.md](../../BACKLOG.md) § Gap-selection parked debt.
 
 - [x] `RepairConfig`: `only_gaps: Option<Vec<String>>`, `skip_gaps: Option<Vec<String>>` (string tokens, §4); validate mutual exclusivity in `RepairConfig::validate` (TOML path — clap cannot see config keys)
@@ -562,10 +565,13 @@ scan-params contract → [TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md); r
 
 ## 11. Promotion / done criteria
 
-When v1 ships:
-
-- Mark status **v1 done**; move the user-facing contract from this file into
-  [gap-repair-guide.md](../gap-repair-guide.md) and [cli-output.md](../cli-output.md).
-- Link from [pipeline.md](../pipeline.md)'s fill-plan section to the promoted user doc, not to this
-  TEMP file.
-- Archive this file once v1.5 either ships or is abandoned; the ranges and deferred docs stand alone.
+- [x] Status **v1 done**; operator contract in [gap-repair-guide.md](../gap-repair-guide.md) §
+      Iterative subset patching (identity labels, flags/TOML, empty-selection asymmetry, precedence
+      vs fillability/coverage/equivalence, filter note, error shapes). Supporting homes:
+      [cli-output.md](../cli-output.md) (filter note + JSON/human selection-error exception),
+      [gap-vocabulary.md](gap-vocabulary.md) § Gap numbering (input identity rule),
+      [json-output.md](../json-output.md) / [error-mapping.md](../error-mapping.md).
+- [x] [pipeline.md](../pipeline.md) fill-plan section links the guide, not this TEMP file.
+- [ ] Archive **this** file once v1.5 either ships or is abandoned; the ranges and deferred docs
+      stand alone. Design rationale left here until then (§2.1 why containment forced identity,
+      §5 wiring, §10 settled decisions).

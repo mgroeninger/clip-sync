@@ -1,7 +1,8 @@
 # Gap selection v1.5 — range tokens (DRAFT)
 
-Status: **rule set, not started.** Blocked on v1. One measurement still wanted (§2, ε magnitudes at
-real gap edges) — the *scheme* does not depend on it.
+Status: **rule set, unblocked — implement next.** Thin v1 shipped; identity rule (§ tokens are
+labels) is live in operator docs. One measurement still wanted (§2, ε magnitudes at real gap
+edges) — the *scheme* does not depend on it.
 
 Split out of `TEMP-gap-selection-plan.md` on 2026-07-29.
 

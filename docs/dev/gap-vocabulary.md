@@ -32,6 +32,9 @@ Consequences worth stating outright:
 - **Identity and count never share a token.** `gap #4 (3 of 6 planned)`, never `gap 4/6`. The first
   number is *which gap*; the second pair is *how far through the work*. They have different bases,
   different denominators, and are frequently different numbers for the same line.
+- **Input selection uses the same identity rule.** `--only-gaps` / `--skip-gaps` take gap **numbers**
+  (labels into `report.gaps`), never “the Nth fillable / planned / subset member”. Operator contract:
+  [gap-repair-guide.md](../gap-repair-guide.md) § Iterative subset patching.
 - **Say "gap number" to users, "index" only internally.** Error messages and user docs use *gap
   number* (matching the `#` column). "Index" is reserved for the 0-based axis — putting it in a
   message that asserts 1-basedness reintroduces exactly the ambiguity this rule removes. Shipped
