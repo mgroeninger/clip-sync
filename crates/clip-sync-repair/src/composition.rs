@@ -126,7 +126,11 @@ fn dump_gap_fingerprints(
     let select = resolve_fingerprint_gap_select(&args.fingerprint_gap, report.gaps.len())?;
     let media_reader = SymphoniaMediaReader;
     let decoded = decode_ab(&media_reader, report, progress)?;
-    let request = config.repair.patch_settings().into_request(report.clone());
+    let request = config
+        .repair
+        .patch_settings()
+        .into_request(report.clone())
+        .map_err(RepairError::GapSelection)?;
 
     // Complete the scan recipe with params only config carries (report lacks min_gap / abs-silence).
     let complete_recipe = |corpus: &mut crate::application::gap_fingerprint::GapCorpus| {
@@ -218,7 +222,9 @@ fn pending_after_scan(
 
     match pending_repair_write(config, source_video)? {
         Some(write) => Ok(PendingAfterScan::Write(write)),
-        None => Ok(PendingAfterScan::None),
+        None => Ok(PendingAfterScan::None {
+            gap_selection: config.repair.gap_selection_mode(),
+        }),
     }
 }
 
@@ -323,13 +329,7 @@ fn print_repair_outcome(
             }
         });
 
-    let skip_json = matches!(
-        (args.format, &outcome.patch_result),
-        (
-            crate::infrastructure::config::OutputFormat::Json,
-            Err(RepairError::GapSelection(_))
-        )
-    );
+    let skip_json = suppress_json_on_gap_selection_error(args.format, &outcome.patch_result);
     if !skip_json {
         print_repair_output(
             &outcome.report,
@@ -347,6 +347,51 @@ fn print_repair_outcome(
     }
 
     outcome.patch_result.map(|_| ())
+}
+
+/// Under `--format json`, a post-scan selection failure must not emit a success-shaped document.
+fn suppress_json_on_gap_selection_error<T>(
+    format: crate::infrastructure::config::OutputFormat,
+    patch_result: &Result<T, RepairError>,
+) -> bool {
+    matches!(
+        (format, patch_result),
+        (
+            crate::infrastructure::config::OutputFormat::Json,
+            Err(RepairError::GapSelection(_))
+        )
+    )
+}
+
+#[cfg(test)]
+mod gap_selection_output_tests {
+    use super::{suppress_json_on_gap_selection_error, RepairError};
+    use crate::infrastructure::config::OutputFormat;
+
+    #[test]
+    fn json_format_suppresses_stdout_on_gap_selection_error() {
+        let err: Result<(), RepairError> = Err(RepairError::GapSelection(
+            "gap number 9 out of range".into(),
+        ));
+        assert!(suppress_json_on_gap_selection_error(
+            OutputFormat::Json,
+            &err
+        ));
+        assert!(!suppress_json_on_gap_selection_error(
+            OutputFormat::Human,
+            &err
+        ));
+        let ok: Result<(), RepairError> = Ok(());
+        assert!(!suppress_json_on_gap_selection_error(
+            OutputFormat::Json,
+            &ok
+        ));
+        let config_err: Result<(), RepairError> = Err(RepairError::Config("other".into()));
+        assert!(!suppress_json_on_gap_selection_error(
+            OutputFormat::Json,
+            &config_err
+        ));
+    }
 }
 
 #[cfg(all(test, feature = "calibration"))]

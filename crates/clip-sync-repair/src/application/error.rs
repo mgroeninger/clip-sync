@@ -20,7 +20,7 @@ pub enum RepairError {
 
     /// Post-scan gap selection (`--only-gaps` / `--skip-gaps`) failed validation. Exit 2; under
     /// `--format json`, stdout must stay empty (no success-shaped scan document).
-    #[error("config error: {0}")]
+    #[error("gap selection: {0}")]
     GapSelection(String),
 
     /// Output or report I/O failure.

@@ -12,7 +12,7 @@ use clip_sync_repair::application::{
 use clip_sync_repair::domain::gap::{Gap, GapReport};
 use clip_sync_repair::domain::{
     CompatibilityVerdict, FillMode, FillOffsetMode, FitBoundarySearch, GapPatchStatus,
-    GapSignatureMode, RepairProfile, TrackCompatibility,
+    GapSelectionMode, GapSignatureMode, RepairProfile, TrackCompatibility,
 };
 use clip_sync_repair_fixtures::energy_signature_fixtures::{
     gap_report_times, structure_heavy_weights, structure_slide_secs, EnergySignatureFixture,
@@ -64,6 +64,8 @@ pub struct PatchTestOptions {
     pub fit_boundary_search: FitBoundarySearch,
     /// Match production default (`RepairConfig.dual_fit`).
     pub dual_fit: bool,
+    /// Gap subset filter; resolved in [`PatchRequestSettings::into_request`].
+    pub gap_selection: GapSelectionMode,
 }
 
 impl Default for PatchTestOptions {
@@ -104,6 +106,7 @@ impl Default for PatchTestOptions {
             profile: RepairProfile::Default,
             fit_boundary_search: FitBoundarySearch::BaselineOnly,
             dual_fit: clip_sync_repair::infrastructure::config::RepairConfig::default().dual_fit,
+            gap_selection: GapSelectionMode::All,
         }
     }
 }
@@ -332,6 +335,7 @@ pub fn patch_request_with_options(
         border_standoff_secs: 0.0,
         // Hypothesis: tests want every gap processed and the patch observable, not deduped/vetoed.
         skip_equivalent_gaps: false,
+        gap_selection: options.gap_selection,
         residual_gate: clip_sync_repair::domain::ResidualGateMode::Off,
         // No energy field on PatchTestOptions, so energy bias can only mirror nominal. Production
         // deliberately splits them 4× (1.0 / 0.25). Inert under Gate-mode defaults — see
@@ -341,6 +345,7 @@ pub fn patch_request_with_options(
         ..clip_sync_repair::infrastructure::config::RepairConfig::default().patch_settings()
     }
     .into_request(report)
+    .expect("default All gap selection")
 }
 
 pub fn run_patch(request: PatchAudioRequest, crossfade_ms: u64) -> PatchAudioResult {

@@ -190,7 +190,8 @@ fn patch_inside_gap(
                 fill_fit_energy_nominal_bias_scale: 1.0,
                 ..clip_sync_repair::infrastructure::config::RepairConfig::default().patch_settings()
             }
-            .into_request(report),
+            .into_request(report)
+            .expect("default All gap selection"),
             10,
         )
         .expect("patch inside-region gap")

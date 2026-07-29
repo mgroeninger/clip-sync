@@ -610,4 +610,32 @@ mod cli_override_tests {
         apply_cli_overrides(&mut config, &args);
         assert!(!config.repair.dual_fit);
     }
+
+    #[test]
+    fn only_gaps_cli_clears_skip_gaps_from_toml() {
+        use clap::Parser;
+
+        let args = Args::parse_from(["clip-sync-repair", "a.wav", "b.wav", "--only-gaps", "1,3"]);
+        let mut config = RepairAppConfig::default();
+        config.repair.skip_gaps = Some(vec!["2".into()]);
+        apply_cli_overrides(&mut config, &args);
+        assert_eq!(config.repair.only_gaps, Some(vec!["1".into(), "3".into()]));
+        assert!(config.repair.skip_gaps.is_none());
+        assert_eq!(
+            config.repair.gap_selection_mode(),
+            crate::domain::GapSelectionMode::Only(vec!["1".into(), "3".into()])
+        );
+    }
+
+    #[test]
+    fn skip_gaps_cli_clears_only_gaps_from_toml() {
+        use clap::Parser;
+
+        let args = Args::parse_from(["clip-sync-repair", "a.wav", "b.wav", "--skip-gaps", "2"]);
+        let mut config = RepairAppConfig::default();
+        config.repair.only_gaps = Some(vec!["1".into()]);
+        apply_cli_overrides(&mut config, &args);
+        assert_eq!(config.repair.skip_gaps, Some(vec!["2".into()]));
+        assert!(config.repair.only_gaps.is_none());
+    }
 }

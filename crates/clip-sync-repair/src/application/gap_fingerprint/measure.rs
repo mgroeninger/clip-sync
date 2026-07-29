@@ -3196,7 +3196,10 @@ mod tests {
             max_anchors_per_side: 2,
             ..RepairConfig::default()
         };
-        let request: PatchAudioRequest = repair.patch_settings().into_request(report.clone());
+        let request: PatchAudioRequest = repair
+            .patch_settings()
+            .into_request(report.clone())
+            .expect("default All gap selection");
         let progress = NoOpProgressReporter;
 
         let off =

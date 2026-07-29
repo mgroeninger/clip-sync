@@ -773,6 +773,24 @@ mod tests {
     }
 
     #[test]
+    fn gap_not_selected_tags_and_verbose_plan_skip() {
+        let status = GapPatchStatus::NotPlanned {
+            reason: GapFillSkipReason::GapNotSelected,
+        };
+        let tags = derive_gap_tags_from_status(&status, FillMode::Fit, FillTierThresholds::DEFAULT);
+        assert_eq!(tags.plan_kind, PlanKind::NotPlanned);
+        assert_eq!(
+            tags.plan_skip_reason,
+            Some(GapFillSkipReason::GapNotSelected)
+        );
+        assert!(
+            format_gap_tags_verbose_line(&tags).contains("plan_skip=gap_not_selected"),
+            "{}",
+            format_gap_tags_verbose_line(&tags)
+        );
+    }
+
+    #[test]
     fn verbose_line_includes_anchor_seam_metadata() {
         let mut ctx = patch_ctx();
         ctx.anchor_seam_used = true;

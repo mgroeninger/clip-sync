@@ -27,8 +27,11 @@ clip-sync-repair A.mkv B.mkv --wav out2.wav --only-gaps 3 --no-dual-fit   # exam
 
 - Copy `#` from **this run's** gap table (or JSON `gaps[]` order). Numbers are **not** stable if you change scan knobs (`min_gap_ms`, hold, block size, silence floor).
 - `--skip-gaps` is the complement polarity (same 1-based labels). The two flags are mutually exclusive.
+- TOML peers use string tokens: `only_gaps = ["1", "3"]` (not bare integers).
+- Empty `only_gaps = []` errors when gaps exist; empty `skip_gaps = []` means skip nothing (all selected).
 - Unselected gaps keep **original A** audio; status shows `not planned: gap not selected`.
-- Selection is ignored on scan-only runs (no fill plan). It **does** apply with `--repair-preview`.
+- On scan-only runs the flags do not change output, but invalid gap numbers still error (exit 2).
+- Selection **does** apply with `--repair-preview`.
 
 Thresholds below use **production defaults** unless noted: `min_fill_correlation = 0.35`, `fill_marginal_margin = 0.08`, `fill_absolute_floor = 0.12`, `fill_mode = fit`, `dual_fit = true`, repair profile **`default`** (`fit_boundary_search = baseline_only`, `fill_border_search_secs = 10`).
 

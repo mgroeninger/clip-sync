@@ -245,7 +245,10 @@ pub fn scan_gaps_for_fixture(fixture: &EnergySignatureFixture, temp: &Path) -> G
 }
 
 pub fn patch_request_from_repair(report: GapReport, repair: &RepairConfig) -> PatchAudioRequest {
-    repair.patch_settings().into_request(report)
+    repair
+        .patch_settings()
+        .into_request(report)
+        .expect("default All gap selection")
 }
 
 /// Patch geometry params mirroring [`production_repair_config`] for haystack diagnostics.

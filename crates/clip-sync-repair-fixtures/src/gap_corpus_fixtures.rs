@@ -815,7 +815,10 @@ fn patch_audio_request_from_repair(
     report: clip_sync_repair::domain::GapReport,
     repair: &clip_sync_repair::infrastructure::config::RepairConfig,
 ) -> clip_sync_repair::application::PatchAudioRequest {
-    repair.patch_settings().into_request(report)
+    repair
+        .patch_settings()
+        .into_request(report)
+        .expect("default All gap selection")
 }
 
 /// Patch timing config: production gate path (structure + waveform), 5s B haystack, no

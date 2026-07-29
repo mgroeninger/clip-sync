@@ -98,7 +98,8 @@ pub struct Args {
     pub no_skip_equivalent_gaps: bool,
 
     /// Patch only these gaps (1-based gap numbers from the scan table; comma-separated).
-    /// Mutually exclusive with `--skip-gaps`. Ignored on scan-only runs (no fill plan).
+    /// Mutually exclusive with `--skip-gaps`. On scan-only runs tokens are validated but do not
+    /// change output.
     #[arg(
         long,
         value_name = "LIST",
@@ -108,7 +109,8 @@ pub struct Args {
     pub only_gaps: Option<Vec<String>>,
 
     /// Patch all fillable gaps except these (1-based gap numbers; comma-separated).
-    /// Mutually exclusive with `--only-gaps`. Ignored on scan-only runs (no fill plan).
+    /// Mutually exclusive with `--only-gaps`. On scan-only runs tokens are validated but do not
+    /// change output.
     #[arg(
         long,
         value_name = "LIST",

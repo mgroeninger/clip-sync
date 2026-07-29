@@ -52,7 +52,7 @@ Both CLIs treat a closed downstream pipe (`clip-sync … | head`) as **success, 
 | Code | `RepairError` variant | When |
 |------|-----------------------|------|
 | 0 | — | Gap analysis or write path complete (scan-only, WAV patch, or mux) |
-| 2 | `Config(String)` | Invalid config, argument, or validation failure (including `--mux` without `ffmpeg-mux` build feature) |
+| 2 | `Config(String)`, `GapSelection(String)` | Invalid config, argument, validation failure, or post-scan gap selection (`--only-gaps` / `--skip-gaps`); including `--mux` without `ffmpeg-mux` build feature |
 | 3 | `Domain(DomainError)` | No decodable audio track in A or B, or video A duration unknown during gap scan (`InvalidDuration`) |
 | 4 | `Media(MediaError)`, `Io(std::io::Error)`, or `Write(std::io::Error)` | File I/O, decode failure during gap scan/patch, WAV write failure, or failure writing the report to stdout (`Io`) |
 | 5 | `Align(AppError)` | Any failure from the alignment sub-flow |
@@ -69,6 +69,7 @@ Messages come from `RepairError`'s `Display` implementation (`clip-sync-repair/s
 | RepairError | Typical stderr output |
 |-------------|----------------------|
 | `Config(String)` | `config error: <detail>` (e.g. `--mux` without `ffmpeg-mux` feature, JSON serialize failure) |
+| `GapSelection(String)` | `gap selection: <detail>` (bad `--only-gaps` / `--skip-gaps`; exit 2). Under `--format json`, stdout stays empty — no success-shaped scan document |
 | `Domain(DomainError::NoAudioTracks)` | `no audio tracks found` |
 | `Domain(DomainError::InvalidDuration)` | `invalid media duration` |
 | `Media(MediaError)` | Same text as lib `MediaError` (no extra prefix) |

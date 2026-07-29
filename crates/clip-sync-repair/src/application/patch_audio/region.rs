@@ -2454,7 +2454,10 @@ mod tests {
             max_anchors_per_side: 2,
             ..RepairConfig::default()
         };
-        let request: PatchAudioRequest = repair.patch_settings().into_request(report.clone());
+        let request: PatchAudioRequest = repair
+            .patch_settings()
+            .into_request(report.clone())
+            .expect("default All gap selection");
 
         let regions = vec![FillRegion {
             gap_index: 0,
@@ -2613,7 +2616,10 @@ mod tests {
             absolute_silence_rms: 0.001,
             ..Default::default()
         };
-        let mut request = repair.patch_settings().into_request(report);
+        let mut request = repair
+            .patch_settings()
+            .into_request(report)
+            .expect("default All gap selection");
         request.measure_residual = measure_residual;
         request
     }

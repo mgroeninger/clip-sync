@@ -120,7 +120,8 @@ range tokens are **recipe-stable** identities. Neither is ever a count.
 
 | Rule | Detail |
 |------|--------|
-| **Patch / preview modes** | Flags apply when a fill plan is built: `--wav` / `--mux` **and** `--repair-preview`. Scan-only runs ignore selection (no fill plan). |
+| **Patch / preview modes** | Flags apply when a fill plan is built: `--wav` / `--mux` **and** `--repair-preview`. |
+| **Scan-only** | Tokens are **validated** against the report (bad `#` → exit 2) but do not change scan output; no filter note (no fill plan). |
 | **Full scan always** | Phases 1–2 unchanged; stdout/JSON still list **all** detected gaps. |
 | **Filter at plan time** | Hook: `build_gap_fill_plan` (`domain/gap_fill.rs`). Unselected gaps never enter `regions`. |
 | **Audio on A** | Unselected gaps keep **original A** audio in the output (no splice). Preview never splices; status still shows `gap_not_selected`. |
@@ -132,7 +133,7 @@ range tokens are **recipe-stable** identities. Neither is ever a count.
 prints `No gaps planned for patch; skipping audio decode.` and returns `Ok` with an all-`NotPlanned`
 summary. That stays. Selection is different because an empty `GapSelection` means the **user's own
 arguments** named nothing in the report — a silent success there is indistinguishable from "worked".
-So: empty selection after resolve errors (`RepairError::Config`, exit **2**); a non-empty selection
+So: empty selection after resolve errors (`RepairError::GapSelection`, exit **2**); a non-empty selection
 that the plan later empties keeps the existing `Ok` + phase-line behavior. This check lives in the
 post-scan resolve step (§5.6), *before* the plan is built, so the error mentions the selection, not the
 plan.
@@ -201,8 +202,9 @@ v1 accepts **only** integer tokens, but the stored type on both `Args` and `Repa
 breaking type change on the TOML key when v1.5 adds range tokens (`"6128.25-6360.0"`). Cost today is
 one `parse::<usize>()` with a friendly error; cost of deferring is a config-compat break.
 
-TOML numbers are also accepted for ergonomics (`only_gaps = [2, 4, 5]`) via a serde-untagged
-`GapSelectorToken { Index(usize), Token(String) }` if that proves cheap; the string form is normative.
+TOML numbers are **not** accepted in v1 (`only_gaps = [2, 4, 5]` fails serde into `Vec<String>`).
+Use quoted strings. An untagged `GapSelectorToken` remains optional follow-up if bare integers prove
+painful; string form stays normative for range tokens in v1.5.
 
 ### Token parsing
 
@@ -215,8 +217,11 @@ Tokens are **gap numbers** (labels), not positions in a filtered list — §2.1.
 - Both strings are **verbatim** the ones `resolve_fingerprint_gap_select` already ships. One message
   shape across both surfaces; if either is ever reworded, change **both** together.
 - Resolution is order-insensitive and unions across tokens.
-- Empty list is **not** the same as absent: `only_gaps = []` (or `--only-gaps ""`) resolves to
-  "nothing selected" → the §3 empty-selection error. Absent / `None` → `GapSelectionMode::All`.
+- Empty list is **not** the same as absent for `--only-gaps` / `only_gaps`: `only_gaps = []`
+  (or `--only-gaps ""` yielding no tokens) resolves to "nothing selected" → the §3 empty-selection
+  error (except on an empty report, where the empty set is vacuous success).
+- Empty `--skip-gaps` / `skip_gaps = []` means skip nothing → all gaps selected (filter present,
+  note silent because every gap remains). Documented deliberate asymmetry vs empty only.
 
 ### Index base: 1-based
 
@@ -383,28 +388,20 @@ Three-stage flow:
 | **2. Carry** | `RepairConfig::patch_settings()` → `PatchRequestSettings.gap_selection: GapSelectionMode` | unresolved | `patch_settings()` is the single "policy moves in whole" boundary; a new knob that skipped it would become a second source of truth |
 | **3. Resolve + validate** | `application/run_repair.rs`, after `ScanGaps` returns the report | `GapSelection` on `PatchAudioRequest` | First point where both the intent and the gap count exist, and the last point that can still return `Result` |
 
-**Stage 3 detail.** `PatchRequestSettings::into_request(report)` returns `PatchAudioRequest`, *not*
-`Result`, so it cannot host validation. Do not change its signature — it is the deliberate "policy
-moves in whole, no per-field copy list" seam. Instead resolve just before it, in the two `run_repair`
-arms that already hold the report (`run_preview` and `into_write_request`):
+**Stage 3 detail.** `PatchRequestSettings::into_request(report)` returns `Result<PatchAudioRequest, String>`
+and **resolves** `gap_selection` against the report (bounds / duplicates / empty-selection). `run_repair`
+maps `Err` to `RepairError::GapSelection`. Callers that only ever use `GapSelectionMode::All` can
+`.expect("default All gap selection")`.
 
 ```rust
 // run_repair.rs — both arms
-let selection = resolve_gap_selection(&patch_settings.gap_selection, &report)
-    .map_err(RepairError::Config)?;      // exit 2 via exit_code_for
-let mut request = patch_settings.into_request(report);
-request.gap_selection = selection;        // per-run resolved value, like `measure_residual`
+let request = patch_settings
+    .into_request(report)
+    .map_err(RepairError::GapSelection)?;
+if let Some(note) = format_gap_selection_filter_note(&request.gap_selection, request.report.gaps.len()) {
+    progress.phase(&note);
+}
 ```
-
-`gap_selection` on `PatchAudioRequest` follows the `measure_residual` precedent: a per-run field set
-directly on the request rather than through `Deref`, defaulting to `GapSelection::all(gap_count)` so
-every existing constructor keeps compiling with unchanged behavior.
-
-`resolve_gap_selection` owns all four failures — non-integer token, out of range, duplicate, and empty
-result (§3) — and is where the 1-based → 0-based conversion happens. Mutual exclusivity is caught
-earlier and twice: clap `conflicts_with` for the CLI, and `RepairConfig::validate` for the TOML path
-(clap cannot see config-file keys). Range/count validation **cannot** live in `validate` — it runs
-pre-scan, where `report.gaps.len()` does not exist yet.
 
 **Blast radius (source audit, 2026-07-28).** Adding a field to `PatchRequestSettings` costs **one
 edit**: `RepairConfig::patch_settings()`. Nothing else constructs one exhaustively — both literals in
@@ -441,7 +438,8 @@ No v1 change to anchor table indexing.
 
 ### Scan-only
 
-Selection flags ignored; no `GapNotSelected` in output.
+Selection flags do not change the scan table, but tokens are still **validated** against
+`report.gaps` (same resolve as write/preview) so a mistyped `#` fails instead of exit 0.
 
 ### `--repair-preview`
 
@@ -508,7 +506,7 @@ display / provenance defects discovered during prep go to BACKLOG or a tiny sepa
 - [x] **JSON suppression (§3):** on a selection error under `--format json`, print **nothing** on stdout (message on stderr, exit 2); human format keeps printing the table. Gate at the `print_repair_output` call in `print_repair_outcome` via an explicit signal — **not** by matching `Err(RepairError::Config)`, which `repair_videos.rs` also raises post-scan
 - [x] Document the human-format exception in [cli-output.md](../cli-output.md) next to its failure table (stdout "Empty — no partial report"): post-scan selection/config errors still print the gap table because the operator needs `#` to fix the selection
 - [x] `format_unified_gap_report` / patch summary: `not planned: gap not selected`
-- [x] Golden JSON fixture update for the new `plan_skip_reason` value, per [json-output.md](../json-output.md) revision rules
+- [x] Golden / wire spelling pin for `plan_skip_reason: gap_not_selected` (serde unit + tags verbose); full-surface golden unchanged (no new status row required — additive enum value only, documented in [json-output.md](../json-output.md))
 - [x] Docs: [gap-repair-guide.md](../gap-repair-guide.md) workflow, [cli-output.md](../cli-output.md) flags, [pipeline.md](../pipeline.md) fill-plan paragraph, [gap-fill-modes.md](../gap-fill-modes.md) cross-link
 - [x] Integration test: 3-gap fixture, `--only-gaps 2`, assert gaps 1 and 3 unchanged on A, gap 2 patched, status strings correct
 

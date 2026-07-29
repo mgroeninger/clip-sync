@@ -430,6 +430,12 @@ mod format_tests {
     use super::*;
 
     #[test]
+    fn gap_not_selected_serializes_as_snake_case_json() {
+        let json = serde_json::to_string(&GapFillSkipReason::GapNotSelected).expect("serialize");
+        assert_eq!(json, "\"gap_not_selected\"");
+    }
+
+    #[test]
     fn correlation_skip_includes_best_attempt_when_higher() {
         let reason = GapPatchSkipReason::CorrelationBelowThreshold {
             pre_correlation: 0.06,

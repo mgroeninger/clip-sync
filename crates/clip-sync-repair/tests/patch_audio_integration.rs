@@ -24,8 +24,7 @@ use clip_sync_repair::domain::policies;
 use clip_sync_repair::domain::FillConfidence;
 use clip_sync_repair::domain::{CompatibilityVerdict, TrackCompatibility};
 use clip_sync_repair::domain::{
-    resolve_gap_selection, FillMode, FillOffsetMode, FitBoundarySearch, GapSelectionMode,
-    GapSignatureMode, RepairProfile,
+    FillMode, FillOffsetMode, FitBoundarySearch, GapSelectionMode, GapSignatureMode, RepairProfile,
 };
 use clip_sync_repair::domain::{GapFillSkipReason, GapPatchSkipReason, GapPatchStatus};
 use clip_sync_repair::infrastructure::aligner::SymphoniaAligner;
@@ -2557,13 +2556,16 @@ fn only_gaps_2_leaves_other_gaps_on_a() {
             .collect(),
     );
 
-    let mut request = patch_request(report, false, 5.0, 0.35);
-    let selection = resolve_gap_selection(
-        &GapSelectionMode::Only(vec!["2".into()]),
-        &request.report,
-    )
-    .expect("only-gaps 2");
-    request.gap_selection = selection;
+    let request = patch_request_with_options(
+        report,
+        false,
+        5.0,
+        0.35,
+        PatchTestOptions {
+            gap_selection: GapSelectionMode::Only(vec!["2".into()]),
+            ..PatchTestOptions::default()
+        },
+    );
 
     let result = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter)
         .execute(request, 10)

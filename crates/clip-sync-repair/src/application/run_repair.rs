@@ -13,7 +13,7 @@ use crate::application::ports::PatchedAudioWriter;
 use crate::application::repair_videos::{RepairVideos, RepairWriteRequest};
 use crate::application::scan_gaps::{ScanGaps, ScanGapsRequest};
 use crate::domain::gap_fill::{format_gap_selection_filter_note, resolve_gap_selection};
-use crate::domain::GapReport;
+use crate::domain::{GapReport, GapSelectionMode};
 
 #[cfg(feature = "ffmpeg-mux")]
 use crate::application::mux_bitrate::MuxAudioBitratePolicy;
@@ -38,8 +38,9 @@ pub struct PendingRepairWrite {
 ///
 /// Built from `RepairConfig` (`dry_run`, `repair_preview`, output paths) in `composition`.
 pub enum PendingAfterScan {
-    /// Scan report only (`dry_run`, no preview, no output paths).
-    None,
+    /// Scan report only (`dry_run`, no preview, no output paths). Selection tokens are still
+    /// validated against the report so a retry mistype (`--only-gaps 99`) fails instead of exit 0.
+    None { gap_selection: GapSelectionMode },
     /// Pass-1 characterize without splice/write (`repair_preview`).
     Preview {
         patch_settings: PatchRequestSettings,
@@ -65,13 +66,14 @@ fn resolve_patch_request(
     report: GapReport,
     progress: &dyn ProgressReporter,
 ) -> Result<PatchAudioRequest, RepairError> {
-    let selection = resolve_gap_selection(&patch_settings.gap_selection, &report)
+    let request = patch_settings
+        .into_request(report)
         .map_err(RepairError::GapSelection)?;
-    if let Some(note) = format_gap_selection_filter_note(&selection, report.gaps.len()) {
+    if let Some(note) =
+        format_gap_selection_filter_note(&request.gap_selection, request.report.gaps.len())
+    {
         progress.phase(&note);
     }
-    let mut request = patch_settings.into_request(report);
-    request.gap_selection = selection;
     Ok(request)
 }
 
@@ -106,6 +108,14 @@ fn run_preview(
     PatchAudio::new(media_reader, progress).preview(request, crossfade_ms)
 }
 
+fn validate_scan_only_selection(
+    mode: &GapSelectionMode,
+    report: &GapReport,
+) -> Result<(), RepairError> {
+    resolve_gap_selection(mode, report).map_err(RepairError::GapSelection)?;
+    Ok(())
+}
+
 #[cfg(feature = "ffmpeg-mux")]
 pub fn run_repair<MR, A, PW, MM>(
     input: RepairRunInput,
@@ -126,7 +136,9 @@ where
     let alignment_detail = scan.alignment_detail;
 
     let patch_result = match input.after_scan {
-        PendingAfterScan::None => Ok(None),
+        PendingAfterScan::None { gap_selection } => {
+            validate_scan_only_selection(&gap_selection, &report).map(|()| None)
+        }
         PendingAfterScan::Preview {
             patch_settings,
             crossfade_ms,
@@ -138,12 +150,11 @@ where
             report.clone(),
         )
         .map(Some),
-        PendingAfterScan::Write(pending) => {
-            into_write_request(pending, report.clone(), progress).and_then(|write_request| {
+        PendingAfterScan::Write(pending) => into_write_request(pending, report.clone(), progress)
+            .and_then(|write_request| {
                 let repair = RepairVideos::new(media_reader, progress, wav_writer);
                 repair.execute(write_request, muxer).map(Some)
-            })
-        }
+            }),
     };
 
     Ok(RepairRunOutcome {
@@ -171,7 +182,9 @@ where
     let alignment_detail = scan.alignment_detail;
 
     let patch_result = match input.after_scan {
-        PendingAfterScan::None => Ok(None),
+        PendingAfterScan::None { gap_selection } => {
+            validate_scan_only_selection(&gap_selection, &report).map(|()| None)
+        }
         PendingAfterScan::Preview {
             patch_settings,
             crossfade_ms,
@@ -183,12 +196,11 @@ where
             report.clone(),
         )
         .map(Some),
-        PendingAfterScan::Write(pending) => {
-            into_write_request(pending, report.clone(), progress).and_then(|write_request| {
+        PendingAfterScan::Write(pending) => into_write_request(pending, report.clone(), progress)
+            .and_then(|write_request| {
                 let repair = RepairVideos::new(media_reader, progress, wav_writer);
                 repair.execute(write_request).map(Some)
-            })
-        }
+            }),
     };
 
     Ok(RepairRunOutcome {

@@ -168,17 +168,20 @@ pub struct PatchRequestSettings {
 }
 
 impl PatchRequestSettings {
-    /// Attach the scan report, producing the runnable request. Policy moves in whole — there is
-    /// no per-field copy list to keep in sync when a knob is added.
-    pub fn into_request(self, report: GapReport) -> PatchAudioRequest {
-        let gap_count = report.gaps.len();
-        PatchAudioRequest {
+    /// Attach the scan report, resolving [`Self::gap_selection`] against it.
+    ///
+    /// Policy moves in whole — there is no per-field copy list to keep in sync when a knob is
+    /// added. Selection validation (bounds, duplicates, empty non-vacuous lists) happens here so
+    /// callers cannot silently ignore `GapSelectionMode::Only` / `Skip`.
+    pub fn into_request(self, report: GapReport) -> Result<PatchAudioRequest, String> {
+        let selection =
+            crate::domain::gap_fill::resolve_gap_selection(&self.gap_selection, &report)?;
+        Ok(PatchAudioRequest {
             report,
             settings: self,
             // Report-only residual measurement is opt-in; callers set it on the request directly.
             measure_residual: false,
-            // Default all-selected; `run_repair` replaces after `resolve_gap_selection`.
-            gap_selection: GapSelection::all(gap_count),
-        }
+            gap_selection: selection,
+        })
     }
 }

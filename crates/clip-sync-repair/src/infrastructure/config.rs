@@ -620,7 +620,11 @@ impl RepairConfig {
             (None, None) => GapSelectionMode::All,
             (Some(tokens), None) => GapSelectionMode::Only(tokens.clone()),
             (None, Some(tokens)) => GapSelectionMode::Skip(tokens.clone()),
-            (Some(_), Some(_)) => GapSelectionMode::All, // unreachable after validate
+            (Some(only), Some(_skip)) => {
+                // `validate` rejects both keys; fixtures may call `patch_settings()` without it.
+                // Prefer the restrictive polarity — never silently select all.
+                GapSelectionMode::Only(only.clone())
+            }
         }
     }
 
@@ -1406,5 +1410,75 @@ require_consistent_offsets = true
 
         let config = load_repair_app_config(Some(&path)).expect("load config");
         assert!(config.align.alignment.require_consistent_offsets);
+    }
+
+    #[test]
+    fn rejects_only_gaps_and_skip_gaps_together() {
+        let config = RepairConfig {
+            only_gaps: Some(vec!["1".into()]),
+            skip_gaps: Some(vec!["2".into()]),
+            ..RepairConfig::default()
+        };
+        let err = config.validate().expect_err("mutual exclusivity");
+        assert!(
+            format!("{err:?}").contains("only_gaps"),
+            "unexpected err: {err:?}"
+        );
+        assert!(
+            format!("{err:?}").contains("skip_gaps"),
+            "unexpected err: {err:?}"
+        );
+    }
+
+    #[test]
+    fn gap_selection_mode_prefers_only_when_both_set() {
+        let config = RepairConfig {
+            only_gaps: Some(vec!["1".into()]),
+            skip_gaps: Some(vec!["2".into()]),
+            ..RepairConfig::default()
+        };
+        assert_eq!(
+            config.gap_selection_mode(),
+            GapSelectionMode::Only(vec!["1".into()])
+        );
+    }
+
+    #[test]
+    fn load_config_accepts_string_only_gaps_tokens() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("repair.toml");
+        std::fs::write(
+            &path,
+            r#"
+[repair]
+dry_run = true
+only_gaps = ["2", "4"]
+"#,
+        )
+        .expect("write config");
+        let config = load_repair_app_config(Some(&path)).expect("string tokens");
+        assert_eq!(config.repair.only_gaps, Some(vec!["2".into(), "4".into()]));
+    }
+
+    #[test]
+    fn load_config_rejects_numeric_only_gaps_tokens() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("repair.toml");
+        std::fs::write(
+            &path,
+            r#"
+[repair]
+dry_run = true
+only_gaps = [2, 4, 5]
+"#,
+        )
+        .expect("write config");
+        let err =
+            load_repair_app_config(Some(&path)).expect_err("bare integers are not Vec<String>");
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("only_gaps") || msg.to_lowercase().contains("string"),
+            "expected a deserialize hint about only_gaps/strings, got: {msg}"
+        );
     }
 }

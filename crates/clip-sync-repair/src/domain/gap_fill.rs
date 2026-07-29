@@ -7,8 +7,9 @@ use crate::domain::track_match::CompatibilityVerdict;
 /// Resolved after scan, before fill plan. **0-based** — same base as [`FillRegion::gap_index`].
 #[derive(Debug, Clone)]
 pub struct GapSelection {
-    /// 0-based indices into `GapReport.gaps` (chronological). Empty set is unreachable after a
-    /// successful [`resolve_gap_selection`] (empty selection errors out first).
+    /// 0-based indices into `GapReport.gaps` (chronological). May be empty when the report has no
+    /// gaps (`GapSelectionMode::All` / skip-nothing on an empty report). A non-empty report never
+    /// yields an empty set after a successful [`resolve_gap_selection`] — that case errors first.
     selected: HashSet<usize>,
     /// Present when `--only-gaps` / `--skip-gaps` (or TOML peers) were in effect — drives the
     /// stderr filter note.
@@ -63,6 +64,17 @@ pub fn resolve_gap_selection(
         GapSelectionMode::Only(tokens) => {
             let selected = parse_gap_number_tokens(tokens, gap_count)?;
             if selected.is_empty() {
+                // Empty report: the empty set *is* the full selection — do not fail write/preview.
+                // Non-empty report + empty only-list: user named nothing → error (§3).
+                if gap_count == 0 {
+                    return Ok(GapSelection {
+                        selected,
+                        filter: Some(GapSelectionFilter {
+                            kind: "only-gaps",
+                            tokens: tokens.iter().map(|t| t.trim().to_string()).collect(),
+                        }),
+                    });
+                }
                 return Err("gap selection matched no gaps (only-gaps listed nothing)".to_string());
             }
             Ok(GapSelection {
@@ -77,9 +89,19 @@ pub fn resolve_gap_selection(
             let skip = parse_gap_number_tokens(tokens, gap_count)?;
             let selected: HashSet<usize> = (0..gap_count).filter(|i| !skip.contains(i)).collect();
             if selected.is_empty() {
+                // Empty report + skip-nothing: same as All — succeed. Non-empty report where every
+                // gap was excluded: user error (§3).
+                if gap_count == 0 {
+                    return Ok(GapSelection {
+                        selected,
+                        filter: Some(GapSelectionFilter {
+                            kind: "skip-gaps",
+                            tokens: tokens.iter().map(|t| t.trim().to_string()).collect(),
+                        }),
+                    });
+                }
                 return Err(
-                    "gap selection matched no gaps (skip-gaps excluded every detected gap)"
-                        .to_string(),
+                    "skip-gaps excluded every detected gap (nothing left to select)".to_string(),
                 );
             }
             Ok(GapSelection {
@@ -99,14 +121,15 @@ fn parse_gap_number_tokens(tokens: &[String], gap_count: usize) -> Result<HashSe
     for raw in tokens {
         let token = raw.trim();
         if token.is_empty() {
-            return Err(format!("invalid gap selection token {raw:?}: expected a gap number"));
+            return Err(format!(
+                "invalid gap selection token {raw:?}: expected a gap number"
+            ));
         }
-        let n: usize = token.parse().map_err(|_| {
-            format!("invalid gap selection token {token:?}: expected a gap number")
-        })?;
-        if !seen_numbers.insert(n) {
-            return Err(format!("duplicate gap number {n} in selection"));
-        }
+        let n: usize = token
+            .parse()
+            .map_err(|_| format!("invalid gap selection token {token:?}: expected a gap number"))?;
+        // Bounds before duplicate: `--only-gaps 9,9` on a 3-gap report must say out-of-range, not
+        // "duplicate 9".
         let index = match n {
             0 => {
                 return Err("gap number 0 is invalid (gap numbers are 1-based)".to_string());
@@ -118,6 +141,9 @@ fn parse_gap_number_tokens(tokens: &[String], gap_count: usize) -> Result<HashSe
             }
             n => n - 1,
         };
+        if !seen_numbers.insert(n) {
+            return Err(format!("duplicate gap number {n} in selection"));
+        }
         selected.insert(index);
     }
     Ok(selected)
@@ -229,9 +255,10 @@ pub fn build_gap_fill_plan(
             continue;
         }
 
-        // Equivalence gate (lowest precedence — after fillable + coverage, per plan §4): drop gaps whose
-        // silence is already equivalent to B's (mutual/ambient silence), so the decode/patch path is never
-        // entered for them. Only when `skip_equivalent_gaps`; the classification is advisory otherwise.
+        // Equivalence gate (after fillable + coverage; selection is lower still — plan §5.2): drop
+        // gaps whose silence is already equivalent to B's (mutual/ambient silence), so the
+        // decode/patch path is never entered for them. Only when `skip_equivalent_gaps`; the
+        // classification is advisory otherwise.
         if skip_equivalent_gaps && report.gap_equivalence_at(index).is_some_and(|v| v.drop) {
             skipped.push(GapFillSkipped {
                 gap_index: index,
@@ -316,7 +343,7 @@ pub(crate) fn format_gap_selection_filter_note(
     let n = selection.selected.len();
     let token_list = filter.tokens.join(",");
     Some(format!(
-        "Gap filter: patching {n} of {gap_count} detected gaps ({}: {token_list})",
+        "Gap filter: selected {n} of {gap_count} detected gaps ({}: {token_list})",
         filter.kind
     ))
 }
@@ -531,7 +558,8 @@ mod tests {
 
         // With the mapped-region gate disabled, both gaps are planned.
         report.limit_fill_to_mapped_region = false;
-        let plan_all = build_gap_fill_plan(&report, 0, false, &GapSelection::all(report.gaps.len()));
+        let plan_all =
+            build_gap_fill_plan(&report, 0, false, &GapSelection::all(report.gaps.len()));
         assert_eq!(plan_all.regions.len(), 2);
     }
 
@@ -556,7 +584,8 @@ mod tests {
         assert!(report.gap_equivalence[0].drop && !report.gap_equivalence[1].drop);
 
         // Flag off: classification is advisory only — both gaps still planned.
-        let plan_off = build_gap_fill_plan(&report, 0, false, &GapSelection::all(report.gaps.len()));
+        let plan_off =
+            build_gap_fill_plan(&report, 0, false, &GapSelection::all(report.gaps.len()));
         assert_eq!(plan_off.regions.len(), 2);
         assert!(plan_off.skipped.is_empty());
 
@@ -690,13 +719,11 @@ mod tests {
     fn resolve_rejects_zero_out_of_range_duplicates_and_empty_only() {
         let report = base_report(Some(stereo_identical()), vec![fillable_gap(0.0, 1.0)]);
         assert_eq!(
-            resolve_gap_selection(&GapSelectionMode::Only(vec!["0".into()]), &report)
-                .unwrap_err(),
+            resolve_gap_selection(&GapSelectionMode::Only(vec!["0".into()]), &report).unwrap_err(),
             "gap number 0 is invalid (gap numbers are 1-based)"
         );
         assert_eq!(
-            resolve_gap_selection(&GapSelectionMode::Only(vec!["2".into()]), &report)
-                .unwrap_err(),
+            resolve_gap_selection(&GapSelectionMode::Only(vec!["2".into()]), &report).unwrap_err(),
             "gap number 2 out of range (1 gaps detected)"
         );
         assert_eq!(
@@ -708,6 +735,22 @@ mod tests {
             "duplicate gap number 1 in selection"
         );
         assert!(resolve_gap_selection(&GapSelectionMode::Only(vec![]), &report).is_err());
+    }
+
+    #[test]
+    fn empty_report_allows_vacuous_only_and_skip_selection() {
+        let report = base_report(Some(stereo_identical()), vec![]);
+        let only = resolve_gap_selection(&GapSelectionMode::Only(vec![]), &report)
+            .expect("empty only-list on empty report");
+        assert!(!only.is_filtered(0));
+        let skip = resolve_gap_selection(&GapSelectionMode::Skip(vec![]), &report)
+            .expect("empty skip-list on empty report");
+        assert!(!skip.is_filtered(0));
+        // Named tokens still fail bounds against zero gaps.
+        assert_eq!(
+            resolve_gap_selection(&GapSelectionMode::Skip(vec!["1".into()]), &report).unwrap_err(),
+            "gap number 1 out of range (0 gaps detected)"
+        );
     }
 
     #[test]
@@ -762,5 +805,118 @@ mod tests {
             plan.skipped[0].reason,
             GapFillSkipReason::TrackLayoutMismatch
         );
+    }
+
+    #[test]
+    fn resolve_skip_gaps_is_complement_of_only() {
+        let report = base_report(
+            Some(stereo_identical()),
+            vec![
+                fillable_gap(0.0, 1.0),
+                fillable_gap(2.0, 3.0),
+                fillable_gap(4.0, 5.0),
+            ],
+        );
+        let only = resolve_gap_selection(
+            &GapSelectionMode::Only(vec!["1".into(), "3".into()]),
+            &report,
+        )
+        .expect("only");
+        let skip = resolve_gap_selection(&GapSelectionMode::Skip(vec!["2".into()]), &report)
+            .expect("skip");
+        for i in 0..3 {
+            assert_eq!(
+                only.is_selected(i),
+                skip.is_selected(i),
+                "index {i} must match between only and skip complement"
+            );
+        }
+        assert!(skip.is_selected(0));
+        assert!(!skip.is_selected(1));
+        assert!(skip.is_selected(2));
+    }
+
+    #[test]
+    fn empty_only_errors_but_empty_skip_selects_all() {
+        let report = base_report(
+            Some(stereo_identical()),
+            vec![fillable_gap(0.0, 1.0), fillable_gap(2.0, 3.0)],
+        );
+        assert_eq!(
+            resolve_gap_selection(&GapSelectionMode::Only(vec![]), &report).unwrap_err(),
+            "gap selection matched no gaps (only-gaps listed nothing)"
+        );
+        let skip_nothing =
+            resolve_gap_selection(&GapSelectionMode::Skip(vec![]), &report).expect("skip empty");
+        assert!(skip_nothing.is_selected(0));
+        assert!(skip_nothing.is_selected(1));
+        assert!(!skip_nothing.is_filtered(2));
+    }
+
+    #[test]
+    fn skip_all_gaps_errors_with_exclusion_wording() {
+        let report = base_report(
+            Some(stereo_identical()),
+            vec![
+                fillable_gap(0.0, 1.0),
+                fillable_gap(2.0, 3.0),
+                fillable_gap(4.0, 5.0),
+            ],
+        );
+        assert_eq!(
+            resolve_gap_selection(
+                &GapSelectionMode::Skip(vec!["1".into(), "2".into(), "3".into()]),
+                &report
+            )
+            .unwrap_err(),
+            "skip-gaps excluded every detected gap (nothing left to select)"
+        );
+    }
+
+    #[test]
+    fn out_of_range_duplicate_prefers_bounds_error() {
+        let report = base_report(
+            Some(stereo_identical()),
+            vec![
+                fillable_gap(0.0, 1.0),
+                fillable_gap(2.0, 3.0),
+                fillable_gap(4.0, 5.0),
+            ],
+        );
+        assert_eq!(
+            resolve_gap_selection(
+                &GapSelectionMode::Only(vec!["9".into(), "9".into()]),
+                &report
+            )
+            .unwrap_err(),
+            "gap number 9 out of range (3 gaps detected)"
+        );
+    }
+
+    #[test]
+    fn filter_note_fires_when_subset_and_silent_when_all() {
+        let report = base_report(
+            Some(stereo_identical()),
+            vec![
+                fillable_gap(0.0, 1.0),
+                fillable_gap(2.0, 3.0),
+                fillable_gap(4.0, 5.0),
+            ],
+        );
+        let subset =
+            resolve_gap_selection(&GapSelectionMode::Only(vec!["2".into()]), &report).unwrap();
+        let note = format_gap_selection_filter_note(&subset, 3).expect("filtered");
+        assert!(note.contains("selected 1 of 3"), "{note}");
+        assert!(note.contains("only-gaps: 2"), "{note}");
+
+        let all_named = resolve_gap_selection(
+            &GapSelectionMode::Only(vec!["1".into(), "2".into(), "3".into()]),
+            &report,
+        )
+        .unwrap();
+        assert!(format_gap_selection_filter_note(&all_named, 3).is_none());
+
+        let skip_nothing = resolve_gap_selection(&GapSelectionMode::Skip(vec![]), &report).unwrap();
+        assert!(format_gap_selection_filter_note(&skip_nothing, 3).is_none());
     }
 }

@@ -133,6 +133,9 @@ fn synth_ab_inputs() -> (MultiChannelPcm, Vec<f32>, GapReport, PatchAudioRequest
         max_anchors_per_side: 2,
         ..RepairConfig::default()
     };
-    let request: PatchAudioRequest = repair.patch_settings().into_request(report.clone());
+    let request: PatchAudioRequest = repair
+        .patch_settings()
+        .into_request(report.clone())
+        .expect("default All gap selection");
     (a_pcm, b, report, request)
 }
