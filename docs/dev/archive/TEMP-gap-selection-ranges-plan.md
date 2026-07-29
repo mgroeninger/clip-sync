@@ -1,9 +1,9 @@
-# Gap selection v1.5 — range tokens
+# Gap selection v1.5 — range tokens (ARCHIVED)
 
-Status: **implemented** (2026-07-29). User contract in
-[gap-repair-guide.md](../gap-repair-guide.md) § Iterative subset patching and
-[cli-output.md](../cli-output.md) (filter-note straddler clause). Archive when a follow-up
-absorbs this record, or keep beside v1 until both archive together.
+Status: **archived 2026-07-29** — implemented and promoted with v1. User contract in
+[gap-repair-guide.md](../../gap-repair-guide.md) § Iterative subset patching and
+[cli-output.md](../../cli-output.md) (filter-note straddler clause). Do not treat this file as
+current behavior. Companion v1 record: [TEMP-gap-selection-plan.md](TEMP-gap-selection-plan.md).
 
 Split out of `TEMP-gap-selection-plan.md` on 2026-07-29.
 
@@ -20,14 +20,14 @@ Split out of `TEMP-gap-selection-plan.md` on 2026-07-29.
 >    contract asks for — that is the whole point of the feature.
 > 3. **Neither token restricts the scan.** They select from gaps already detected across the whole
 >    file. Limiting *detection* to a window is a different axis, deliberately out of scope —
->    [TEMP-gap-selection-deferred.md](TEMP-gap-selection-deferred.md) § `--scan-window`.
+>    [TEMP-gap-selection-deferred.md](../TEMP-gap-selection-deferred.md) § `--scan-window`.
 
 > **Verification rule.** `file:line` references and claims about current behavior belong in the
 > checklist (§5), where they are about to be executed. Elsewhere, state the decision and its reason.
 
 **Order (siblings):** v1 **done** → **this** (v1.5) **done** → recipe parked until a consumer →
 deferred sketches not planned. Sequencing record:
-[archive/TEMP-gap-selection-sequencing-plan.md](archive/TEMP-gap-selection-sequencing-plan.md).
+[TEMP-gap-selection-sequencing-plan.md](TEMP-gap-selection-sequencing-plan.md).
 
 ---
 
@@ -174,8 +174,8 @@ surprise the rule exists to avoid. So:
       token rescued the gap — and in the zero-enclosure / empty-selection errors
 - [x] Zero resolution errors **per token** on both flags (§1), so a dead containment window is never a
       silent no-op; filter-note `is_filtered` gate also guards on the straddler list
-- [x] Docs: [gap-repair-guide.md](../gap-repair-guide.md) (steer at JSON `video_a_*_secs` for stable
-      handles), [cli-output.md](../cli-output.md) filter-note straddler clause
+- [x] Docs: [gap-repair-guide.md](../../gap-repair-guide.md) (steer at JSON `video_a_*_secs` for stable
+      handles), [cli-output.md](../../cli-output.md) filter-note straddler clause
 - [ ] Optional: corpus case validating the two ε magnitudes at real gap edges (synthetic unit tests
       cover the scheme)
 

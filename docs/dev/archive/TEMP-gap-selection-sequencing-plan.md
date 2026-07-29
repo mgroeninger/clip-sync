@@ -1,9 +1,9 @@
 # Gap selection — sequencing (ARCHIVED)
 
-Status: **archived 2026-07-29.** Meta doc (order + scope fence). Thin selection v1 shipped and
-promoted; next feature work is [TEMP-gap-selection-ranges-plan.md](../TEMP-gap-selection-ranges-plan.md)
-(v1.5). Recipe stays parked. Feature semantics stay in the sibling plans — do not treat this file
-as current behavior.
+Status: **archived 2026-07-29.** Meta doc (order + scope fence). Thin selection v1 and v1.5 ranges
+shipped and archived ([TEMP-gap-selection-plan.md](TEMP-gap-selection-plan.md),
+[TEMP-gap-selection-ranges-plan.md](TEMP-gap-selection-ranges-plan.md)). Recipe stays parked.
+Feature semantics stay in those sibling plans — do not treat this file as current behavior.
 
 **Why this existed.** Preparing [TEMP-scan-recipe-plan.md](../TEMP-scan-recipe-plan.md) and the
 selection siblings kept surfacing further adjacent defects (stale source claims *and* real nearby
@@ -17,9 +17,8 @@ before `--only-gaps`). That pays provenance / `PartialEq` cost for a deferred co
 when a real same-recipe consumer exists — not by restoring a parallel “path” here.
 
 **Siblings (one deliverable each; each owns a complete checklist):**
-[TEMP-gap-selection-plan.md](../TEMP-gap-selection-plan.md) (v1 — **done**; archive when v1.5
-ships/abandons),
-[TEMP-gap-selection-ranges-plan.md](../TEMP-gap-selection-ranges-plan.md) (v1.5 — **implement next**),
+[TEMP-gap-selection-plan.md](TEMP-gap-selection-plan.md) (v1 — **archived**),
+[TEMP-gap-selection-ranges-plan.md](TEMP-gap-selection-ranges-plan.md) (v1.5 — **archived**),
 [TEMP-scan-recipe-plan.md](../TEMP-scan-recipe-plan.md) (recipe type — **parked**),
 [TEMP-gap-selection-deferred.md](../TEMP-gap-selection-deferred.md) (`--scan-window`, `--gaps-from`).
 
@@ -62,8 +61,8 @@ time-to-operator-value, and the next PR must not absorb adjacent scan/provenance
 | Doc | Status claim |
 |-----|--------------|
 | [TEMP-scan-recipe-plan.md](../TEMP-scan-recipe-plan.md) | **Parked until a consumer**; not a gate on selection |
-| [TEMP-gap-selection-plan.md](../TEMP-gap-selection-plan.md) | **v1 done**; promote complete; archive when v1.5 ships/abandons |
-| [TEMP-gap-selection-ranges-plan.md](../TEMP-gap-selection-ranges-plan.md) | **Unblocked — implement next** |
+| [TEMP-gap-selection-plan.md](TEMP-gap-selection-plan.md) | **v1 archived** (shipped + promoted) |
+| [TEMP-gap-selection-ranges-plan.md](TEMP-gap-selection-ranges-plan.md) | **v1.5 archived** (shipped) |
 | [TEMP-gap-selection-deferred.md](../TEMP-gap-selection-deferred.md) | Unchanged; `--gaps-from` remains the recipe’s main consumer |
 
 ---
@@ -81,7 +80,7 @@ Ordered. Stop when the operator can subset-patch; do not start recipe work in th
 
 ### Step 1 — Implement thin v1 (one PR) — done
 
-Implement [TEMP-gap-selection-plan.md](../TEMP-gap-selection-plan.md) **§8 as written**. That checklist is
+Implement [TEMP-gap-selection-plan.md](TEMP-gap-selection-plan.md) **§8 as written**. That checklist is
 the full v1 deliverable; ticking it means the selection plan is done for v1 (promote per its §11).
 Recipe is **not** an excepted leftover — it lives only on the parked recipe plan.
 

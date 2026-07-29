@@ -78,7 +78,7 @@ approach — kept for history; this section + the silence gate replace §5's alg
 
 Companions: [gap-scan.md](../../gap-scan.md), [pipeline.md](../../pipeline.md) § Fill plan,
 [gap-vocabulary.md](../gap-vocabulary.md), [seam-scoring.md](../../seam-scoring.md),
-[TEMP-gap-selection-plan.md](../TEMP-gap-selection-plan.md), [json-output.md](../../json-output.md),
+[TEMP-gap-selection-plan.md](TEMP-gap-selection-plan.md), [json-output.md](../../json-output.md),
 [TEMP-pipeline-perf-redesign-plan.md](TEMP-pipeline-perf-redesign-plan.md) §1 gate inventory.
 
 Motivating use case: sensitive gap scan (`min_gap_ms=500`, `scan_block_ms=100`, …) finds many

@@ -1,10 +1,11 @@
-# Gap selection (subset patching) v1 — plan
+# Gap selection (subset patching) v1 — plan (ARCHIVED)
 
-Status: **v1 done** (thin subset patching). User-facing contract promoted (§11) into
-[gap-repair-guide.md](../gap-repair-guide.md) § Iterative subset patching,
-[cli-output.md](../cli-output.md), [gap-vocabulary.md](gap-vocabulary.md) § Gap numbering.
-Archive this file when v1.5 ships or is abandoned. Sequencing meta archived:
-[archive/TEMP-gap-selection-sequencing-plan.md](archive/TEMP-gap-selection-sequencing-plan.md).
+Status: **archived 2026-07-29** — v1 shipped and promoted. User-facing contract:
+[gap-repair-guide.md](../../gap-repair-guide.md) § Iterative subset patching,
+[cli-output.md](../../cli-output.md), [gap-vocabulary.md](../gap-vocabulary.md) § Gap numbering.
+Do not treat this file as current behavior. Sequencing:
+[TEMP-gap-selection-sequencing-plan.md](TEMP-gap-selection-sequencing-plan.md).
+v1.5 (ranges): [TEMP-gap-selection-ranges-plan.md](TEMP-gap-selection-ranges-plan.md).
 
 
 **This document was split on 2026-07-29.** It had grown to ~1200 lines covering four independent
@@ -15,11 +16,11 @@ before the recipe provenance PR.
 
 | Where it went | What |
 |---------------|------|
-| [archive/TEMP-gap-index-convention-plan.md](archive/TEMP-gap-index-convention-plan.md) | The gap-index prep PR (was §0). **Shipped 2026-07-28.** Its one durable rule now lives in [gap-vocabulary.md](gap-vocabulary.md) § Gap numbering |
-| [archive/TEMP-gap-selection-sequencing-plan.md](archive/TEMP-gap-selection-sequencing-plan.md) | Meta: thin v1 before recipe — **archived** after promote |
-| [TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md) | `ScanRecipe` on `GapReport` + the JSON scan-params echo. **Not a selection feature**; **parked** (no code dependency from v1) |
+| [TEMP-gap-index-convention-plan.md](TEMP-gap-index-convention-plan.md) | The gap-index prep PR (was §0). **Shipped 2026-07-28.** Its one durable rule now lives in [gap-vocabulary.md](../gap-vocabulary.md) § Gap numbering |
+| [TEMP-gap-selection-sequencing-plan.md](TEMP-gap-selection-sequencing-plan.md) | Meta: thin v1 before recipe — **archived** after promote |
+| [TEMP-scan-recipe-plan.md](../TEMP-scan-recipe-plan.md) | `ScanRecipe` on `GapReport` + the JSON scan-params echo. **Not a selection feature**; **parked** (no code dependency from v1) |
 | [TEMP-gap-selection-ranges-plan.md](TEMP-gap-selection-ranges-plan.md) | v1.5 range tokens: `START-END` identity, `START..END` containment, dual ε, straddler diagnostics — **done** |
-| [TEMP-gap-selection-deferred.md](TEMP-gap-selection-deferred.md) | `--scan-window` (refused in its cheap form) and the `--gaps-from` manifest (v2) |
+| [TEMP-gap-selection-deferred.md](../TEMP-gap-selection-deferred.md) | `--scan-window` (refused in its cheap form) and the `--gaps-from` manifest (v2) |
 
 **What still binds this document to its siblings** (do not re-litigate these in isolation):
 
@@ -33,10 +34,10 @@ before the recipe provenance PR.
 > the decision and the reason; cite source only where the citation *is* the evidence, and re-verify it
 > when you touch that paragraph.
 
-Companions: [pipeline.md](../pipeline.md) § Orchestration / Fill plan,
-[gap-fill-modes.md](../gap-fill-modes.md), [gap-repair-guide.md](../gap-repair-guide.md),
-[cli-output.md](../cli-output.md), [json-output.md](../json-output.md),
-[gap-vocabulary.md](gap-vocabulary.md).
+Companions: [pipeline.md](../../pipeline.md) § Orchestration / Fill plan,
+[gap-fill-modes.md](../../gap-fill-modes.md), [gap-repair-guide.md](../../gap-repair-guide.md),
+[cli-output.md](../../cli-output.md), [json-output.md](../../json-output.md),
+[gap-vocabulary.md](../gap-vocabulary.md).
 
 ---
 
@@ -70,7 +71,7 @@ stability, without pretending gap numbers are global IDs.
 - If `min_gap_ms`, `silence_hold_ms`, `scan_block_ms`, `silence_peak_fraction`, or
   `absolute_silence_rms` will change before the next patch attempt, record the **Range** (or JSON
   `video_a_start_secs` / `video_a_end_secs`) and use a **range token** (v1.5), not a remembered `#`.
-  Those five knobs are exactly `ScanRecipe` — see [TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md),
+  Those five knobs are exactly `ScanRecipe` — see [TEMP-scan-recipe-plan.md](../TEMP-scan-recipe-plan.md),
   which makes the report state its own recipe so a script can check this instead of trusting the user.
 - Do **not** silently remap old gap numbers onto a new scan.
 
@@ -115,7 +116,7 @@ range tokens are **recipe-stable** identities. Neither is ever a count.
 **Vocabulary:** user-facing docs and error messages say *gap number* (matching the `#` column), not
 "gap index". Reserve "index" for the 0-based internal `gap_index`. This is enforced in code already —
 `resolve_fingerprint_gap_select` says "gap number" in both messages; see
-[gap-vocabulary.md](gap-vocabulary.md) § Gap numbering.
+[gap-vocabulary.md](../gap-vocabulary.md) § Gap numbering.
 
 ---
 
@@ -149,7 +150,7 @@ acceptable for the human format (the table is genuinely useful context for fixin
 wrong for JSON, where a well-formed success document accompanied by a nonzero exit invites scripts to
 parse it and proceed.
 
-**Settled 2026-07-29: suppress the JSON document.** [cli-output.md](../cli-output.md) already makes
+**Settled 2026-07-29: suppress the JSON document.** [cli-output.md](../../cli-output.md) already makes
 this normative — its failure row says stdout is *"Empty — no partial report"* and the scripting
 guidance is *"prefer `--format json --quiet` and parse stdout only"*. Emitting a success-shaped
 document on a failing run breaks the contract that makes that guidance safe. So:
@@ -159,7 +160,7 @@ document on a failing run breaks the contract that makes that guidance safe. So:
 | `--format json` | **Nothing on stdout**; message on stderr; exit 2 — the documented failure shape |
 | Human | **Keep printing the gap table**, then the error, then exit 2 — a deliberate, documented exception for post-scan selection/config errors, because the operator needs the `#` column to fix the selection |
 
-Add the exception to [cli-output.md](../cli-output.md) next to that failure table; it is a doc change,
+Add the exception to [cli-output.md](../../cli-output.md) next to that failure table; it is a doc change,
 not a new rule for the human format (which already prints context before failing).
 
 **Implementation note.** `print_repair_outcome` calls `print_repair_output(…, args.format, …)`
@@ -309,7 +310,7 @@ GapFillSkipped {
 
 So: selected-but-equivalent → `already_matches_reference`, **not** `gap_not_selected`. Equivalence
 beats selection (same rule as
-[archive/TEMP-gap-equivalence-plan.md](archive/TEMP-gap-equivalence-plan.md)).
+[TEMP-gap-equivalence-plan.md](TEMP-gap-equivalence-plan.md)).
 
 **Plan-block arm is not selection-aware — by design.** `build_gap_fill_plan` early-returns before the
 per-gap loop when `track_compatibility` is `None` or `Mismatch`, marking every gap with the block
@@ -335,7 +336,7 @@ pub enum GapFillSkipReason {
 | Human `format_fill_skip_reason` | `gap not selected` |
 | `GapTags` / `PlanKind` | `not_planned` (same arm as coverage / track / equivalence plan-time skips) |
 
-Update [json-output.md](../json-output.md) § `GapFillSkipReason` and golden fixtures.
+Update [json-output.md](../../json-output.md) § `GapFillSkipReason` and golden fixtures.
 
 ### 5.4 Progress and logging — v1 owes nothing
 
@@ -350,7 +351,7 @@ Skip / marginal warn lines use `region.gap_index` via `format_skip_gap_fill_log`
 `gap_key` HashMap). Progress-bar args and the `Aligning N fill region(s)` phase line are unchanged.
 **v1's only obligation is not regressing this** — selection changes which gaps reach `regions`, and the
 display already reports report identity correctly. See
-[archive/TEMP-gap-index-convention-plan.md](archive/TEMP-gap-index-convention-plan.md).
+[TEMP-gap-index-convention-plan.md](TEMP-gap-index-convention-plan.md).
 
 ### 5.5 Filter note / `repairable_count`
 
@@ -469,7 +470,7 @@ Selection is independent of `repair_profile`, `fill_mode`, dual-fit, anchor/resi
 - **Replacing** `limit_fill_to_mapped_region`, track-compatibility, or equivalence gates.
 - **Reintroducing float `gap_key` joins** — use `gap_index` on plan structs.
 - **`--gaps-from` manifest** —
-  [TEMP-gap-selection-deferred.md](TEMP-gap-selection-deferred.md).
+  [TEMP-gap-selection-deferred.md](../TEMP-gap-selection-deferred.md).
 
 ### 7.1 Selection vs. identification — two axes, one of them out of scope
 
@@ -484,17 +485,17 @@ refer to the post-window report**.
 
 The window is **not in this plan**, and its cheap form is refused outright on measured grounds. Full
 reasoning, shape, and the measurement anyone revisiting it must take first:
-[TEMP-gap-selection-deferred.md](TEMP-gap-selection-deferred.md) § `--scan-window`.
+[TEMP-gap-selection-deferred.md](../TEMP-gap-selection-deferred.md) § `--scan-window`.
 
 ---
 
 ## 8. Implementation checklist
 
-No recipe prerequisite. [TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md) is parked; accept any
+No recipe prerequisite. [TEMP-scan-recipe-plan.md](../TEMP-scan-recipe-plan.md) is parked; accept any
 golden churn in this PR (beyond the new `plan_skip_reason` value). Hard scope rule: adjacent scan /
 display / provenance defects discovered during prep go to BACKLOG or a tiny separate PR — see
-[archive/TEMP-gap-selection-sequencing-plan.md](archive/TEMP-gap-selection-sequencing-plan.md) §4 and
-[BACKLOG.md](../../BACKLOG.md) § Gap-selection parked debt.
+[TEMP-gap-selection-sequencing-plan.md](TEMP-gap-selection-sequencing-plan.md) §4 and
+[BACKLOG.md](../../../BACKLOG.md) § Gap-selection parked debt.
 
 - [x] `RepairConfig`: `only_gaps: Option<Vec<String>>`, `skip_gaps: Option<Vec<String>>` (string tokens, §4); validate mutual exclusivity in `RepairConfig::validate` (TOML path — clap cannot see config keys)
 - [x] `Args`: `--only-gaps`, `--skip-gaps` (comma-separated, `conflicts_with` each other); wire in `cli/mod.rs`
@@ -507,10 +508,10 @@ display / provenance defects discovered during prep go to BACKLOG or a tiny sepa
 - [x] Empty-selection error → `RepairError::GapSelection` (exit 2; suppresses JSON stdout); confirm the non-selection empty plan keeps its current `Ok` + "No gaps planned" behavior (§3)
 - [x] Selection filter note (§5.5) in `domain/gap_fill.rs` next to `format_scan_fillable_followup`; emitted from `run_repair.rs` via `progress.phase(...)` only when `is_filtered`
 - [x] **JSON suppression (§3):** on a selection error under `--format json`, print **nothing** on stdout (message on stderr, exit 2); human format keeps printing the table. Gate at the `print_repair_output` call in `print_repair_outcome` via an explicit signal — **not** by matching `Err(RepairError::Config)`, which `repair_videos.rs` also raises post-scan
-- [x] Document the human-format exception in [cli-output.md](../cli-output.md) next to its failure table (stdout "Empty — no partial report"): post-scan selection/config errors still print the gap table because the operator needs `#` to fix the selection
+- [x] Document the human-format exception in [cli-output.md](../../cli-output.md) next to its failure table (stdout "Empty — no partial report"): post-scan selection/config errors still print the gap table because the operator needs `#` to fix the selection
 - [x] `format_unified_gap_report` / patch summary: `not planned: gap not selected`
-- [x] Golden / wire spelling pin for `plan_skip_reason: gap_not_selected` (serde unit + tags verbose); full-surface golden unchanged (no new status row required — additive enum value only, documented in [json-output.md](../json-output.md))
-- [x] Docs: [gap-repair-guide.md](../gap-repair-guide.md) workflow, [cli-output.md](../cli-output.md) flags, [pipeline.md](../pipeline.md) fill-plan paragraph, [gap-fill-modes.md](../gap-fill-modes.md) cross-link
+- [x] Golden / wire spelling pin for `plan_skip_reason: gap_not_selected` (serde unit + tags verbose); full-surface golden unchanged (no new status row required — additive enum value only, documented in [json-output.md](../../json-output.md))
+- [x] Docs: [gap-repair-guide.md](../../gap-repair-guide.md) workflow, [cli-output.md](../../cli-output.md) flags, [pipeline.md](../../pipeline.md) fill-plan paragraph, [gap-fill-modes.md](../../gap-fill-modes.md) cross-link
 - [x] Integration test: 3-gap fixture, `--only-gaps 2`, assert gaps 1 and 3 unchanged on A, gap 2 patched, status strings correct
 
 ---
@@ -551,27 +552,25 @@ Kept because each one has a reason someone would otherwise re-derive wrongly.
    field on `PatchAudioRequest`; resolution happens in `run_repair.rs` (§5.6).
 4. **Tokens are identities, not counts** (2026-07-28). Forced by v1.5 containment tokens, which would
    otherwise make integers ambiguous inside a mixed list (§2.1).
-5. **JSON output on a selection error: suppress** (2026-07-29). [cli-output.md](../cli-output.md)
+5. **JSON output on a selection error: suppress** (2026-07-29). [cli-output.md](../../cli-output.md)
    already makes it normative; a success-shaped document with exit 2 breaks the contract that makes
    "parse stdout only" safe. Human format keeps the table as a documented exception. Implementation
    must carry an explicit signal rather than matching `Err(RepairError::Config)` (§3).
 
 Settled elsewhere: gap numbering / display split and the all-0-based rejection →
-[archive/TEMP-gap-index-convention-plan.md](archive/TEMP-gap-index-convention-plan.md); the JSON
-scan-params contract → [TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md); range ε and containment →
+[TEMP-gap-index-convention-plan.md](TEMP-gap-index-convention-plan.md); the JSON
+scan-params contract → [TEMP-scan-recipe-plan.md](../TEMP-scan-recipe-plan.md); range ε and containment →
 [TEMP-gap-selection-ranges-plan.md](TEMP-gap-selection-ranges-plan.md).
 
 ---
 
 ## 11. Promotion / done criteria
 
-- [x] Status **v1 done**; operator contract in [gap-repair-guide.md](../gap-repair-guide.md) §
+- [x] Status **v1 done**; operator contract in [gap-repair-guide.md](../../gap-repair-guide.md) §
       Iterative subset patching (identity labels, flags/TOML, empty-selection asymmetry, precedence
       vs fillability/coverage/equivalence, filter note, error shapes). Supporting homes:
-      [cli-output.md](../cli-output.md) (filter note + JSON/human selection-error exception),
-      [gap-vocabulary.md](gap-vocabulary.md) § Gap numbering (input identity rule),
-      [json-output.md](../json-output.md) / [error-mapping.md](../error-mapping.md).
-- [x] [pipeline.md](../pipeline.md) fill-plan section links the guide, not this TEMP file.
-- [ ] Archive **this** file once v1.5 either ships or is abandoned; the ranges and deferred docs
-      stand alone. Design rationale left here until then (§2.1 why containment forced identity,
-      §5 wiring, §10 settled decisions).
+      [cli-output.md](../../cli-output.md) (filter note + JSON/human selection-error exception),
+      [gap-vocabulary.md](../gap-vocabulary.md) § Gap numbering (input identity rule),
+      [json-output.md](../../json-output.md) / [error-mapping.md](../../error-mapping.md).
+- [x] [pipeline.md](../../pipeline.md) fill-plan section links the guide, not this TEMP file.
+- [x] Archive **this** file (v1.5 shipped); ranges archived alongside; deferred / recipe stay live.

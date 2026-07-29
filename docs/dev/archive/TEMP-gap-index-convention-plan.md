@@ -9,7 +9,7 @@ complete, so it no longer belongs in an active plan.
 provenance: why the rule exists, what two defects it repaired, and what the code looked like before.
 
 **Siblings** (what this constrained):
-[TEMP-gap-selection-plan.md](../TEMP-gap-selection-plan.md) — selection adds a fifth reason for
+[TEMP-gap-selection-plan.md](TEMP-gap-selection-plan.md) — selection adds a fifth reason for
 `plan.regions` to be shorter than `report.gaps`, which is the exact condition that made these defects
 visible. Landing the convention first kept two mechanical renames and one value fix out of the
 selection diff, where a reviewer could not have distinguished a rename from a behavior change.
