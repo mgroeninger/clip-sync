@@ -37,7 +37,7 @@ pub use clip_window::{ClipLabel, ClipWindow};
 pub use error::DomainError;
 pub use human_format::{
     format_time_range, format_time_range_verbose, format_timestamp, format_timestamp_verbose,
-    VERBOSE_SUBSECOND_SPAN_SECS,
+    parse_timestamp, VERBOSE_SUBSECOND_SPAN_SECS,
 };
 pub use media_extent::MediaExtent;
 pub use media_source::MediaSource;

@@ -1,8 +1,14 @@
 use std::collections::HashSet;
 
-use crate::domain::gap::GapReport;
+use clip_sync::parse_timestamp;
+
+use crate::domain::gap::{interval_fully_within_window, GapReport};
 use crate::domain::patch_result::GapFillSkipReason;
 use crate::domain::track_match::CompatibilityVerdict;
+
+/// Dual-ε for range tokens: fractional spelling (JSON / `.mmm`) vs whole-second table copy.
+const RANGE_EPS_FRACTIONAL_SECS: f64 = 0.050;
+const RANGE_EPS_WHOLE_SECOND_SECS: f64 = 0.500;
 
 /// Resolved after scan, before fill plan. **0-based** — same base as [`FillRegion::gap_index`].
 #[derive(Debug, Clone)]
@@ -16,12 +22,44 @@ pub struct GapSelection {
     filter: Option<GapSelectionFilter>,
 }
 
+/// Which selection flag produced a filter. Drives both the note's label and the straddler
+/// polarity — an enum so adding a third flag is a compile error, not a silently wrong clause.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GapSelectionFilterKind {
+    OnlyGaps,
+    SkipGaps,
+}
+
+impl GapSelectionFilterKind {
+    /// Flag name as it appears on the filter note.
+    fn label(self) -> &'static str {
+        match self {
+            Self::OnlyGaps => "only-gaps",
+            Self::SkipGaps => "skip-gaps",
+        }
+    }
+
+    /// Straddler clause for the filter note. Polarity is opposite per flag: an unenclosed gap is
+    /// left out of an only-gaps selection, but left *in* when the window was a skip window.
+    fn straddler_clause(self, gap_num: usize) -> String {
+        match self {
+            Self::OnlyGaps => format!(
+                "; gap #{gap_num} overlaps the window but is not fully inside it — not selected"
+            ),
+            Self::SkipGaps => format!(
+                "; gap #{gap_num} overlaps the skip window but is not fully inside it — still selected"
+            ),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct GapSelectionFilter {
-    /// `"only-gaps"` or `"skip-gaps"`.
-    kind: &'static str,
+    kind: GapSelectionFilterKind,
     /// User tokens as provided (trimmed), for the filter note.
     tokens: Vec<String>,
+    /// 1-based gap numbers that overlapped a `START..END` window but were not fully enclosed.
+    straddlers: Vec<usize>,
 }
 
 impl GapSelection {
@@ -43,7 +81,7 @@ impl GapSelection {
     }
 }
 
-/// Unresolved user intent; tokens are still strings (v1 parses integers at resolve time).
+/// Unresolved user intent; tokens are strings (integers and/or range forms resolved after scan).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GapSelectionMode {
     All,
@@ -51,7 +89,22 @@ pub enum GapSelectionMode {
     Skip(Vec<String>),
 }
 
-/// Parse CLI/TOML selection tokens against `report.gaps` (1-based gap numbers → 0-based indices).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RangeKind {
+    /// `START-END` — exact identity match of one gap's edges.
+    Identity,
+    /// `START..END` — full enclosure of each selected gap.
+    Containment,
+}
+
+struct TokenResolve {
+    selected: HashSet<usize>,
+    /// 1-based gap numbers named by containment straddlers across tokens.
+    straddlers: Vec<usize>,
+}
+
+/// Parse CLI/TOML selection tokens against `report.gaps` (1-based gap numbers + range tokens →
+/// 0-based indices).
 ///
 /// Error strings for `0` / out-of-range match `resolve_fingerprint_gap_select` verbatim.
 pub fn resolve_gap_selection(
@@ -62,74 +115,194 @@ pub fn resolve_gap_selection(
     match mode {
         GapSelectionMode::All => Ok(GapSelection::all(gap_count)),
         GapSelectionMode::Only(tokens) => {
-            let selected = parse_gap_number_tokens(tokens, gap_count)?;
-            if selected.is_empty() {
-                // Empty report: the empty set *is* the full selection — do not fail write/preview.
-                // Non-empty report + empty only-list: user named nothing → error (§3).
-                if gap_count == 0 {
-                    return Ok(GapSelection {
-                        selected,
-                        filter: Some(GapSelectionFilter {
-                            kind: "only-gaps",
-                            tokens: tokens.iter().map(|t| t.trim().to_string()).collect(),
-                        }),
-                    });
-                }
-                return Err("gap selection matched no gaps (only-gaps listed nothing)".to_string());
-            }
-            Ok(GapSelection {
-                selected,
-                filter: Some(GapSelectionFilter {
-                    kind: "only-gaps",
-                    tokens: tokens.iter().map(|t| t.trim().to_string()).collect(),
-                }),
-            })
+            let resolved = resolve_selection_tokens(tokens, report)?;
+            finish_only_selection(tokens, resolved, gap_count)
         }
         GapSelectionMode::Skip(tokens) => {
-            let skip = parse_gap_number_tokens(tokens, gap_count)?;
-            let selected: HashSet<usize> = (0..gap_count).filter(|i| !skip.contains(i)).collect();
-            if selected.is_empty() {
-                // Empty report + skip-nothing: same as All — succeed. Non-empty report where every
-                // gap was excluded: user error (§3).
-                if gap_count == 0 {
-                    return Ok(GapSelection {
-                        selected,
-                        filter: Some(GapSelectionFilter {
-                            kind: "skip-gaps",
-                            tokens: tokens.iter().map(|t| t.trim().to_string()).collect(),
-                        }),
-                    });
-                }
-                return Err(
-                    "skip-gaps excluded every detected gap (nothing left to select)".to_string(),
-                );
-            }
-            Ok(GapSelection {
-                selected,
-                filter: Some(GapSelectionFilter {
-                    kind: "skip-gaps",
-                    tokens: tokens.iter().map(|t| t.trim().to_string()).collect(),
-                }),
-            })
+            let resolved = resolve_selection_tokens(tokens, report)?;
+            let selected: HashSet<usize> = (0..gap_count)
+                .filter(|i| !resolved.selected.contains(i))
+                .collect();
+            finish_skip_selection(tokens, selected, resolved.straddlers, gap_count)
         }
     }
 }
 
-fn parse_gap_number_tokens(tokens: &[String], gap_count: usize) -> Result<HashSet<usize>, String> {
+fn finish_only_selection(
+    tokens: &[String],
+    resolved: TokenResolve,
+    gap_count: usize,
+) -> Result<GapSelection, String> {
+    let TokenResolve {
+        selected,
+        straddlers,
+    } = resolved;
+    // Drop straddlers rescued by another token (integer / identity / wider containment).
+    let straddlers = straddlers_still_unselected(&selected, straddlers);
+    let filter = Some(GapSelectionFilter {
+        kind: GapSelectionFilterKind::OnlyGaps,
+        tokens: tokens.iter().map(|t| t.trim().to_string()).collect(),
+        straddlers: straddlers.clone(),
+    });
+    if selected.is_empty() {
+        if gap_count == 0 {
+            return Ok(GapSelection { selected, filter });
+        }
+        return Err(empty_only_error(&straddlers));
+    }
+    Ok(GapSelection { selected, filter })
+}
+
+fn finish_skip_selection(
+    tokens: &[String],
+    selected: HashSet<usize>,
+    straddlers: Vec<usize>,
+    gap_count: usize,
+) -> Result<GapSelection, String> {
+    // Under skip, a containment straddler was *not* excluded — keep only those still selected.
+    let straddlers = straddlers_still_selected(&selected, straddlers);
+    let filter = Some(GapSelectionFilter {
+        kind: GapSelectionFilterKind::SkipGaps,
+        tokens: tokens.iter().map(|t| t.trim().to_string()).collect(),
+        straddlers,
+    });
+    if selected.is_empty() {
+        if gap_count == 0 {
+            return Ok(GapSelection { selected, filter });
+        }
+        return Err("skip-gaps excluded every detected gap (nothing left to select)".to_string());
+    }
+    Ok(GapSelection { selected, filter })
+}
+
+/// 1-based straddler numbers that remain outside the final only-gaps selection.
+fn straddlers_still_unselected(selected: &HashSet<usize>, straddlers: Vec<usize>) -> Vec<usize> {
+    straddlers
+        .into_iter()
+        .filter(|gap_num| !selected.contains(&(gap_num - 1)))
+        .collect()
+}
+
+/// 1-based straddler numbers that remain inside the final selection after skip-gaps.
+fn straddlers_still_selected(selected: &HashSet<usize>, straddlers: Vec<usize>) -> Vec<usize> {
+    straddlers
+        .into_iter()
+        .filter(|gap_num| selected.contains(&(gap_num - 1)))
+        .collect()
+}
+
+fn empty_only_error(straddlers: &[usize]) -> String {
+    if straddlers.is_empty() {
+        "gap selection matched no gaps (only-gaps listed nothing)".to_string()
+    } else {
+        format!(
+            "gap selection matched no gaps (only-gaps listed nothing); gap(s) {} overlap the window but are not fully inside it",
+            format_gap_number_list(straddlers)
+        )
+    }
+}
+
+/// A `START..END` token that enclosed no gap. Names any straddler so the near-miss is visible.
+fn empty_containment_error(token: &str, gap_count: usize, straddlers: &[usize]) -> String {
+    if straddlers.is_empty() {
+        format!("no gap lies fully inside containment range {token:?} ({gap_count} gaps detected)")
+    } else {
+        format!(
+            "no gap lies fully inside containment range {token:?} ({gap_count} gaps detected); gap(s) {} overlap the window but are not fully inside it",
+            format_gap_number_list(straddlers)
+        )
+    }
+}
+
+fn format_gap_number_list(nums: &[usize]) -> String {
+    nums.iter()
+        .map(|n| format!("#{n}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn resolve_selection_tokens(tokens: &[String], report: &GapReport) -> Result<TokenResolve, String> {
+    let gap_count = report.gaps.len();
     let mut selected = HashSet::new();
     let mut seen_numbers = HashSet::new();
+    let mut straddlers = Vec::new();
+    let mut seen_straddlers = HashSet::new();
+
     for raw in tokens {
         let token = raw.trim();
         if token.is_empty() {
             return Err(format!(
-                "invalid gap selection token {raw:?}: expected a gap number"
+                "invalid gap selection token {raw:?}: expected a gap number or time range"
             ));
         }
-        let n: usize = token
-            .parse()
-            .map_err(|_| format!("invalid gap selection token {token:?}: expected a gap number"))?;
-        // Bounds before duplicate: `--only-gaps 9,9` on a 3-gap report must say out-of-range, not
-        // "duplicate 9".
+
+        if let Some((kind, start_raw, end_raw)) = split_range_token(token) {
+            let (start, start_frac) = parse_timestamp(start_raw).map_err(|e| {
+                format!("invalid gap selection token {token:?}: bad range start ({e})")
+            })?;
+            let (end, end_frac) = parse_timestamp(end_raw).map_err(|e| {
+                format!("invalid gap selection token {token:?}: bad range end ({e})")
+            })?;
+            if end < start {
+                return Err(format!(
+                    "invalid gap selection token {token:?}: range end is before start"
+                ));
+            }
+            let eps_start = range_eps(start_frac);
+            let eps_end = range_eps(end_frac);
+            match kind {
+                RangeKind::Identity => {
+                    let matches = match_identity_gaps(report, start, end, eps_start, eps_end);
+                    match matches.as_slice() {
+                        [] => {
+                            return Err(format!(
+                                "no gap matches identity range {token:?} ({} gaps detected); prefer JSON video_a_start_secs/video_a_end_secs with fractional seconds",
+                                gap_count
+                            ));
+                        }
+                        [one] => {
+                            selected.insert(*one);
+                        }
+                        many => {
+                            let nums: Vec<String> =
+                                many.iter().map(|i| format!("#{}", i + 1)).collect();
+                            return Err(format!(
+                                "identity range {token:?} matches multiple gaps ({}); use fractional seconds or JSON video_a_start_secs/video_a_end_secs for a unique handle",
+                                nums.join(", ")
+                            ));
+                        }
+                    }
+                }
+                RangeKind::Containment => {
+                    let win_start = start - eps_start;
+                    let win_end = end + eps_end;
+                    let (enclosed, token_straddlers) =
+                        match_containment_gaps(report, win_start, win_end);
+                    // Per-token, both flags: a window that encloses nothing is a stale or mistyped
+                    // handle, never a no-op. Identity tokens already error here; matching that keeps
+                    // `--skip-gaps` from silently patching the stretch the user asked to leave alone.
+                    if enclosed.is_empty() {
+                        return Err(empty_containment_error(token, gap_count, &token_straddlers));
+                    }
+                    for idx in enclosed {
+                        selected.insert(idx);
+                    }
+                    for gap_num in token_straddlers {
+                        if seen_straddlers.insert(gap_num) {
+                            straddlers.push(gap_num);
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+
+        // Integer gap number (labels only — never a position in a filtered subset).
+        let n: usize = token.parse().map_err(|_| {
+            format!(
+                "invalid gap selection token {token:?}: expected a gap number or time range (START-END / START..END)"
+            )
+        })?;
         let index = match n {
             0 => {
                 return Err("gap number 0 is invalid (gap numbers are 1-based)".to_string());
@@ -146,7 +319,105 @@ fn parse_gap_number_tokens(tokens: &[String], gap_count: usize) -> Result<HashSe
         }
         selected.insert(index);
     }
-    Ok(selected)
+
+    straddlers.sort_unstable();
+    Ok(TokenResolve {
+        selected,
+        straddlers,
+    })
+}
+
+fn range_eps(fractional_spelling: bool) -> f64 {
+    if fractional_spelling {
+        RANGE_EPS_FRACTIONAL_SECS
+    } else {
+        RANGE_EPS_WHOLE_SECOND_SECS
+    }
+}
+
+fn match_identity_gaps(
+    report: &GapReport,
+    start: f64,
+    end: f64,
+    eps_start: f64,
+    eps_end: f64,
+) -> Vec<usize> {
+    report
+        .gaps
+        .iter()
+        .enumerate()
+        .filter(|(_, g)| {
+            (g.video_a_start_secs - start).abs() <= eps_start
+                && (g.video_a_end_secs - end).abs() <= eps_end
+        })
+        .map(|(i, _)| i)
+        .collect()
+}
+
+fn match_containment_gaps(
+    report: &GapReport,
+    win_start: f64,
+    win_end: f64,
+) -> (Vec<usize>, Vec<usize>) {
+    let mut enclosed = Vec::new();
+    let mut straddlers = Vec::new();
+    for (i, g) in report.gaps.iter().enumerate() {
+        let fully = interval_fully_within_window(
+            g.video_a_start_secs,
+            g.video_a_end_secs,
+            win_start,
+            win_end,
+        );
+        if fully {
+            enclosed.push(i);
+            continue;
+        }
+        // Overlaps the (ε-expanded) window but is not fully inside it.
+        let overlaps = g.video_a_start_secs < win_end && g.video_a_end_secs > win_start;
+        if overlaps {
+            straddlers.push(i + 1);
+        }
+    }
+    (enclosed, straddlers)
+}
+
+/// Split `START..END` (containment) or `START-END` / table-copy `START – END` (identity).
+fn split_range_token(token: &str) -> Option<(RangeKind, &str, &str)> {
+    if let Some((a, b)) = token.split_once("..") {
+        let a = a.trim();
+        let b = b.trim();
+        if !a.is_empty() && !b.is_empty() {
+            return Some((RangeKind::Containment, a, b));
+        }
+        return None;
+    }
+    // Table Range column uses U+2013 en-dash with spaces: `1:42:08 – 1:46:00`.
+    if let Some((a, b)) = token.split_once(" – ") {
+        let a = a.trim();
+        let b = b.trim();
+        if !a.is_empty() && !b.is_empty() {
+            return Some((RangeKind::Identity, a, b));
+        }
+    }
+    if let Some((a, b)) = token.split_once('–') {
+        let a = a.trim();
+        let b = b.trim();
+        if !a.is_empty() && !b.is_empty() {
+            return Some((RangeKind::Identity, a, b));
+        }
+    }
+    // ASCII hyphen: try each `-` so `6128.25-6360.0` and `1:42:08-1:46:00` both work.
+    for (i, _) in token.match_indices('-') {
+        let left = token[..i].trim();
+        let right = token[i + 1..].trim();
+        if left.is_empty() || right.is_empty() {
+            continue;
+        }
+        if parse_timestamp(left).is_ok() && parse_timestamp(right).is_ok() {
+            return Some((RangeKind::Identity, left, right));
+        }
+    }
+    None
 }
 
 /// Describes one region where B audio will be spliced into A.
@@ -336,16 +607,24 @@ pub(crate) fn format_gap_selection_filter_note(
     selection: &GapSelection,
     gap_count: usize,
 ) -> Option<String> {
-    if !selection.is_filtered(gap_count) {
+    let filter = selection.filter.as_ref()?;
+    // A named straddler must be reported even when the selection narrowed nothing — otherwise a
+    // skip window that enclosed no gap would go out silently. (Such a token errors in
+    // `resolve_selection_tokens` today; this keeps the note correct if that precedence ever moves.)
+    if !selection.is_filtered(gap_count) && filter.straddlers.is_empty() {
         return None;
     }
-    let filter = selection.filter.as_ref()?;
     let n = selection.selected.len();
     let token_list = filter.tokens.join(",");
-    Some(format!(
+    let mut note = format!(
         "Gap filter: selected {n} of {gap_count} detected gaps ({}: {token_list})",
-        filter.kind
-    ))
+        filter.kind.label()
+    );
+    // Name each straddler so partial enclosure is never silent when other gaps matched.
+    for gap_num in &filter.straddlers {
+        note.push_str(&filter.kind.straddler_clause(*gap_num));
+    }
+    Some(note)
 }
 
 /// Patch-stage phase line: note plan-time skips before structure match / splice.
@@ -918,5 +1197,296 @@ mod tests {
 
         let skip_nothing = resolve_gap_selection(&GapSelectionMode::Skip(vec![]), &report).unwrap();
         assert!(format_gap_selection_filter_note(&skip_nothing, 3).is_none());
+    }
+
+    // --- v1.5 range tokens ---
+
+    #[test]
+    fn identity_range_matches_one_gap_and_rejects_span() {
+        let report = base_report(
+            Some(stereo_identical()),
+            vec![
+                fillable_gap(10.0, 20.0),
+                fillable_gap(30.0, 40.0),
+                fillable_gap(50.0, 60.0),
+            ],
+        );
+        let sel = resolve_gap_selection(&GapSelectionMode::Only(vec!["30.0-40.0".into()]), &report)
+            .unwrap();
+        assert!(sel.is_selected(1));
+        assert!(!sel.is_selected(0));
+        assert!(!sel.is_selected(2));
+
+        // A token spanning several gaps is not a containment window — zero identity matches.
+        let err = resolve_gap_selection(&GapSelectionMode::Only(vec!["10.0-60.0".into()]), &report)
+            .unwrap_err();
+        assert!(err.contains("no gap matches identity range"), "{err}");
+    }
+
+    #[test]
+    fn identity_range_epsilon_collision_errors() {
+        // Two gaps whose starts are 0.2 s apart — both inside ±500 ms of a whole-second token.
+        let report = base_report(
+            Some(stereo_identical()),
+            vec![fillable_gap(100.1, 110.0), fillable_gap(100.3, 110.2)],
+        );
+        let err = resolve_gap_selection(&GapSelectionMode::Only(vec!["100-110".into()]), &report)
+            .unwrap_err();
+        assert!(err.contains("matches multiple gaps"), "{err}");
+        assert!(err.contains("#1"), "{err}");
+        assert!(err.contains("#2"), "{err}");
+        assert!(err.contains("fractional"), "{err}");
+    }
+
+    #[test]
+    fn containment_full_enclosure_excludes_straddler() {
+        let report = base_report(
+            Some(stereo_identical()),
+            vec![
+                fillable_gap(10.0, 20.0), // fully inside 0..30
+                fillable_gap(25.0, 35.0), // straddles end
+                fillable_gap(40.0, 50.0), // outside
+            ],
+        );
+        let sel =
+            resolve_gap_selection(&GapSelectionMode::Only(vec!["0..30".into()]), &report).unwrap();
+        assert!(sel.is_selected(0));
+        assert!(!sel.is_selected(1));
+        assert!(!sel.is_selected(2));
+        let note = format_gap_selection_filter_note(&sel, 3).expect("filtered");
+        assert!(
+            note.contains("gap #2 overlaps the window but is not fully inside it"),
+            "{note}"
+        );
+
+        // Zero enclosure is a token-level error (not the aggregate empty-selection one), and it
+        // names the near-miss straddler.
+        let err = resolve_gap_selection(&GapSelectionMode::Only(vec!["28..32".into()]), &report)
+            .unwrap_err();
+        assert!(
+            err.contains("no gap lies fully inside containment range \"28..32\""),
+            "{err}"
+        );
+        assert!(err.contains("#2"), "{err}");
+    }
+
+    #[test]
+    fn straddler_rescued_by_integer_is_not_named_on_note() {
+        let report = base_report(
+            Some(stereo_identical()),
+            vec![
+                fillable_gap(10.0, 20.0),
+                fillable_gap(25.0, 35.0), // straddles 0..30
+                fillable_gap(40.0, 50.0),
+            ],
+        );
+        let sel = resolve_gap_selection(
+            &GapSelectionMode::Only(vec!["0..30".into(), "2".into()]),
+            &report,
+        )
+        .unwrap();
+        assert!(sel.is_selected(0));
+        assert!(sel.is_selected(1));
+        assert!(!sel.is_selected(2));
+        let note = format_gap_selection_filter_note(&sel, 3).expect("filtered");
+        assert!(
+            !note.contains("gap #2"),
+            "rescued straddler must not be reported as unselected: {note}"
+        );
+    }
+
+    #[test]
+    fn straddler_enclosed_by_second_window_is_not_named() {
+        let report = base_report(
+            Some(stereo_identical()),
+            vec![fillable_gap(10.0, 20.0), fillable_gap(25.0, 35.0)],
+        );
+        // First window straddles #2; second fully encloses it.
+        let sel = resolve_gap_selection(
+            &GapSelectionMode::Only(vec!["0..30".into(), "0..40".into()]),
+            &report,
+        )
+        .unwrap();
+        assert!(sel.is_selected(0));
+        assert!(sel.is_selected(1));
+        // Both gaps selected → not filtered → no note (and no lying straddler clause).
+        assert!(format_gap_selection_filter_note(&sel, 2).is_none());
+    }
+
+    #[test]
+    fn skip_gaps_straddler_note_says_still_selected() {
+        let report = base_report(
+            Some(stereo_identical()),
+            vec![
+                fillable_gap(10.0, 20.0), // fully inside skip window → excluded
+                fillable_gap(25.0, 35.0), // straddles → remains selected
+                fillable_gap(40.0, 50.0), // outside → remains selected
+            ],
+        );
+        let sel =
+            resolve_gap_selection(&GapSelectionMode::Skip(vec!["0..30".into()]), &report).unwrap();
+        assert!(!sel.is_selected(0));
+        assert!(sel.is_selected(1));
+        assert!(sel.is_selected(2));
+        let note = format_gap_selection_filter_note(&sel, 3).expect("filtered");
+        assert!(
+            note.contains("gap #2 overlaps the skip window") && note.contains("still selected"),
+            "{note}"
+        );
+        assert!(!note.contains("not selected"), "{note}");
+    }
+
+    #[test]
+    fn mixed_tokens_union_identity_with_integer() {
+        let report = base_report(
+            Some(stereo_identical()),
+            vec![
+                fillable_gap(10.0, 20.0),
+                fillable_gap(30.0, 40.0),
+                fillable_gap(50.0, 60.0),
+            ],
+        );
+        // Containment window encloses gap 1 only; integer names gap #3.
+        let sel = resolve_gap_selection(
+            &GapSelectionMode::Only(vec!["0..25".into(), "3".into()]),
+            &report,
+        )
+        .unwrap();
+        assert!(sel.is_selected(0));
+        assert!(!sel.is_selected(1));
+        assert!(sel.is_selected(2));
+    }
+
+    #[test]
+    fn overlapping_containment_selects_once() {
+        let report = base_report(
+            Some(stereo_identical()),
+            vec![fillable_gap(10.0, 20.0), fillable_gap(30.0, 40.0)],
+        );
+        let sel = resolve_gap_selection(
+            &GapSelectionMode::Only(vec!["0..25".into(), "5..25".into()]),
+            &report,
+        )
+        .unwrap();
+        assert!(sel.is_selected(0));
+        assert!(!sel.is_selected(1));
+        assert_eq!(sel.selected.len(), 1);
+    }
+
+    #[test]
+    fn epsilon_keyed_on_token_spelling() {
+        // Gap edges 0.4 s past the displayed whole-second labels.
+        let report = base_report(Some(stereo_identical()), vec![fillable_gap(100.4, 110.4)]);
+        let whole = resolve_gap_selection(&GapSelectionMode::Only(vec!["100-110".into()]), &report)
+            .unwrap();
+        assert!(whole.is_selected(0));
+
+        let fractional =
+            resolve_gap_selection(&GapSelectionMode::Only(vec!["100.0-110.0".into()]), &report)
+                .unwrap_err();
+        assert!(
+            fractional.contains("no gap matches identity range"),
+            "{fractional}"
+        );
+    }
+
+    #[test]
+    fn skip_window_enclosing_nothing_errors_instead_of_patching_the_straddler() {
+        // The #2 regression: `--skip-gaps 28..32` used to skip nothing, emit no note, and patch the
+        // straddling gap the user asked to leave alone. Zero enclosure must fail before any write.
+        let report = base_report(
+            Some(stereo_identical()),
+            vec![
+                fillable_gap(10.0, 20.0),
+                fillable_gap(25.0, 35.0), // straddles the window, encloses nothing
+                fillable_gap(40.0, 50.0),
+            ],
+        );
+        let err = resolve_gap_selection(&GapSelectionMode::Skip(vec!["28..32".into()]), &report)
+            .unwrap_err();
+        assert!(
+            err.contains("no gap lies fully inside containment range \"28..32\""),
+            "{err}"
+        );
+        assert!(err.contains("#2"), "{err}");
+    }
+
+    #[test]
+    fn dead_containment_window_errors_in_both_modes() {
+        let report = base_report(
+            Some(stereo_identical()),
+            vec![fillable_gap(10.0, 20.0), fillable_gap(30.0, 40.0)],
+        );
+        // A window matching nothing at all is never a no-op, even beside a live token.
+        let only = resolve_gap_selection(
+            &GapSelectionMode::Only(vec!["2".into(), "1000..2000".into()]),
+            &report,
+        )
+        .unwrap_err();
+        assert!(only.contains("no gap lies fully inside"), "{only}");
+        assert!(only.contains("2 gaps detected"), "{only}");
+        // No straddler to name here — the clause must not appear.
+        assert!(!only.contains("overlap the window"), "{only}");
+
+        let skip =
+            resolve_gap_selection(&GapSelectionMode::Skip(vec!["1000..2000".into()]), &report)
+                .unwrap_err();
+        assert!(skip.contains("no gap lies fully inside"), "{skip}");
+    }
+
+    #[test]
+    fn skip_straddler_note_polarity_is_per_flag() {
+        let report = base_report(
+            Some(stereo_identical()),
+            vec![
+                fillable_gap(10.0, 20.0), // enclosed by 0..30 → skipped
+                fillable_gap(25.0, 35.0), // straddles → NOT skipped, so still selected
+                fillable_gap(40.0, 50.0),
+            ],
+        );
+        let sel =
+            resolve_gap_selection(&GapSelectionMode::Skip(vec!["0..30".into()]), &report).unwrap();
+        assert!(!sel.is_selected(0));
+        assert!(sel.is_selected(1));
+        let note = format_gap_selection_filter_note(&sel, 3).expect("filtered");
+        assert!(
+            note.contains(
+                "gap #2 overlaps the skip window but is not fully inside it — still selected"
+            ),
+            "{note}"
+        );
+        // The only-gaps polarity must never leak into a skip note.
+        assert!(!note.contains("not selected"), "{note}");
+    }
+
+    #[test]
+    fn table_en_dash_identity_copy_works() {
+        let report = base_report(Some(stereo_identical()), vec![fillable_gap(6128.4, 6360.2)]);
+        // Whole-second table form with en-dash + spaces (format_time_range shape).
+        let sel = resolve_gap_selection(
+            &GapSelectionMode::Only(vec!["1:42:08 – 1:46:00".into()]),
+            &report,
+        )
+        .unwrap();
+        assert!(sel.is_selected(0));
+    }
+
+    #[test]
+    fn skip_gaps_range_is_complement() {
+        let report = base_report(
+            Some(stereo_identical()),
+            vec![
+                fillable_gap(10.0, 20.0),
+                fillable_gap(30.0, 40.0),
+                fillable_gap(50.0, 60.0),
+            ],
+        );
+        let only =
+            resolve_gap_selection(&GapSelectionMode::Only(vec!["0..45".into()]), &report).unwrap();
+        let skip =
+            resolve_gap_selection(&GapSelectionMode::Skip(vec!["0..45".into()]), &report).unwrap();
+        for i in 0..3 {
+            assert_eq!(only.is_selected(i), !skip.is_selected(i), "index {i}");
+        }
     }
 }

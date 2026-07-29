@@ -11,6 +11,79 @@ pub fn format_timestamp(secs: f64) -> String {
     }
 }
 
+/// Parse a clock time as used by gap-selection range tokens (inverse of the formatters above).
+///
+/// Accepts bare seconds (`6128.25`), `M:SS`, `M:SS.mmm`, `H:MM:SS`, and `H:MM:SS.mmm`.
+/// Returns `(seconds, fractional_spelling)` where `fractional_spelling` is true when the input
+/// contains a `.` — that spelling drives the dual-ε matcher in gap selection (50 ms vs 500 ms).
+pub fn parse_timestamp(raw: &str) -> Result<(f64, bool), String> {
+    let s = raw.trim();
+    if s.is_empty() {
+        return Err("empty timestamp".to_string());
+    }
+    if s.contains(':') {
+        return parse_colon_timestamp(s);
+    }
+    let fractional = s.contains('.');
+    let v: f64 = s
+        .parse()
+        .map_err(|_| format!("invalid timestamp {raw:?}: expected seconds or H:MM:SS"))?;
+    if !v.is_finite() || v < 0.0 {
+        return Err(format!(
+            "invalid timestamp {raw:?}: must be a non-negative finite value"
+        ));
+    }
+    Ok((v, fractional))
+}
+
+fn parse_colon_timestamp(s: &str) -> Result<(f64, bool), String> {
+    let parts: Vec<&str> = s.split(':').collect();
+    let err = || format!("invalid timestamp {s:?}: expected M:SS[.mmm] or H:MM:SS[.mmm]");
+    match parts.as_slice() {
+        [minutes, seconds] => {
+            let minutes: u64 = minutes.parse().map_err(|_| err())?;
+            let (secs, fractional) = parse_seconds_component(seconds).map_err(|_| err())?;
+            Ok((minutes as f64 * 60.0 + secs, fractional))
+        }
+        [hours, minutes, seconds] => {
+            let hours: u64 = hours.parse().map_err(|_| err())?;
+            let minutes: u64 = minutes.parse().map_err(|_| err())?;
+            if minutes >= 60 {
+                return Err(err());
+            }
+            let (secs, fractional) = parse_seconds_component(seconds).map_err(|_| err())?;
+            Ok((
+                hours as f64 * 3600.0 + minutes as f64 * 60.0 + secs,
+                fractional,
+            ))
+        }
+        _ => Err(err()),
+    }
+}
+
+fn parse_seconds_component(s: &str) -> Result<(f64, bool), String> {
+    if let Some((whole, frac)) = s.split_once('.') {
+        if frac.is_empty() || !frac.chars().all(|c| c.is_ascii_digit()) {
+            return Err("bad fractional seconds".into());
+        }
+        let whole: u64 = whole.parse().map_err(|_| "bad seconds")?;
+        if whole >= 60 {
+            return Err("seconds out of range".into());
+        }
+        // Interprets "750" as 750 ms, "5" as 500 ms, "50" as 500 ms — same as `0.{frac}` parse.
+        let frac_val: f64 = format!("0.{frac}")
+            .parse()
+            .map_err(|_| "bad fractional seconds")?;
+        Ok((whole as f64 + frac_val, true))
+    } else {
+        let whole: u64 = s.parse().map_err(|_| "bad seconds")?;
+        if whole >= 60 {
+            return Err("seconds out of range".into());
+        }
+        Ok((whole as f64, false))
+    }
+}
+
 /// Span below which verbose ranges show millisecond precision.
 pub const VERBOSE_SUBSECOND_SPAN_SECS: f64 = 10.0;
 
@@ -85,5 +158,28 @@ mod tests {
     #[test]
     fn format_timestamp_verbose_with_hours() {
         assert_eq!(format_timestamp_verbose(3661.5, true), "1:01:01.500");
+    }
+
+    #[test]
+    fn parse_timestamp_round_trips_formatters() {
+        let (secs, frac) = parse_timestamp("1:30").unwrap();
+        assert!((secs - 90.0).abs() < 1e-9);
+        assert!(!frac);
+
+        let (secs, frac) = parse_timestamp("1:01:01").unwrap();
+        assert!((secs - 3661.0).abs() < 1e-9);
+        assert!(!frac);
+
+        let (secs, frac) = parse_timestamp("55:01.750").unwrap();
+        assert!((secs - 3301.75).abs() < 1e-9);
+        assert!(frac);
+
+        let (secs, frac) = parse_timestamp("6128.25").unwrap();
+        assert!((secs - 6128.25).abs() < 1e-9);
+        assert!(frac);
+
+        let (secs, frac) = parse_timestamp("6128").unwrap();
+        assert!((secs - 6128.0).abs() < 1e-9);
+        assert!(!frac);
     }
 }

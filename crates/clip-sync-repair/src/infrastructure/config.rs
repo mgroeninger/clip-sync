@@ -64,10 +64,12 @@ pub struct RepairConfig {
     /// with `--no-skip-equivalent-gaps` to patch every scanned gap regardless of silence character.
     #[serde(default = "default_true")]
     pub skip_equivalent_gaps: bool,
-    /// Patch only these gaps (1-based gap numbers as strings). Mutually exclusive with [`Self::skip_gaps`].
+    /// Patch only these gaps (1-based gap numbers and/or time-range tokens as strings).
+    /// Mutually exclusive with [`Self::skip_gaps`].
     #[serde(default)]
     pub only_gaps: Option<Vec<String>>,
-    /// Patch all gaps except these (1-based gap numbers as strings). Mutually exclusive with [`Self::only_gaps`].
+    /// Patch all gaps except these (same token grammar as [`Self::only_gaps`]).
+    /// Mutually exclusive with [`Self::only_gaps`].
     #[serde(default)]
     pub skip_gaps: Option<Vec<String>>,
     /// Maximum |silence_offset − alignment_offset| (seconds) to count as agreement.

@@ -1,8 +1,9 @@
-# Gap selection v1.5 — range tokens (DRAFT)
+# Gap selection v1.5 — range tokens
 
-Status: **rule set, unblocked — implement next.** Thin v1 shipped; identity rule (§ tokens are
-labels) is live in operator docs. One measurement still wanted (§2, ε magnitudes at real gap
-edges) — the *scheme* does not depend on it.
+Status: **implemented** (2026-07-29). User contract in
+[gap-repair-guide.md](../gap-repair-guide.md) § Iterative subset patching and
+[cli-output.md](../cli-output.md) (filter-note straddler clause). Archive when a follow-up
+absorbs this record, or keep beside v1 until both archive together.
 
 Split out of `TEMP-gap-selection-plan.md` on 2026-07-29.
 
@@ -24,6 +25,10 @@ Split out of `TEMP-gap-selection-plan.md` on 2026-07-29.
 > **Verification rule.** `file:line` references and claims about current behavior belong in the
 > checklist (§5), where they are about to be executed. Elsewhere, state the decision and its reason.
 
+**Order (siblings):** v1 **done** → **this** (v1.5) **done** → recipe parked until a consumer →
+deferred sketches not planned. Sequencing record:
+[archive/TEMP-gap-selection-sequencing-plan.md](archive/TEMP-gap-selection-sequencing-plan.md).
+
 ---
 
 ## 1. Grammar: same flags, mixed tokens
@@ -41,7 +46,15 @@ Auto-detect per token:
 | `START..END` | **Containment** — every gap whose A window lies entirely inside the interval |
 
 Times accept seconds (`6128.25`) or `H:MM:SS` / `H:MM:SS.mmm` / `M:SS`, matching `format_timestamp`
-display. Unmatched or empty resolution → error listing detected gaps (no silent skip).
+display. Table-copy en-dash forms (`START – END` with U+2013) are accepted as identity.
+
+**Zero resolution is a per-token error, on both flags** — never a no-op. Every token shape errors when
+it resolves to nothing: an integer out of bounds, an identity range with no edge match, and a
+containment window that encloses no gap. The check is *per token*, not on the aggregate selection, so
+`--only-gaps 2,1000..2000` fails on the dead window instead of quietly returning gap #2. The aggregate
+empty-selection errors (§ v1) remain as the backstop for an empty token list. Rationale: a token is a
+handle, and a stale handle must fail loudly (§2) — on `--skip-gaps` the silent alternative is worse
+than a missing patch, because the gap the user asked to leave alone gets written.
 
 ### `START-END` is a gap *identity*, not a *window* — and needs a companion that is
 
@@ -56,7 +69,7 @@ and they must not share a syntax:
 | Token | Semantics | Serves |
 |-------|-----------|--------|
 | `START-END` | **Strict identity.** Matches the single gap whose `video_a_start_secs` / `video_a_end_secs` are both within ε. No match → **error**. | The cross-rescan stable handle. Errors *loudly* when the scan recipe moved the gap — the whole reason to prefer ranges over remembered numbers |
-| `START..END` | **Containment: full enclosure** (§3). Selects every gap whose A window lies entirely within `[START − ε, END + ε]`. Zero matches → **error** (empty selection) | "patch this whole stretch"; bulk exclusion via `--skip-gaps` |
+| `START..END` | **Containment: full enclosure** (§3). Selects every gap whose A window lies entirely within `[START − ε, END + ε]`. Encloses nothing → **error on that token** (§1), on both flags | "patch this whole stretch"; bulk exclusion via `--skip-gaps` |
 
 Keeping them distinct preserves the rule that stale handles must never silently remap: under
 containment, a gap that shifted or split still lands inside a wide window and is quietly selected —
@@ -91,9 +104,8 @@ hazard is display quantization, not scan jitter.
 - For `START..END` containment the same dual ε applies to each edge. A 500 ms slack on a bulk window is
   benign; stated explicitly so it is not re-derived.
 
-**Still wanted from a corpus case:** confirmation of the two magnitudes at real gap edges (and that
-50 ms is not too tight against sub-block refine). The dual *scheme* is settled and does not depend on
-it.
+**ε magnitudes** are coded at 50 ms / 500 ms (unit-tested against synthetic edges). Optional follow-up:
+corpus confirmation at real gap edges (not a ship gate).
 
 ## 3. Containment = **full enclosure** — settled 2026-07-29
 
@@ -109,26 +121,34 @@ containment rule in the crate, not two**. Overlap-as-select would pull in gaps t
 the requested stretch, weakening the "no quiet remap" spirit that motivated splitting `START-END` from
 `START..END` in the first place.
 
-**No corpus case was needed to choose the rule.** One is still wanted to validate the diagnostic
-wording and ε behavior at real edges.
-
 ### Straddlers must be named, and the error is not enough
 
 Naming the excluded gap only in the empty-selection error covers just the zero-match case. If a window
 matches two gaps and half-covers a third, there is no error and the exclusion is silent — exactly the
 surprise the rule exists to avoid. So:
 
-- **Zero matches** → error (the v1 empty-selection error), naming any gap that overlapped the window
-  but was not enclosed.
+- **Zero enclosure** → error on that token (§1 — *not* the aggregate empty-selection error, which
+  cannot fire when another token matched), naming any gap that overlapped the window but was not
+  enclosed. This is what keeps a `--skip-gaps` window that encloses nothing from passing silently: the
+  straddler would otherwise be patched with no error *and* no note, since the selection narrowed
+  nothing and `is_filtered` suppresses the line.
 - **Some matches, with an excluded straddler** → name it on the **selection filter note**, v1's
-  unconditional stderr line, which is already emitted at the right point in the run. Shape:
+  unconditional stderr line, which is already emitted at the right point in the run. Shape
+  (`--only-gaps`):
 
   ```text
-  Gap filter: patching 2 of 6 detected gaps (only-gaps: 1:42:00..1:50:00; gap #4 overlaps the
-  window but is not fully inside it — not selected)
+  Gap filter: selected 2 of 6 detected gaps (only-gaps: 1:42:00..1:50:00); gap #4 overlaps the
+  window but is not fully inside it — not selected
   ```
 
+  Omit the clause when another token in the same list selects that gap. Under `--skip-gaps`,
+  polarity flips to `— still selected` (the window did not exclude the straddler).
+
   This is the only place the exclusion becomes visible when other gaps matched.
+
+  The note's `is_filtered` early-return is therefore gated on the straddler list being empty too. With
+  zero enclosure erroring per token, no reachable path needs that today — it is a guard so a future
+  change to error precedence cannot make a straddler silent again.
 
 ## 4. What v1.5 does **not** change
 
@@ -141,19 +161,23 @@ surprise the rule exists to avoid. So:
 
 ## 5. Checklist
 
-- [ ] Range-token parser: `START-END` vs `START..END` discrimination; seconds and `H:MM:SS[.mmm]` /
-      `M:SS` time forms; per-token fractional-vs-whole-second detection driving ε
-- [ ] `resolve_gap_selection`: resolve range tokens to 0-based report indices, union with integer
-      tokens, same error vocabulary as v1 ("gap number", per the shipped
-      [index convention](archive/TEMP-gap-index-convention-plan.md) § 6 deviation 3)
-- [ ] Strict-identity errors: no match; **two candidates inside ε** → error naming both and pointing at
+- [x] Range-token parser: `START-END` vs `START..END` discrimination; seconds and `H:MM:SS[.mmm]` /
+      `M:SS` time forms; per-token fractional-vs-whole-second detection driving ε; table en-dash
+      (`START – END`) accepted as identity
+- [x] `resolve_gap_selection`: resolve range tokens to 0-based report indices, union with integer
+      tokens, same error vocabulary as v1 ("gap number", …)
+- [x] Strict-identity errors: no match; **two candidates inside ε** → error naming both and pointing at
       the fractional / JSON form
-- [ ] Containment: full enclosure via the existing `interval_fully_within_window` helper — do not write
+- [x] Containment: full enclosure via the existing `interval_fully_within_window` helper — do not write
       a second containment predicate
-- [ ] Straddler diagnostic on the selection filter note (§3) and in the empty-selection error
-- [ ] Docs: [gap-repair-guide.md](../gap-repair-guide.md) (steer at JSON `video_a_*_secs` for stable
-      handles), [cli-output.md](../cli-output.md) flag grammar
-- [ ] Corpus case: validate the two ε magnitudes at real gap edges and the straddler wording
+- [x] Straddler diagnostic on the selection filter note (§3) — per-flag polarity, omitted when another
+      token rescued the gap — and in the zero-enclosure / empty-selection errors
+- [x] Zero resolution errors **per token** on both flags (§1), so a dead containment window is never a
+      silent no-op; filter-note `is_filtered` gate also guards on the straddler list
+- [x] Docs: [gap-repair-guide.md](../gap-repair-guide.md) (steer at JSON `video_a_*_secs` for stable
+      handles), [cli-output.md](../cli-output.md) filter-note straddler clause
+- [ ] Optional: corpus case validating the two ε magnitudes at real gap edges (synthetic unit tests
+      cover the scheme)
 
 ## 6. Tests
 
@@ -167,3 +191,7 @@ surprise the rule exists to avoid. So:
 | ε keying | Whole-second token resolves a gap whose true edge is up to 0.5 s from the displayed value; a fractional token 0.4 s off does **not** match (50 ms ε); ε is keyed on the token's spelling, not on which output the value was copied from |
 | Straddler note | Window enclosing 2 of 3 gaps with the third straddling an edge: the straddler is not selected **and** is named on the filter note (non-empty selection ⇒ no error fires, so the note is the only visible signal) |
 | `--skip-gaps` parity | Same grammar; resolves to the report-set complement of the equivalent `--only-gaps` |
+| Skip window enclosing nothing | `--skip-gaps 28..32` over a gap that only straddles → **error** naming the straddler. Regression guard: this used to skip nothing, emit no note, and patch that gap |
+| Dead containment window | A window matching nothing errors on **both** flags, and errors even beside a live token (`--only-gaps 2,1000..2000`); no straddler ⇒ no overlap clause in the message |
+| Skip straddler note polarity | Window enclosing 1 of 3 with a straddler: note reads `— still selected`, and the only-gaps `— not selected` wording never appears |
+| Table en-dash | `format_time_range` shape (`START – END`) parses as identity |

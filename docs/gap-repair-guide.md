@@ -23,24 +23,36 @@ To patch only some gaps from this run's table (e.g. fix 1,2,4,5 first; retry 3 w
 ```text
 clip-sync-repair A.mkv B.mkv --wav out.wav --only-gaps 1,2,4,5
 clip-sync-repair A.mkv B.mkv --wav out2.wav --only-gaps 3 --no-dual-fit   # example retry
+clip-sync-repair A.mkv B.mkv --wav out.wav --only-gaps 6128.25-6360.0     # stable identity from JSON
+clip-sync-repair A.mkv B.mkv --wav out.wav --only-gaps 1:42:00..1:50:00   # all gaps fully in window
 ```
 
 **Flags / TOML**
 
 | Surface | Meaning |
 |---------|---------|
-| `--only-gaps <LIST>` / `only_gaps` | Patch **only** these gap numbers |
+| `--only-gaps <LIST>` / `only_gaps` | Patch **only** these gaps (numbers and/or time ranges) |
 | `--skip-gaps <LIST>` / `skip_gaps` | Patch all candidates **except** these |
 | Mutual exclusivity | Both set → error (CLI `conflicts_with`; TOML validate) |
-| Token type | Quoted strings in TOML (`only_gaps = ["1", "3"]`); bare integers fail to load |
-| Modes | Applies to `--wav` / `--mux` **and** `--repair-preview`. Scan-only: tokens are **validated** (bad `#` → exit 2) but the table is unchanged |
+| Token type | Quoted strings in TOML (`only_gaps = ["1", "3"]` or `"6128.25-6360.0"`); bare integers fail to load |
+| Modes | Applies to `--wav` / `--mux` **and** `--repair-preview`. Scan-only: tokens are **validated** (bad `#` / range → exit 2) but the table is unchanged |
 
-**Tokens are labels, not counts.** `--only-gaps 4` means the gap the table calls `#4` — never the 4th fillable gap, 4th planned region, or “4th of some subset”. Each token resolves against the full `gaps[]` / table; the result is a **set** (order does not matter: `5,2` ≡ `2,5`). Duplicate numbers are an error. Bounds are `1…N` for `N` detected gaps. See [gap-vocabulary.md](dev/gap-vocabulary.md) § Gap numbering.
+**Tokens are labels, not counts.** `--only-gaps 4` means the gap the table calls `#4` — never the 4th fillable gap, 4th planned region, or “4th of some subset”. Each token resolves against the full `gaps[]` / table; the result is a **set** (order does not matter: `5,2` ≡ `2,5`). Duplicate numbers are an error. Bounds for integers are `1…N` for `N` detected gaps. See [gap-vocabulary.md](dev/gap-vocabulary.md) § Gap numbering.
 
 **Identity / stability**
 
 - Copy `#` from **this run's** table (or JSON `gaps[]` order). Do not reuse remembered numbers after changing scan knobs (`min_gap_ms`, hold, block size, silence floor / peak).
-- The tool never remaps stale `#` values onto a new scan. Cross-run handles (time-range tokens) are v1.5 — see [TEMP-gap-selection-ranges-plan.md](dev/TEMP-gap-selection-ranges-plan.md).
+- The tool never remaps stale `#` values onto a new scan.
+- **Time-range tokens** (same flags; mix freely with integers):
+
+  | Token | Meaning |
+  |-------|---------|
+  | `START-END` | **One gap** whose edges both match `START`/`END` (rescan-stable spelling of a `#`). Table copy with an en-dash (`1:42:08 – 1:46:00`) is accepted. Spanning several gaps → error (this is not a window). |
+  | `START..END` | **Every gap** whose A range lies **fully inside** the interval. A gap that straddles an edge is not selected under `--only-gaps` (named on the filter note / empty-selection error; omitted from the note if another token selects it). Under `--skip-gaps`, a straddler stays selected and the note says so. Encloses no gap → error (see below). Times, not gap-number spans — use `1,2,3` for multiple `#`s. |
+
+  Times are bare seconds or `H:MM:SS[.mmm]` / `M:SS`. Prefer JSON `video_a_start_secs` / `video_a_end_secs` (fractional) for stable identity handles; whole-second table times use a looser ±500 ms match so copy-paste works (±50 ms when the token has a fraction). Two gaps inside ε → error (never a silent pick).
+
+- **A token that matches nothing is always an error, never a no-op** — on both flags, and per token: an out-of-bounds `#`, an identity range with no edge match, and a `START..END` window that encloses no gap all fail the run (exit 2) before anything is written. `--only-gaps 2,1:00:00..1:10:00` fails on the empty window rather than quietly patching just `#2`. This is the point of preferring ranges: after a scan-recipe change, a stale handle tells you it moved instead of silently doing the wrong amount of work. It matters most on `--skip-gaps`, where a silently-empty window means the stretch you wanted left alone gets patched.
 
 **Plan / audio / status**
 

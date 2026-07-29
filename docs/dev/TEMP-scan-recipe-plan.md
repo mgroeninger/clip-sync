@@ -13,7 +13,7 @@ consumer (`--gaps-from`) remains deferred.
 **Siblings:**
 [archive/TEMP-gap-selection-sequencing-plan.md](archive/TEMP-gap-selection-sequencing-plan.md) (when to unpark),
 [TEMP-gap-selection-plan.md](TEMP-gap-selection-plan.md) (v1 — **done**),
-[TEMP-gap-selection-ranges-plan.md](TEMP-gap-selection-ranges-plan.md) (v1.5 — implement next),
+[TEMP-gap-selection-ranges-plan.md](TEMP-gap-selection-ranges-plan.md) (v1.5 — **done**),
 [TEMP-gap-selection-deferred.md](TEMP-gap-selection-deferred.md) (the `--gaps-from` manifest, whose
 "same recipe?" check is the main consumer of the `PartialEq`),
 [archive/TEMP-gap-index-convention-plan.md](archive/TEMP-gap-index-convention-plan.md) (shipped).

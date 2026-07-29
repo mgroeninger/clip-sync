@@ -33,7 +33,7 @@ pub use domain::policies::{
 };
 pub use domain::{
     build_query_alignment_result, compute_mapped_region, format_time_range,
-    format_time_range_verbose, format_timestamp, format_timestamp_verbose,
+    format_time_range_verbose, format_timestamp, format_timestamp_verbose, parse_timestamp,
     resolve_output_bit_depth, AlignmentModeUsed, AlignmentResult, AudioTimelineSkew, AudioTrack,
     BitDepth, ClipLabel, ClipMatch, ClipMatchEstimate, ClipRepetitionReport, ClipWindow,
     DomainError, Fingerprint, HighRateRefinement, InterleavedScanBucket, MediaExtent, MediaSource,

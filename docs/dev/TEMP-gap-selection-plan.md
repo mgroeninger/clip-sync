@@ -18,7 +18,7 @@ before the recipe provenance PR.
 | [archive/TEMP-gap-index-convention-plan.md](archive/TEMP-gap-index-convention-plan.md) | The gap-index prep PR (was §0). **Shipped 2026-07-28.** Its one durable rule now lives in [gap-vocabulary.md](gap-vocabulary.md) § Gap numbering |
 | [archive/TEMP-gap-selection-sequencing-plan.md](archive/TEMP-gap-selection-sequencing-plan.md) | Meta: thin v1 before recipe — **archived** after promote |
 | [TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md) | `ScanRecipe` on `GapReport` + the JSON scan-params echo. **Not a selection feature**; **parked** (no code dependency from v1) |
-| [TEMP-gap-selection-ranges-plan.md](TEMP-gap-selection-ranges-plan.md) | v1.5 range tokens: `START-END` identity, `START..END` containment, dual ε, straddler diagnostics |
+| [TEMP-gap-selection-ranges-plan.md](TEMP-gap-selection-ranges-plan.md) | v1.5 range tokens: `START-END` identity, `START..END` containment, dual ε, straddler diagnostics — **done** |
 | [TEMP-gap-selection-deferred.md](TEMP-gap-selection-deferred.md) | `--scan-window` (refused in its cheap form) and the `--gaps-from` manifest (v2) |
 
 **What still binds this document to its siblings** (do not re-litigate these in isolation):

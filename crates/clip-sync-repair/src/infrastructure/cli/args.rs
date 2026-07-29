@@ -97,9 +97,10 @@ pub struct Args {
     #[arg(long, overrides_with = "skip_equivalent_gaps")]
     pub no_skip_equivalent_gaps: bool,
 
-    /// Patch only these gaps (1-based gap numbers from the scan table; comma-separated).
-    /// Mutually exclusive with `--skip-gaps`. On scan-only runs tokens are validated but do not
-    /// change output.
+    /// Patch only these gaps (1-based gap numbers and/or time ranges from the scan table;
+    /// comma-separated). Range forms: `START-END` (one gap by edges) or `START..END` (all gaps
+    /// fully inside). Times are seconds or `H:MM:SS[.mmm]`. Mutually exclusive with `--skip-gaps`.
+    /// On scan-only runs tokens are validated but do not change output.
     #[arg(
         long,
         value_name = "LIST",
@@ -108,9 +109,9 @@ pub struct Args {
     )]
     pub only_gaps: Option<Vec<String>>,
 
-    /// Patch all fillable gaps except these (1-based gap numbers; comma-separated).
-    /// Mutually exclusive with `--only-gaps`. On scan-only runs tokens are validated but do not
-    /// change output.
+    /// Patch all fillable gaps except these (same gap-number / range-token semantics as
+    /// `--only-gaps`). Mutually exclusive with `--only-gaps`. On scan-only runs tokens are
+    /// validated but do not change output.
     #[arg(
         long,
         value_name = "LIST",

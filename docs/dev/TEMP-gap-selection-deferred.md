@@ -7,9 +7,9 @@ Split out of `TEMP-gap-selection-plan.md` on 2026-07-29 (its §7.2 and §9). Bot
 as "obvious next features" during selection design; both have a reason not to be built yet, and the
 reasons are the content.
 
-**Siblings:** [TEMP-gap-selection-plan.md](TEMP-gap-selection-plan.md) (v1),
-[TEMP-gap-selection-ranges-plan.md](TEMP-gap-selection-ranges-plan.md) (v1.5),
-[TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md) (prerequisite for the manifest below).
+**Siblings:** [TEMP-gap-selection-plan.md](TEMP-gap-selection-plan.md) (v1 — **done**),
+[TEMP-gap-selection-ranges-plan.md](TEMP-gap-selection-ranges-plan.md) (v1.5 — **done**),
+[TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md) (prerequisite for the manifest below; **parked**).
 
 ---
 

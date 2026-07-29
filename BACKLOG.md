@@ -17,8 +17,8 @@ Last updated: 2026-07-29.
 
 | Plan | Covers |
 |------|--------|
-| [TEMP-gap-selection-plan.md](docs/dev/TEMP-gap-selection-plan.md) | Gap selection (subset patching) **v1 done** — operator contract promoted; archive when v1.5 ships/abandons |
-| [TEMP-gap-selection-ranges-plan.md](docs/dev/TEMP-gap-selection-ranges-plan.md) | Gap selection **v1.5** — range tokens (identity vs containment, dual ε); **implement next** |
+| [TEMP-gap-selection-plan.md](docs/dev/TEMP-gap-selection-plan.md) | Gap selection (subset patching) **v1 done** — operator contract promoted; archive when v1 TEMP retires with v1.5 |
+| [TEMP-gap-selection-ranges-plan.md](docs/dev/TEMP-gap-selection-ranges-plan.md) | Gap selection **v1.5 done** — range tokens (identity / containment, dual ε, straddler note) |
 | [TEMP-scan-recipe-plan.md](docs/dev/TEMP-scan-recipe-plan.md) | `ScanRecipe` on `GapReport` + JSON scan-params echo — **parked** until a consumer (`--gaps-from` / same-recipe check) |
 | [TEMP-gap-selection-deferred.md](docs/dev/TEMP-gap-selection-deferred.md) | Deferred/refused: `--scan-window`, `--gaps-from` manifest — recorded so they are not rediscovered |
 | [TEMP-nway-donor-alignment-plan.md](docs/dev/TEMP-nway-donor-alignment-plan.md) | N-way donor alignment: repair one damaged copy from multiple donors — draft, not started |
