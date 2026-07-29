@@ -24,9 +24,10 @@ use clip_sync_repair::domain::policies;
 use clip_sync_repair::domain::FillConfidence;
 use clip_sync_repair::domain::{CompatibilityVerdict, TrackCompatibility};
 use clip_sync_repair::domain::{
-    FillMode, FillOffsetMode, FitBoundarySearch, GapSignatureMode, RepairProfile,
+    resolve_gap_selection, FillMode, FillOffsetMode, FitBoundarySearch, GapSelectionMode,
+    GapSignatureMode, RepairProfile,
 };
-use clip_sync_repair::domain::{GapPatchSkipReason, GapPatchStatus};
+use clip_sync_repair::domain::{GapFillSkipReason, GapPatchSkipReason, GapPatchStatus};
 use clip_sync_repair::infrastructure::aligner::SymphoniaAligner;
 use clip_sync_repair::infrastructure::wav_writer::WavPatchedAudioWriter;
 use clip_sync_repair_fixtures::energy_signature_fixtures::{
@@ -2533,5 +2534,74 @@ fn i4_f3_auto_matches_bool_outcome() {
         auto_domain.map(|m| m.alignment.start_frame),
         bool_domain.map(|m| m.alignment.start_frame),
         "I4: auto and bool domain placement should match"
+    );
+}
+
+/// Thin selection v1: `--only-gaps 2` on a 3-gap run patches only gap #2; gaps 1 and 3 keep A's silence.
+#[test]
+fn only_gaps_2_leaves_other_gaps_on_a() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let path_a = temp.path().join("a.wav");
+    let path_b = temp.path().join("b.wav");
+    let gaps = [(3.0, 4.0), (5.0, 6.0), (7.0, 8.0)];
+    write_stereo_sine_with_gaps(&path_a, SAMPLE_RATE, 10, &gaps, 440.0, 16_000.0);
+    write_stereo_sine_wav(&path_b, SAMPLE_RATE, 10, 440.0, 16_000.0);
+
+    let report = make_report_with_alignment(
+        path_a,
+        path_b,
+        stereo_identical_compat(SAMPLE_RATE),
+        make_alignment(0.0),
+        gaps.iter()
+            .map(|&(s, e)| make_gap_on_a(s, e, 0.0))
+            .collect(),
+    );
+
+    let mut request = patch_request(report, false, 5.0, 0.35);
+    let selection = resolve_gap_selection(
+        &GapSelectionMode::Only(vec!["2".into()]),
+        &request.report,
+    )
+    .expect("only-gaps 2");
+    request.gap_selection = selection;
+
+    let result = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter)
+        .execute(request, 10)
+        .expect("patch");
+    let pcm = expect_pcm(&result);
+
+    assert_eq!(result.summary.patched_count, 1);
+    assert_eq!(result.summary.not_planned_count, 2);
+    match &result.summary.gaps[0].status {
+        GapPatchStatus::NotPlanned { reason } => {
+            assert_eq!(*reason, GapFillSkipReason::GapNotSelected);
+        }
+        other => panic!("gap 1 expected not selected, got {other:?}"),
+    }
+    assert!(matches!(
+        result.summary.gaps[1].status,
+        GapPatchStatus::Patched { .. }
+    ));
+    match &result.summary.gaps[2].status {
+        GapPatchStatus::NotPlanned { reason } => {
+            assert_eq!(*reason, GapFillSkipReason::GapNotSelected);
+        }
+        other => panic!("gap 3 expected not selected, got {other:?}"),
+    }
+
+    let gap1_rms = rms_region(&pcm.samples, SAMPLE_RATE, CHANNELS, 3.0, 4.0);
+    let gap2_rms = rms_region(&pcm.samples, SAMPLE_RATE, CHANNELS, 5.0, 6.0);
+    let gap3_rms = rms_region(&pcm.samples, SAMPLE_RATE, CHANNELS, 7.0, 8.0);
+    assert!(
+        gap1_rms < 1e-3,
+        "unselected gap 1 must stay silent on A, rms={gap1_rms}"
+    );
+    assert!(
+        gap2_rms > 100.0 / 32767.0,
+        "selected gap 2 must be filled, rms={gap2_rms}"
+    );
+    assert!(
+        gap3_rms < 1e-3,
+        "unselected gap 3 must stay silent on A, rms={gap3_rms}"
     );
 }

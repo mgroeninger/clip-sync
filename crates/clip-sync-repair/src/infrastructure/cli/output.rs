@@ -855,6 +855,7 @@ fn format_fill_skip_reason(reason: &GapFillSkipReason) -> &'static str {
         GapFillSkipReason::AlreadyMatchesReference => {
             "already matches reference (equivalent silence)"
         }
+        GapFillSkipReason::GapNotSelected => "gap not selected",
     }
 }
 

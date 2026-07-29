@@ -456,7 +456,8 @@ pub fn derive_gap_tags_from_status(
                 GapFillSkipReason::OutsideReferenceCoverage
                 | GapFillSkipReason::TrackLayoutMismatch
                 | GapFillSkipReason::TrackCompatibilityUnavailable
-                | GapFillSkipReason::AlreadyMatchesReference => PlanKind::NotPlanned,
+                | GapFillSkipReason::AlreadyMatchesReference
+                | GapFillSkipReason::GapNotSelected => PlanKind::NotPlanned,
             };
             GapTags {
                 plan_kind,
@@ -569,6 +570,7 @@ fn format_plan_skip_reason(reason: &GapFillSkipReason) -> &'static str {
         GapFillSkipReason::TrackLayoutMismatch => "track_layout_mismatch",
         GapFillSkipReason::TrackCompatibilityUnavailable => "track_compatibility_unavailable",
         GapFillSkipReason::AlreadyMatchesReference => "already_matches_reference",
+        GapFillSkipReason::GapNotSelected => "gap_not_selected",
     }
 }
 

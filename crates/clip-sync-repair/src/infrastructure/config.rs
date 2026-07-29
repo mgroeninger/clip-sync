@@ -7,7 +7,7 @@ use clip_sync::{unknown_toml_keys, AlignConfig, AppError, ConfigError, LoggingCo
 use crate::application::mux_bitrate::parse_mux_audio_bitrate_policy;
 use crate::application::patch_audio::PatchRequestSettings;
 use crate::domain::{
-    FitBoundarySearch, RepairProfile, RepairProfileBundle, RepairProfileFieldMask,
+    FitBoundarySearch, GapSelectionMode, RepairProfile, RepairProfileBundle, RepairProfileFieldMask,
 };
 
 /// Default clip count for repair alignment (start + end windows on long media).
@@ -64,6 +64,12 @@ pub struct RepairConfig {
     /// with `--no-skip-equivalent-gaps` to patch every scanned gap regardless of silence character.
     #[serde(default = "default_true")]
     pub skip_equivalent_gaps: bool,
+    /// Patch only these gaps (1-based gap numbers as strings). Mutually exclusive with [`Self::skip_gaps`].
+    #[serde(default)]
+    pub only_gaps: Option<Vec<String>>,
+    /// Patch all gaps except these (1-based gap numbers as strings). Mutually exclusive with [`Self::only_gaps`].
+    #[serde(default)]
+    pub skip_gaps: Option<Vec<String>>,
     /// Maximum |silence_offset − alignment_offset| (seconds) to count as agreement.
     #[serde(default = "default_gap_offset_tolerance_secs")]
     pub gap_offset_tolerance_secs: f64,
@@ -474,6 +480,8 @@ impl Default for RepairConfig {
             absolute_silence_rms: default_absolute_silence_rms(),
             scan_both: default_true(),
             skip_equivalent_gaps: true,
+            only_gaps: None,
+            skip_gaps: None,
             gap_offset_tolerance_secs: default_gap_offset_tolerance_secs(),
             min_fill_correlation: default_min_fill_correlation(),
             fill_align_margin_secs: default_fill_align_margin_secs(),
@@ -606,9 +614,20 @@ impl RepairConfig {
         apply_profile_bundle_fields(self, bundle, mask);
     }
 
+    /// Unresolved gap-selection intent from config (mutual exclusivity already enforced in [`Self::validate`]).
+    pub fn gap_selection_mode(&self) -> GapSelectionMode {
+        match (&self.only_gaps, &self.skip_gaps) {
+            (None, None) => GapSelectionMode::All,
+            (Some(tokens), None) => GapSelectionMode::Only(tokens.clone()),
+            (None, Some(tokens)) => GapSelectionMode::Skip(tokens.clone()),
+            (Some(_), Some(_)) => GapSelectionMode::All, // unreachable after validate
+        }
+    }
+
     pub fn patch_settings(&self) -> PatchRequestSettings {
         PatchRequestSettings {
             skip_equivalent_gaps: self.skip_equivalent_gaps,
+            gap_selection: self.gap_selection_mode(),
             normalize_fill: self.normalize_fill,
             dual_fit: self.dual_fit,
             normalize_window_secs: self.normalize_window_secs,
@@ -978,6 +997,12 @@ impl RepairConfig {
                 field: "repair_preview".into(),
                 reason: "cannot combine with output.wav_path / output.video_path (--wav / --mux)"
                     .into(),
+            });
+        }
+        if self.only_gaps.is_some() && self.skip_gaps.is_some() {
+            return Err(ConfigError::InvalidValue {
+                field: "only_gaps".into(),
+                reason: "mutually exclusive with skip_gaps".into(),
             });
         }
         if self.max_anchor_bracket_secs <= 0.0 {

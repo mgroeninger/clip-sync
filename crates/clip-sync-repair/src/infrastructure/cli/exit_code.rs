@@ -14,7 +14,7 @@ use crate::application::error::RepairError;
 /// |  6   | ffmpeg mux failure |
 pub fn exit_code_for(error: &RepairError) -> ExitCode {
     match error {
-        RepairError::Config(_) => ExitCode::from(2),
+        RepairError::Config(_) | RepairError::GapSelection(_) => ExitCode::from(2),
         RepairError::Domain(_) => ExitCode::from(3),
         RepairError::Media(_) | RepairError::Io(_) | RepairError::Write(_) => ExitCode::from(4),
         RepairError::Align(_) => ExitCode::from(5),

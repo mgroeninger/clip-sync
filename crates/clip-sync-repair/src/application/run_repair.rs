@@ -5,11 +5,14 @@ use std::path::PathBuf;
 use clip_sync::{MediaReader, ProgressReporter};
 
 use crate::application::error::RepairError;
-use crate::application::patch_audio::{PatchAudio, PatchAudioResult, PatchRequestSettings};
+use crate::application::patch_audio::{
+    PatchAudio, PatchAudioRequest, PatchAudioResult, PatchRequestSettings,
+};
 use crate::application::ports::Aligner;
 use crate::application::ports::PatchedAudioWriter;
 use crate::application::repair_videos::{RepairVideos, RepairWriteRequest};
 use crate::application::scan_gaps::{ScanGaps, ScanGapsRequest};
+use crate::domain::gap_fill::{format_gap_selection_filter_note, resolve_gap_selection};
 use crate::domain::GapReport;
 
 #[cfg(feature = "ffmpeg-mux")]
@@ -57,13 +60,30 @@ pub struct RepairRunOutcome {
     pub patch_result: Result<Option<PatchAudioResult>, RepairError>,
 }
 
+fn resolve_patch_request(
+    patch_settings: PatchRequestSettings,
+    report: GapReport,
+    progress: &dyn ProgressReporter,
+) -> Result<PatchAudioRequest, RepairError> {
+    let selection = resolve_gap_selection(&patch_settings.gap_selection, &report)
+        .map_err(RepairError::GapSelection)?;
+    if let Some(note) = format_gap_selection_filter_note(&selection, report.gaps.len()) {
+        progress.phase(&note);
+    }
+    let mut request = patch_settings.into_request(report);
+    request.gap_selection = selection;
+    Ok(request)
+}
+
 fn into_write_request(
     pending: PendingRepairWrite,
     report: GapReport,
+    progress: &dyn ProgressReporter,
 ) -> Result<RepairWriteRequest, RepairError> {
+    let patch_request = resolve_patch_request(pending.patch_settings, report, progress)?;
     Ok(RepairWriteRequest {
         source_video: pending.source_video,
-        patch_request: pending.patch_settings.into_request(report),
+        patch_request,
         crossfade_ms: pending.crossfade_ms,
         wav_path: pending.wav_path,
         #[cfg(feature = "ffmpeg-mux")]
@@ -82,7 +102,7 @@ fn run_preview(
     crossfade_ms: u64,
     report: GapReport,
 ) -> Result<PatchAudioResult, RepairError> {
-    let request = patch_settings.into_request(report);
+    let request = resolve_patch_request(patch_settings, report, progress)?;
     PatchAudio::new(media_reader, progress).preview(request, crossfade_ms)
 }
 
@@ -119,7 +139,7 @@ where
         )
         .map(Some),
         PendingAfterScan::Write(pending) => {
-            into_write_request(pending, report.clone()).and_then(|write_request| {
+            into_write_request(pending, report.clone(), progress).and_then(|write_request| {
                 let repair = RepairVideos::new(media_reader, progress, wav_writer);
                 repair.execute(write_request, muxer).map(Some)
             })
@@ -164,7 +184,7 @@ where
         )
         .map(Some),
         PendingAfterScan::Write(pending) => {
-            into_write_request(pending, report.clone()).and_then(|write_request| {
+            into_write_request(pending, report.clone(), progress).and_then(|write_request| {
                 let repair = RepairVideos::new(media_reader, progress, wav_writer);
                 repair.execute(write_request).map(Some)
             })

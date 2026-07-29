@@ -2,7 +2,7 @@
 
 Open follow-up work for `clip-sync`. See [PLAN.md](PLAN.md) for architecture, [docs/pipeline.md](docs/pipeline.md) for the repair pipeline (phase by phase), [docs/dev/corpus-validation.md](docs/dev/corpus-validation.md) for the test corpus, and [docs/error-mapping.md](docs/error-mapping.md) for error handling. Shipped work is recorded in `docs/dev/archive/*` and git history.
 
-Last updated: 2026-07-26.
+Last updated: 2026-07-29.
 
 **How this doc works**
 
@@ -17,12 +17,34 @@ Last updated: 2026-07-26.
 
 | Plan | Covers |
 |------|--------|
-| [TEMP-gap-selection-plan.md](docs/dev/TEMP-gap-selection-plan.md) | Gap selection (subset patching) — draft, not started |
+| [TEMP-gap-selection-plan.md](docs/dev/TEMP-gap-selection-plan.md) | Gap selection (subset patching) **v1 implemented** — `--only-gaps` / `--skip-gaps`; promote per §11; archive when v1.5 ships/abandons |
+| [TEMP-gap-selection-sequencing-plan.md](docs/dev/TEMP-gap-selection-sequencing-plan.md) | Meta: thin v1 landed; **archive this file** (recipe stays parked) |
+| [TEMP-scan-recipe-plan.md](docs/dev/TEMP-scan-recipe-plan.md) | `ScanRecipe` on `GapReport` + JSON scan-params echo — **parked** until a consumer (`--gaps-from` / same-recipe check) |
+| [TEMP-gap-selection-ranges-plan.md](docs/dev/TEMP-gap-selection-ranges-plan.md) | Gap selection **v1.5** — range tokens (identity vs containment, dual ε); rule set, blocked on v1 |
+| [TEMP-gap-selection-deferred.md](docs/dev/TEMP-gap-selection-deferred.md) | Deferred/refused: `--scan-window`, `--gaps-from` manifest — recorded so they are not rediscovered |
 | [TEMP-nway-donor-alignment-plan.md](docs/dev/TEMP-nway-donor-alignment-plan.md) | N-way donor alignment: repair one damaged copy from multiple donors — draft, not started |
 
-**Recently archived:** [TEMP-rust-review-findings.md](docs/dev/archive/TEMP-rust-review-findings.md) — workspace Rust review ledger (P0–P3), **closed and archived 2026-07-27**: every finding fixed, withdrawn, or closed will-not-fix. Elective residue that outlived it: optional M-SILENT machine-readable report flags, the deferred `align_videos` module split, and the prepare-clone perf stretch. · [TEMP-fill-placement-axis-plan.md](docs/dev/archive/TEMP-fill-placement-axis-plan.md) — Phase A armed, Phase B slack exit → Phase C NO-GO (2026-07-26). Search slack narrowed to 1.0 s (extract-tail still 5.0); see [repair-perf.md](docs/dev/repair-perf.md) §5 #3.
+> Gap-selection docs were split out of one ~1200-line plan on 2026-07-29; order settled the same day
+> ([TEMP-gap-selection-sequencing-plan.md](docs/dev/TEMP-gap-selection-sequencing-plan.md)): thin v1
+> first, recipe parked (recipe-first rejected). Index-convention prep shipped 2026-07-28
+> ([archive/TEMP-gap-index-convention-plan.md](docs/dev/archive/TEMP-gap-index-convention-plan.md));
+> durable rule in [gap-vocabulary.md](docs/dev/gap-vocabulary.md) § Gap numbering.
+
+**Recently archived:** [TEMP-gap-index-convention-plan.md](docs/dev/archive/TEMP-gap-index-convention-plan.md) — gap-index convention (0-based data / 1-based display), **shipped 2026-07-28**: `source_gap_index` axis fix, `region_*` renames, `--fingerprint-gap` → 1-based, identity-vs-count display split. · [TEMP-rust-review-findings.md](docs/dev/archive/TEMP-rust-review-findings.md) — workspace Rust review ledger (P0–P3), **closed and archived 2026-07-27**: every finding fixed, withdrawn, or closed will-not-fix. Elective residue that outlived it: optional M-SILENT machine-readable report flags, the deferred `align_videos` module split, and the prepare-clone perf stretch. · [TEMP-fill-placement-axis-plan.md](docs/dev/archive/TEMP-fill-placement-axis-plan.md) — Phase A armed, Phase B slack exit → Phase C NO-GO (2026-07-26). Search slack narrowed to 1.0 s (extract-tail still 5.0); see [repair-perf.md](docs/dev/repair-perf.md) §5 #3.
 
 ## Open work
+
+### Gap-selection parked debt (do not fold into thin v1)
+
+From [TEMP-gap-selection-sequencing-plan.md](docs/dev/TEMP-gap-selection-sequencing-plan.md) §4.
+Survive archival of that meta doc. Not required for `--only-gaps` / `--skip-gaps`.
+
+| Item | Direction |
+|------|-----------|
+| `format_scan_summary` RMS floor `{:.0}` prints `0` for normalized ≈ `0.001` | Real display bug; one-line fix + rebase the covering test off the old 0–32767 scale; tiny PR |
+| JSON missing `min_gap_ms` / `silence_hold_ms` / `absolute_silence_rms` | Provenance; lands with parked [TEMP-scan-recipe-plan.md](docs/dev/TEMP-scan-recipe-plan.md) or a flat-echo interim |
+| Corpus `from_report` hardcodes `None` + `complete_recipe` back-fill | Deleted when recipe is unparked |
+| `limit_fill_to_mapped_region` on scan report | Wrong home; recipe plan explicitly out of scope — separate cleanup if ever moved |
 
 ### Dual-fit confidence axis
 

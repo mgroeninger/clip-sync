@@ -87,7 +87,12 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
     ) -> Result<PatchAudioResult, RepairError> {
         // Step 1: Build fill plan (may be empty when tracks mismatch or no B energy). The equivalence
         // gate drops already-equivalent gaps here (when enabled) so they never reach decode/patch.
-        let plan = build_gap_fill_plan(&request.report, crossfade_ms, request.skip_equivalent_gaps);
+        let plan = build_gap_fill_plan(
+            &request.report,
+            crossfade_ms,
+            request.skip_equivalent_gaps,
+            &request.gap_selection,
+        );
 
         if plan.regions.is_empty() {
             self.progress

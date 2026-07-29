@@ -1,5 +1,6 @@
 use clip_sync::MultiChannelPcm;
 
+use crate::domain::gap_fill::{GapSelection, GapSelectionMode};
 use crate::domain::patch_result::PatchSummary;
 use crate::domain::GapReport;
 
@@ -34,6 +35,9 @@ pub struct PatchAudioRequest {
     /// P1 report-only: compute the residual/floor verdict per gap and attach it to the outcome/JSON.
     /// Off by default (no cost, no field); enabled for calibration runs. Set directly on the request.
     pub measure_residual: bool,
+    /// Resolved gap subset for this run (`--only-gaps` / `--skip-gaps`). Defaults to all gaps via
+    /// [`into_request`](PatchRequestSettings::into_request); `run_repair` overwrites after resolve.
+    pub gap_selection: GapSelection,
 }
 
 impl std::ops::Deref for PatchAudioRequest {
@@ -50,6 +54,8 @@ pub struct PatchRequestSettings {
     /// Drop already-equivalent gaps (mutual/ambient silence) from the fill plan before decode/patch
     /// (`docs/dev/gap-vocabulary.md` § Silence-character pre-gate). Off by default.
     pub skip_equivalent_gaps: bool,
+    /// Unresolved `--only-gaps` / `--skip-gaps` intent; resolved in `run_repair` once the report exists.
+    pub gap_selection: GapSelectionMode,
     pub normalize_fill: bool,
     pub normalize_window_secs: f64,
     pub max_fill_gain_db: f64,
@@ -165,11 +171,14 @@ impl PatchRequestSettings {
     /// Attach the scan report, producing the runnable request. Policy moves in whole — there is
     /// no per-field copy list to keep in sync when a knob is added.
     pub fn into_request(self, report: GapReport) -> PatchAudioRequest {
+        let gap_count = report.gaps.len();
         PatchAudioRequest {
             report,
             settings: self,
             // Report-only residual measurement is opt-in; callers set it on the request directly.
             measure_residual: false,
+            // Default all-selected; `run_repair` replaces after `resolve_gap_selection`.
+            gap_selection: GapSelection::all(gap_count),
         }
     }
 }

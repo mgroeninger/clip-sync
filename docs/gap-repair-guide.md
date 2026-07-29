@@ -16,6 +16,20 @@ Operational guide for `clip-sync-repair`: what kinds of gaps exist, how they app
 3. Match the gap to a **stage** and **shape** below (or read the composed **[Vocabulary](#vocabulary)** tags).
 4. Apply the **recommendation** row; use [gap-fill-modes.md](gap-fill-modes.md) for exact flag names and TOML keys.
 
+### Iterative subset patching
+
+To patch only some gaps from this run's table (e.g. fix 1,2,4,5 first; retry 3 with different flags):
+
+```text
+clip-sync-repair A.mkv B.mkv --wav out.wav --only-gaps 1,2,4,5
+clip-sync-repair A.mkv B.mkv --wav out2.wav --only-gaps 3 --no-dual-fit   # example retry
+```
+
+- Copy `#` from **this run's** gap table (or JSON `gaps[]` order). Numbers are **not** stable if you change scan knobs (`min_gap_ms`, hold, block size, silence floor).
+- `--skip-gaps` is the complement polarity (same 1-based labels). The two flags are mutually exclusive.
+- Unselected gaps keep **original A** audio; status shows `not planned: gap not selected`.
+- Selection is ignored on scan-only runs (no fill plan). It **does** apply with `--repair-preview`.
+
 Thresholds below use **production defaults** unless noted: `min_fill_correlation = 0.35`, `fill_marginal_margin = 0.08`, `fill_absolute_floor = 0.12`, `fill_mode = fit`, `dual_fit = true`, repair profile **`default`** (`fit_boundary_search = baseline_only`, `fill_border_search_secs = 10`).
 
 ---
@@ -236,7 +250,7 @@ Prefer **facts** in automation. Treat **hints** as shorthand for the C-layer sha
 | Tag | Values | Source layer | In report today |
 |-----|--------|--------------|-----------------|
 | `plan_kind` | `below_scan_floor`, `unfillable`, `not_planned`, `fillable` | Plan (P0–P5) | Status column / omitted |
-| `plan_skip_reason` | `not_fillable`, `outside_reference_coverage`, `track_layout_mismatch`, `track_compatibility_unavailable`, `already_matches_reference` | Plan (P1–P4) | `unfillable`, `not planned: …` |
+| `plan_skip_reason` | `not_fillable`, `outside_reference_coverage`, `track_layout_mismatch`, `track_compatibility_unavailable`, `already_matches_reference`, `gap_not_selected` | Plan (P1–P4 + selection) | `unfillable`, `not planned: …` |
 | `patch_tier` | `high`, `marginal`, `anchor_trusted`, `dead_zone`, `hard_skip`, `structure_fail`, `not_applicable` | Fit tiers + patch (W, Layer 3) | Gap table ` [tier · seam]` suffix; `patched`, `!`, `patched (anchor …)`, `skipped: …` |
 | `seam_shape` | `balanced`, `asymmetric_post`, `asymmetric_pre`, `symmetric_weak`, `not_applicable` | Seam scores (W1–W5) | Gap table suffix (`post-strong`, `weak both sides`, …); `-v` `gap tags:` |
 | `content_hint` | `flat`, `contour`, `speech_boundary_suspected`, `long_tail` | Content shape (C1–C5) | Not emitted — guide only |

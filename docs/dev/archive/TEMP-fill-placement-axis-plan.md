@@ -176,7 +176,7 @@ dumps than requested. (b) Gaps the equivalence scan drops (`shared-silence → d
 characterized, so they remain available as fixture sources.
 
 > ⚠️ **Finding (a) is superseded — 2026-07-28.** Both halves of it were fixed by the §0 prep PR of
-> [TEMP-gap-selection-plan.md](../TEMP-gap-selection-plan.md) § 0.3 C: `--fingerprint-gap` is now
+> [TEMP-gap-index-convention-plan.md](TEMP-gap-index-convention-plan.md) § 3 C: `--fingerprint-gap` is now
 > **1-based** (matching the table `#`), `0` is rejected rather than underflowing, and an out-of-range
 > number is a hard error naming the detected gap count instead of being silently ignored. Corpus
 > filenames and `GapFingerprint::index` stay 0-based, so `--fingerprint-gap 3` still writes

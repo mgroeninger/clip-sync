@@ -131,7 +131,7 @@ CLI flags are accepted in both modes unless noted. **Effect** differs by mode.
 | `anchor_seam_mode`, `max_anchor_bracket_secs`, `max_anchors_per_side`, `anchor_seam_min_*` | **Active** — editorial anchor bracket search when triggered | **No effect** (fit only) |
 | `dual_fit` / `--no-dual-fit` | **Active** — G6 rescue after scored gate skip (except structure alignment failed) | **No effect** (fit only) |
 
-**Align / scan flags** (`--clip-length`, `--num-clips`, query-reference, high-rate, gap scan knobs) are orthogonal to `fill_mode`.
+**Align / scan flags** (`--clip-length`, `--num-clips`, query-reference, high-rate, gap scan knobs) are orthogonal to `fill_mode`. **Gap selection** (`--only-gaps` / `--skip-gaps`) is also orthogonal — it filters the fill plan after scan; see [gap-repair-guide.md](gap-repair-guide.md) § Iterative subset patching.
 
 ---
 

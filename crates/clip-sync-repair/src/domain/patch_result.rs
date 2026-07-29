@@ -39,6 +39,9 @@ pub enum GapFillSkipReason {
     /// Gap-equivalence gate: A's silence is already equivalent to B's (mutual/ambient silence — nothing to
     /// repair), so patching would be a no-op. Only produced when `skip_equivalent_gaps` is enabled.
     AlreadyMatchesReference,
+    /// User gap selection (`--only-gaps` / `--skip-gaps`): gap would otherwise be planned but was not
+    /// selected for this run.
+    GapNotSelected,
 }
 
 /// Which fit-joint placement produced a seam Pearson score.

@@ -14,7 +14,9 @@ use std::time::Duration;
 use clip_sync::testing::fakes::FakeProgressReporter;
 use clip_sync::{AlignConfig, AlignmentModeUsed, ClipConfig, SymphoniaMediaReader};
 use clip_sync_repair::application::{PatchAudio, PatchRequestSettings, ScanGaps, ScanGapsRequest};
-use clip_sync_repair::domain::{build_gap_fill_plan, GapFillSkipReason, GapPatchStatus};
+use clip_sync_repair::domain::{
+    build_gap_fill_plan, GapFillSkipReason, GapPatchStatus, GapSelection,
+};
 use clip_sync_repair::infrastructure::aligner::SymphoniaAligner;
 use hound::{SampleFormat, WavSpec, WavWriter};
 
@@ -269,7 +271,7 @@ fn repair_query_gap_inside_region_fillable() {
         report.alignment.start_overlap
     );
 
-    let plan = build_gap_fill_plan(report, 10, false);
+    let plan = build_gap_fill_plan(report, 10, false, &GapSelection::all(report.gaps.len()));
     assert!(
         plan.regions
             .iter()
@@ -427,7 +429,7 @@ fn repair_query_gap_outside_region_skipped() {
         .expect("gap outside mapped region should still be reported");
     assert!(report.gap_outside_reference_coverage(outside_gap));
 
-    let plan = build_gap_fill_plan(&report, 10, false);
+    let plan = build_gap_fill_plan(&report, 10, false, &GapSelection::all(report.gaps.len()));
     assert!(
         !plan
             .regions

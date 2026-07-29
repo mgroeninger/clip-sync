@@ -47,6 +47,14 @@ pub fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     } else if args.no_skip_equivalent_gaps {
         config.repair.skip_equivalent_gaps = false;
     }
+    if let Some(tokens) = &args.only_gaps {
+        config.repair.only_gaps = Some(tokens.clone());
+        config.repair.skip_gaps = None;
+    }
+    if let Some(tokens) = &args.skip_gaps {
+        config.repair.skip_gaps = Some(tokens.clone());
+        config.repair.only_gaps = None;
+    }
     if args.dual_fit {
         config.repair.dual_fit = true;
     } else if args.no_dual_fit {

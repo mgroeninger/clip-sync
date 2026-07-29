@@ -97,6 +97,26 @@ pub struct Args {
     #[arg(long, overrides_with = "skip_equivalent_gaps")]
     pub no_skip_equivalent_gaps: bool,
 
+    /// Patch only these gaps (1-based gap numbers from the scan table; comma-separated).
+    /// Mutually exclusive with `--skip-gaps`. Ignored on scan-only runs (no fill plan).
+    #[arg(
+        long,
+        value_name = "LIST",
+        value_delimiter = ',',
+        conflicts_with = "skip_gaps"
+    )]
+    pub only_gaps: Option<Vec<String>>,
+
+    /// Patch all fillable gaps except these (1-based gap numbers; comma-separated).
+    /// Mutually exclusive with `--only-gaps`. Ignored on scan-only runs (no fill plan).
+    #[arg(
+        long,
+        value_name = "LIST",
+        value_delimiter = ',',
+        conflicts_with = "only_gaps"
+    )]
+    pub skip_gaps: Option<Vec<String>>,
+
     /// Write patched audio to a WAV file (implies write mode).
     #[arg(long, value_name = "PATH")]
     pub wav: Option<PathBuf>,

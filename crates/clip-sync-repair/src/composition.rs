@@ -323,19 +323,28 @@ fn print_repair_outcome(
             }
         });
 
-    print_repair_output(
-        &outcome.report,
-        &outcome.alignment_detail,
-        patch_summary,
-        outcome
-            .patch_result
-            .as_ref()
-            .ok()
-            .and_then(|result| result.as_ref()),
-        args.format,
-        args.verbose,
-        output_written,
-    )?;
+    let skip_json = matches!(
+        (args.format, &outcome.patch_result),
+        (
+            crate::infrastructure::config::OutputFormat::Json,
+            Err(RepairError::GapSelection(_))
+        )
+    );
+    if !skip_json {
+        print_repair_output(
+            &outcome.report,
+            &outcome.alignment_detail,
+            patch_summary,
+            outcome
+                .patch_result
+                .as_ref()
+                .ok()
+                .and_then(|result| result.as_ref()),
+            args.format,
+            args.verbose,
+            output_written,
+        )?;
+    }
 
     outcome.patch_result.map(|_| ())
 }

@@ -26,6 +26,8 @@ Historical implementation notes: [archive/cli-output-ux-plan.md](dev/archive/cli
 
 Scripting: prefer `--format json --quiet` and parse stdout only.
 
+**Exception — post-scan selection/config errors (human format only).** When `--only-gaps` / `--skip-gaps` (or TOML peers) fail validation after the gap table exists (bad gap number, empty selection, etc.), the human format still prints the gap table on stdout so the operator can copy `#` values, then prints the error on stderr and exits **2**. Under `--format json`, stdout stays empty (no success-shaped document) — matching the failure row above.
+
 ---
 
 ## Verbosity tiers
@@ -271,7 +273,7 @@ Gaps in video A (5 found, 3 repaired, 0 skipped, 2 unfillable):
 - **Duration summary:** when patching ran, a sub-line under the header totals repaired/skipped seconds and points at the longest skipped gap (`gap #N at H:MM:SS`).
 - **Row emphasis:** `>` prefix on skipped gaps, `-` on unfillable; `!` on duration when skipped/unfillable and ≥ 30s. Rows follow timeline order (gap #1, #2, …).
 
-- **Status column:** merged scan + patch outcome (`unfillable`, `blocked (track layout)`, `repairable` [scan-only], `patched (…)`, `skipped: …`, `not planned: …`). After patch, append vocabulary suffix ` [tier · seam]` when applicable (e.g. `[marginal · post-strong]`, `[anchor trusted · symmetric weak]`, `[hard skip · weak both sides]`, `[structure fail]`); see [gap-repair-guide.md](gap-repair-guide.md) § Vocabulary.
+- **Status column:** merged scan + patch outcome (`unfillable`, `blocked (track layout)`, `repairable` [scan-only], `patched (…)`, `skipped: …`, `not planned: …` including `not planned: gap not selected` when `--only-gaps` / `--skip-gaps` exclude a gap). After patch, append vocabulary suffix ` [tier · seam]` when applicable (e.g. `[marginal · post-strong]`, `[anchor trusted · symmetric weak]`, `[hard skip · weak both sides]`, `[structure fail]`); see [gap-repair-guide.md](gap-repair-guide.md) § Vocabulary.
 - **Default patch detail (`fill_mode = fit`, default):** `patched (pre→post)` from waveform seam scores at the winning placement (scan throat or editorial anchor). When anchor seam search rescues a gap with strong structure but throat Pearson below `min_fill_correlation`, the status prefix is `anchor` (e.g. `patched (anchor 0.31→0.29)`) and the suffix tier is `anchor trusted`. `structure_trusted` is always false in JSON for fit mode.
 - **Default patch detail (`fill_mode = gate`):** `patched (struct pre→post)` when structure-trusted; `patched (pre→post)` otherwise.
 - **Verbose patch detail:** includes slide adjustment and full pre/post labels.

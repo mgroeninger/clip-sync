@@ -77,6 +77,8 @@ For each fillable gap, the **B offset map** translates A's gap time to a nominal
 
 Gaps are also tagged `plan_kind` (`fillable` / `unfillable` / `not_planned`). See [gap-fill-modes.md](gap-fill-modes.md) § Patch anchors and README § Gap patching pipeline (1).
 
+**Gap selection (subset patching).** `--only-gaps` / `--skip-gaps` (and TOML `only_gaps` / `skip_gaps`) filter which detected gaps enter `regions` after fillability, coverage, and equivalence checks. Unselected gaps stay on original A audio and report `not planned: gap not selected` (`plan_skip_reason: gap_not_selected`). Gap numbers are **1-based** labels from this run's table (not stable across scan-knob changes). Scan-only runs ignore the flags. See [gap-repair-guide.md](gap-repair-guide.md).
+
 **Equivalence drop (`skip_equivalent_gaps`, on by default).** After the fillable/coverage gates, a gap whose scan-time silence-character verdict `drops()` (mutual/ambient silence — nothing to repair) is removed from the plan as `already_matches_reference`, so it never reaches decode/patch. Lowest precedence (`not_fillable`, coverage, and track blocks win). Disable with `--no-skip-equivalent-gaps`. See [gap-vocabulary.md](dev/gap-vocabulary.md) § Silence-character pre-gate for the classification and [gap-scan.md](gap-scan.md) for how the signals are measured.
 
 - **Config:** `fill_offset_mode`, `fill_anchor_*`, `limit_fill_to_mapped_region`, `skip_equivalent_gaps`.

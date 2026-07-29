@@ -1,6 +1,127 @@
+use std::collections::HashSet;
+
 use crate::domain::gap::GapReport;
 use crate::domain::patch_result::GapFillSkipReason;
 use crate::domain::track_match::CompatibilityVerdict;
+
+/// Resolved after scan, before fill plan. **0-based** — same base as [`FillRegion::gap_index`].
+#[derive(Debug, Clone)]
+pub struct GapSelection {
+    /// 0-based indices into `GapReport.gaps` (chronological). Empty set is unreachable after a
+    /// successful [`resolve_gap_selection`] (empty selection errors out first).
+    selected: HashSet<usize>,
+    /// Present when `--only-gaps` / `--skip-gaps` (or TOML peers) were in effect — drives the
+    /// stderr filter note.
+    filter: Option<GapSelectionFilter>,
+}
+
+#[derive(Debug, Clone)]
+struct GapSelectionFilter {
+    /// `"only-gaps"` or `"skip-gaps"`.
+    kind: &'static str,
+    /// User tokens as provided (trimmed), for the filter note.
+    tokens: Vec<String>,
+}
+
+impl GapSelection {
+    /// Every gap selected — the default when no selection flag is given.
+    pub fn all(gap_count: usize) -> Self {
+        Self {
+            selected: (0..gap_count).collect(),
+            filter: None,
+        }
+    }
+
+    pub fn is_selected(&self, gap_index: usize) -> bool {
+        self.selected.contains(&gap_index)
+    }
+
+    /// True when a selection flag was in effect and did not name every gap.
+    pub fn is_filtered(&self, gap_count: usize) -> bool {
+        self.filter.is_some() && self.selected.len() != gap_count
+    }
+}
+
+/// Unresolved user intent; tokens are still strings (v1 parses integers at resolve time).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GapSelectionMode {
+    All,
+    Only(Vec<String>),
+    Skip(Vec<String>),
+}
+
+/// Parse CLI/TOML selection tokens against `report.gaps` (1-based gap numbers → 0-based indices).
+///
+/// Error strings for `0` / out-of-range match `resolve_fingerprint_gap_select` verbatim.
+pub fn resolve_gap_selection(
+    mode: &GapSelectionMode,
+    report: &GapReport,
+) -> Result<GapSelection, String> {
+    let gap_count = report.gaps.len();
+    match mode {
+        GapSelectionMode::All => Ok(GapSelection::all(gap_count)),
+        GapSelectionMode::Only(tokens) => {
+            let selected = parse_gap_number_tokens(tokens, gap_count)?;
+            if selected.is_empty() {
+                return Err("gap selection matched no gaps (only-gaps listed nothing)".to_string());
+            }
+            Ok(GapSelection {
+                selected,
+                filter: Some(GapSelectionFilter {
+                    kind: "only-gaps",
+                    tokens: tokens.iter().map(|t| t.trim().to_string()).collect(),
+                }),
+            })
+        }
+        GapSelectionMode::Skip(tokens) => {
+            let skip = parse_gap_number_tokens(tokens, gap_count)?;
+            let selected: HashSet<usize> = (0..gap_count).filter(|i| !skip.contains(i)).collect();
+            if selected.is_empty() {
+                return Err(
+                    "gap selection matched no gaps (skip-gaps excluded every detected gap)"
+                        .to_string(),
+                );
+            }
+            Ok(GapSelection {
+                selected,
+                filter: Some(GapSelectionFilter {
+                    kind: "skip-gaps",
+                    tokens: tokens.iter().map(|t| t.trim().to_string()).collect(),
+                }),
+            })
+        }
+    }
+}
+
+fn parse_gap_number_tokens(tokens: &[String], gap_count: usize) -> Result<HashSet<usize>, String> {
+    let mut selected = HashSet::new();
+    let mut seen_numbers = HashSet::new();
+    for raw in tokens {
+        let token = raw.trim();
+        if token.is_empty() {
+            return Err(format!("invalid gap selection token {raw:?}: expected a gap number"));
+        }
+        let n: usize = token.parse().map_err(|_| {
+            format!("invalid gap selection token {token:?}: expected a gap number")
+        })?;
+        if !seen_numbers.insert(n) {
+            return Err(format!("duplicate gap number {n} in selection"));
+        }
+        let index = match n {
+            0 => {
+                return Err("gap number 0 is invalid (gap numbers are 1-based)".to_string());
+            }
+            n if n > gap_count => {
+                return Err(format!(
+                    "gap number {n} out of range ({gap_count} gaps detected)"
+                ));
+            }
+            n => n - 1,
+        };
+        selected.insert(index);
+    }
+    Ok(selected)
+}
 
 /// Describes one region where B audio will be spliced into A.
 pub struct FillRegion {
@@ -49,6 +170,7 @@ pub fn build_gap_fill_plan(
     report: &GapReport,
     crossfade_ms: u64,
     skip_equivalent_gaps: bool,
+    selection: &GapSelection,
 ) -> GapFillPlan {
     let crossfade_secs = crossfade_ms as f64 / 1000.0;
     let limit_fill_to_mapped_region = report.limit_fill_to_mapped_region;
@@ -120,6 +242,16 @@ pub fn build_gap_fill_plan(
             continue;
         }
 
+        if !selection.is_selected(index) {
+            skipped.push(GapFillSkipped {
+                gap_index: index,
+                a_start_secs: g.video_a_start_secs,
+                a_end_secs: g.video_a_end_secs,
+                reason: GapFillSkipReason::GapNotSelected,
+            });
+            continue;
+        }
+
         regions.push(FillRegion {
             gap_index: index,
             a_start_secs: g.video_a_start_secs,
@@ -169,6 +301,23 @@ pub(crate) fn format_scan_fillable_followup(report: &GapReport) -> Option<String
     Some(format!(
         "Gap fill: {repairable} of {found} repairable ({omitted} skipped — {})",
         detail.join(", ")
+    ))
+}
+
+/// Stderr note when `--only-gaps` / `--skip-gaps` narrows the fill plan.
+pub(crate) fn format_gap_selection_filter_note(
+    selection: &GapSelection,
+    gap_count: usize,
+) -> Option<String> {
+    if !selection.is_filtered(gap_count) {
+        return None;
+    }
+    let filter = selection.filter.as_ref()?;
+    let n = selection.selected.len();
+    let token_list = filter.tokens.join(",");
+    Some(format!(
+        "Gap filter: patching {n} of {gap_count} detected gaps ({}: {token_list})",
+        filter.kind
     ))
 }
 
@@ -294,7 +443,7 @@ mod tests {
         assert_eq!(report.fillable_count(), 1);
         assert_eq!(report.repairable_count(), 0);
         assert!(!report.patch_allowed());
-        let plan = build_gap_fill_plan(&report, 10, false);
+        let plan = build_gap_fill_plan(&report, 10, false, &GapSelection::all(report.gaps.len()));
         assert!(plan.regions.is_empty());
         assert_eq!(plan.skipped.len(), 1);
         assert_eq!(
@@ -306,7 +455,7 @@ mod tests {
     #[test]
     fn build_gap_fill_plan_empty_when_no_compatibility() {
         let report = base_report(None, vec![fillable_gap(0.0, 3.0)]);
-        let plan = build_gap_fill_plan(&report, 10, false);
+        let plan = build_gap_fill_plan(&report, 10, false, &GapSelection::all(report.gaps.len()));
         assert!(plan.regions.is_empty());
         assert_eq!(plan.skipped.len(), 1);
         assert_eq!(
@@ -328,7 +477,7 @@ mod tests {
             },
         ];
         let report = base_report(Some(stereo_identical()), gaps);
-        let plan = build_gap_fill_plan(&report, 10, false);
+        let plan = build_gap_fill_plan(&report, 10, false, &GapSelection::all(report.gaps.len()));
         assert_eq!(plan.regions.len(), 1);
         assert!((plan.regions[0].a_start_secs - 3.0).abs() < 0.001);
         assert!((plan.regions[0].a_end_secs - 6.0).abs() < 0.001);
@@ -350,7 +499,7 @@ mod tests {
             video_b_end_secs: 10.0,
             shared_length_secs: 10.0,
         });
-        let plan = build_gap_fill_plan(&report, 0, false);
+        let plan = build_gap_fill_plan(&report, 0, false, &GapSelection::all(report.gaps.len()));
         assert_eq!(plan.regions.len(), 2);
         assert!(plan.skipped.is_empty());
     }
@@ -371,7 +520,7 @@ mod tests {
         report.alignment.query_reference_mode = true;
         assert_eq!(report.repairable_count(), 1);
 
-        let plan = build_gap_fill_plan(&report, 0, false);
+        let plan = build_gap_fill_plan(&report, 0, false, &GapSelection::all(report.gaps.len()));
         assert_eq!(plan.regions.len(), 1);
         assert!((plan.regions[0].a_start_secs - 1.0).abs() < 0.001);
         assert_eq!(plan.skipped.len(), 1);
@@ -382,7 +531,7 @@ mod tests {
 
         // With the mapped-region gate disabled, both gaps are planned.
         report.limit_fill_to_mapped_region = false;
-        let plan_all = build_gap_fill_plan(&report, 0, false);
+        let plan_all = build_gap_fill_plan(&report, 0, false, &GapSelection::all(report.gaps.len()));
         assert_eq!(plan_all.regions.len(), 2);
     }
 
@@ -407,12 +556,12 @@ mod tests {
         assert!(report.gap_equivalence[0].drop && !report.gap_equivalence[1].drop);
 
         // Flag off: classification is advisory only — both gaps still planned.
-        let plan_off = build_gap_fill_plan(&report, 0, false);
+        let plan_off = build_gap_fill_plan(&report, 0, false, &GapSelection::all(report.gaps.len()));
         assert_eq!(plan_off.regions.len(), 2);
         assert!(plan_off.skipped.is_empty());
 
         // Flag on: the dropping gap is skipped as AlreadyMatchesReference; the other is still planned.
-        let plan_on = build_gap_fill_plan(&report, 0, true);
+        let plan_on = build_gap_fill_plan(&report, 0, true, &GapSelection::all(report.gaps.len()));
         assert_eq!(plan_on.regions.len(), 1);
         assert!((plan_on.regions[0].a_start_secs - 20.0).abs() < 1e-9);
         assert_eq!(plan_on.skipped.len(), 1);
@@ -449,7 +598,7 @@ mod tests {
             Some(0.0),
             &on,
         )];
-        let plan = build_gap_fill_plan(&report, 0, true);
+        let plan = build_gap_fill_plan(&report, 0, true, &GapSelection::all(report.gaps.len()));
         assert!(plan.regions.is_empty());
         assert_eq!(plan.skipped[0].reason, GapFillSkipReason::NotFillable);
     }
@@ -496,9 +645,122 @@ mod tests {
                 },
             ],
         );
-        let plan = build_gap_fill_plan(&report, 0, false);
+        let plan = build_gap_fill_plan(&report, 0, false, &GapSelection::all(report.gaps.len()));
         let line = super::format_align_fill_regions_phase(&plan);
         assert!(line.contains("Skipping 1 gap(s) at fill plan (1 unfillable)"));
         assert!(line.contains("aligning 1 fill region(s)"));
+    }
+
+    #[test]
+    fn resolve_only_gaps_is_order_insensitive_and_one_based() {
+        let report = base_report(
+            Some(stereo_identical()),
+            vec![
+                fillable_gap(0.0, 1.0),
+                fillable_gap(2.0, 3.0),
+                fillable_gap(4.0, 5.0),
+            ],
+        );
+        let a = resolve_gap_selection(
+            &GapSelectionMode::Only(vec!["5".into(), "2".into()]),
+            &report,
+        );
+        // 5 is out of range for 3 gaps
+        assert!(a.is_err());
+
+        let sel = resolve_gap_selection(
+            &GapSelectionMode::Only(vec!["3".into(), "1".into()]),
+            &report,
+        )
+        .expect("in range");
+        assert!(sel.is_selected(0));
+        assert!(!sel.is_selected(1));
+        assert!(sel.is_selected(2));
+        assert!(sel.is_filtered(3));
+
+        let sel2 = resolve_gap_selection(
+            &GapSelectionMode::Only(vec!["1".into(), "3".into()]),
+            &report,
+        )
+        .expect("same set");
+        assert_eq!(sel.selected, sel2.selected);
+    }
+
+    #[test]
+    fn resolve_rejects_zero_out_of_range_duplicates_and_empty_only() {
+        let report = base_report(Some(stereo_identical()), vec![fillable_gap(0.0, 1.0)]);
+        assert_eq!(
+            resolve_gap_selection(&GapSelectionMode::Only(vec!["0".into()]), &report)
+                .unwrap_err(),
+            "gap number 0 is invalid (gap numbers are 1-based)"
+        );
+        assert_eq!(
+            resolve_gap_selection(&GapSelectionMode::Only(vec!["2".into()]), &report)
+                .unwrap_err(),
+            "gap number 2 out of range (1 gaps detected)"
+        );
+        assert_eq!(
+            resolve_gap_selection(
+                &GapSelectionMode::Only(vec!["1".into(), "1".into()]),
+                &report
+            )
+            .unwrap_err(),
+            "duplicate gap number 1 in selection"
+        );
+        assert!(resolve_gap_selection(&GapSelectionMode::Only(vec![]), &report).is_err());
+    }
+
+    #[test]
+    fn selection_skips_unselected_after_equivalence_and_fillability() {
+        use crate::domain::gap_equivalence::{classify_gap_equivalence, GapEquivalenceParams};
+
+        let on = GapEquivalenceParams {
+            enabled: true,
+            ..Default::default()
+        };
+        let mut report = base_report(
+            Some(stereo_identical()),
+            vec![
+                fillable_gap(0.0, 1.0),
+                fillable_gap(2.0, 3.0),
+                fillable_gap(4.0, 5.0),
+            ],
+        );
+        report.gap_equivalence = vec![
+            classify_gap_equivalence(Some(-108.0), Some(-46.0), Some(1.0), &on), // drop
+            classify_gap_equivalence(Some(-106.0), Some(-47.0), Some(0.0), &on), // keep
+            classify_gap_equivalence(Some(-106.0), Some(-47.0), Some(0.0), &on), // keep
+        ];
+
+        let selection = resolve_gap_selection(
+            &GapSelectionMode::Only(vec!["1".into(), "2".into()]),
+            &report,
+        )
+        .unwrap();
+        // Equivalence on + drop on gap 0: AlreadyMatchesReference beats GapNotSelected.
+        let plan = build_gap_fill_plan(&report, 0, true, &selection);
+        assert_eq!(plan.regions.len(), 1);
+        assert_eq!(plan.regions[0].gap_index, 1);
+        assert!(plan
+            .skipped
+            .iter()
+            .any(|s| s.gap_index == 0 && s.reason == GapFillSkipReason::AlreadyMatchesReference));
+        assert!(plan
+            .skipped
+            .iter()
+            .any(|s| s.gap_index == 2 && s.reason == GapFillSkipReason::GapNotSelected));
+    }
+
+    #[test]
+    fn plan_block_arm_ignores_selection() {
+        let report = base_report(Some(stereo_mismatch()), vec![fillable_gap(0.0, 1.0)]);
+        let selection =
+            resolve_gap_selection(&GapSelectionMode::Only(vec!["1".into()]), &report).unwrap();
+        let plan = build_gap_fill_plan(&report, 0, false, &selection);
+        assert!(plan.regions.is_empty());
+        assert_eq!(
+            plan.skipped[0].reason,
+            GapFillSkipReason::TrackLayoutMismatch
+        );
     }
 }

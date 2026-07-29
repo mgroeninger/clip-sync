@@ -69,7 +69,10 @@ pub use residual_gate::{
 };
 
 pub use gap::{Gap, GapOffsetAgreement, GapReport};
-pub use gap_fill::{build_gap_fill_plan, FillRegion, GapFillPlan, GapFillSkipped};
+pub use gap_fill::{
+    build_gap_fill_plan, resolve_gap_selection, FillRegion, GapFillPlan, GapFillSkipped,
+    GapSelection, GapSelectionMode,
+};
 pub use gap_repair_spec::{
     cell_for_skip_reason, reason_admits_cell, skip_cell_from_tags, BExtractWindow, GapRepairCell,
     GapRepairPlan, GapRepairSpec, GapRepairStrategy, GapRepairTags, GapRepairVerdict, GateTags,
