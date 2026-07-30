@@ -277,6 +277,12 @@ Per-gap silence-character classification (advisory; scan report `gap_equivalence
 `scan_equivalence` blocks on `--gap-fingerprints`). See [gap-vocabulary.md](dev/gap-vocabulary.md)
 § Silence-character pre-gate.
 
+On a `--gap-fingerprints` dump the same gap carries **two** of these. `scan_equivalence` is the one
+production acts on; `equivalence` is a differently-defined fine-bin read kept for calibration, and it
+disagrees on ~2 % of gaps (always biased toward `drop`). Read `scan_equivalence` unless you are
+specifically calibrating the two — [dev/gap-fingerprint.md](dev/gap-fingerprint.md)
+§ *`equivalence` vs `scan_equivalence`*.
+
 | Field | Type | Presence | Notes |
 |-------|------|----------|-------|
 | `class` | string | always | `repairable_dropout` (keep) · `shared_silence` / `ambient_quiet` (drop) · `not_evaluated` |

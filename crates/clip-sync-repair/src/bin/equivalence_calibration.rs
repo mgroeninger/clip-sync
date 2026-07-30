@@ -1,5 +1,5 @@
 //! `equivalence-calibration` — diff the **coarse production scan gate** (the scan-block equivalence gate)
-//! against the **fine `--gap-fingerprints` reference** (sample-level A RMS + fine-bin noise floor + 50 ms
+//! against the **fine `--gap-fingerprints` second opinion** (sample-level A RMS + fine-bin noise floor + 50 ms
 //! donor bins), per gap. Both paths feed the same `classify_gap_equivalence`, but that is where the
 //! commonality ends.
 //!
@@ -23,9 +23,20 @@
 //! that the scan path is the wrong one. Both floors are now recorded per gap
 //! (`GapEquivalenceVerdict::gap_floor_db`) so a divergence can be attributed instead of assumed.
 //!
-//! This tool quantifies where the cheap production path disagrees with the fine reference on real media —
-//! especially the one dangerous direction: **scan says *drop* but the reference says *keep*** (a potential
-//! false drop / unrepaired hole).
+//! The **noise-floor** row biases the same way, and that is now measured rather than argued: fine reads
+//! **lower** on 10/10 gaps of one characterized pair (~3–19 dB), 5/5 of the divergences on a 17-pair
+//! corpus, and 3/3 of the committed curated fixtures. A lower floor shrinks `a_below_noise`, pushing gaps
+//! out of `repairable_dropout`. So both known differences push fine toward **drop** — fine is the more
+//! aggressive path, not the safer one.
+//!
+//! **Measured population (2026-07-30):** 5 divergent / 297 gaps (1.7 %) over a 17-pair corpus,
+//! recipe-invariant, with **0 dangerous**. Divergence at this rate is expected, not a defect. The
+//! mechanism is a donor sitting *between* the two floors — silent to fine, occupied to scan — pinned
+//! media-free by `tests/gap_corpus/fingerprints/equivalence_divergence/`.
+//!
+//! This tool quantifies where the two disagree on real media — especially the one dangerous direction:
+//! **scan says *drop* but fine says *keep*** (a potential false drop / unrepaired hole). That direction is
+//! the one fine's biases do **not** manufacture, which is what makes it worth gating on.
 //!
 //! A single `--gap-fingerprints DIR` run carries **both** verdicts per gap (`equivalence` = fine,
 //! `scan_equivalence` = coarse). Two modes, auto-detected from the argument:
@@ -33,8 +44,8 @@
 //!   equivalence-calibration out_dir            # ONE corpus (dir or dir/corpus.json) → per-gap table
 //!   equivalence-calibration gap-files/equiv-coarse-vs-fine   # PARENT of numbered corpora → roll-up
 //!
-//! Exit code 1 if any **dangerous** divergence exists (scan drops, reference keeps), else 0 — so it can gate CI.
-//! See `docs/dev/gap-fingerprint.md` § equivalence (fine vs coarse) and `docs/dev/gap-vocabulary.md`
+//! Exit code 1 if any **dangerous** divergence exists (scan drops, fine keeps), else 0 — so it can gate CI.
+//! See `docs/dev/gap-fingerprint.md` § *`equivalence` vs `scan_equivalence`* and `docs/dev/gap-vocabulary.md`
 //! § *Silence-character pre-gate*.
 
 use std::path::{Path, PathBuf};
@@ -48,7 +59,7 @@ use clip_sync_repair::domain::gap_equivalence::{GapEquivalenceClass, GapEquivale
 
 #[derive(Parser)]
 #[command(
-    about = "Diff the scan-block equivalence gate against the fine-bin fingerprint reference"
+    about = "Diff the scan-block equivalence gate against the fine-bin fingerprint second opinion"
 )]
 struct Args {
     /// A `--gap-fingerprints` corpus (dir or `corpus.json`) for the per-gap table, OR a parent directory
@@ -56,20 +67,22 @@ struct Args {
     path: PathBuf,
 }
 
-/// The per-gap comparison outcome between the coarse scan verdict and the fine reference verdict.
+/// The per-gap comparison outcome between the coarse scan verdict and the fine second opinion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PairVerdict {
     /// Both paths landed on the same class.
     Agree,
-    /// Classes differ but the scan does **not** drop a gap the reference keeps — a missed optimization
-    /// (scan keeps, ref drops) or a benign class swap. Safe.
+    /// Classes differ but the scan does **not** drop a gap fine keeps — a missed optimization
+    /// (scan keeps, fine drops) or a benign class swap. Safe, and **expected at ~2 %**: both known
+    /// input differences bias fine toward `drop`, so this is the direction they produce.
     SafeDiverge,
-    /// Scan drops a gap the fine reference would keep — a potential **false drop** (unrepaired hole).
+    /// Scan drops a gap the fine path would keep — a potential **false drop** (unrepaired hole). Neither
+    /// known bias produces this direction, so a hit here warrants investigation rather than a shrug.
     Dangerous,
 }
 
-/// Compare a coarse (scan) verdict against a fine (reference) verdict. The only unsafe divergence is the
-/// scan removing a gap the reference would keep.
+/// Compare a coarse (scan) verdict against the fine one. The only unsafe divergence is the scan
+/// removing a gap fine would keep.
 fn pair_verdict(scan: &GapEquivalenceVerdict, refv: &GapEquivalenceVerdict) -> PairVerdict {
     if scan.drop && !refv.drop {
         PairVerdict::Dangerous

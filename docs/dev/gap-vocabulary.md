@@ -182,7 +182,7 @@ repairing?** It reads one **new axis** crossed with an existing one:
 
 | Axis | Question | Placement |
 |------|----------|-----------|
-| A silence character | Did A's signal **die** (gap RMS ≥ `dropout_margin_db` below A's *own* noise floor), or is it room tone **at** the floor? | A gap interior vs A context (250 ms scan blocks) |
+| A silence character | Did A's signal **die** (gap RMS ≥ `dropout_margin_db` below A's *own* noise floor), or is it room tone **at** the floor? | A gap interior vs A context (scan blocks; size = the `scan_block_ms` knob) |
 | Donor — nominal | Is B occupied at the same program time? | nominal `b_mapped`, no lag (**reuses** the Donor—nominal axis) |
 
 **Cells (`GapEquivalenceClass`, emitted on the scan report + `--gap-fingerprints`):**
@@ -202,6 +202,15 @@ Only `shared_silence` and `ambient_quiet` drop (`GapEquivalenceClass::drops()`),
 plan time **only** when `--skip-equivalent-gaps` is set, at **lowest precedence** — `NotFillable`, coverage,
 and track blocks win (§ Unfillable). The classification is always computed and reported (advisory), so a plain
 scan (`--json`, no `--mux`/`--wav`) shows it with the flag off.
+
+**These are scan-time cells.** A `--gap-fingerprints` dump carries a *second* verdict per gap
+(`equivalence`) from a fine-bin front-end, and the two do not always agree — measured at 1.7 % of gaps.
+The cell named here is always the **scan** one (`scan_equivalence`): it is what production acts on, and
+the fine path's two known input differences both bias it toward `drop`, so it cannot serve as the
+arbiter of a `keep`. Curated fixtures are asserted against `scan_equivalence` for that reason, and a
+committed fixture pins the disagreement itself
+(`tests/gap_corpus/fingerprints/equivalence_divergence/`). Full treatment:
+[gap-fingerprint.md](gap-fingerprint.md) § *`equivalence` vs `scan_equivalence`*.
 
 ## Derived readouts (not primitives)
 

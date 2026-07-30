@@ -17,7 +17,8 @@ path = "src/lib.rs"
 name = "clip-sync-repair"
 path = "src/main.rs"
 
-# Calibration/dev tool: diff the 250 ms scan equivalence gate against the fine-bin fingerprint reference.
+# Calibration/dev tool: diff the scan-block equivalence gate (authoritative) against the fine-bin
+# fingerprint second opinion (diagnostic). Not a granularity comparison — see the bin's header.
 # Gated behind `calibration` so it stays out of default `cargo build` / release artifacts.
 [[bin]]
 name = "equivalence-calibration"
@@ -92,6 +93,10 @@ path = "tests/integration_gap_corpus.rs"
 [[test]]
 name = "gap_cell_fixtures"
 path = "tests/gap_cell_fixtures.rs"
+
+[[test]]
+name = "equivalence_divergence"
+path = "tests/equivalence_divergence.rs"
 
 [[test]]
 name = "integration_floor_oracle_smoke"

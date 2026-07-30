@@ -117,7 +117,7 @@ approaches were refuted by measurement. Full analysis + cost hierarchy: that pla
 | `residual` | full, B present | least-squares same-source cancellation (dB) vs noise floor at the decision seam |
 | `outcome` | B present | plan_kind, tier, seam_shape, fit_path, signature_mode, skip_reason |
 | `equivalence` | B present | **gap-equivalence class (fine)** — does this gap need patching? (silence-character; see below) |
-| `scan_equivalence` | scan classified | the **coarse 250 ms production** verdict for the same gap (`GapReport::gap_equivalence`), copied in so one dump holds both granularities for calibration |
+| `scan_equivalence` | scan classified | the **coarse production** verdict for the same gap (`GapReport::gap_equivalence`; block size = the `scan_block_ms` knob), copied in so one dump holds both readings for calibration. **This is the authoritative one** — see below |
 | `lag` | diagnostics | **Tier-3** per pre/post anchor lag fingerprint at the best-energy bracket / structure throat — requires `--fingerprint-diagnostics` |
 | `wide_envelope` | diagnostics | **Tier-3** 100 ms-bin RMS-envelope lag peak at `b_mapped` — cross-scale confirmer of `baseline_lag` |
 | `seam_probe` | diagnostics | **Tier-3** encoding-robust seam metrics (R2/R4/spectrum/env/recovered); not used by any gate |
@@ -210,13 +210,38 @@ The fingerprint **always emits** `equivalence` (fine) and `scan_equivalence` (co
 the dump itself never drops gaps. Production plan-time drop is separate and **on by default**
 (`skip_equivalent_gaps = true`; `--no-skip-equivalent-gaps` to patch all). See [gap-scan.md](../gap-scan.md).
 
-**`equivalence` vs `scan_equivalence` (fine vs coarse):** `equivalence` is the **fine reference** —
-sample-level A gap RMS, fine-bin noise floor, 50 ms donor bins, on the full decode. `scan_equivalence` is the
-**coarse production** verdict the scan gate actually uses (250 ms scan blocks). They feed the same classifier
-and normally agree; a single `--gap-fingerprints DIR` run carries both per gap so the **`equivalence-calibration`**
-tool can diff them (`equivalence-calibration DIR`) and flag any gap where the coarse gate *drops* a gap the fine
-reference would *keep* (the only unsafe divergence). See [gap-vocabulary.md](gap-vocabulary.md)
-§ *Silence-character pre-gate*.
+### `equivalence` vs `scan_equivalence` — a second opinion, not an oracle
+
+They feed the **same classifier** from **differently defined** inputs. This is deliberate and is not
+scheduled to converge; read them accordingly.
+
+- **`scan_equivalence` is authoritative.** It is the verdict production acts on (`skip_equivalent_gaps`),
+  measured on scan blocks (size = the `scan_block_ms` recipe knob — not a constant, and not 250 ms).
+  The curated gap **cells** in [gap-vocabulary.md](gap-vocabulary.md) are scan-time cells, so a fixture's
+  declared cell is checked against *this* field.
+- **`equivalence` is diagnostic only.** Nothing in the plan or patch path reads it; it exists to be
+  compared. Sample-level A gap RMS over the **refined** span, fine-bin noise floor, 50 ms donor bins.
+
+**It was called "the fine reference" here until 2026-07-30. That was wrong**, and the wording bred a
+recurring error: reading a divergence as "the coarse gate is inaccurate". Both known differences bias
+the *fine* side toward `drop`, so it is the **more aggressive** of the two, not the safer one:
+
+| bias | mechanism | direction |
+|---|---|---|
+| `gap_floor_db` | fine takes the max over **all** bins in the span (a content peak); scan takes the max over A's **silent** blocks (an actual floor) | fine's floor is higher ⇒ more donor blocks read silent ⇒ toward `shared_silence` |
+| noise floor | ±3 s / 50 ms bins vs ±2 s / 100 ms blocks | fine reads **lower** — measured on 10/10 gaps of one pair (~3–19 dB), 5/5 on a 17-pair corpus, and 3/3 on the committed curated fixtures ⇒ smaller `a_below_noise` ⇒ away from `repairable_dropout` |
+
+**Measured population:** 5 divergent / 297 gaps (1.7 %) across a 17-pair corpus, **0 in the dangerous
+direction**. The mechanism behind the divergences is a donor whose level sits *between* the two floors —
+silent to fine, occupied to scan. Pinned media-free by
+`tests/gap_corpus/fingerprints/equivalence_divergence/`; full analysis in
+[TEMP-equivalence-divergence-findings.md](TEMP-equivalence-divergence-findings.md) § F15.
+
+`equivalence-calibration DIR` diffs the two per gap and exits 1 only on the **dangerous** direction —
+scan *drops* what fine would *keep*. That gate is worth keeping precisely because it is the one
+direction fine's biases do **not** produce, so a hit there is a real signal rather than a known offset.
+A merely "divergent" gap is expected at ~2 % and is not by itself a defect. See
+[gap-vocabulary.md](gap-vocabulary.md) § *Silence-character pre-gate*.
 
 ## Lag fingerprint
 
@@ -331,6 +356,12 @@ The **committed** instance of this library is the curated per-gap-**type** fixtu
 `crates/clip-sync-repair/tests/gap_corpus/fingerprints/curated/` — one representative single-gap `GapCorpus`
 per gap cell (see [gap-vocabulary.md](gap-vocabulary.md)), the media-free input for the gap-classification
 tests (`gap_cell_fixtures`, `golden_baseline_invariance`, `gap_repair_spec_diff`).
+
+A second, smaller committed set sits alongside it at
+`crates/clip-sync-repair/tests/gap_corpus/fingerprints/equivalence_divergence/` — gaps where
+`scan_equivalence` and `equivalence` disagree, pinning the divergence class for `equivalence_divergence`.
+Deliberately **not** in `curated/`: a cell is a property of a gap, a divergence is a property of the two
+front-ends reading it, so it has no `GapCellType` and is not subject to the per-cell coverage invariants.
 
 **Licensing guardrail:** the only place the real `id → title/path` mapping should live is a
 **git-ignored** local file (e.g. `corpus/.sources.local.toml`). Keep it out of the committed corpus.

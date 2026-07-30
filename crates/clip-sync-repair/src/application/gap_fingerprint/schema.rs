@@ -186,8 +186,14 @@ pub struct GapFingerprint {
     /// Gap-equivalence classification (`docs/dev/gap-vocabulary.md` § Silence-character pre-gate): does this gap need patching?
     /// Derived from the **silence character** — A's gap RMS vs the recording's noise floor (dropout vs room
     /// tone) + donor silence (is B occupied) — the signals that separate real dropouts from mutual/program
-    /// silence. This is the **fine reference**: sample-level A RMS + fine-bin noise floor + 50 ms donor bins,
-    /// on the full decode. Emitted for tuning/categorizing; the production plan-time drop is a later (v1) step.
+    /// silence. Sample-level A RMS over the refined span + fine-bin noise floor + 50 ms donor bins.
+    ///
+    /// **Diagnostic only, and not a reference.** Nothing in the plan or patch path reads this field —
+    /// `scan_equivalence` is the verdict production acts on. It was documented as "the fine reference"
+    /// until 2026-07-30; that framing was wrong, because both known differences from the scan path bias
+    /// *this* side toward `drop` (whole-span `gap_floor_db` inflates donor silence; the ±3 s / 50 ms noise
+    /// floor reads lower). Measured divergence: 1.7 % of gaps, never in the dangerous direction.
+    /// See `docs/dev/gap-fingerprint.md` § *`equivalence` vs `scan_equivalence`*.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub equivalence: Option<crate::domain::gap_equivalence::GapEquivalenceVerdict>,
     /// The **coarse production** equivalence verdict for the same gap — the scan-block gate the scan

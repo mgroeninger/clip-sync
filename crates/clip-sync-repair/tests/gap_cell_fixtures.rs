@@ -34,12 +34,18 @@ fn row_of(fx: &GapCellFixture) -> GapRow {
 }
 
 /// Re-run the domain equivalence classifier from a fixture's recorded silence signals, asserting the class.
+///
+/// Reads **`scan_equivalence`**, not the fine `equivalence` block. The cells in this taxonomy are
+/// *scan-time* cells (see `GapCellType`'s variant docs) and the scan verdict is what production acts on;
+/// the fine block is a differently-defined second opinion that diverges on ~1.7 % of gaps, always biased
+/// toward `drop`. Until 2026-07-30 this read the fine block — harmless on these fixtures, where the two
+/// agree, but the wrong authority. `docs/dev/gap-fingerprint.md` § *`equivalence` vs `scan_equivalence`*.
 fn assert_equivalence_class(fx: &GapCellFixture, expected: GapEquivalenceClass) {
     let v = fx
         .gap()
-        .equivalence
+        .scan_equivalence
         .as_ref()
-        .unwrap_or_else(|| panic!("{}: fixture carries no equivalence verdict", fx.file));
+        .unwrap_or_else(|| panic!("{}: fixture carries no scan_equivalence verdict", fx.file));
     let params = GapEquivalenceParams {
         enabled: true,
         ..Default::default()

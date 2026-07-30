@@ -2,6 +2,14 @@
 //! domain gate ([`crate::domain::gap_equivalence`]). The noise floor (A `levels.noise_floor_db`) and donor
 //! silence (`donor_interior_nominal`) come from the fingerprint's **existing** measurements — no new decode,
 //! no seam/residual math.
+//!
+//! **This front-end is diagnostic, not authoritative.** Production drops gaps on the *scan* verdict
+//! ([`crate::domain::gap_equivalence::derive_gap_equivalence`]); this one only lands in the fingerprint
+//! dump for calibration. The two share `classify_gap_equivalence` but differ in what they feed it — A RMS
+//! window and filter, noise-floor context, donor window and predicate, and the definition of
+//! `gap_floor_db`. Both known differences push this side toward `drop`, so a divergence is **not**
+//! evidence the scan gate is inaccurate. `docs/dev/gap-fingerprint.md`
+//! § *`equivalence` vs `scan_equivalence`*.
 
 use crate::domain::gap_equivalence::{
     classify_gap_equivalence, GapEquivalenceParams, GapEquivalenceVerdict,

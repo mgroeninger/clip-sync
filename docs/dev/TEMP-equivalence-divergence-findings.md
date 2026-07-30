@@ -1,7 +1,10 @@
 # Equivalence divergence — open findings ledger
 
 **Opened:** 2026-07-30. **Status:** **F14** border alignment **FIXED and media-validated** (dump A
-borders = `mono(refined ± w)` like `try_dual_fit`; `fp_post_F14_fix/` confirms). **F15** still OPEN —
+borders = `mono(refined ± w)` like `try_dual_fit`; `fp_post_F14_fix/` confirms). **F15** still OPEN,
+but its donor mechanism is now **measured** on that same run (donor in the band between the two
+floors on exactly the divergent gaps) and its noise-floor axis characterized (fine lower on 10/10,
+~8 dB) —
 floor **(a)** decided; silent-core A RMS should follow; noise-floor / context window still open.
 Retracted claims are marked in place rather than deleted.
 
@@ -31,8 +34,10 @@ were read 2026-07-30 and some have already moved.
 
 ## Where the data lives — and why it is inlined here
 
-Artifacts sit under gitignored `gap-files/silence-floor/`: `fp_F15_question/` (full-pair re-run with
-both floors recorded — the Answer's source), `fp6/` / `fp/` (earlier single-gap dumps),
+Artifacts sit under gitignored `gap-files/silence-floor/`: `fp_post_F14_fix/` (**current reference** —
+post-F14-fix full-pair run; both floors *and* both noise floors on all ten characterized gaps),
+`fp_F15_question/` (the pre-fix run the Answer was first derived from), `fp6/` / `fp/` (earlier
+single-gap dumps),
 `scan-postfix.json`, `preview-debug.log`, plus a `*-scan.json` and `*.log` per run.
 **`gap-files/` is ephemeral and deletable** — it is licensed-media-derived and not a durable
 reference. Every number these findings depend on is therefore quoted inline below, so the findings
@@ -46,8 +51,14 @@ file `g001`.
 ---
 
 ## F15 — Scan-time and fill-time equivalence disagree on the same gap, post-fix
-**Severity: high. Status: OPEN — floor (a) decided; silent-core A RMS should follow; context /
-noise-floor window still open.** Found / diagnosed 2026-07-30.
+**Severity: high → medium (2026-07-30, after the population check). Status: OPEN — floor (a)
+decided; silent-core A RMS should follow; context / noise-floor window still open.** Mechanism
+**measured** on `fp_post_F14_fix/` (see the post-fix re-run section); population **measured** over
+one 17-pair corpus, recipe-invariant across two runs of it — **1.7 % divergent, 0 dangerous**
+(see § Population check). Severity drops because no *observed* divergence puts audio at risk: every
+action divergence is scan-keeps / fine-drops, the conservative direction. 0/297 bounds the dangerous
+rate below ~1 %; it does not establish zero. What is left is a mislabel and wasted search.
+Found / diagnosed 2026-07-30.
 
 The gap at **2585.11–2586.25 s** carries both verdicts in one fingerprint file, and they are
 opposites:
@@ -199,16 +210,111 @@ over the **refined** interval (fine); context median over **±2 s / 100 ms block
 ### Prior validation says this should not exist
 
 `skip_equivalent_gaps` shipped on-by-default (2026-07-20) after an 8-pair / 121-gap validation
-recorded as **0 divergent vs the fine reference**. This gap is divergent. Either that corpus did not
-contain this shape, or something changed after it — resolving which is still useful population
-context: `equivalence-calibration` (`src/bin/equivalence_calibration.rs`) diffs these two verdicts
-per gap from `corpus.json` alone.
+recorded as **0 divergent vs the fine reference**. This gap is divergent.
 
-**Direction matters for severity.** That tool gates CI on the *dangerous* direction only — scan
-drops while the reference keeps (a false drop / unrepaired hole). This gap is the **safe**
-direction: scan keeps, reference drops. So `equivalence-calibration` would exit 0 on it, and no
-audio is lost. Severity stays high on the strength of the 8× measurement disagreement and the
-wrong operator-facing label, not on data loss.
+### Population check — RUN 2026-07-30. It is rare, and never dangerous.
+
+`equivalence-calibration` roll-up over the **17-pair** corpus (`gap-files/anchor-bracket-corpus/`),
+media-free, `corpus.json` only:
+
+> **297 gaps compared · 5 divergent (1.7 %) · 0 dangerous · exit 0**
+
+**Reproduced** identically on a second 17-pair set at a different recipe
+(`gap-files/fill_length_slack_secs_narrow/`): 297 / 5 / 0.
+
+**Read this as recipe-invariance, not extra media.** Both sets are the *same 17 pairs*; only the
+recipe differs. It rules out the divergence being an artifact of one scan recipe — worth having —
+but **n = 297, not 594**. Neither set contains the F15 pair, so the pair is corroborated by
+independent media; the two corpora do not corroborate *each other*.
+
+**Precision.** 5/297 is a 95 % interval of roughly **0.7 – 3.9 %**. By the rule of three, 0 dangerous
+in 297 bounds the dangerous rate at **< ~1 %**, not at zero. The supported claim is "uncommon, and
+the dangerous direction is unobserved across 17 pairs" — not "never dangerous".
+
+No re-run was needed for any of this: these are already fingerprint corpora, and both verdicts
+(`equivalence`, `scan_equivalence`) sit in each `corpus.json`. Verified that `gaps == cmp` on all 17
+pairs — the fine verdict is present even for gaps scan drops, so the dangerous direction is
+observable rather than excluded by construction. Extending the *mechanism* to these pairs is the
+part that would cost a fingerprint sweep: they predate the floor-provenance fields.
+
+The five, with the coarse→fine class and the input deltas the tool reports:
+
+| pair·gap | scan → fine | `nf` Δ | `aRMS` Δ | `ds` Δ | kind |
+|---|---|---|---|---|---|
+| 3·#5 | `ambient_quiet` → `shared_silence` | −8.5 | −6.2 | +0.14 | reason only |
+| 3·#10 | `dropout` → `ambient_quiet` | −4.7 | **+11.8** | +0.29 | keep → drop |
+| 12·#1 | `dropout` → `shared_silence` | −5.3 | −7.0 | +0.71 | keep → drop |
+| 13·#32 | `ambient_quiet` → `shared_silence` | −3.0 | −3.9 | +0.51 | reason only |
+| 14·#17 | `dropout` → `shared_silence` | −7.2 | −4.0 | +0.37 | keep → drop |
+
+Three read-offs:
+
+1. **The shape matches the F15 pair exactly** — 3 action divergences (all keep → drop, the *safe*
+   direction) and 2 reason-only, which is `g4`/`g5` + `g8`. F15 is not a property of one pair.
+2. **The noise-floor bias replicates on independent media** — `nf` Δ is negative on 5/5 here, as on
+   10/10 there. That is now a two-corpus result, and it is the axis with no decided answer.
+3. **The 8-pair validation was not wrong, just under-powered.** At 1.7 %, a 121-gap set expects ~2
+   divergences and can easily see zero. Nothing changed after it; the shape was never sampled. That
+   closes the "did something regress?" question in the negative.
+
+**Bearing on severity.** Across **307 gaps** (297 + this pair's 10) the dangerous direction —
+scan drops a gap the fine path would keep — occurs **zero** times. No audio is at risk from this
+finding on any media measured. What remains is a wrong operator-facing label on ~2 % of gaps and
+wasted bracket-search work on the ones scan keeps.
+
+**Direction matters for severity.** `equivalence-calibration` gates CI on the *dangerous* direction
+only — scan drops while fine keeps (a false drop / unrepaired hole). Every observed divergence is the
+**safe** direction: scan keeps, fine drops. So the tool exits 0, and no audio is lost. Severity is
+now **medium**, carried by the wrong operator-facing label and the wasted search, not by data loss.
+
+### (B) applied — 2026-07-30
+
+The fork is closed on **(B): keep the sensors different, fix the interpretation.** Rationale: the
+divergence rate is ~2 %, always safe-direction, and both known input differences bias the *fine* side
+toward `drop` — so fine is the more aggressive path, and converging on it would import that bias into
+the gate that actually drops gaps. Converging on scan would be a rewrite of the fine path with no
+measured benefit.
+
+**Nothing in the plan or patch path reads `equivalence`** (verified: only the fingerprint dump writes
+it; only `equivalence-calibration` and the fixture tests read it). So (B) is a documentation and
+authority change, with **zero behaviour change**:
+
+- `equivalence` is documented as **diagnostic, not a reference**. The phrase "the fine reference" is
+  retired from `schema.rs`, `application/gap_equivalence.rs`, `equivalence-calibration`'s header and
+  `--help`, and `gap-fingerprint.md`. `scan_equivalence` is stated as authoritative.
+- Both biases are recorded as **measured, same-direction** offsets, so a future divergence is read as
+  "which known bias is this?" rather than "the scan gate is inaccurate".
+- **One real bug fell out of the re-reading:** `tests/gap_cell_fixtures.rs::assert_equivalence_class`
+  asserted each fixture's declared cell against the **fine** block, though `GapCellType`'s own docs
+  define the cells as *scan-time*. It passes today only because the three equivalence fixtures happen
+  to agree on both paths. Now reads `scan_equivalence`. This is exactly the class of error (B) exists
+  to prevent — the wrong sensor silently promoted to authority.
+- `equivalence-calibration`'s dangerous-direction exit-1 gate is **kept and re-justified**: it is the
+  one direction neither known bias produces, so a hit there is signal rather than a known offset.
+
+**Step 4 — the class is now pinned media-free.**
+`tests/gap_corpus/fingerprints/equivalence_divergence/band_donor.json` is `g4` of this pair, harvested
+as a committed single-gap fingerprint (non-identifying: hashed ids, numbers, enum names only —
+audited). It deliberately sits *outside* `curated/`: a cell is a property of a gap, a divergence is a
+property of the pair of front-ends, so folding it into the cell manifest would need a fake
+`GapCellType` and drag in unrelated per-cell assertions. `tests/equivalence_divergence.rs` asserts:
+
+1. both paths reclassify **live** to opposite dispositions (scan `repairable_dropout` / keep, fine
+   `shared_silence` / drop) — and each matches the class stored in the artifact;
+2. the **band premise**: `scan_floor (−79.50) < donor_rms (−66.94) < fine_floor (−58.39)`;
+3. the donor fractions **straddle** the 0.5 threshold (0.474 vs 1.000) — which is what turns a floor
+   difference into a class difference;
+4. **attribution**: scan's A-side signals + fine's donor fraction reproduces fine's class, so the
+   donor axis alone accounts for this flip;
+5. fine's noise floor reads **lower** (the second bias, sign-pinned);
+6. the divergence is **not** in the dangerous direction.
+
+Assertions 1 and 4 are the ones with teeth: a refactor that quietly converged the two sensors would
+fail them loudly instead of silently discarding a deliberate difference.
+
+**Not closed by (B).** The two open axes are unchanged — fine's silent-core A RMS (decided in
+direction, needs a silence predicate for 50 ms bins) and the noise-floor context window. (B) means a
+divergence is now *correctly interpreted*; it does not mean the sensors are right.
 
 **Operational consequence.** `skip_equivalent_gaps` is on by default and consumes the *scan-time*
 verdict, so this gap is admitted to the fill plan as a `repairable_dropout`, runs the full bracket
@@ -221,7 +327,8 @@ This is why the parent ledger's §0 premise — two signals off the same B audio
 
 **Next step.** Floor **(a)** is decided; silent-core A RMS should move with it; context / noise-floor
 window is still open — see *What must be resolved first* and *Ready to implement*. Population check
-(`equivalence-calibration` over multi-pair corpora) is still useful for "one gap or a class".
+**run 2026-07-30**: a class, but a rare and safe-direction one — 5/297 on each of two 17-pair
+corpora, 0 dangerous. See § *Population check* under F15.
 
 ### The whole scan verdict set for this pair
 
@@ -510,18 +617,80 @@ keep:
 3. **Noise floor / context window** — ±2 s / 100 ms blocks vs ±3 s / 50 ms bins. On `g4`: scan
    −44.86, fine −54.21 (**9.4 dB**). On `g5`: scan **−45.85**, fine −64.83.
 
-(2) is the same policy as (1) — "silent core or whole refined span?" — applied to another output.
-They should move together. (3) is separate and **decisive alone**: hold scan's A RMS and swap in
-only fine's noise floor → not a dropout on both gaps
-(`−86.41 < −54.21 − 35` false; `−82.27 < −64.83 − 35` false).
+(2) is **largely** the same policy as (1) — "silent core or whole refined span?" — applied to another
+output, but see the refutation below; they should still move together. (3) is separate and
+**decisive alone**: hold scan's A RMS and swap in only fine's noise floor → not a dropout on both
+gaps (`−86.41 < −54.21 − 35` false; `−82.27 < −64.83 − 35` false).
 
 **Net.** Adopt **(a)** for floor and carry it to fine's `a_gap_rms` (silent-core). That closes the
 donor axis and part of the A-side split. The **context / noise-floor window** remains open — do not
 claim F15 closed until it is decided (or deliberately accepted).
 
-**Corroborating separation.** Scanner abs silence threshold −59.94 dBFS. Fine floor exceeds it on
-exactly `g4`, `g5`, `g6`, `g8` (divergent / near-divergent); the other six agree. Class splits:
-`g4`/`g5` keep vs drop, `g8` reason only. Control `g3`: floors differ 2.7 dB, donors agree to 0.001.
+### Post-F14-fix re-run 2026-07-30 — the mechanism is now measured, and one framing is refuted
+
+`gap-files/silence-floor/fp_post_F14_fix/` is the first run carrying **both** floors and both noise
+floors on all ten characterized gaps (the "safe to do now" provenance item). Four results.
+
+**1. The band hypothesis is confirmed directly, not inferred.** Testing the nominal donor's `rms_db`
+against each path's floor:
+
+| idx | `di_rms` | scan floor | fine floor | silent to scan | silent to fine | verdicts agree |
+|---|---|---|---|---|---|---|
+| 1 / 2 / 9 | −51.6 / −39.9 / −43.8 | ≈ −101 | −95.7 / −81.5 / −94.9 | no | no | ✓ |
+| 3 | −61.2 | −72.4 | −69.7 | no | no | ✓ |
+| **4** | −66.9 | −79.5 | −58.4 | no | **yes** | **divergent** |
+| **5** | −54.8 | −74.5 | −51.0 | no | **yes** | **divergent** |
+| **6** | −67.6 | −84.5 | −58.6 | no | **yes** | ✓ (fragile — see 4) |
+| **8** | −67.3 | −74.9 | −58.8 | no | **yes** | ✓ (reason differs) |
+| 7 / 10 | −81.1 / −109.1 | −74.0 / −101.3 | −78.9 / −89.7 | yes | yes | ✓ |
+
+The donor sits **between** the two floors on exactly the four flagged gaps and nowhere else. Where it
+is loud to both or silent to both, the paths agree. That is the entire donor axis of F15, on measured
+floors. Note also that `g5`'s scan floor measures **−74.53** against the earlier derived bound of
+≤ −71.9 — the bound held, and was tight.
+
+**2. The noise-floor split is a systematic bias, not per-gap noise.** Fine's noise floor is lower than
+scan's on **10 of 10** gaps: −2.3, −3.0, −3.2, −5.8, −7.8, −8.0, −9.4, −10.3, −10.7, −19.0 dB. So axis
+(3) is a characterizable ~8 dB offset rather than an open unknown. Direction matters: since
+`is_dropout = a < nf − 35`, a lower noise floor makes fine *less* likely to call a dropout ⇒
+`ambient_quiet` / `shared_silence` ⇒ **drop**. **Both** fine-side sensor differences therefore push the
+same way — toward dropping repairable gaps, the direction the CI gate exists to catch. "Fine is a
+second opinion, not an oracle" now rests on ten gaps and two axes rather than one inference.
+
+*Corroborated on two further sets, one of them permanent.* The 5 divergences of the 17-pair corpus
+carry a negative `nf` delta 5/5 (§ Population check). And the three **committed curated fixtures**
+that carry an equivalence verdict — harvested from a *different* corpus again — show the same sign:
+−6.1, −9.2, −4.4 dB. That third set is in the repo, so the bias is now pinned by artifacts that
+outlive `gap-files/`, and `tests/equivalence_divergence.rs` asserts the sign directly.
+
+**3. Refuted — "the floor split and the A-RMS split are one policy question" was too clean.** That
+model (scan filters to silent blocks, fine does not) predicts fine ≥ scan on `a_gap_rms_db`
+universally. It does not hold:
+
+- mixed gaps (4, 5, 6, 8): fine reads **13–20 dB higher** — the filter effect, as predicted;
+- pure dropouts (1, 2, 9, 10): fine reads **5–8 dB lower** (e.g. −107.10 vs −101.49).
+
+When every block is silent the filter is a no-op, and what remains is a second, **opposite** effect —
+span and bin granularity (fine's refined span / 50 ms bins vs scan's core / 100 ms blocks) reading
+deeper into true silence. So (1) and (2) share a *dominant* cause, not a single one. This does not
+change the recommendation — the filter effect is what moves the divergent gaps — but "adopt
+silent-core and the A axis aligns" overstates it, and any implementation should expect the pure-dropout
+rows to move by several dB in the other direction.
+
+**4. `g6` is one block from being a third divergence.** Its scan donor fraction is **0.533** against
+the 0.5 threshold. A single block's movement makes it `repairable_dropout` against fine's
+`shared_silence`. The present agreement there is luck, not robustness — do not count `g6` as evidence
+that the paths agree.
+
+**Convergence check, and its limit.** Under scan's floor, `g4`'s donor (−66.9 > −79.5) and `g5`'s
+(−54.8 > −74.5) both read **occupied**, so fine would classify `repairable_dropout` — matching scan.
+Adopting (a) + silent-core A RMS + scan's context does converge them. But that is close to
+tautological: it converges because it makes fine equal scan. The reason to prefer scan remains what it
+was — it carries the F2-fixed definition and errs safe — not this arithmetic.
+
+**Superseded.** The earlier "corroborating separation" note (fine floor vs the −59.94 dBFS scanner
+absolute threshold on `g4`/`g5`/`g6`/`g8`) was a proxy for the band test now measured directly in (1).
+Kept only as the record of how the split was first spotted.
 
 ### Already done (2026-07-30)
 
@@ -544,7 +713,10 @@ additive.
 | **F14:** `splice_dualfit_at` A borders → raw `mono(refined ± w)` like `try_dual_fit` | **Done + media-validated** | `fp_post_F14_fix/`: `g1` flag `true`, `trim_frames −9` = production. |
 | **F14 residual:** `bridge_frames > 0` + NaN-aware step-real/`gate_pass` (no `finite_corr` on dual-fit scores) | **Done** | Fixed from source, not measurement — neither edge fired on this pair. |
 | **F15:** fine `gap_floor_db` + A RMS → silent-core **(a)** | **Decided; needs design** | Fine has no `BlockLevel.silent` — pick a silence filter (abs-floor / peak test on bins, or reuse scan signals) before coding. Move floor and A RMS together. |
-| **F15:** noise-floor / context window (±2 s/100 ms vs ±3 s/50 ms) | **Open** | Decisive alone on g4/g5. Do not claim divergence closed until decided or accepted. |
+| **F15:** noise-floor / context window (±2 s/100 ms vs ±3 s/50 ms) | **Open — now characterized** | Decisive alone on g4/g5. Fine reads lower on **10/10** gaps (~8 dB median), biasing toward `drop`: a systematic offset, not noise. Do not claim divergence closed until decided or accepted. |
+| **F15:** population check via `equivalence-calibration` | **Done 2026-07-30** | 17-pair corpus **297 gaps / 5 divergent / 0 dangerous**, reproduced on a second 17-pair set at another recipe. Sets the severity and unblocks the fork below. |
+| **F15 fork:** (A) converge the sensors vs (B) keep them different and fix the *interpretation* | **(B) DONE 2026-07-30** | See § *(B) applied* below. No behaviour change — the fine block was already read by nothing in the plan/patch path. |
+| **F15:** curated fixture with a band-donor gap | **DONE 2026-07-30** | `tests/gap_corpus/fingerprints/equivalence_divergence/band_donor.json` + `tests/equivalence_divergence.rs` (4 tests). |
 | Naive "coarse adopts fine's floor" | **Do not** | Re-imports pre-F2 contamination into the path that makes plan decisions. |
 
 ---
