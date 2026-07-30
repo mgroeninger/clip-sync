@@ -190,9 +190,12 @@ pub struct GapFingerprint {
     /// on the full decode. Emitted for tuning/categorizing; the production plan-time drop is a later (v1) step.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub equivalence: Option<crate::domain::gap_equivalence::GapEquivalenceVerdict>,
-    /// The **coarse production** equivalence verdict for the same gap — the 250 ms scan-block gate the scan
-    /// report carries (`GapReport::gap_equivalence`), copied in so one `--gap-fingerprints` run holds both
-    /// granularities per gap for calibration (the `equivalence-calibration` tool diffs `equivalence` vs this).
+    /// The **coarse production** equivalence verdict for the same gap — the scan-block gate the scan
+    /// report carries (`GapReport::gap_equivalence`; block size is the `scan_block_ms` recipe knob, not a
+    /// constant), copied in so one `--gap-fingerprints` run holds both readings per gap for calibration
+    /// (the `equivalence-calibration` tool diffs `equivalence` vs this). They are **not** two granularities
+    /// of one measurement — see that tool's header for the five ways their definitions differ, and compare
+    /// `gap_floor_db` on the two verdicts before concluding either is wrong.
     /// `None` when the scan did not classify the gap.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub scan_equivalence: Option<crate::domain::gap_equivalence::GapEquivalenceVerdict>,

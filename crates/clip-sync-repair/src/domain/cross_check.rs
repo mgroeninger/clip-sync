@@ -380,7 +380,10 @@ mod tests {
                 a_gap_rms_db: Some(-100.0),
                 noise_floor_db: Some(-50.0),
                 a_below_noise_db: Some(-50.0),
+                // provenance fields default to None; these tests only exercise the class + drop
+
                 donor_silence_fraction: Some(0.0),
+                ..Default::default()
             },
             GapEquivalenceVerdict {
                 class: GapEquivalenceClass::SharedSilence,
@@ -389,23 +392,10 @@ mod tests {
                 noise_floor_db: Some(-70.0),
                 a_below_noise_db: Some(-10.0),
                 donor_silence_fraction: Some(1.0),
+                ..Default::default()
             },
-            GapEquivalenceVerdict {
-                class: GapEquivalenceClass::NotEvaluated,
-                drop: false,
-                a_gap_rms_db: None,
-                noise_floor_db: None,
-                a_below_noise_db: None,
-                donor_silence_fraction: None,
-            },
-            GapEquivalenceVerdict {
-                class: GapEquivalenceClass::NotEvaluated,
-                drop: false,
-                a_gap_rms_db: None,
-                noise_floor_db: None,
-                a_below_noise_db: None,
-                donor_silence_fraction: None,
-            },
+            GapEquivalenceVerdict::default(),
+            GapEquivalenceVerdict::default(),
         ];
         let intervals = mutual_silence_intervals_from_gaps(&gaps, &equivalence);
         assert_eq!(intervals.len(), 2);

@@ -1,9 +1,31 @@
 //! `equivalence-calibration` — diff the **coarse production scan gate** (the scan-block equivalence gate)
 //! against the **fine `--gap-fingerprints` reference** (sample-level A RMS + fine-bin noise floor + 50 ms
-//! donor bins), per gap. Both paths feed the same `classify_gap_equivalence`; they differ only in
-//! measurement granularity. This tool quantifies where the cheap production path disagrees with the fine
-//! reference on real media — especially the one dangerous direction: **scan says *drop* but the reference
-//! says *keep*** (a potential false drop / unrepaired hole).
+//! donor bins), per gap. Both paths feed the same `classify_gap_equivalence`, but that is where the
+//! commonality ends.
+//!
+//! **They do NOT differ only in measurement granularity** (this doc comment said so until 2026-07-30; it
+//! was wrong, and it was the stated justification for treating "fine" as ground truth). All three inputs
+//! are differently *defined*, not merely differently sampled:
+//!
+//! | input | coarse (scan) | fine (fingerprint) |
+//! |---|---|---|
+//! | A RMS | silent blocks only, over the silent **core** | full PCM RMS over the **refined** span |
+//! | noise floor | median, ±2 s, scan blocks | median, ±3 s, 50 ms bins |
+//! | donor window | **core**, offset-mapped | **nominal** refined span |
+//! | donor predicate | `silent` bit **OR** `rms < gap_floor` | `rms < gap_floor` only |
+//! | `gap_floor` | max of **silent** A blocks (F2/R1-filtered) | max over **all** gap bins (unfiltered) |
+//!
+//! The last row matters most and cuts *against* the fine side: the fingerprint floor has no silence
+//! filter, so it is inflated by exactly the hold-bridged / edge-refined content that
+//! `TEMP-silence-floor-findings` F2 identified and fixed — on the coarse path only. A higher floor counts
+//! more of B as silent, biasing toward `shared_silence`/drop, which is the dangerous direction. So
+//! **"fine" is a second opinion, not an oracle**, and a divergence reported here is not by itself proof
+//! that the scan path is the wrong one. Both floors are now recorded per gap
+//! (`GapEquivalenceVerdict::gap_floor_db`) so a divergence can be attributed instead of assumed.
+//!
+//! This tool quantifies where the cheap production path disagrees with the fine reference on real media —
+//! especially the one dangerous direction: **scan says *drop* but the reference says *keep*** (a potential
+//! false drop / unrepaired hole).
 //!
 //! A single `--gap-fingerprints DIR` run carries **both** verdicts per gap (`equivalence` = fine,
 //! `scan_equivalence` = coarse). Two modes, auto-detected from the argument:

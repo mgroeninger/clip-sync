@@ -2274,9 +2274,17 @@ pub fn characterize_gaps_from_decode(
                 ..Default::default()
             },
         );
-        fp.equivalence = Some(equiv);
-        // Copy in the coarse 250 ms scan-block verdict (index-parallel to report gaps) so the corpus holds
-        // both granularities per gap — the calibration diff reads them from `corpus.json` alone.
+        // Record the floor the fine donor fraction was measured against. It is a *different
+        // statistic* from the scan path's (max over all gap bins vs max over silent A blocks only),
+        // and the two differ by enough to flip a class — so both are now recorded per gap rather
+        // than left to be inferred.
+        fp.equivalence = Some(equiv.with_gap_floor_db(f64::from(fp.levels.gap_floor_db)));
+        // Copy in the coarse scan-block verdict (block size = the `scan_block_ms` recipe knob, not a
+        // constant — see `default_scan_block_ms`; this comment said "250 ms" until 2026-07-30, long
+        // after the default moved to 100), index-parallel to report gaps, so the corpus holds both
+        // verdicts per gap and the calibration diff reads them from `corpus.json` alone. They are two
+        // differently-*defined* measurements, not two granularities of one — see the table in
+        // `bin/equivalence_calibration.rs` before treating either as the reference.
         fp.scan_equivalence = report.gap_equivalence.get(fp.index).cloned();
     }
     corpus

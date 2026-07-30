@@ -51,7 +51,7 @@ impl Default for GapEquivalenceParams {
 /// Vocabulary for the gate — the reason a gap does or doesn't need patching. These are the
 /// **scan-time silence-character cells** in [`docs/dev/gap-vocabulary.md`] (§ *Silence-character pre-gate*),
 /// a pre-filter that runs before the seam/donor cells.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GapEquivalenceClass {
     /// A's signal died (RMS ≥ `dropout_margin_db` below the recording's noise floor) **and** B carries content
@@ -67,7 +67,10 @@ pub enum GapEquivalenceClass {
     /// genuine quiet passage, not a dropout. **Drop** (don't inject content into intentional quiet). A cell with
     /// no seam/donor counterpart — decided on A's own character, not B's donor state.
     AmbientQuiet,
-    /// Gate disabled or a required signal missing — **keep** (no decision made).
+    /// Gate disabled or a required signal missing — **keep** (no decision made). Also the `Default`:
+    /// the only variant that asserts nothing about the audio, so a default-constructed verdict can
+    /// never fabricate a drop.
+    #[default]
     NotEvaluated,
 }
 
@@ -79,7 +82,10 @@ impl GapEquivalenceClass {
 }
 
 /// The gate's per-gap readout: the class + the signals it was derived from (for tuning + reporting).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+///
+/// `Default` is `NotEvaluated` with every signal absent, so tests and constructors can spread
+/// `..Default::default()` and stay correct as provenance fields are added.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct GapEquivalenceVerdict {
     pub class: GapEquivalenceClass,
     /// `class.drops()` — surfaced so consumers don't re-derive it.
@@ -93,6 +99,28 @@ pub struct GapEquivalenceVerdict {
     pub a_below_noise_db: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub donor_silence_fraction: Option<f64>,
+    /// The floor `donor_silence_fraction` was measured against. **Provenance, not a classification
+    /// input** — nothing reads it to decide a class; it is recorded so the donor fraction can be
+    /// audited after the fact.
+    ///
+    /// The two equivalence front-ends define this differently, and the difference is decision-sized
+    /// (~20 dB observed): the scan path uses the loudest **silent** A block in the gap (immune to
+    /// hold-bridging and edge refinement — the F2/R1 definition), while the fingerprint path uses
+    /// the loudest content **anywhere** in the gap span, unfiltered. Recording it is what makes the
+    /// two comparable at all; before this it was derivable only as an arithmetic bound.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub gap_floor_db: Option<f64>,
+    /// Count of A blocks inside the gap that passed the silence test — the population behind
+    /// `a_gap_rms_db` (energy mean) and `gap_floor_db` (max). Provenance only.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub a_gap_silent_blocks: Option<usize>,
+    /// Silent / total donor blocks behind `donor_silence_fraction`. Provenance only — a fraction
+    /// alone cannot distinguish `1/10` from `1.1/11`, which matters when comparing paths that bin
+    /// the same span differently.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub donor_silent_blocks: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub donor_total_blocks: Option<usize>,
 }
 
 impl GapEquivalenceVerdict {
@@ -107,7 +135,36 @@ impl GapEquivalenceVerdict {
                 _ => None,
             },
             donor_silence_fraction: ds,
+            gap_floor_db: None,
+            a_gap_silent_blocks: None,
+            donor_silent_blocks: None,
+            donor_total_blocks: None,
         }
+    }
+
+    /// Attach the scan-path measurement provenance. Never changes `class` or `drop`.
+    #[must_use]
+    pub fn with_scan_provenance(
+        mut self,
+        gap_floor_db: Option<f64>,
+        a_gap_silent_blocks: usize,
+        donor_blocks: Option<(usize, usize)>,
+    ) -> Self {
+        self.gap_floor_db = gap_floor_db;
+        self.a_gap_silent_blocks = Some(a_gap_silent_blocks);
+        (self.donor_silent_blocks, self.donor_total_blocks) = match donor_blocks {
+            Some((silent, total)) => (Some(silent), Some(total)),
+            None => (None, None),
+        };
+        self
+    }
+
+    /// Attach the fingerprint path's gap floor (`levels.gap_floor_db`) so the two paths' floors sit
+    /// side by side in one corpus. Never changes `class` or `drop`.
+    #[must_use]
+    pub fn with_gap_floor_db(mut self, gap_floor_db: f64) -> Self {
+        self.gap_floor_db = gap_floor_db.is_finite().then_some(gap_floor_db);
+        self
     }
 }
 
@@ -168,7 +225,9 @@ pub fn classify_gap_equivalence(
     GapEquivalenceVerdict::of(class, a_gap_rms_db, noise_floor_db, donor_silence_fraction)
 }
 
-/// A block's timeline center (used for gap/context membership at 250 ms granularity).
+/// A block's timeline center (used for gap/context membership). Block duration is the
+/// `scan_block_ms` recipe knob — do not restate it as a literal here; that is how this comment came
+/// to claim 250 ms long after the default moved to 100.
 fn block_center(b: &BlockLevel) -> f64 {
     (b.start_secs + b.end_secs) / 2.0
 }
@@ -215,6 +274,9 @@ fn median_db(mut vals: Vec<f64>) -> Option<f64> {
 ///
 /// `b_levels`/`b_mapped` are `None` when B was not scanned (missing/unaligned) ⇒ donor signal absent ⇒
 /// `NotEvaluated`. Pure — no I/O.
+///
+/// Also records measurement **provenance** on the verdict (`gap_floor_db`, `a_gap_silent_blocks`,
+/// `donor_silent_blocks`/`donor_total_blocks`) — recorded, never classified on.
 pub fn derive_gap_equivalence(
     a_levels: &[BlockLevel],
     a_start_secs: f64,
@@ -253,7 +315,7 @@ pub fn derive_gap_equivalence(
     // A's gap floor. Never re-threshold rms alone against the floor — digitally silent blocks
     // sit at BLOCK_LEVEL_FLOOR_DB and `rms < gap_floor` is false when both are −120.
     let gap_floor = gap_floor_db.is_finite().then_some(gap_floor_db);
-    let donor_silence_fraction = match (b_levels, b_mapped) {
+    let donor_blocks = match (b_levels, b_mapped) {
         (Some(bl), Some((b_start, b_end))) => {
             let mut total = 0usize;
             let mut silent = 0usize;
@@ -266,12 +328,15 @@ pub fn derive_gap_equivalence(
                     silent += 1;
                 }
             }
-            (total > 0).then(|| silent as f64 / total as f64)
+            Some((silent, total))
         }
         _ => None,
     };
+    let donor_silence_fraction =
+        donor_blocks.and_then(|(silent, total)| (total > 0).then(|| silent as f64 / total as f64));
 
     classify_gap_equivalence(a_gap_rms_db, noise_floor_db, donor_silence_fraction, params)
+        .with_scan_provenance(gap_floor, gap_silent_blocks().count(), donor_blocks)
 }
 
 #[cfg(test)]
