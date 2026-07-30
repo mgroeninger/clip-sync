@@ -1891,7 +1891,7 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
         }
     }
     let patched = any_ok;
-    let outcome = GateOutcome {
+    let mut outcome = GateOutcome {
         plan_kind: "fillable".into(),
         tier: if patched {
             "patch".into()
@@ -1902,6 +1902,8 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
         fit_path: None,
         signature_mode: None,
         skip_reason: (!patched).then(|| "gate skipped".into()),
+        // Set below, once `splice_dualfit_at` has run — `gate_pass` is not available yet.
+        dual_fit_rescue: None,
     };
 
     // Lag fingerprints — `b_mono`/`b_ch` shared by both placements.
@@ -1997,6 +1999,17 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
         b_mapped_start,
         cfg,
         sample_rate,
+    });
+    // F14: now that `splice_dualfit` exists, record whether production's dual-fit would rescue this
+    // skip. Deliberately the same `dual_fit_rescue_flag` the projection calls — the two paths are
+    // compared axis-by-axis by `decode_path_projection`, so a second inline copy would be a drift bug
+    // waiting to happen.
+    outcome.dual_fit_rescue = dual_fit_rescue_flag(&DualFitRescueInput {
+        patched,
+        brackets: &infos,
+        splice_dualfit: splice_dualfit.as_ref(),
+        donor_aligned: donor_interior.as_ref(),
+        donor_nominal: donor_interior_nominal.as_ref(),
     });
     let wide_envelope = if include_diagnostics {
         Some(wide_envelope_at_placement(&WideEnvelopeAtPlacementInput {
@@ -2537,6 +2550,8 @@ mod tests {
                 fit_path: None,
                 signature_mode: None,
                 skip_reason: None,
+                // Patched by the bracket gate ⇒ dual-fit is never consulted.
+                dual_fit_rescue: None,
             },
             baseline_lag: None,
             splice: Some(SpliceSummary {

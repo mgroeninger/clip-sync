@@ -26,6 +26,14 @@ pub struct GoldenRecord {
     // --- Tier 1: bit-exact ---
     pub tier: Option<String>,
     pub patched: bool,
+    /// **F14 — production's second disposition** (`outcome.dual_fit_rescue`). Tier 1: it is a decision,
+    /// not a score. Deliberately a separate axis from `tier`/`patched`, which stay the bracket-gate
+    /// `any_ok` result; folding dual-fit into those would destroy the only precise axis in the dump.
+    /// `None` on every fingerprint written before 2026-07-30, which is why adding it left the frozen
+    /// `curated.golden.json` green — the committed fixtures predate the field. Regenerating those
+    /// fixtures will populate it, and this axis is what makes that show up as a reviewable diff.
+    #[serde(default)]
+    pub dual_fit_rescue: Option<bool>,
     pub dualfit_target: bool,
     pub program_quiet_skip: bool,
     pub bracket_exhausted: bool,
@@ -75,6 +83,7 @@ fn record_from_row(r: &GapRow) -> GoldenRecord {
         index: r.index,
         tier: r.outcome_tier.clone(),
         patched: r.patched(),
+        dual_fit_rescue: r.dual_fit_rescue,
         dualfit_target: r.dualfit_target(),
         program_quiet_skip: r.program_quiet_skip(),
         bracket_exhausted: r.bracket_exhausted(),
@@ -117,7 +126,8 @@ fn record_from_row(r: &GapRow) -> GoldenRecord {
 pub fn baseline_from_rows<'a>(rows: impl IntoIterator<Item = &'a GapRow>) -> GoldenBaseline {
     let gaps: Vec<GoldenRecord> = rows.into_iter().map(record_from_row).collect();
     GoldenBaseline {
-        schema: "perf §4 golden baseline. Tier-1 (tier/patched/*target/*quiet/*exhausted/gate_pass/\
+        schema: "perf §4 golden baseline. Tier-1 (tier/patched/dual_fit_rescue/*target/*quiet/\
+                 *exhausted/gate_pass/\
                  *continuous/edge_pinned/brackets_*/fill_start_frame/fill_frames) assert BIT-EXACT. \
                  Tier-2 (gross_*/seamlocal_*/nominal_*/aligned_*/throat_*/fill_*_r continuous) assert \
                  WITHIN ε. \
@@ -235,6 +245,7 @@ fn diff_record(
     }
     tier1!(tier);
     tier1!(patched);
+    tier1!(dual_fit_rescue);
     tier1!(dualfit_target);
     tier1!(program_quiet_skip);
     tier1!(bracket_exhausted);
@@ -314,6 +325,7 @@ mod tests {
                 index: 0,
                 tier: Some("skip".into()),
                 patched: false,
+                dual_fit_rescue: Some(true),
                 dualfit_target: false,
                 program_quiet_skip: false,
                 bracket_exhausted: true,
@@ -378,5 +390,25 @@ mod tests {
             "a 1-frame placement move must be caught: {errs:?}"
         );
         assert!(errs[0].contains("fill_start_frame"));
+
+        // F14: dual-fit rescue is its own Tier-1 axis. A gap whose production disposition flips from
+        // "rescued" to "not rescued" is a real repair-coverage regression even though `tier`/`patched`
+        // (the bracket gate) never move — which is precisely the blind spot F14 recorded.
+        let mut act = exp.clone();
+        act.gaps[0].dual_fit_rescue = Some(false);
+        let errs = diff_baselines(&exp, &act, TIER2_ABS_EPS);
+        assert_eq!(
+            errs.len(),
+            1,
+            "a dual-fit rescue flip must be caught with tier/patched unchanged: {errs:?}"
+        );
+        assert!(errs[0].contains("dual_fit_rescue"));
+
+        // Losing the measurement entirely must also read as a change, not silently as "no rescue".
+        let mut act = exp.clone();
+        act.gaps[0].dual_fit_rescue = None;
+        let errs = diff_baselines(&exp, &act, TIER2_ABS_EPS);
+        assert_eq!(errs.len(), 1, "Some→None must be caught: {errs:?}");
+        assert!(errs[0].contains("dual_fit_rescue"));
     }
 }

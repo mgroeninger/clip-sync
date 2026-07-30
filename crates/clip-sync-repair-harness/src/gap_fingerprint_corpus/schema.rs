@@ -237,12 +237,35 @@ pub struct GapRow {
     /// A-side gap floor (from `levels`) — deep-silent dropout vs quiet-at-noise-floor passage.
     pub a_gap_floor_db: Option<f64>,
     pub a_noise_floor_db: Option<f64>,
+    /// **F14 — would production's dual-fit rescue this bracket-gate skip?** (`outcome.dual_fit_rescue`.)
+    /// `outcome_tier` is the bracket-gate result *only*; production runs `skip_or_dual_fit` afterwards and
+    /// can still patch, so a `skip` row here can be a patched gap in production. `None` on gaps the gate
+    /// patched (not applicable), on unmeasured gaps, and on every fingerprint written before 2026-07-30.
+    /// See [`Self::production_patched`] — do not fold this into [`Self::patched`].
+    pub dual_fit_rescue: Option<bool>,
 }
 
 impl GapRow {
     /// Patched = the gate produced a patch tier (anything but `skip`). `None` outcome → not patched.
+    ///
+    /// **This is the bracket-gate `any_ok` axis and must stay that way** — it is a frozen Tier-1
+    /// golden-baseline field, and it is the only axis in the dump that means something precise. It is
+    /// *not* "production repaired this gap": production's dual-fit can rescue a gap this returns `false`
+    /// for. Use [`Self::production_patched`] when the question is whether a hole was left unrepaired.
     pub fn patched(&self) -> bool {
         matches!(&self.outcome_tier, Some(t) if t != "skip")
+    }
+
+    /// **F14 — did production most likely leave audio unrepaired?** The bracket gate patched it, *or*
+    /// dual-fit would have rescued it. This is the predicate a "how many holes remain?" roll-up wants;
+    /// [`Self::patched`] under-counts by exactly the dual-fit rescues, which is the oracle bias F14
+    /// recorded.
+    ///
+    /// Inherits `dual_fit_rescue`'s caveats: it assumes `--dual-fit` is on, and it is a gate prediction,
+    /// not an observed patch — production re-validates the assembled fill and may still decline. On
+    /// fingerprints predating the field it degrades to [`Self::patched`].
+    pub fn production_patched(&self) -> bool {
+        self.patched() || self.dual_fit_rescue == Some(true)
     }
 
     /// `|frac_lag_pre − frac_lag_post|` in ms when both are present.

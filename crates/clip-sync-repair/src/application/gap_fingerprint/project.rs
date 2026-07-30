@@ -136,6 +136,16 @@ pub fn spec_to_fingerprint_summary(
         pre_seam_z: sl.pre_seam_z,
         post_seam_z: sl.post_seam_z,
     });
+    // F14: same predicate the from-decode dump applies, over the projection's own brackets (real when
+    // characterize supplied them, else `synth_brackets`' reconstruction — see `brackets_dual_fit_eligible`
+    // for why the synthesized shape still answers the question correctly).
+    let dual_fit_rescue = dual_fit_rescue_flag(&DualFitRescueInput {
+        patched: tier == "patch",
+        brackets: &brackets,
+        splice_dualfit: splice_dualfit.as_ref(),
+        donor_aligned: tags.donor_aligned.as_ref(),
+        donor_nominal: tags.donor_nominal.as_ref(),
+    });
 
     GapFingerprint {
         index: spec.gap_index,
@@ -179,6 +189,7 @@ pub fn spec_to_fingerprint_summary(
         splice_dualfit,
         outcome: Some(GateOutcome {
             plan_kind: "fillable".into(),
+            dual_fit_rescue,
             tier,
             seam_shape: String::new(),
             fit_path: None,

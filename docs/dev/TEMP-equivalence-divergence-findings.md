@@ -258,8 +258,8 @@ is why this only surfaced on a fingerprint run.
 ---
 
 ## F14 — Fingerprint `outcome` records `skip` where production patches (dual-fit rescues invisible)
-**Severity: medium-high (calibration-oracle integrity). Status: OPEN (diagnosed), found 2026-07-30;
-source diagnosis 2026-07-30.**
+**Severity: medium-high (calibration-oracle integrity). Status: WIRED 2026-07-30 (predictive flag
+shipped; corpus re-run still pending), found 2026-07-30; source diagnosis 2026-07-30.**
 
 The gap at **1050.82 s**, fingerprinted and previewed from the **same binary with the same flags**:
 
@@ -370,11 +370,57 @@ tests fail on any `tier` change: `curated_golden_baseline_invariance`,
 additive-vs-mutation question in favour of additive** — re-tiering is not a judgement call here, it
 breaks the frozen decision contract.
 
-Still unverified: whether adding a field to `GateOutcome` requires regenerating the committed
-`tests/gap_corpus/fingerprints/curated/*.json`. The `gap_floor_db` work above is the precedent —
-four additive `Option` fields with `skip_serializing_if`/`default` required **no** fixture
-regeneration and left all four golden/fixture tests green — but that was on `GapEquivalenceVerdict`,
-not `GateOutcome`, so treat it as a strong prior rather than a result.
+### Implemented 2026-07-30 — with one correction to the recommendation above
+
+Steps 1–3 are done. Two things did **not** go as the plan predicted; both are worth keeping.
+
+**Correction — the eligibility predicate above is wrong, and dangerously so.** Step 1 says to set the
+flag when the failure class is eligible and `splice_dualfit.gate_pass` is true. That models the seam
+gate and nothing else, and `try_dual_fit` (`domain/dual_fit.rs`) accepts on **four** conditions, not
+one. Implemented seam-gate-only, the flag reported `Some(true)` for `04_program_quiet` — a gap whose
+seams score ~0.998 with a **dead donor**, i.e. exactly the case production declines. A seam-only
+predicate therefore over-promises rescue on the very cell the dual-fit work exists to distinguish
+from silence-splice. The shipped `dual_fit_rescue_flag`
+(`gap_fingerprint/schema.rs`) models all of them:
+
+1. dual-fit-eligible failure class (`brackets_dual_fit_eligible` — the per-bracket analogue of
+   production's `StructureAlignmentFailed` carve-out);
+2. `splice_dualfit.gate_pass`;
+3. the step is **real** — `post_seam_r − post_seam_global_r ≥ DUALFIT_STEP_REAL_MARGIN` (0.15), so a
+   rigid single-lag map doesn't already explain the seam;
+4. the **aligned** donor is `continuous`;
+5. the **nominal** donor is not program-quiet (`silence_fraction < PROGRAM_QUIET_SILENCE_FRAC`, 0.5).
+
+This is the same conjunction `gap_repair_spec::classify_bracket_exhausted_skip` already uses for the
+`SilenceSplice` cell — the bug was writing a second, looser definition rather than reading the
+existing one. `None` means *no claim* (already patched, or an input missing), never a defaulted
+`false`. The predicate is pinned by three unit tests in `schema.rs` and by `04_program_quiet`'s
+curated golden row reading `false`.
+
+**Correction — the fixture-regeneration prior was wrong.** `gap_floor_db`'s "no regeneration needed"
+did **not** carry over. `dual_fit_rescue` is *derived*, so the projection emits it while the
+committed fixtures (harvested before the field existed) read `null`, and
+`projection_preserves_curated_golden_baseline` goes red on five gaps — not a projection infidelity,
+just fixtures older than the field. `gap_floor_db` escaped this only because nothing recomputes it
+during projection. Handled by a new `tests/curated_fixture_backfill.rs`
+(`CURATED_FIXTURE_BACKFILL=1`), which text-splices the derived value into the committed JSON —
+neither serde route is byte-faithful, see its header — followed by `CURATED_GOLDEN_REGEN=1`. The
+five fixture diffs are one line each; the golden gains a `dual_fit_rescue` column reading `true` on
+exactly the two `dualfit_target` gaps. **Generalizes:** any future *derived* fingerprint field hits
+this same wall and should go through that backfill rather than a `without_*()` golden exclusion —
+excluding it would leave the new axis untested in the differential.
+
+**Where the flag is wired.** Emitted by both `measure.rs` (from-decode dump) and `project.rs`
+(corpus projection) through the one shared helper, so the two paths cannot drift; carried on
+`GapRow.dual_fit_rescue`; Tier-1 exact-compare in `golden_baseline`; read by
+`GapRow::production_patched()` (`patched() || dual_fit_rescue == Some(true)`) — `patched()` itself
+stays frozen as the `any_ok` axis. The corpus report's headline tally now counts rescues as their own
+term, with a fallback line for pre-flag fingerprints.
+
+**Still predictive, not observed.** The flag assumes `--dual-fit` is on and models production's
+decision from fingerprint-side measurements; it is not a record of a rescue that happened. The one
+real-media confirmation is the 1050.82 s gap above. A corpus re-run would upgrade this from
+"mirrors the predicate" to "matches production on n gaps" — not yet done.
 
 **What is *not* yet recorded here.** The `outcome` block's other fields for this gap (beyond `tier`
 and `skip_reason`) were not transcribed, and the corresponding `preview-debug.log` lines were read
@@ -422,8 +468,11 @@ windows or bins, changing what `skip_equivalent_gaps` consumes, and any recalibr
    comments now name the `scan_block_ms` recipe knob rather than any literal, since the value is
    configurable and the literal is what went stale. `default_scan_block_ms` in `config.rs` is
    annotated that its "coarse and fine agree" note held for that corpus, not as an invariant.
-4. **F14's wiring** (below) — it is orthogonal to the floor question and can proceed. **Not yet
-   done.**
+4. ~~**F14's wiring** (below) — orthogonal to the floor question, so it can proceed.~~ **DONE
+   2026-07-30.** Additive `outcome.dual_fit_rescue`, emitted by the dump and the projection through
+   one shared predicate, Tier-1 in the golden. Two corrections to the plan as written — the
+   eligibility predicate needed all four `try_dual_fit` conditions, not just the seam gate, and the
+   committed fixtures **did** need backfilling. Both written up in F14's "Implemented" section.
 
 **Blast-radius check for anything that later touches `outcome.tier` (verified 2026-07-30):
 `tier` *is* a Tier-1 exact-compare axis** — `golden_baseline.rs:27` / `:76` / `:236 tier1!(tier)`,

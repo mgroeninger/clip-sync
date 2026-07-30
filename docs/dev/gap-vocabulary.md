@@ -98,6 +98,18 @@ per-seam fit + length reconciliation ([gap-fill-modes.md](../gap-fill-modes.md) 
 *Old guide: throat **W5** skip; after rescue the gap becomes **W7** (`patch_tier=high`) — W7 is a
 post-rescue outcome, not a separate gap type.*
 
+> **`outcome.tier` does not carry the rescue** (F14). The dump path sets `tier` from bracket-gate `any_ok`
+> alone and stops there — it never runs `skip_or_dual_fit`, so a gap production *would* rescue still reads
+> `tier=skip`. Same carve-out as the residual veto below, in the opposite direction: there the fingerprint
+> over-reports a patch, here it under-reports one. The rescue is therefore recorded **beside** `tier`, as
+> `outcome.dual_fit_rescue` (`Some(true)` = production's dual fit would take this gap, assuming `--dual-fit`;
+> `None` = no claim, i.e. patched already or an input missing), and roll-ups that want production's real
+> disposition read `GapRow::production_patched()`, not `patched()`. `dual_fit_rescue` models **all** of
+> `try_dual_fit`'s accept conditions — eligible failure stage, seam `gate_pass`, a *real* step, aligned donor
+> continuity, and nominal donor not program-quiet. Seam `gate_pass` alone is not enough: **Program-quiet**
+> (below) scores ~0.998 on both seams with a dead donor, so a seam-only predicate claims a rescue on exactly
+> the gaps production declines.
+
 **Program-quiet** (n=24, e.g. 1·g4, 1·g19, 6·g2) — B has no content to donate across the hole (silent
 at the *same program time*, before any lag search). Can look identical to silence-splice at the seam —
 `1·g19` scores 0.998 on both seams yet its donor interior is dead — so donor occupancy, not seam score,

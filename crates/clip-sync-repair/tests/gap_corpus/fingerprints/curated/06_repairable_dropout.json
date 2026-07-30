@@ -498,7 +498,8 @@
         "plan_kind": "fillable",
         "tier": "skip",
         "seam_shape": "",
-        "skip_reason": "correlation_below_threshold"
+        "skip_reason": "correlation_below_threshold",
+        "dual_fit_rescue": true
       },
       "equivalence": {
         "class": "repairable_dropout",

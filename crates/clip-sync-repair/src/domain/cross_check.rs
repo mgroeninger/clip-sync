@@ -381,7 +381,6 @@ mod tests {
                 noise_floor_db: Some(-50.0),
                 a_below_noise_db: Some(-50.0),
                 // provenance fields default to None; these tests only exercise the class + drop
-
                 donor_silence_fraction: Some(0.0),
                 ..Default::default()
             },

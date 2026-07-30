@@ -315,6 +315,78 @@ pub enum FailureStage {
     Residual,
 }
 
+/// **F14 — the fingerprint analogue of production's `dual_fit_eligible`** (`patch_audio/region.rs`).
+///
+/// Production carries one `SeamGateFailure` per region and excludes only `StructureAlignmentFailed`,
+/// which `select_joint_fit_winner_with_residual` emits exactly when no candidate recorded a failure —
+/// nothing was ever scored, so there is nothing to rescue. The per-bracket equivalent is "some bracket
+/// failed at a stage past structure alignment". Zero brackets ⇒ nothing scored ⇒ not eligible.
+///
+/// Also correct on the *synthesized* brackets the corpus projection builds: `synth_brackets` gives
+/// filler rows `StructureAlign` and puts the real stage on the closest bracket, so this reduces there
+/// to "the closest failure was past structure alignment" — the same question, since the closest
+/// bracket is by definition the one that got furthest.
+pub fn brackets_dual_fit_eligible(brackets: &[BracketInfo]) -> bool {
+    brackets
+        .iter()
+        .any(|b| matches!(b.failure_stage, Some(stage) if stage != FailureStage::StructureAlign))
+}
+
+/// The measurements [`dual_fit_rescue_flag`] needs, so the two call sites pass the same set and neither
+/// can quietly omit one. `donor_aligned` is the registered bridge; `donor_nominal` is the
+/// registration-independent program-quiet read.
+pub struct DualFitRescueInput<'a> {
+    /// Bracket-gate `any_ok`.
+    pub patched: bool,
+    pub brackets: &'a [BracketInfo],
+    pub splice_dualfit: Option<&'a SpliceDualfit>,
+    pub donor_aligned: Option<&'a DonorInterior>,
+    pub donor_nominal: Option<&'a DonorInterior>,
+}
+
+/// **F14 — would production's dual-fit rescue this gap?** The single definition both the from-decode
+/// dump and the corpus projection use, so the two paths cannot drift. See
+/// [`GateOutcome::dual_fit_rescue`] for what the value means and its limits.
+///
+/// Models **every** condition `domain::dual_fit::try_dual_fit` accepts on, not just the seam gate —
+/// the same conjunction `gap_repair_spec::classify_bracket_exhausted_skip` uses for the `SilenceSplice`
+/// cell:
+///
+/// 1. the bracket failure class is dual-fit-eligible ([`brackets_dual_fit_eligible`]);
+/// 2. `gate_pass` — both shoulders clear the seam floors;
+/// 3. the **step is real** — the post seam at its own lag beats the post seam at the *pre* lag by
+///    `DUALFIT_STEP_REAL_MARGIN`, i.e. a rigid single-lag map doesn't already explain it;
+/// 4. the **aligned donor bridges** the hole (`continuous`) — there is something to fill;
+/// 5. the **nominal donor is not program-quiet** — B isn't silent at the same program time.
+///
+/// Dropping 3–5 makes this over-promise badly: a program-quiet gap has high seam correlation and a dead
+/// donor, so seam-gate-only would report a rescue on exactly the gaps production declines. The curated
+/// `04_program_quiet` fixture pins that.
+///
+/// `None` means "no claim": a patched gap never reaches `skip_or_dual_fit`, and a gap missing any input
+/// isn't measurable. Never a defaulted `false`.
+pub fn dual_fit_rescue_flag(input: &DualFitRescueInput<'_>) -> Option<bool> {
+    if input.patched {
+        return None;
+    }
+    let df = input.splice_dualfit?;
+    let aligned = input.donor_aligned?;
+    let nominal = input.donor_nominal?;
+
+    let step_real =
+        df.post_seam_r - df.post_seam_global_r >= crate::domain::dual_fit::DUALFIT_STEP_REAL_MARGIN;
+    let program_quiet =
+        nominal.silence_fraction >= crate::domain::donor::PROGRAM_QUIET_SILENCE_FRAC;
+
+    Some(
+        brackets_dual_fit_eligible(input.brackets)
+            && df.gate_pass
+            && step_real
+            && aligned.continuous
+            && !program_quiet,
+    )
+}
+
 /// Baseline structure-tier correlations at the throat.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StructureScores {
@@ -578,11 +650,187 @@ pub struct GateOutcome {
     pub signature_mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub skip_reason: Option<String>,
+    /// **Would production's dual-fit rescue this bracket-gate skip?** (F14.) `tier` is contractually the
+    /// bracket-gate `any_ok` result and nothing else — see `characterize_gaps_from_decode`, "does NOT run
+    /// the production patch gate". But production, after the same class of failure, calls `skip_or_dual_fit`
+    /// and may still patch, so a `tier: "skip"` fingerprint can correspond to a *patched* production gap.
+    /// This field records that second disposition **beside** `tier` instead of overloading it.
+    ///
+    /// `Some(true)` ⇒ no bracket passed, at least one bracket was actually *scored* (the fingerprint
+    /// analogue of production's `dual_fit_eligible`: anything but `StructureAlignmentFailed`), and
+    /// `splice_dualfit.gate_pass` is true. `Some(false)` ⇒ a skip that dual-fit would not rescue.
+    /// `None` ⇒ not applicable (the gate patched it) or not measurable (no `splice_dualfit`).
+    ///
+    /// **Predictive, not observed.** It assumes `--dual-fit` is on (the fingerprint has no request flag)
+    /// and reflects `try_dual_fit`'s *gate* verdict, not a real assembled fill — production still
+    /// re-validates the assembled seams and can decline. Read it as "is this a dual-fit rescue
+    /// candidate", not "this was patched".
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub dual_fit_rescue: Option<bool>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn bracket(failure_stage: Option<FailureStage>) -> BracketInfo {
+        BracketInfo {
+            pre_time_secs: 0.0,
+            post_time_secs: 0.0,
+            span_secs: 0.0,
+            move_frames: 0,
+            structure_pre: None,
+            structure_post: None,
+            seam_pre: None,
+            seam_post: None,
+            start_frame: None,
+            fill_frames: None,
+            failure_stage,
+        }
+    }
+
+    fn splice_dualfit(gate_pass: bool) -> SpliceDualfit {
+        SpliceDualfit {
+            pre_seam_r: 0.9,
+            post_seam_r: 0.9,
+            gap_frames: 1000,
+            bridge_frames: 1000,
+            trim_frames: 0,
+            gate_pass,
+            // 0.9 − 0.1 = 0.8 ≥ DUALFIT_STEP_REAL_MARGIN ⇒ the step is real.
+            post_seam_global_r: 0.1,
+            pre_seam_prom: None,
+            post_seam_prom: None,
+            pre_seam_z: None,
+            post_seam_z: None,
+        }
+    }
+
+    fn donor(silence_fraction: f64, continuous: bool) -> DonorInterior {
+        DonorInterior {
+            rms_db: -30.0,
+            silence_fraction,
+            longest_silence_ms: 0.0,
+            continuous,
+        }
+    }
+
+    /// A rescuable gap: scored-but-failed brackets, seams pass, step real, donor bridges, B occupied.
+    fn rescuable<'a>(
+        brackets: &'a [BracketInfo],
+        df: &'a SpliceDualfit,
+        aligned: &'a DonorInterior,
+        nominal: &'a DonorInterior,
+    ) -> DualFitRescueInput<'a> {
+        DualFitRescueInput {
+            patched: false,
+            brackets,
+            splice_dualfit: Some(df),
+            donor_aligned: Some(aligned),
+            donor_nominal: Some(nominal),
+        }
+    }
+
+    /// F14 — the fingerprint's dual-fit prediction must mirror production's `dual_fit_eligible`:
+    /// `StructureAlignmentFailed` (nothing scored) is the one class that cannot be rescued.
+    #[test]
+    fn dual_fit_rescue_mirrors_production_eligibility() {
+        let scored = [bracket(Some(FailureStage::WaveformFloor))];
+        let unscored = [bracket(Some(FailureStage::StructureAlign))];
+        let pass = splice_dualfit(true);
+        let fail = splice_dualfit(false);
+        let occupied = donor(0.0, true);
+
+        assert_eq!(
+            dual_fit_rescue_flag(&rescuable(&scored, &pass, &occupied, &occupied)),
+            Some(true)
+        );
+        // Same brackets, seam gate fails ⇒ a skip that stays a skip.
+        assert_eq!(
+            dual_fit_rescue_flag(&rescuable(&scored, &fail, &occupied, &occupied)),
+            Some(false)
+        );
+        // Nothing was ever scored: there is no shoulder pair to fit, so a passing seam gate must NOT
+        // be reported as a rescue — this is the production carve-out.
+        assert_eq!(
+            dual_fit_rescue_flag(&rescuable(&unscored, &pass, &occupied, &occupied)),
+            Some(false)
+        );
+        // Mixed: one bracket got past structure alignment ⇒ eligible (production records the failure
+        // of the candidate that got furthest, not the first one tried).
+        let mixed = [
+            bracket(Some(FailureStage::StructureAlign)),
+            bracket(Some(FailureStage::Residual)),
+        ];
+        assert_eq!(
+            dual_fit_rescue_flag(&rescuable(&mixed, &pass, &occupied, &occupied)),
+            Some(true)
+        );
+    }
+
+    /// The seam gate alone is NOT the accept condition — `try_dual_fit` also requires a real step, a
+    /// continuous aligned donor, and a non-quiet nominal donor. Each must independently veto, or the
+    /// flag over-promises repair coverage on exactly the gaps production declines (the curated
+    /// `04_program_quiet` regression).
+    #[test]
+    fn dual_fit_rescue_requires_every_try_dual_fit_condition() {
+        let scored = [bracket(Some(FailureStage::WaveformFloor))];
+        let pass = splice_dualfit(true);
+        let occupied = donor(0.0, true);
+
+        // Step not real: the post seam at the pre lag is just as good ⇒ a rigid single-lag map already
+        // explains it, so there is no splice to fit.
+        let mut rigid = splice_dualfit(true);
+        rigid.post_seam_global_r = rigid.post_seam_r;
+        assert_eq!(
+            dual_fit_rescue_flag(&rescuable(&scored, &rigid, &occupied, &occupied)),
+            Some(false)
+        );
+
+        // Aligned donor has an internal hole — nothing continuous to bridge with.
+        let broken = donor(0.4, false);
+        assert_eq!(
+            dual_fit_rescue_flag(&rescuable(&scored, &pass, &broken, &occupied)),
+            Some(false)
+        );
+
+        // Program-quiet at nominal: B is silent at the same program time. Seams correlate beautifully
+        // (silence against silence), which is exactly why gate_pass alone is not enough.
+        let quiet = donor(crate::domain::donor::PROGRAM_QUIET_SILENCE_FRAC, true);
+        assert_eq!(
+            dual_fit_rescue_flag(&rescuable(&scored, &pass, &occupied, &quiet)),
+            Some(false)
+        );
+    }
+
+    /// The `None` cases are "no claim", never a defaulted `false` — a patched gap never reaches
+    /// `skip_or_dual_fit`, and an unmeasured one has nothing to report.
+    #[test]
+    fn dual_fit_rescue_absent_rather_than_false_when_inapplicable() {
+        let scored = [bracket(Some(FailureStage::WaveformFloor))];
+        let pass = splice_dualfit(true);
+        let occupied = donor(0.0, true);
+
+        // The bracket gate patched it: dual-fit is never consulted.
+        let mut patched = rescuable(&scored, &pass, &occupied, &occupied);
+        patched.patched = true;
+        assert_eq!(dual_fit_rescue_flag(&patched), None);
+
+        // Missing any measurement (lean dump / older corpus) ⇒ unknown, not "no".
+        let mut no_df = rescuable(&scored, &pass, &occupied, &occupied);
+        no_df.splice_dualfit = None;
+        assert_eq!(dual_fit_rescue_flag(&no_df), None);
+
+        let mut no_donor = rescuable(&scored, &pass, &occupied, &occupied);
+        no_donor.donor_nominal = None;
+        assert_eq!(dual_fit_rescue_flag(&no_donor), None);
+
+        // No brackets at all ⇒ nothing scored; a definite "would not rescue" once measured.
+        assert_eq!(
+            dual_fit_rescue_flag(&rescuable(&[], &pass, &occupied, &occupied)),
+            Some(false)
+        );
+    }
 
     /// Deterministic PRNG noise sample in [-1, 1) — local to the schema tests (the measure slice keeps
     /// its own copy for its PCM builders).
@@ -732,6 +980,7 @@ mod tests {
                 fit_path: Some("baseline_only".into()),
                 signature_mode: Some("energy".into()),
                 skip_reason: Some("boundary correlation below threshold".into()),
+                dual_fit_rescue: None,
             }),
             equivalence: None,
             scan_equivalence: None,

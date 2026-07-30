@@ -846,7 +846,8 @@
         "plan_kind": "fillable",
         "tier": "skip",
         "seam_shape": "",
-        "skip_reason": "gate skipped"
+        "skip_reason": "gate skipped",
+        "dual_fit_rescue": true
       }
     }
   ]

@@ -157,6 +157,10 @@ name = "golden_baseline_invariance"
 path = "tests/golden_baseline_invariance.rs"
 
 [[test]]
+name = "curated_fixture_backfill"
+path = "tests/curated_fixture_backfill.rs"
+
+[[test]]
 name = "gap_repair_spec_diff"
 path = "tests/gap_repair_spec_diff.rs"
 

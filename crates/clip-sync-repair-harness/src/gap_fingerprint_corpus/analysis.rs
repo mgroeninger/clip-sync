@@ -279,6 +279,10 @@ struct Outcome {
     tier: String,
     #[serde(default)]
     skip_reason: Option<String>,
+    /// F14 — production's dual-fit disposition beside `tier`. `default` so every corpus written before
+    /// 2026-07-30 still deserializes, reading as `None` ("unknown", not "would not rescue").
+    #[serde(default)]
+    dual_fit_rescue: Option<bool>,
 }
 
 const DEFAULT_DRIFT_EPS_MS: f64 = 1.0;
@@ -505,6 +509,7 @@ fn gap_row(pair: &str, source: &SourceMeta, gap: &GapEntry, eps: f64, tail_secs:
         kind,
         verdict,
         outcome_tier: gap.outcome.as_ref().map(|o| o.tier.clone()),
+        dual_fit_rescue: gap.outcome.as_ref().and_then(|o| o.dual_fit_rescue),
         skip_reason: gap.outcome.as_ref().and_then(|o| o.skip_reason.clone()),
         frac_lag_pre_ms,
         frac_lag_post_ms,

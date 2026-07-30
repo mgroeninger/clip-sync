@@ -226,7 +226,10 @@ impl CorpusReport {
             }
         }
 
-        // Outcome among matched.
+        // Outcome among matched. `patched()` is the bracket gate; the reader who wants "how many holes
+        // did production actually leave?" needs the dual-fit rescues too (F14) — reported as their own
+        // term rather than folded in, since `patched` is a frozen decision axis and the rescue is a
+        // gate *prediction* (assumes --dual-fit, and production re-validates the assembled fill).
         let mpatched = matched.iter().filter(|r| r.patched()).count();
         let mskipped = matched
             .iter()
@@ -238,6 +241,27 @@ impl CorpusReport {
             pct(mpatched, m),
             pct(mskipped, m)
         );
+        let rescued = matched
+            .iter()
+            .filter(|r| r.dual_fit_rescue == Some(true))
+            .count();
+        if rescued > 0 {
+            let prod = matched.iter().filter(|r| r.production_patched()).count();
+            let _ = writeln!(
+                s,
+                "    of those skips, {rescued} would be dual-fit rescued in production ⇒ \
+                 production-patched {prod} ({}), unrepaired {} ({})",
+                pct(prod, m),
+                m - prod,
+                pct(m - prod, m)
+            );
+        } else if matched.iter().all(|r| r.dual_fit_rescue.is_none()) {
+            let _ = writeln!(
+                s,
+                "    dual-fit rescue: — (pre-flag fingerprint; re-scan to populate — skips here may \
+                 still be patched in production)"
+            );
+        }
 
         // Headline: addressable = matched + timing_offset + skipped.
         let addr: Vec<&&GapRow> = matched
