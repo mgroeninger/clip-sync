@@ -296,6 +296,39 @@ mod tests {
     }
 
     #[test]
+    fn occupancy_follows_scanner_silent_on_six_channel_center_dialogue() {
+        use crate::domain::pcm::InterleavedPcm;
+        use crate::domain::policies::{is_silent_interleaved, SilenceRunScanner};
+
+        const CHANNELS: usize = 6;
+        const CENTER: usize = 2;
+        let abs_floor = 33.0 / 32767.0;
+        let rate = 11_025u32;
+        let block_secs = 0.25;
+        let frames = (rate as f64 * block_secs * 4.0).round() as usize; // 1 s
+        let peak = 0.01f32;
+        let mut samples = vec![0.0f32; frames * CHANNELS];
+        for f in 0..frames {
+            samples[f * CHANNELS + CENTER] = f32::sin(f as f32 * 0.3) * peak;
+        }
+        assert!(!is_silent_interleaved(&samples, CHANNELS, 0.01, abs_floor));
+
+        let pcm = InterleavedPcm {
+            sample_rate: rate,
+            channels: CHANNELS as u16,
+            samples,
+        };
+        let mut scanner =
+            SilenceRunScanner::new(block_secs, 0.01, 1.0, 0, abs_floor).retain_block_levels();
+        scanner.feed(&pcm, 0.0);
+        let (_runs, levels) = scanner.finish_with_levels();
+        assert!(
+            b_has_energy_from_levels(&levels, 0.0, 1.0),
+            "occupancy must follow scanner silent bit for center-only 5.1"
+        );
+    }
+
+    #[test]
     fn b_range_fully_scanned_requires_complete_coverage() {
         assert!(b_range_fully_scanned(1.0, 5.0, Some(5.0)));
         assert!(!b_range_fully_scanned(1.0, 5.1, Some(5.0)));

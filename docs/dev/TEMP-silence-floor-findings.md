@@ -1,6 +1,8 @@
 # Silence-floor / fillability findings ledger
 
 **Opened:** 2026-07-29. **Status:** fixes landed 2026-07-29 (F1–F10/F12; F11 still open; R1–R4 review follow-ups).
+Regression tests added 2026-07-29: production-floor scan E2E + F7 agreement, scanner→occupancy/donor
+pipeline (digital silence + abs-floor dither), 6ch center-only mid-band occupancy.
 
 Findings from diagnosing an `unfillable` mid-file gap on an uncatalogued licensed 5.1 pair
 (A ≈ 6900 s, AAC-LC 48 kHz 5.1). Two production runs plus one direct `astats` measurement of

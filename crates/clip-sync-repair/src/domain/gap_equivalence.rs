@@ -529,4 +529,117 @@ mod tests {
         );
         assert_eq!(v.class, NotEvaluated);
     }
+
+    // --- Scanner → levels → occupancy/donor (production recipe; not hand-built BlockLevels) -----
+
+    fn mono_pcm(rate: u32, samples: Vec<f32>) -> crate::domain::pcm::InterleavedPcm {
+        crate::domain::pcm::InterleavedPcm {
+            sample_rate: rate,
+            channels: 1,
+            samples,
+        }
+    }
+
+    fn sine_samples(rate: u32, secs: f64) -> Vec<f32> {
+        let count = (rate as f64 * secs).round() as usize;
+        (0..count)
+            .map(|i| f32::sin(i as f32 * 0.3) * 0.244)
+            .collect()
+    }
+
+    fn scan_levels(
+        samples: Vec<f32>,
+        abs_floor: f32,
+    ) -> (Vec<crate::domain::policies::SilentRun>, Vec<BlockLevel>) {
+        let rate = 11_025u32;
+        let mut scanner =
+            crate::domain::policies::SilenceRunScanner::new(0.25, 0.01, 1.0, 0, abs_floor)
+                .retain_block_levels();
+        scanner.feed(&mono_pcm(rate, samples), 0.0);
+        scanner.finish_with_levels()
+    }
+
+    #[test]
+    fn scanner_pipeline_digital_silence_occupancy_and_donor_agree() {
+        use crate::domain::cross_check::b_has_energy_from_levels;
+
+        let abs = 33.0 / 32767.0;
+        let rate = 11_025u32;
+        // A: loud shoulders + 2 s digital silence (noise-floor context present).
+        let mut a = sine_samples(rate, 2.0);
+        a.extend(std::iter::repeat_n(0.0f32, rate as usize * 2));
+        a.extend(sine_samples(rate, 2.0));
+        let b = vec![0.0f32; rate as usize * 6];
+
+        let (runs, a_levels) = scan_levels(a, abs);
+        let (_, b_levels) = scan_levels(b, abs);
+        assert_eq!(runs.len(), 1, "expected one silent run on A");
+        let core_s = runs[0].core_start_secs;
+        let core_e = runs[0].core_end_secs;
+
+        assert!(
+            !b_has_energy_from_levels(&b_levels, core_s, core_e),
+            "digitally silent B must be unoccupied"
+        );
+        let v = derive_gap_equivalence(
+            &a_levels,
+            core_s,
+            core_e,
+            Some(&b_levels),
+            Some((core_s, core_e)),
+            &on(),
+        );
+        assert_eq!(v.donor_silence_fraction, Some(1.0), "{v:?}");
+        assert_eq!(v.class, SharedSilence, "{v:?}");
+        assert!(occupancy_agrees_with_donor_silence(
+            false,
+            v.donor_silence_fraction,
+            0.5
+        ));
+    }
+
+    #[test]
+    fn scanner_pipeline_abs_floor_dither_is_donor_silent_not_occupied() {
+        use crate::domain::cross_check::b_has_energy_from_levels;
+
+        let abs = 33.0 / 32767.0;
+        let rate = 11_025u32;
+        let mut a = sine_samples(rate, 2.0);
+        a.extend(std::iter::repeat_n(0.0f32, rate as usize * 2));
+        a.extend(sine_samples(rate, 2.0));
+        // B: ±1/32767 dither — quieter than abs floor peak check, louder than digital −120 gap floor.
+        let dither = 1.0f32 / 32767.0;
+        let b: Vec<f32> = (0..rate as usize * 6)
+            .map(|i| if i % 2 == 0 { dither } else { -dither })
+            .collect();
+
+        let (runs, a_levels) = scan_levels(a, abs);
+        let (_, b_levels) = scan_levels(b, abs);
+        let core_s = runs[0].core_start_secs;
+        let core_e = runs[0].core_end_secs;
+
+        assert!(
+            b_levels.iter().any(|l| {
+                let c = (l.start_secs + l.end_secs) / 2.0;
+                c >= core_s && c < core_e && l.silent
+            }),
+            "scanner must mark dither blocks silent under abs floor"
+        );
+        assert!(!b_has_energy_from_levels(&b_levels, core_s, core_e));
+        let v = derive_gap_equivalence(
+            &a_levels,
+            core_s,
+            core_e,
+            Some(&b_levels),
+            Some((core_s, core_e)),
+            &on(),
+        );
+        assert_eq!(v.class, SharedSilence, "{v:?}");
+        assert_eq!(v.donor_silence_fraction, Some(1.0), "{v:?}");
+        assert!(occupancy_agrees_with_donor_silence(
+            false,
+            v.donor_silence_fraction,
+            0.5
+        ));
+    }
 }

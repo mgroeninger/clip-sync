@@ -681,6 +681,47 @@ mod tests {
         assert!(is_silent_interleaved(&samples, 2, 0.01, 0.0));
     }
 
+    /// 5.1 center-only dialogue near −40 dBFS peak: per-channel silence says occupied; interleaved
+    /// RMS is diluted (~7.8 dB) toward the default abs floor — the silent bit must not follow RMS.
+    #[test]
+    fn six_channel_center_only_midband_is_occupied_at_default_floor() {
+        const CHANNELS: usize = 6;
+        const CENTER: usize = 2; // L R C LFE Ls Rs
+        let abs_floor = 33.0 / 32767.0;
+        let rate = 11_025u32;
+        let block_secs = 0.25;
+        let frames = (rate as f64 * block_secs).round() as usize;
+        let peak = 0.01f32; // −40 dBFS — mid-band R2 exposure
+        let mut samples = vec![0.0f32; frames * CHANNELS];
+        for f in 0..frames {
+            samples[f * CHANNELS + CENTER] = f32::sin(f as f32 * 0.3) * peak;
+        }
+
+        assert!(
+            !is_silent_interleaved(&samples, CHANNELS, 0.01, abs_floor),
+            "center-only dialogue must not be silent (per-channel peak path)"
+        );
+
+        let pcm = InterleavedPcm {
+            sample_rate: rate,
+            channels: CHANNELS as u16,
+            samples,
+        };
+        let mut scanner =
+            SilenceRunScanner::new(block_secs, 0.01, 1.0, 0, abs_floor).retain_block_levels();
+        scanner.feed(&pcm, 0.0);
+        let (_runs, levels) = scanner.finish_with_levels();
+        assert!(
+            !levels.is_empty() && levels.iter().all(|b| !b.silent),
+            "retained silent bit must stay occupied despite downmix-diluted rms: {levels:?}"
+        );
+        // Diluted interleaved RMS sits several dB below the center peak (−40 dBFS).
+        assert!(
+            levels.iter().any(|b| b.rms_db < -45.0),
+            "expected downmix dilution below center peak; levels={levels:?}"
+        );
+    }
+
     #[test]
     fn rms_interleaved_of_constant() {
         let v = 1000.0_f32 / 32767.0;

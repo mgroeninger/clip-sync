@@ -1291,4 +1291,79 @@ mod tests {
             "header must show i16-scale floor + dBFS, got {line}"
         );
     }
+
+    /// Production default floor (`33/32767`), not the fixture habit of `0.0`.
+    fn production_abs_floor() -> f32 {
+        33.0 / 32767.0
+    }
+
+    fn assert_occupancy_agrees_with_donor(report: &GapReport) {
+        for (i, gap) in report.gaps.iter().enumerate() {
+            let ds = report
+                .gap_equivalence_at(i)
+                .and_then(|v| v.donor_silence_fraction);
+            assert!(
+                crate::domain::gap_equivalence::occupancy_agrees_with_donor_silence(
+                    gap.b_has_energy,
+                    ds,
+                    0.5,
+                ),
+                "gap {i}: b_has_energy={} donor_silence={ds:?} (F7)",
+                gap.b_has_energy
+            );
+        }
+    }
+
+    #[test]
+    fn scan_with_production_floor_silent_pair_agrees_and_labels_both_silent() {
+        let dur = Duration::from_secs(60);
+        let reader = FixedReader::new()
+            .with("a.wav", SessionKind::Silent, dur)
+            .with("b.wav", SessionKind::Silent, dur);
+        let progress = FakeProgressReporter;
+        let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
+
+        let mut request = scan_request("a.wav", "b.wav", 60);
+        request.absolute_silence_rms = production_abs_floor();
+        request.scan_both = true;
+
+        let report = scan
+            .scan_after_alignment(request, aligned_result(Some(0.0)))
+            .expect("scan should succeed");
+
+        assert!(!report.gaps.is_empty(), "silent A should yield gaps");
+        for gap in &report.gaps {
+            assert!(gap.video_b_start_secs.is_some());
+            assert!(!gap.b_has_energy);
+            assert_eq!(gap.unfillable_label(), "both sides silent");
+        }
+        assert_occupancy_agrees_with_donor(&report);
+    }
+
+    #[test]
+    fn scan_with_production_floor_a_silent_b_loud_keeps_occupancy_donor_agreement() {
+        let dur = Duration::from_secs(60);
+        let reader = FixedReader::new()
+            .with("a.wav", SessionKind::Silent, dur)
+            .with("b.wav", SessionKind::Loud, dur);
+        let progress = FakeProgressReporter;
+        let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
+
+        let mut request = scan_request("a.wav", "b.wav", 60);
+        request.absolute_silence_rms = production_abs_floor();
+        request.scan_both = true;
+
+        let report = scan
+            .scan_after_alignment(request, aligned_result(Some(0.0)))
+            .expect("scan should succeed");
+
+        assert_eq!(report.gaps.len(), 1);
+        assert!(report.gaps[0].b_has_energy);
+        assert_occupancy_agrees_with_donor(&report);
+        let ds = report.gap_equivalence[0].donor_silence_fraction;
+        assert!(
+            ds.is_some_and(|f| f < 0.5),
+            "loud donor must score occupied, got {ds:?}"
+        );
+    }
 }
