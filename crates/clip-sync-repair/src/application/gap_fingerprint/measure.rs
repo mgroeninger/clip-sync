@@ -2147,7 +2147,8 @@ pub fn characterize_gaps_from_decode(
         progress.progress("fingerprint-gap", gn as u64 + 1, total_gaps);
         let i = fp.index;
         let gap = &report.gaps[i];
-        let Some(b_start) = gap.video_b_start_secs else {
+        // Guarded span: half-mapped / degenerate / negative B coords are not fingerprintable.
+        let Some((b_start, b_end)) = gap.mapped_b_span() else {
             continue;
         };
         let refined = refine_gap_frames(
@@ -2164,7 +2165,6 @@ pub fn characterize_gaps_from_decode(
             continue;
         }
         let gap_offset = b_start - gap.video_a_start_secs;
-        let b_end = gap.video_b_end_secs.unwrap_or(gap.video_a_end_secs);
         let lo = (((b_start - pad_lead).max(0.0) * rate) as usize).min(b_total);
         let hi = (((b_end + pad_tail) * rate).ceil() as usize).min(b_total);
         if hi <= lo {
@@ -2316,26 +2316,26 @@ pub fn characterize_gaps(
         .enumerate()
         .filter(|(i, _)| take_all || select.contains(i))
         .map(|(i, gap)| {
-            let has_b = gap.video_b_start_secs.is_some();
-            let gap_offset_secs = gap
-                .video_b_start_secs
-                .map(|b0| b0 - gap.video_a_start_secs)
+            // One guarded read of the mapped span: the reported offset and the extract window
+            // must come from the same validated coordinates (F10).
+            let mapped_b = gap.mapped_b_span();
+            let gap_offset_secs = mapped_b
+                .map(|(b0, _)| b0 - gap.video_a_start_secs)
                 .unwrap_or(0.0);
 
-            let (b_haystack, b_extract_start_secs) = if has_b {
-                let b_start = gap.video_b_start_secs.unwrap_or(gap.video_a_start_secs);
-                let b_end = gap.video_b_end_secs.unwrap_or(gap.video_a_end_secs);
-                let extract_start = (b_start - pad_lead).max(0.0);
-                let extract_end = b_end + pad_tail;
-                let lo = ((extract_start * rate) as usize).min(b_total);
-                let hi = ((extract_end * rate).ceil() as usize).min(b_total);
-                if hi > lo {
-                    (Some(&b_samples[lo * ch..hi * ch]), lo as f64 / rate)
-                } else {
-                    (None, 0.0)
+            let (b_haystack, b_extract_start_secs) = match mapped_b {
+                Some((b_start, b_end)) => {
+                    let extract_start = (b_start - pad_lead).max(0.0);
+                    let extract_end = b_end + pad_tail;
+                    let lo = ((extract_start * rate) as usize).min(b_total);
+                    let hi = ((extract_end * rate).ceil() as usize).min(b_total);
+                    if hi > lo {
+                        (Some(&b_samples[lo * ch..hi * ch]), lo as f64 / rate)
+                    } else {
+                        (None, 0.0)
+                    }
                 }
-            } else {
-                (None, 0.0)
+                None => (None, 0.0),
             };
 
             let inputs = GapInputs {

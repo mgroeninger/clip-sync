@@ -1,6 +1,8 @@
 # Silence-floor / fillability findings ledger
 
-**Opened:** 2026-07-29. **Status:** fixes landed 2026-07-29 (F1–F10/F12; F11 still open; R1–R4 review follow-ups).
+**Opened:** 2026-07-29. **Status:** fixes landed 2026-07-29 (F1–F10/F12 fixed; F11 still open,
+delegated to [TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md); R1–R4 review follow-ups).
+Remaining before archive: the two media re-runs (§5, R3) — neither is answerable from source.
 Regression tests added 2026-07-29: production-floor scan E2E + F7 agreement, scanner→occupancy/donor
 pipeline (digital silence + abs-floor dither), 6ch center-only mid-band occupancy.
 
@@ -226,9 +228,29 @@ noise-floor context), fall back to mapped `!b_has_energy` only. Decided classes
 (`RepairableDropout` / `AmbientQuiet`) never fall back to fillability.
 
 ### F10 — Degenerate and negative ranges
-**Severity: low. Status: PARTIAL.** Degenerate occupancy ranges `debug_assert` + fail-closed.
-Negative `b_start` is covered for occupancy via `b_range_fully_scanned`'s `start >= 0.0`
-(fail-closed / unmapped). Unguarded coords elsewhere may remain.
+**Severity: low. Status: FIXED 2026-07-29.** Occupancy was already covered by
+`b_range_fully_scanned` (degenerate `start < end` + negative `start >= 0.0`, fail-closed). The
+residue — "unguarded coords elsewhere" — was audited and closed by giving `Gap` one guarded
+accessor instead of per-call-site clamps:
+
+```rust
+pub fn mapped_b_span(&self) -> Option<(f64, f64)>   // domain/gap.rs
+```
+
+Same predicate shape as `b_range_fully_scanned` (both `Some`, `start < end`, `start >= 0.0`),
+minus the coverage limit. Two real defects it retires, both in the fingerprint path
+(`gap_fingerprint/measure.rs`):
+
+- **Mixed-timeline span.** `video_b_end_secs.unwrap_or(video_a_end_secs)` paired a B start with an
+  **A** end on a half-mapped gap, so the extract window silently spanned two timelines.
+- **Clamp/report disagreement.** `extract_start` was clamped with `.max(0.0)` while
+  `gap_offset_secs` was derived from the *unclamped* `b_start`, so a negative mapped start produced
+  an extract window and a reported offset that disagreed.
+
+`mutual_silence_intervals_from_gaps` (`cross_check.rs`) also moved from "has a B start" to "has a
+usable B span" — a deliberate tightening: half-mapped gaps no longer contribute cross-check
+intervals. Covered by four unit tests in `domain/gap.rs`, one of which pins the accessor against
+`b_range_fully_scanned` so the two predicates cannot drift.
 
 ### F11 — Recipe provenance missing from JSON
 **Severity: medium (reproducibility). Status: CONFIRMED by E3 + code read.**
@@ -236,8 +258,14 @@ Negative `b_start` is covered for occupancy via `b_range_fully_scanned`'s `start
 `min_gap_ms`, `silence_hold_ms`, and `absolute_silence_rms` do not appear in `--format json`. The
 human header prints them; the machine-readable output does not, which is backwards. E3 shows why
 it matters: the same pair produces different gap *composition* under different recipes, and the
-JSON cannot say which recipe produced it. Already parked —
-`archive/TEMP-gap-selection-sequencing-plan.md` §4, `BACKLOG.md` § Gap-selection parked debt.
+JSON cannot say which recipe produced it.
+
+**Delegated to [TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md)** (that plan's §1 "the visible
+one" is this finding; its `GapScanJson` checklist item closes it). That plan is **parked until a
+`PartialEq` consumer** exists (`--gaps-from`), so F11 does not land with it by default. If a script
+needs provenance sooner, take the thinner interim recorded in
+`archive/TEMP-gap-selection-sequencing-plan.md` §3: emit the three missing knobs as **flat** JSON
+fields without introducing `ScanRecipe`. Tracked in `BACKLOG.md` § Gap-selection parked debt.
 
 ### F12 — `SilentRun::core_*` doc comment overclaims
 **Severity: low (documentation). Status: FIXED 2026-07-29.** Comment now states hold can place
@@ -297,18 +325,23 @@ Kept so they are not re-proposed.
 
 ---
 
-## 4. Suggested order
+## 4. Order — EXECUTED 2026-07-29
 
-1. **F3 + F4 + F5** together — one units decision, then the display and the two tests that lock in
-   the wrong unit. Cheapest, and F3 is a live foot-gun for anyone who passes the flag as
-   documented.
-2. **F1** — the defect that produced the misleading output. Small, and the floor it needs already
-   exists in `cross_check.rs`.
-3. **F2** — largest blast radius (changes which gaps get repaired on real media), so it wants a
-   fixture and a re-run of the pair before and after.
-4. **F6** — operator-facing label split; removes the false alarm.
-5. **F7 / F8 / F11** — after F1 and F2 settle, since each depends on their outcome.
-6. **F9 / F10 / F12** — cleanup.
+Ran as planned; kept as the record of what shipped in which wave. Only F11 left the list (delegated,
+see above) and F10 shipped partial. Source re-verified against this ledger 2026-07-29 (444 crate
+unit tests green).
+
+1. ~~**F3 + F4 + F5**~~ — done. Units normalized at the CLI boundary (the documented 0–32767 scale
+   kept); header prints `rms floor 33 (at -60 dBFS)`; both tests that locked in the wrong unit
+   rebased.
+2. ~~**F1**~~ — done. Donor silence is `BlockLevel::silent || rms_db < gap_floor`.
+3. ~~**F2**~~ — done. A-gap RMS aggregates silent blocks only, so hold-bridged non-silent blocks can
+   no longer lift a −101 dB dropout to −52 dB.
+4. ~~**F6**~~ — done. `unfillable_label()` splits `both sides silent` from `unmapped`.
+5. ~~**F7 / F8**~~ — done (F7 caught R1 on its first outing). **F11** delegated to
+   [TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md).
+6. ~~**F9 / F10 / F12**~~ — done. F10 closed on a second pass via `Gap::mapped_b_span` after the
+   audit found two live instances in the fingerprint path.
 
 ## 5. Open question
 

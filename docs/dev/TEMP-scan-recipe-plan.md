@@ -115,13 +115,15 @@ produce **identical** gap lists, so they must compare **equal**. Therefore:
   equality, which is the one thing the `--gaps-from` loader must not do: it would reject a saved gap
   list as stale after a config edit that provably cannot change the list.
 
-**Do not over-apply that retraction.** The same summary helper has a *different*, live defect: the RMS
-floor branch formats `absolute_silence_rms` with `{:.0}`, and production feeds the normalized default
-(`33.0 / 32767.0` ≈ `0.001007`), which prints as `rms floor 0` on every scan. The covering test still
-constructs the old 0–32767 scale (`33.0`) and asserts `"rms floor 33"`. Making `absolute_silence_rms` a
-recipe member and echoing it in JSON forces the scale into the contract — fix the specifier and rebase
-the test in this PR (checklist). Fixing only the stale doc comment while leaving the wrong-scale green
-test is the worst of the three outcomes.
+**Do not over-apply that retraction — but the defect it shielded is now fixed elsewhere.** The same
+summary helper had a *different*, live defect: the RMS floor branch formatted the normalized
+`absolute_silence_rms` (`33.0 / 32767.0` ≈ `0.001007`) with `{:.0}`, printing `rms floor 0` on every
+production scan, with a covering test that constructed the old 0–32767 scale and asserted
+`"rms floor 33"`. That was diagnosed and fixed **2026-07-29** outside this plan as F3/F4/F5 of
+[TEMP-silence-floor-findings.md](TEMP-silence-floor-findings.md): the CLI now normalizes the
+documented 0–32767 input, and the header prints `rms floor 33 (at -60 dBFS)`. **Nothing is left for
+this plan to fix here** — the checklist step below is now a pure re-pointing of the reads at
+`recipe.*`. Kept as history because the retraction above made this defect easy to wave away twice.
 
 ### Carrier note (audited 2026-07-29)
 
@@ -156,11 +158,11 @@ Ordered — each step depends on the one above.
 - [ ] **New domain type** `ScanRecipe` (`domain/gap.rs` or a sibling): `min_gap_ms: u64`, `silence_hold_ms: u64`, `scan_block_ms: u64`, `silence_peak_fraction: f32`, `absolute_silence_rms: f32`; `PartialEq` that is **bitwise** and intended (§2). Types match `RepairConfig` (`config.rs:40,43,46,53,57`). `decode_chunk_secs` is **not** a member
 - [ ] **`ScanGapsRequest` (`application/scan_gaps.rs:24-46`): recipe becomes canonical.** Replace the four flats `min_gap_secs`, `scan_block_secs`, `silence_peak_fraction`, and `absolute_silence_rms` with `recipe: ScanRecipe`. **Do not** leave peak/rms as request flats beside the recipe — that is the dual-source-of-truth shape this is fixing. Derive `scan_block_secs` / `min_gap_secs` for `SilenceRunScanner` at the A-side and B-side construction sites (`scan_gaps.rs:154-165`, `:213-219`), not in the summary helper. **`silence_hold_blocks` stays** as its own field (what the scanner consumes). Build the recipe at `composition.rs:187-200` with `silence_hold_ms: silence_hold_blocks as u64 * scan_block_ms` — **never** `config.repair.silence_hold_ms`. Whole-ms narrowing is intentional (§2)
 - [ ] **Update the 10 `ScanGapsRequest` literal sites** — production `composition.rs:187`; test helpers `scan_gaps.rs:731` (`scan_request`), `query_reference_integration.rs:110` (`scan_request`), `gap_corpus_fixtures.rs:697`; direct literals `scan_gaps.rs:1114` (the `format_scan_summary` test), `patch_audio_integration.rs:1222`, `scan_gaps_integration.rs:82,143,205`, `energy_signature_production.rs:222`. Four route through a helper, so the effective edit count is smaller than the site count. Mechanical: four flats collapse into one `recipe:` initializer (hold_ms from blocks × block_ms)
-- [ ] **`format_scan_summary` — hold is fine; RMS floor rendering is not (§3).** Re-point hold / block / min-gap / peak reads at `recipe.*` (same numbers by construction). **Fix** the RMS floor branch: stop using `{:.0}` on a normalized `f32`; rebase `format_scan_summary_includes_thresholds_and_count` (`scan_gaps.rs:1111-1137`) onto a normalized value (default `33.0 / 32767.0` or an explicit fixture) and assert the new printed form. Drop the stale "0–32767 scale" wording on the old request field while the field moves into the recipe
+- [ ] **`format_scan_summary` — re-point only; both renderings are already correct (§3).** Point the hold / block / min-gap / peak / rms-floor reads at `recipe.*` (same numbers by construction). The hold rendering was never a bug, and the RMS floor branch was fixed under F3/F4 — it now prints `rms floor {i16-scale} (at {dBFS})`, covered by `format_scan_summary_includes_thresholds_and_count`. Do **not** re-open either; assert the existing printed form still holds after the re-point
 - [ ] **`GapReport`: `recipe: ScanRecipe`**, replacing the flat `scan_block_ms` / `silence_peak_fraction` and sourced from the request that produced it. ~15 full literals to update; the ~12 spread-update sites (`..report` / `..make_report(...)`) inherit it; read sites re-point to `report.recipe.*` (including `measure.rs`, `patch_audio/mod.rs`, `cli/output.rs`, and `w5_anchor_rescue_diag.rs`)
 - [ ] Delete the back-fill: `complete_recipe` (`composition.rs:130-136`) and the two hardcoded `None`s + the "the bin path overwrites the rest from config" comment in `from_report` (`schema.rs:91-100`). `CorpusScanRecipe` is now populated from `report.recipe`
 - [ ] `CorpusScanRecipe`: add the missing fifth knob `silence_hold_ms: Option<u64>` (same `skip_serializing_if` / `default` treatment as its siblings). **Options stay** — backward compat for corpora written before each field existed; new dumps fill all five. Confirmed no golden churn: curated fixtures are *deserialized* (`tests/gap_cell_fixtures.rs:28`), never byte-compared against a fresh dump, so absent fields keep defaulting
-- [ ] `GapScanJson` (`cli/output.rs:680-699`): emit all five **flat**, reading `report.recipe.*` in `from_parts`. No nesting in the JSON contract — the change stays purely additive per [json-output.md](../json-output.md)`:5`
+- [ ] `GapScanJson` (`infrastructure/cli/output.rs:688-703`): emit all five **flat**, reading `report.recipe.*` in `from_parts`. No nesting in the JSON contract — the change stays purely additive per [json-output.md](../json-output.md)`:5`
 - [ ] Golden JSON re-baseline: `tests/fixtures/full_surface_repair.json` only (the 13 curated corpus JSONs match on `scan_recipe`, a different struct) + [json-output.md](../json-output.md) field contract and additive-revision list at `:3`, documenting `silence_hold_ms` as the **effective** hold and `absolute_silence_rms` as **normalized** (`f32`, default ≈ `0.001007`, not the legacy 0–32767 display scale)
 - [ ] Sanity: values round-trip from the scan request that produced the report, not from a re-read of config
 - [ ] **Not in scope:** `limit_fill_to_mapped_region` is a *fill* policy living on a scan report (wrong home), and `GapReport` gets no `Default` — zero scan params are a meaningless report, and the spread-update sites make one unnecessary. Both recorded so they are not rediscovered as bugs

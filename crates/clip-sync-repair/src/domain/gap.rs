@@ -41,6 +41,21 @@ impl Gap {
         self.video_b_start_secs.is_some() && self.b_has_energy
     }
 
+    /// The gap's mapped B span, or `None` when it is absent, degenerate, or negative.
+    ///
+    /// The single guarded way to read B coordinates off a gap. Rejects the same shapes
+    /// [`b_range_fully_scanned`](crate::domain::cross_check::b_range_fully_scanned) rejects —
+    /// the two predicates must not drift. In particular a half-mapped gap (start but no end)
+    /// is `None` rather than a start on B's timeline paired with an end on A's, and a negative
+    /// mapped start is `None` rather than something a caller clamps in one expression and
+    /// reports unclamped in the next.
+    pub fn mapped_b_span(&self) -> Option<(f64, f64)> {
+        match (self.video_b_start_secs, self.video_b_end_secs) {
+            (Some(start), Some(end)) if start < end && start >= 0.0 => Some((start, end)),
+            _ => None,
+        }
+    }
+
     /// Operator-facing reason when [`is_fillable`](Self::is_fillable) is false.
     pub fn unfillable_label(&self) -> &'static str {
         if self.video_b_start_secs.is_some() {
@@ -160,5 +175,71 @@ impl GapReport {
             return false;
         }
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn gap_with_b(start: Option<f64>, end: Option<f64>) -> Gap {
+        Gap {
+            video_a_start_secs: 10.0,
+            video_a_end_secs: 20.0,
+            video_b_start_secs: start,
+            video_b_end_secs: end,
+            b_has_energy: true,
+        }
+    }
+
+    #[test]
+    fn mapped_b_span_accepts_a_well_formed_span() {
+        assert_eq!(
+            gap_with_b(Some(3.0), Some(13.0)).mapped_b_span(),
+            Some((3.0, 13.0))
+        );
+        assert_eq!(
+            gap_with_b(Some(0.0), Some(1.0)).mapped_b_span(),
+            Some((0.0, 1.0))
+        );
+    }
+
+    #[test]
+    fn mapped_b_span_rejects_half_mapped_rather_than_mixing_timelines() {
+        // The F10 shape: a B start with no B end previously fell back to the *A* end.
+        assert_eq!(gap_with_b(Some(3.0), None).mapped_b_span(), None);
+        assert_eq!(gap_with_b(None, Some(13.0)).mapped_b_span(), None);
+        assert_eq!(gap_with_b(None, None).mapped_b_span(), None);
+    }
+
+    #[test]
+    fn mapped_b_span_rejects_negative_and_degenerate_spans() {
+        // A negative mapped start is rejected outright, not clamped in one expression and
+        // reported unclamped in the next.
+        assert_eq!(gap_with_b(Some(-0.5), Some(9.5)).mapped_b_span(), None);
+        assert_eq!(gap_with_b(Some(3.0), Some(3.0)).mapped_b_span(), None);
+        assert_eq!(gap_with_b(Some(13.0), Some(3.0)).mapped_b_span(), None);
+    }
+
+    #[test]
+    fn mapped_b_span_matches_b_range_fully_scanned_on_shape() {
+        // Same predicate shape, different job: this one has no coverage limit. Any span
+        // `mapped_b_span` accepts must be shape-acceptable to the coverage check too.
+        for (start, end) in [(3.0, 13.0), (0.0, 1.0)] {
+            assert!(gap_with_b(Some(start), Some(end)).mapped_b_span().is_some());
+            assert!(crate::domain::cross_check::b_range_fully_scanned(
+                start,
+                end,
+                Some(end)
+            ));
+        }
+        for (start, end) in [(-0.5, 9.5), (3.0, 3.0), (13.0, 3.0)] {
+            assert!(gap_with_b(Some(start), Some(end)).mapped_b_span().is_none());
+            assert!(!crate::domain::cross_check::b_range_fully_scanned(
+                start,
+                end,
+                Some(end.max(start))
+            ));
+        }
     }
 }

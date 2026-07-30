@@ -21,7 +21,9 @@ silence_peak_fraction = 0.01
 scan_block_ms = 250
 decode_chunk_secs = 10
 silence_hold_ms = 500
-absolute_silence_rms = 33.0
+# Normalized amplitude in [0, 1) — the TOML contract. 33/32767, i.e. the CLI's
+# --absolute-silence-rms 33 on the 0-32767 operator scale.
+absolute_silence_rms = 0.001007
 scan_both = true
 gap_offset_tolerance_secs = 0.5
 min_fill_correlation = 0.35

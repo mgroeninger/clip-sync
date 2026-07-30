@@ -31,6 +31,8 @@ fn repair_fixture_deserializes_and_validates() {
     assert_eq!(config.repair.min_gap_ms, 1000);
     assert_eq!(config.repair.silence_peak_fraction, 0.01);
     assert_eq!(config.repair.scan_block_ms, 250);
+    // TOML takes the normalized amplitude, not the CLI's 0-32767 operator scale (F3).
+    assert!((config.repair.absolute_silence_rms - 0.001007).abs() < 1e-9);
     assert_eq!(config.repair.decode_chunk_secs, 10);
     assert_eq!(config.repair.min_fill_correlation, 0.35);
     assert_eq!(config.repair.crossfade_ms, 10);

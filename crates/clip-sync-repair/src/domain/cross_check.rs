@@ -94,7 +94,8 @@ pub fn mutual_silence_intervals_from_gaps(
     gaps.iter()
         .zip(gap_equivalence.iter())
         .filter(|(gap, eq)| {
-            if gap.video_b_start_secs.is_none() {
+            // "Mapped" means a usable B span, not just a present start (F10).
+            if gap.mapped_b_span().is_none() {
                 return false;
             }
             match eq.class {
