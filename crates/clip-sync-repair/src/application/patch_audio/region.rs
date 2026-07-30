@@ -2439,6 +2439,8 @@ mod tests {
             scan_block_ms: 20,
             silence_peak_fraction: 0.05,
             limit_fill_to_mapped_region: false,
+            b_scanned_end_secs: None,
+            b_scan_truncated: false,
             audio_timeline_skew: None,
         };
         let repair = RepairConfig {
@@ -2609,6 +2611,8 @@ mod tests {
             scan_block_ms: 250,
             silence_peak_fraction: 0.01,
             limit_fill_to_mapped_region: true,
+            b_scanned_end_secs: None,
+            b_scan_truncated: false,
             audio_timeline_skew: None,
         };
         let repair = crate::infrastructure::config::RepairConfig {

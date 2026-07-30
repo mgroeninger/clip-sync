@@ -39,10 +39,10 @@ Survive archival of that meta doc. Not required for `--only-gaps` / `--skip-gaps
 
 | Item | Direction |
 |------|-----------|
-| `format_scan_summary` RMS floor `{:.0}` prints `0` for normalized ≈ `0.001` | Real display bug; one-line fix + rebase the covering test off the old 0–32767 scale; tiny PR |
 | JSON missing `min_gap_ms` / `silence_hold_ms` / `absolute_silence_rms` | Provenance; lands with parked [TEMP-scan-recipe-plan.md](docs/dev/TEMP-scan-recipe-plan.md) or a flat-echo interim |
 | Corpus `from_report` hardcodes `None` + `complete_recipe` back-fill | Deleted when recipe is unparked |
 | `limit_fill_to_mapped_region` on scan report | Wrong home; recipe plan explicitly out of scope — separate cleanup if ever moved |
+| Absolute B occupancy via `BlockLevel.silent` (not aggregate RMS) | Optional; `silent` is now retained for equivalence (F2). Fillability still uses aggregate `rms_db` vs abs floor — switch if multichannel false-unfillable shows up. |
 
 ### Dual-fit confidence axis
 

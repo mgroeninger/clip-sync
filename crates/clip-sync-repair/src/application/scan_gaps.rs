@@ -12,12 +12,12 @@ use crate::application::align_bridge::{
 use crate::application::error::RepairError;
 use crate::application::ports::Aligner;
 use crate::domain::cross_check::{
-    b_has_energy_in_range, check_gap_offset_agreement_in_overlap,
+    b_has_energy_from_levels, b_range_fully_scanned, check_gap_offset_agreement_in_overlap,
     mutual_silence_intervals_from_gaps, SilenceInterval,
 };
 use crate::domain::diagnostics::TIME_EPS_SECS;
 use crate::domain::gap::{Gap, GapReport};
-use crate::domain::gap_fill::format_scan_fillable_followup;
+use crate::domain::gap_fill::{format_b_scan_truncation_note, format_scan_fillable_followup};
 use crate::domain::policies;
 use crate::domain::track_match::{assess_track_compatibility, TrackDescriptor};
 
@@ -72,9 +72,22 @@ pub(crate) fn format_scan_summary(request: &ScanGapsRequest, gap_count: usize) -
         request.decode_chunk_secs,
     );
     if request.absolute_silence_rms > 0.0 {
-        line.push_str(&format!(", rms floor {:.0}", request.absolute_silence_rms));
+        let i16_units = request.absolute_silence_rms * 32767.0;
+        let db = 20.0 * f64::from(request.absolute_silence_rms).log10();
+        line.push_str(&format!(
+            ", rms floor {:.0} (at {db:.0} dBFS)",
+            i16_units.round()
+        ));
     }
     line
+}
+
+/// Result of the sequential B silence/level scan (report-only safe on mid-file decode errors).
+struct BSilenceScan {
+    intervals: Vec<SilenceInterval>,
+    levels: Vec<policies::BlockLevel>,
+    scanned_end_secs: Option<f64>,
+    truncated: bool,
 }
 
 pub struct ScanGaps<'r, MR: MediaReader> {
@@ -204,23 +217,27 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         // Step 5: scan B's native timeline sequentially to build its silence map.
         // Used for both per-gap energy lookup (replaces per-gap seeks) and the cross-check.
         // Only meaningful when we have a B session and an alignment offset.
-        let (b_intervals, b_levels): (Vec<SilenceInterval>, Vec<policies::BlockLevel>) =
-            match (&mut b_session, offset_secs) {
-                (Some((session_b, track_b)), Some(_)) => self.scan_silence_intervals(
-                    session_b,
-                    track_b,
-                    decode_chunk_secs,
-                    policies::SilenceRunScanner::new(
-                        request.scan_block_secs,
-                        request.silence_peak_fraction,
-                        request.min_gap_secs,
-                        silence_hold_blocks,
-                        absolute_silence_rms,
-                    )
-                    .retain_block_levels(),
-                ),
-                _ => (vec![], vec![]),
-            };
+        let b_scan = match (&mut b_session, offset_secs) {
+            (Some((session_b, track_b)), Some(_)) => self.scan_silence_intervals(
+                session_b,
+                track_b,
+                decode_chunk_secs,
+                policies::SilenceRunScanner::new(
+                    request.scan_block_secs,
+                    request.silence_peak_fraction,
+                    request.min_gap_secs,
+                    silence_hold_blocks,
+                    absolute_silence_rms,
+                )
+                .retain_block_levels(),
+            ),
+            _ => BSilenceScan {
+                intervals: vec![],
+                levels: vec![],
+                scanned_end_secs: None,
+                truncated: false,
+            },
+        };
 
         let (a_runs, a_levels) = scanner_a.finish_with_levels();
         // Gap-equivalence (advisory; `docs/dev/gap-vocabulary.md` § Silence-character pre-gate) is built
@@ -234,7 +251,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             enabled: true,
             ..Default::default()
         };
-        let b_levels_for_eq = (!b_levels.is_empty()).then_some(b_levels.as_slice());
+        let b_levels_for_eq = (!b_scan.levels.is_empty()).then_some(b_scan.levels.as_slice());
         let mut gaps = Vec::with_capacity(a_runs.len());
         let mut gap_equivalence = Vec::with_capacity(a_runs.len());
         for run in a_runs {
@@ -242,9 +259,15 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             let end = run.end_secs;
             let b_positions = offset_secs.map(|delta| (pos + delta, end + delta));
 
-            let b_has_energy = match b_positions {
-                Some((b_start, b_end)) if b_start >= 0.0 => {
-                    b_has_energy_in_range(&b_intervals, b_start, b_end)
+            // Absolute occupancy from B's per-block levels over the mapped *core* (same window
+            // equivalence uses) — not hold-bridged silence-run coverage, which can span real audio.
+            // Fail-closed when the mapped core is not fully inside the reviewed B scan prefix.
+            let b_has_energy = match (offset_secs, b_levels_for_eq) {
+                (Some(delta), Some(levels)) => {
+                    let b_start = run.core_start_secs + delta;
+                    let b_end = run.core_end_secs + delta;
+                    b_range_fully_scanned(b_start, b_end, b_scan.scanned_end_secs)
+                        && b_has_energy_from_levels(levels, b_start, b_end)
                 }
                 _ => false,
             };
@@ -259,25 +282,51 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
 
             let b_mapped = offset_secs
                 .map(|delta| (run.core_start_secs + delta, run.core_end_secs + delta))
-                .filter(|_| b_levels_for_eq.is_some());
-            gap_equivalence.push(crate::domain::gap_equivalence::derive_gap_equivalence(
+                .filter(|&(b_start, b_end)| {
+                    b_levels_for_eq.is_some()
+                        && b_range_fully_scanned(b_start, b_end, b_scan.scanned_end_secs)
+                });
+            let verdict = crate::domain::gap_equivalence::derive_gap_equivalence(
                 &a_levels,
                 run.core_start_secs,
                 run.core_end_secs,
                 b_levels_for_eq,
                 b_mapped,
                 &equivalence_params,
-            ));
+            );
+            // F7: after F1 the two B-silent signals must agree when both are present.
+            // Does not reorder NotFillable vs equivalence — only surfaces inconsistency.
+            let occupancy_agrees =
+                crate::domain::gap_equivalence::occupancy_agrees_with_donor_silence(
+                    b_has_energy,
+                    verdict.donor_silence_fraction,
+                    equivalence_params.donor_silence_thresh,
+                );
+            debug_assert!(
+                occupancy_agrees,
+                "occupancy/donor disagreement at A {pos:.3}–{end:.3}: b_has_energy={b_has_energy} donor_silence={:?}",
+                verdict.donor_silence_fraction
+            );
+            if !occupancy_agrees {
+                tracing::warn!(
+                    a_start = pos,
+                    a_end = end,
+                    b_has_energy,
+                    donor_silence_fraction = ?verdict.donor_silence_fraction,
+                    "absolute occupancy says B silent but donor_silence_fraction is below thresh"
+                );
+            }
+            gap_equivalence.push(verdict);
         }
 
         // Step 6: mutual-silence cross-check — only meaningful when alignment produced an offset.
-        // Use co-occurring quiet on both timelines; exclude A-only dropouts (b_has_energy).
-        let a_intervals = mutual_silence_intervals_from_gaps(&gaps);
+        // SharedSilence (donor metric), not !b_has_energy — keep fillability out of offset agreement.
+        let a_intervals = mutual_silence_intervals_from_gaps(&gaps, &gap_equivalence);
         let gap_offset_agreement = if request.scan_both {
             alignment_detail.recommended_offset_secs.and_then(|offset| {
                 check_gap_offset_agreement_in_overlap(
                     &a_intervals,
-                    &b_intervals,
+                    &b_scan.intervals,
                     alignment_detail
                         .start_overlap
                         .as_ref()
@@ -299,6 +348,10 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
 
         let gap_count = gaps.len();
         progress.phase(&format_scan_summary(&request, gap_count));
+        if let Some(line) = format_b_scan_truncation_note(b_scan.truncated, b_scan.scanned_end_secs)
+        {
+            progress.phase(&line);
+        }
 
         let report = GapReport {
             video_a: request.video_a,
@@ -312,6 +365,8 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             scan_block_ms: (request.scan_block_secs * 1000.0).round() as u64,
             silence_peak_fraction: request.silence_peak_fraction,
             limit_fill_to_mapped_region: request.limit_fill_to_mapped_region,
+            b_scanned_end_secs: b_scan.scanned_end_secs,
+            b_scan_truncated: b_scan.truncated,
             audio_timeline_skew: audio_timeline_skew.map(audio_timeline_skew_from_clip_sync),
         };
         if let Some(line) = format_scan_fillable_followup(&report) {
@@ -327,14 +382,15 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
     /// Sequential sample-bucket silence scan on a session's native timeline.
     ///
     /// The caller supplies a configured [`policies::SilenceRunScanner`]; this method only
-    /// drives it over the session's decoded buckets.
+    /// drives it over the session's decoded buckets. Mid-file decode/seek errors are report-only
+    /// safe: return what was scanned and mark truncation with [`BSilenceScan::scanned_end_secs`].
     fn scan_silence_intervals(
         &self,
         session: &mut MR::Session,
         track: &AudioTrack,
         decode_chunk_secs: f64,
         mut scanner: policies::SilenceRunScanner,
-    ) -> (Vec<SilenceInterval>, Vec<policies::BlockLevel>) {
+    ) -> BSilenceScan {
         let progress = self.progress;
         let mut last_fed_end_secs: Option<f64> = None;
 
@@ -349,21 +405,56 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             Ok(())
         };
 
-        // A decode error still returns whatever was scanned so far (report-only safe); either way we
-        // return the runs plus the retained per-block level timeline (empty unless the scanner retains it).
         let mut b_timeline_skew = None;
-        if let Err(err) = session.scan_interleaved_buckets(
-            track,
-            decode_chunk_secs,
-            progress,
-            "scan-b",
-            &mut on_bucket,
-            &mut b_timeline_skew,
-        ) {
-            tracing::warn!(
-                error = %err,
-                "B-side silence scan failed mid-file; later gaps may report b_has_energy=false"
-            );
+        let scan_err = session
+            .scan_interleaved_buckets(
+                track,
+                decode_chunk_secs,
+                progress,
+                "scan-b",
+                &mut on_bucket,
+                &mut b_timeline_skew,
+            )
+            .err();
+
+        // Truncation is a hard scan error. A walk that ends >2s before declared duration may be
+        // container over-report (common) or a soft early stop — warn, but do not set
+        // `b_scan_truncated` from that alone: occupancy fail-closes on `scanned_end_secs`
+        // (last PCM fed), not the truncated flag.
+        const NEAR_END_TOLERANCE_SECS: f64 = 2.0;
+        let declared_end_secs = track.duration.map(|d| d.as_secs_f64());
+        let incomplete_prefix = match (last_fed_end_secs, declared_end_secs) {
+            (Some(end), Some(total)) => end + NEAR_END_TOLERANCE_SECS < total,
+            (None, Some(_)) => true,
+            _ => false,
+        };
+        let truncated = scan_err.is_some();
+
+        if truncated {
+            match (scan_err.as_ref(), last_fed_end_secs) {
+                (Some(err), Some(t)) => tracing::warn!(
+                    error = %err,
+                    b_scanned_end_secs = t,
+                    "B-side silence scan truncated mid-file; gaps mapping past that point are unfillable (not reviewed)"
+                ),
+                (Some(err), None) => tracing::warn!(
+                    error = %err,
+                    "B-side silence scan failed before any audio; donor occupancy not reviewed"
+                ),
+                (None, _) => {}
+            }
+        } else if incomplete_prefix {
+            match last_fed_end_secs {
+                Some(t) => tracing::warn!(
+                    b_scanned_end_secs = t,
+                    declared_end_secs = ?declared_end_secs,
+                    "B-side silence scan ended >2s before declared duration (container over-report or soft EOF); occupancy still uses scanned_end only"
+                ),
+                None => tracing::warn!(
+                    declared_end_secs = ?declared_end_secs,
+                    "B-side silence scan produced no audio before declared duration ended"
+                ),
+            }
         }
 
         let (runs, levels) = scanner.finish_with_levels();
@@ -374,7 +465,12 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
                 end_secs: run.end_secs,
             })
             .collect();
-        (intervals, levels)
+        BSilenceScan {
+            intervals,
+            levels,
+            scanned_end_secs: last_fed_end_secs,
+            truncated,
+        }
     }
 
     /// Open `path` and select its best decodable track. Returns `None` (never an error) when the
@@ -957,6 +1053,8 @@ mod tests {
             scan_block_ms: 250,
             silence_peak_fraction: 0.01,
             limit_fill_to_mapped_region: true,
+            b_scanned_end_secs: None,
+            b_scan_truncated: false,
             audio_timeline_skew: None,
         };
 
@@ -1077,10 +1175,67 @@ mod tests {
             .expect("tail seek on B should not fail the scan");
 
         assert!(report.gaps.is_empty());
+        assert!(report.b_scan_truncated);
+        // Chunk [60,120) starts before fail_from=118 so it feeds; [120,125) SeekFailed
+        // propagates (not within near-end soft-EOF tolerance of 2s) → scanned end ≈ 120s.
+        assert!(
+            report
+                .b_scanned_end_secs
+                .is_some_and(|t| (t - 120.0).abs() < 0.01),
+            "expected scanned end ≈ 120s after mid-tail seek abort; got {:?}",
+            report.b_scanned_end_secs
+        );
     }
 
     #[test]
-    fn scan_continues_past_midfile_extract_failure() {
+    fn truncated_b_scan_fail_closes_gaps_past_scanned_end() {
+        // A fully silent → one long gap. B is loud but seek-fails from 20s; without fail-closed
+        // levels in [0,20) would still report b_has_energy for a core spanning to 60s.
+        let dur = Duration::from_secs(60);
+        let reader = FixedReader::new()
+            .with("a.wav", SessionKind::Silent, dur)
+            .with(
+                "b.wav",
+                SessionKind::TailSeekFail {
+                    fail_from_secs: 20.0,
+                },
+                dur,
+            );
+        let progress = FakeProgressReporter;
+        let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
+
+        let mut request = scan_request("a.wav", "b.wav", 10);
+        request.scan_both = true;
+
+        let report = scan
+            .scan_after_alignment(request, aligned_result(Some(0.0)))
+            .expect("truncated B scan must not abort the report");
+
+        assert_eq!(report.gaps.len(), 1);
+        assert!(report.b_scan_truncated);
+        assert!(
+            report
+                .b_scanned_end_secs
+                .is_some_and(|t| (t - 20.0).abs() < 0.01),
+            "expected scanned end ≈ 20s, got {:?}",
+            report.b_scanned_end_secs
+        );
+        assert!(
+            !report.gaps[0].b_has_energy,
+            "mapped core past scanned end must be unfillable (not reviewed)"
+        );
+        assert!(
+            format_b_scan_truncation_note(report.b_scan_truncated, report.b_scanned_end_secs)
+                .expect("note")
+                .contains("truncated at 20.000s")
+        );
+    }
+
+    #[test]
+    fn scan_a_propagates_midfile_extract_failure() {
+        // Seek-loop fallback (test fakes) now propagates mid-file DecodeFailed instead of
+        // skipping the bucket. Symphonia's production sequential scan still skips individual
+        // corrupt packets with its own consecutive-error limit.
         let dur = Duration::from_secs(180);
         let reader = FixedReader::new()
             .with(
@@ -1095,17 +1250,15 @@ mod tests {
         let progress = FakeProgressReporter;
         let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
 
-        let report = scan
+        let err = scan
             .scan_after_alignment(
                 scan_request("a.wav", "b.wav", 60),
                 aligned_result(Some(0.0)),
             )
-            .expect("scan should succeed");
-
-        assert_eq!(
-            report.gaps.len(),
-            2,
-            "expected gaps in [0,60) and [120,180); mid-file failure must not truncate scan"
+            .expect_err("A mid-file decode failure must fail the scan");
+        assert!(
+            matches!(err, RepairError::Media(_)),
+            "expected Media error, got {err:?}"
         );
     }
 
@@ -1118,7 +1271,7 @@ mod tests {
             decode_chunk_secs: 10,
             scan_block_secs: 0.25,
             silence_peak_fraction: 0.01,
-            absolute_silence_rms: 33.0,
+            absolute_silence_rms: 33.0 / 32767.0,
             silence_hold_blocks: 2,
             min_gap_secs: 1.0,
             scan_both: true,
@@ -1133,6 +1286,9 @@ mod tests {
         assert!(line.contains("hold 500ms"));
         assert!(line.contains("decode 10s"));
         assert!(line.contains("scan-both on"));
-        assert!(line.contains("rms floor 33"));
+        assert!(
+            line.contains("rms floor 33 (at -60 dBFS)"),
+            "header must show i16-scale floor + dBFS, got {line}"
+        );
     }
 }

@@ -35,7 +35,9 @@ pub fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
         config.repair.silence_hold_ms = ms;
     }
     if let Some(rms) = args.absolute_silence_rms {
-        config.repair.absolute_silence_rms = rms;
+        // CLI documents 0–32767 i16 units; config stores normalized amplitude.
+        config.repair.absolute_silence_rms =
+            crate::infrastructure::config::normalize_absolute_silence_rms_i16(rms);
     }
     if args.scan_both {
         config.repair.scan_both = true;
@@ -367,7 +369,11 @@ mod cli_override_tests {
         let mut config = RepairAppConfig::default();
         apply_cli_overrides(&mut config, &args);
         assert_eq!(config.repair.silence_hold_ms, 400);
-        assert!((config.repair.absolute_silence_rms - 25.0).abs() < f32::EPSILON);
+        assert!(
+            (config.repair.absolute_silence_rms - (25.0 / 32767.0)).abs() < 1e-9,
+            "CLI 0–32767 units must normalize; got {}",
+            config.repair.absolute_silence_rms
+        );
         assert!((config.repair.min_fill_correlation - 0.45).abs() < f32::EPSILON);
         assert!((config.repair.max_fill_align_adjustment_secs - 0.25).abs() < f64::EPSILON);
         assert!((config.repair.fill_border_search_secs - 5.0).abs() < f64::EPSILON);

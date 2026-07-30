@@ -127,6 +127,14 @@ fn format_human(
         out.push_str("Tracks:    video B unavailable — compatibility not assessed\n");
     }
 
+    if let Some(line) = crate::domain::gap_fill::format_b_scan_truncation_note(
+        report.b_scan_truncated,
+        report.b_scanned_end_secs,
+    ) {
+        out.push_str(&line);
+        out.push('\n');
+    }
+
     if !query_mode {
         if let Some(overlap) = &align.start_overlap {
             out.push_str(&format!(
@@ -586,7 +594,7 @@ fn format_unified_gap_status(
             format!("skipped: {}", format_gap_patch_skip_reason(reason))
         }
         GapPatchStatus::NotPlanned { reason } => match reason {
-            GapFillSkipReason::NotFillable => "unfillable".into(),
+            GapFillSkipReason::NotFillable => gap.unfillable_label().into(),
             GapFillSkipReason::OutsideReferenceCoverage => "skipped (outside clip coverage)".into(),
             other => format!("not planned: {}", format_fill_skip_reason(other)),
         },
@@ -600,7 +608,7 @@ fn format_unified_gap_status(
 
 fn gap_scan_status_label(gap: &crate::domain::Gap, report: &GapReport) -> &'static str {
     if !gap.is_fillable() {
-        return "unfillable";
+        return gap.unfillable_label();
     }
     if report.limit_fill_to_mapped_region && report.gap_outside_reference_coverage(gap) {
         return "outside clip coverage";
@@ -694,6 +702,12 @@ struct GapScanJson {
     scan_block_ms: u64,
     silence_peak_fraction: f32,
     limit_fill_to_mapped_region: bool,
+    /// How far the B silence/level scan progressed; omitted when B was not scanned.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    b_scanned_end_secs: Option<f64>,
+    /// Present only when the B walk aborted mid-file.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    b_scan_truncated: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     audio_timeline_skew: Option<clip_sync::AudioTimelineSkew>,
 }
@@ -713,6 +727,8 @@ impl GapScanJson {
             scan_block_ms: report.scan_block_ms,
             silence_peak_fraction: report.silence_peak_fraction,
             limit_fill_to_mapped_region: report.limit_fill_to_mapped_region,
+            b_scanned_end_secs: report.b_scanned_end_secs,
+            b_scan_truncated: report.b_scan_truncated,
             audio_timeline_skew: report.audio_timeline_skew.map(|skew| {
                 clip_sync::AudioTimelineSkew {
                     pts_secs: skew.pts_secs,
@@ -848,7 +864,7 @@ pub fn format_patch_summary(summary: &PatchSummary) -> String {
 
 fn format_fill_skip_reason(reason: &GapFillSkipReason) -> &'static str {
     match reason {
-        GapFillSkipReason::NotFillable => "no B energy or alignment offset missing",
+        GapFillSkipReason::NotFillable => "both sides silent or unmapped",
         GapFillSkipReason::TrackLayoutMismatch => "track layout mismatch",
         GapFillSkipReason::TrackCompatibilityUnavailable => "track compatibility unavailable",
         GapFillSkipReason::OutsideReferenceCoverage => "outside clip coverage",
@@ -1016,6 +1032,8 @@ mod tests {
             scan_block_ms: 250,
             silence_peak_fraction: 0.01,
             limit_fill_to_mapped_region: true,
+            b_scanned_end_secs: None,
+            b_scan_truncated: false,
             audio_timeline_skew: None,
         }
     }
@@ -1129,6 +1147,8 @@ mod tests {
             scan_block_ms: 250,
             silence_peak_fraction: 0.01,
             limit_fill_to_mapped_region: true,
+            b_scanned_end_secs: None,
+            b_scan_truncated: false,
             audio_timeline_skew: None,
         }
     }
@@ -1312,7 +1332,7 @@ mod tests {
         assert!(text.contains("1 patched, 1 skipped, 1 not planned"));
         assert!(text.contains("struct pre=0.92"));
         assert!(text.contains("skipped: boundary correlation below threshold"));
-        assert!(text.contains("not planned: no B energy or alignment offset missing"));
+        assert!(text.contains("not planned: both sides silent or unmapped"));
     }
 
     fn failed_alignment_report() -> (GapReport, AlignmentResult) {
@@ -1361,6 +1381,8 @@ mod tests {
             scan_block_ms: 250,
             silence_peak_fraction: 0.01,
             limit_fill_to_mapped_region: true,
+            b_scanned_end_secs: None,
+            b_scan_truncated: false,
             audio_timeline_skew: None,
         };
         (report, alignment_detail)
@@ -1457,7 +1479,7 @@ mod tests {
             text.contains("B timeline mapping skipped"),
             "expected B mapping skipped note in human output"
         );
-        assert!(text.contains("unfillable"));
+        assert!(text.contains("unmapped"));
     }
 
     #[test]
@@ -1518,7 +1540,7 @@ mod tests {
         assert!(text.contains("0 repairable"));
         assert!(text.contains("fill blocked by track layout"));
         assert!(text.contains("blocked (track layout)"));
-        assert!(text.contains("unfillable"));
+        assert!(text.contains("unmapped"));
     }
 
     #[test]

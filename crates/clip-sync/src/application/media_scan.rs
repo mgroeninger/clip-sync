@@ -7,10 +7,11 @@
 //! **These fallbacks** terminate on **declared** container duration (`while pos < total_secs`).
 //! [`DecodeFailed`](crate::application::error::MediaError::DecodeFailed) /
 //! [`SeekFailed`](crate::application::error::MediaError::SeekFailed) within
-//! [`NEAR_TRACK_END_TOLERANCE_SECS`] of the end are swallowed (early `Ok` break); the same
-//! errors earlier in the file are skipped (bucket omitted, scan continues). Other errors
-//! propagate. Over-reporting duration beyond the tolerance fails loudly — acceptable for
-//! fallback paths whose only callers are test fakes today.
+//! [`NEAR_TRACK_END_TOLERANCE_SECS`] of the end are swallowed (early `Ok` break — soft EOF when
+//! the container over-reports duration). The same errors **earlier in the file propagate** so
+//! callers (e.g. repair's B scan truncation reporting) see a hard stop rather than silent holes.
+//! Other errors always propagate. Over-reporting duration beyond the tolerance fails loudly —
+//! acceptable for fallback paths whose primary callers are test fakes today.
 
 use std::time::Duration;
 
@@ -19,8 +20,28 @@ use crate::application::ports::{MediaSession, ProgressReporter};
 use crate::domain::{AudioTrack, ClipLabel, ClipWindow, InterleavedScanBucket, MonoScanBucket};
 
 /// Within this many seconds of declared track end, seek/decode failures terminate the
-/// fallback scan loop with `Ok(())` instead of propagating or skipping a bucket.
+/// fallback scan loop with `Ok(())` (soft EOF) instead of propagating.
 pub const NEAR_TRACK_END_TOLERANCE_SECS: f64 = 2.0;
+
+fn near_track_end(pos: f64, total_secs: f64) -> bool {
+    pos >= total_secs - NEAR_TRACK_END_TOLERANCE_SECS
+}
+
+/// Soft-EOF near the declared end; otherwise propagate mid-file seek/decode failures.
+fn map_fallback_extract_error(
+    error: MediaError,
+    pos: f64,
+    total_secs: f64,
+) -> Result<(), MediaError> {
+    match &error {
+        MediaError::DecodeFailed { .. } | MediaError::SeekFailed { .. }
+            if near_track_end(pos, total_secs) =>
+        {
+            Ok(())
+        }
+        _ => Err(error),
+    }
+}
 
 /// Fallback mono scan: fixed windows via [`MediaSession::extract_mono`].
 pub fn scan_mono_buckets_via_windows<MS: MediaSession + ?Sized>(
@@ -56,12 +77,10 @@ pub fn scan_mono_buckets_via_windows<MS: MediaSession + ?Sized>(
                 end_secs: end,
                 pcm,
             })?,
-            Err(MediaError::DecodeFailed { .. }) | Err(MediaError::SeekFailed { .. }) => {
-                if pos >= total_secs - NEAR_TRACK_END_TOLERANCE_SECS {
-                    break;
-                }
+            Err(error) => {
+                map_fallback_extract_error(error, pos, total_secs)?;
+                break;
             }
-            Err(error) => return Err(error),
         }
         pos = end;
     }
@@ -103,12 +122,10 @@ pub fn scan_interleaved_buckets_via_windows<MS: MediaSession + ?Sized>(
                 end_secs: end,
                 pcm,
             })?,
-            Err(MediaError::DecodeFailed { .. }) | Err(MediaError::SeekFailed { .. }) => {
-                if pos >= total_secs - NEAR_TRACK_END_TOLERANCE_SECS {
-                    break;
-                }
+            Err(error) => {
+                map_fallback_extract_error(error, pos, total_secs)?;
+                break;
             }
-            Err(error) => return Err(error),
         }
         pos = end;
     }
@@ -216,10 +233,13 @@ mod tests {
     }
 
     #[test]
-    fn scan_skips_decode_failed_mid_file() {
+    fn scan_propagates_decode_failed_mid_file() {
         let mut session = ScanTestSession::new(10.0, Some((5.0, 6.0)), ScanFailKind::DecodeFailed);
-        let starts = scan_bucket_starts(&mut session).expect("scan should return Ok");
-        assert_eq!(starts, vec![0.0, 1.0, 2.0, 3.0, 4.0, 6.0, 7.0, 8.0, 9.0]);
+        match scan_bucket_starts(&mut session) {
+            Err(MediaError::DecodeFailed { .. }) => {}
+            Ok(starts) => panic!("expected Err, got Ok with {starts:?}"),
+            Err(other) => panic!("expected DecodeFailed, got {other:?}"),
+        }
     }
 
     #[test]

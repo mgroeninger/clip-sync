@@ -9,13 +9,10 @@ use crate::domain::pcm::InterleavedSamples;
 pub struct SilentRun {
     pub start_secs: f64,
     pub end_secs: f64,
-    /// Block-confirmed silent interior — the span of fully-silent analysis blocks, never widened
-    /// by the sub-block edge refinement that produces `[start_secs, end_secs]`. Equals the reported
-    /// boundaries for runs whose onset/offset happen to land on block edges. The gap-equivalence
-    /// gate classifies on this core (not the refined extent) so the fade-shoulder frames pulled in
-    /// by refinement never pollute the A-side dropout-depth measurement (`aggregate_rms_db` is an
-    /// energy mean dominated by the loudest included block, so one partial-signal block flips a
-    /// deep dropout to `ambient-quiet`).
+    /// Block-edge onset/offset of the open run's silent interior — **not** widened by sub-block
+    /// edge refinement (that only affects `[start_secs, end_secs]`). Hold bridging can still place
+    /// non-silent blocks inside `[core_start_secs, core_end_secs]`; equivalence must read the
+    /// per-block [`BlockLevel::silent`] timeline rather than aggregating the whole core interval.
     pub core_start_secs: f64,
     pub core_end_secs: f64,
 }
@@ -29,11 +26,18 @@ pub struct BlockLevel {
     pub start_secs: f64,
     pub end_secs: f64,
     pub rms_db: f64,
+    /// Result of [`is_silent_interleaved`] for this block at scan time (before hold bridging).
+    pub silent: bool,
 }
 
 /// dBFS a fully-silent analysis block floors to — same convention as the fingerprint's `level_profile`
 /// (`SILENCE_FLOOR_DB`), so a scan-derived noise floor is on the same scale as the fingerprint's.
 pub const BLOCK_LEVEL_FLOOR_DB: f64 = -120.0;
+
+/// Absolute silence floor as dBFS from a normalized amplitude (`0` → disabled / `None`).
+pub fn absolute_silence_floor_db(absolute_silence_rms: f32) -> Option<f64> {
+    (absolute_silence_rms > 0.0).then(|| 20.0 * f64::from(absolute_silence_rms).log10())
+}
 
 /// Accumulates silent runs by classifying PCM in fixed-duration analysis blocks.
 pub struct SilenceRunScanner {
@@ -123,20 +127,22 @@ impl SilenceRunScanner {
             let block_end = end_frames * channels;
             let block = &pcm.samples()[block_start..block_end];
 
+            let silent = is_silent_interleaved(
+                block,
+                channels,
+                self.silence_peak_fraction,
+                self.absolute_rms_floor,
+            );
             if self.retain_levels {
                 self.levels.push(BlockLevel {
                     start_secs: block_start_secs,
                     end_secs: block_end_secs,
                     rms_db: block_rms_db(block),
+                    silent,
                 });
             }
 
-            if is_silent_interleaved(
-                block,
-                channels,
-                self.silence_peak_fraction,
-                self.absolute_rms_floor,
-            ) {
+            if silent {
                 self.held_count = 0;
                 if self.run_start.is_none() {
                     // Sub-block leading-edge refinement: a block straddling the silence onset
@@ -505,6 +511,8 @@ mod tests {
             "silent block floors: {:?}",
             levels[6]
         );
+        assert!(!levels[0].silent, "loud block must not be silent");
+        assert!(levels[6].silent, "floor block must be silent");
         assert!((levels[0].start_secs - 0.0).abs() < 1e-9);
         assert_eq!(
             levels.last().unwrap().rms_db,

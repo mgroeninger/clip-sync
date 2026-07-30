@@ -8,6 +8,9 @@
 //!   floor (the signal is gone); a genuine quiet passage sits **at** the noise floor (room tone). Measuring
 //!   *relative to the noise floor* makes the threshold **self-calibrating** — no hard-coded absolute dB.
 //! - **B-side (`donor_silence_fraction`):** if B is silent at the nominal span there is nothing to fill with.
+//!   A B block counts as silent when [`BlockLevel::silent`] (scanner predicate) **or** quieter than
+//!   A's gap floor — so digital silence / abs-floor quiet is not misread as occupied via a strict
+//!   `rms_db < gap_floor` compare at the −120 floor.
 //!
 //! Empirically (licensed media): the two silence signals separate cleanly (dropouts ≥35 dB below noise floor,
 //! `donor_silence` bimodal at ~0 vs ~1) where the seam/lag approach failed — the recordings drift, so "B matches
@@ -108,6 +111,24 @@ impl GapEquivalenceVerdict {
     }
 }
 
+/// After occupancy and donor silence both honor [`BlockLevel::silent`], a
+/// donor-silent absolute read (`!b_has_energy`) must not disagree with a high
+/// `donor_silence_fraction`. Missing donor fraction → vacuously true (nothing to compare).
+///
+/// Does **not** change plan precedence (`NotFillable` still wins); it only surfaces the
+/// post-F1 consistency invariant (and catches regressions that reintroduce rms-only donor scoring).
+pub fn occupancy_agrees_with_donor_silence(
+    b_has_energy: bool,
+    donor_silence_fraction: Option<f64>,
+    donor_silence_thresh: f64,
+) -> bool {
+    match donor_silence_fraction {
+        None => true,
+        Some(ds) if !b_has_energy => ds >= donor_silence_thresh,
+        Some(_) => true,
+    }
+}
+
 /// Classify one gap from its silence signals. Pure — no I/O, no measurement.
 ///
 /// - `NotEvaluated` when the gate is off or any signal is missing.
@@ -187,9 +208,10 @@ fn median_db(mut vals: Vec<f64>) -> Option<f64> {
 ///
 /// - **noise floor** — median dB of A blocks in `±`[`EQUIVALENCE_CONTEXT_SECS`] around the gap, **excluding**
 ///   blocks inside it (the recording's own floor; self-calibrating).
-/// - **A gap RMS** — aggregate RMS of A's blocks inside the gap (the dropout-vs-room-tone A-side signal).
-/// - **donor silence fraction** — fraction of B blocks over the nominal mapped span below the gap floor
-///   (the loudest A gap block; the donor-occupancy B-side signal).
+/// - **A gap RMS** — aggregate RMS of A's **silent** blocks inside the gap (hold-bridged non-silent
+///   blocks inside the core interval are excluded so they cannot inflate dropout depth).
+/// - **donor silence fraction** — fraction of B blocks over the nominal mapped span that are
+///   scanner-silent ([`BlockLevel::silent`]) or quieter than A's gap floor.
 ///
 /// `b_levels`/`b_mapped` are `None` when B was not scanned (missing/unaligned) ⇒ donor signal absent ⇒
 /// `NotEvaluated`. Pure — no I/O.
@@ -201,14 +223,15 @@ pub fn derive_gap_equivalence(
     b_mapped: Option<(f64, f64)>,
     params: &GapEquivalenceParams,
 ) -> GapEquivalenceVerdict {
-    // A gap blocks (center inside the gap) → aggregate RMS + gap floor (loudest block, donor reference).
-    let gap_blocks = || {
-        a_levels
-            .iter()
-            .filter(|b| block_center(b) >= a_start_secs && block_center(b) < a_end_secs)
+    // Silent A gap blocks only — hold can place non-silent levels inside the core interval.
+    let gap_silent_blocks = || {
+        a_levels.iter().filter(|b| {
+            let c = block_center(b);
+            b.silent && c >= a_start_secs && c < a_end_secs
+        })
     };
-    let a_gap_rms_db = aggregate_rms_db(gap_blocks().map(|b| b.rms_db));
-    let gap_floor_db = gap_blocks()
+    let a_gap_rms_db = aggregate_rms_db(gap_silent_blocks().map(|b| b.rms_db));
+    let gap_floor_db = gap_silent_blocks()
         .map(|b| b.rms_db)
         .fold(f64::NEG_INFINITY, f64::max);
 
@@ -226,9 +249,12 @@ pub fn derive_gap_equivalence(
             .collect(),
     );
 
-    // Donor silence fraction: fraction of B blocks over the mapped span below the gap floor.
+    // Donor silence: scanner silent bit (peak/per-channel, abs floor baked in) OR quieter than
+    // A's gap floor. Never re-threshold rms alone against the floor — digitally silent blocks
+    // sit at BLOCK_LEVEL_FLOOR_DB and `rms < gap_floor` is false when both are −120.
+    let gap_floor = gap_floor_db.is_finite().then_some(gap_floor_db);
     let donor_silence_fraction = match (b_levels, b_mapped) {
-        (Some(bl), Some((b_start, b_end))) if gap_floor_db.is_finite() => {
+        (Some(bl), Some((b_start, b_end))) => {
             let mut total = 0usize;
             let mut silent = 0usize;
             for b in bl.iter().filter(|b| {
@@ -236,7 +262,7 @@ pub fn derive_gap_equivalence(
                 c >= b_start && c < b_end
             }) {
                 total += 1;
-                if b.rms_db < gap_floor_db {
+                if b.silent || gap_floor.is_some_and(|g| b.rms_db < g) {
                     silent += 1;
                 }
             }
@@ -327,14 +353,34 @@ mod tests {
         assert!(!v.drop && v.class == RepairableDropout);
     }
 
+    #[test]
+    fn occupancy_agrees_with_donor_when_both_say_silent() {
+        assert!(occupancy_agrees_with_donor_silence(false, Some(1.0), 0.5));
+        assert!(occupancy_agrees_with_donor_silence(false, Some(0.5), 0.5));
+        assert!(occupancy_agrees_with_donor_silence(true, Some(0.0), 0.5));
+        assert!(occupancy_agrees_with_donor_silence(false, None, 0.5));
+    }
+
+    #[test]
+    fn occupancy_disagrees_when_absolute_silent_but_donor_occupied() {
+        // Pre-F1 E1 shape: absolute silent + donor_silence 0.0.
+        assert!(!occupancy_agrees_with_donor_silence(false, Some(0.0), 0.5));
+        assert!(!occupancy_agrees_with_donor_silence(false, Some(0.49), 0.5));
+    }
+
     // --- derive_gap_equivalence (scan-block timelines → signals → classification) --------------------
 
-    /// One 250 ms block at `[t, t+0.25)` with level `db`.
+    /// One 250 ms block at `[t, t+0.25)` with level `db`. Gap-interior test blocks default to silent.
     fn blk(t: f64, db: f64) -> BlockLevel {
+        blk_silent(t, db, true)
+    }
+
+    fn blk_silent(t: f64, db: f64, silent: bool) -> BlockLevel {
         BlockLevel {
             start_secs: t,
             end_secs: t + 0.25,
             rms_db: db,
+            silent,
         }
     }
 
@@ -350,7 +396,10 @@ mod tests {
             blk(10.25, -119.0),
             blk(10.5, -50.0),
         ];
-        let b = vec![blk(10.0, -20.0), blk(10.25, -20.0)];
+        let b = vec![
+            blk_silent(10.0, -20.0, false),
+            blk_silent(10.25, -20.0, false),
+        ];
         let v = derive_gap_equivalence(&a, 10.0, 10.5, Some(&b), Some((10.0, 10.5)), &on());
         assert_eq!(v.class, RepairableDropout);
         assert_eq!(v.noise_floor_db, Some(-50.0));
@@ -358,8 +407,7 @@ mod tests {
         assert!(v.a_gap_rms_db.unwrap() < -100.0, "{v:?}");
     }
 
-    /// A dropout on A but B is silent over the mapped span → SharedSilence (nothing to fill). A real
-    /// dropout's gap floor still sits above B's true silence (−120), so B reads as silent below it.
+    /// A dropout on A but B is silent over the mapped span → SharedSilence (nothing to fill).
     #[test]
     fn derive_dropout_with_silent_donor_is_shared_silence() {
         let a = vec![
@@ -376,6 +424,67 @@ mod tests {
         assert!(v.drop);
     }
 
+    /// Digitally silent / abs-floor-quiet B must not read occupied via `rms < gap_floor` alone (F1/R1).
+    #[test]
+    fn derive_donor_silent_bit_counts_even_when_rms_equals_gap_floor() {
+        // A gap floor −120; B at −120 with silent=true (scanner). Strict `rms < thresh` would fail.
+        let a = vec![
+            blk(9.5, -45.0),
+            blk(9.75, -45.0),
+            blk(10.0, -120.0),
+            blk(10.25, -120.0),
+            blk(10.5, -45.0),
+        ];
+        let b = vec![blk(10.0, -120.0), blk(10.25, -120.0)];
+        let v = derive_gap_equivalence(&a, 10.0, 10.5, Some(&b), Some((10.0, 10.5)), &on());
+        assert_eq!(v.class, SharedSilence, "{v:?}");
+        assert_eq!(v.donor_silence_fraction, Some(1.0));
+    }
+
+    /// Scanner-silent dither below the abs floor (rms above A's gap floor) still counts as donor-silent.
+    #[test]
+    fn derive_donor_uses_silent_bit_for_abs_floor_quiet() {
+        // A gap floor ≈ −101.5; B dither at −98.8 marked silent by the scanner abs floor.
+        let a = vec![
+            blk(9.5, -45.0),
+            blk(9.75, -45.0),
+            blk(10.0, -101.5),
+            blk(10.25, -101.5),
+            blk(10.5, -45.0),
+        ];
+        let b = vec![
+            blk_silent(10.0, -98.8, true),
+            blk_silent(10.25, -98.8, true),
+        ];
+        let v = derive_gap_equivalence(&a, 10.0, 10.5, Some(&b), Some((10.0, 10.5)), &on());
+        assert_eq!(v.class, SharedSilence, "{v:?}");
+        assert_eq!(v.donor_silence_fraction, Some(1.0));
+    }
+
+    /// Hold-bridged loud block inside the core must not inflate A dropout depth (F2).
+    #[test]
+    fn derive_ignores_non_silent_blocks_inside_gap_core() {
+        let a = vec![
+            blk(9.5, -45.0),
+            blk(9.75, -45.0),
+            blk(10.0, -101.0),
+            blk_silent(10.25, -52.0, false), // bridged noise
+            blk(10.5, -101.0),
+            blk(10.75, -45.0),
+        ];
+        let b = vec![
+            blk_silent(10.0, -20.0, false),
+            blk_silent(10.25, -20.0, false),
+            blk_silent(10.5, -20.0, false),
+        ];
+        let v = derive_gap_equivalence(&a, 10.0, 10.75, Some(&b), Some((10.0, 10.75)), &on());
+        assert_eq!(v.class, RepairableDropout, "{v:?}");
+        assert!(
+            v.a_gap_rms_db.unwrap() < -90.0,
+            "silent-only aggregate must stay deep, got {v:?}"
+        );
+    }
+
     /// Room-tone gap (A only a few dB below its floor) with an occupied donor → AmbientQuiet (drop, but
     /// not a dropout) — the self-calibrating A-side at scan-block granularity.
     #[test]
@@ -387,7 +496,10 @@ mod tests {
             blk(10.25, -52.0),
             blk(10.5, -47.0),
         ];
-        let b = vec![blk(10.0, -20.0), blk(10.25, -20.0)];
+        let b = vec![
+            blk_silent(10.0, -20.0, false),
+            blk_silent(10.25, -20.0, false),
+        ];
         let v = derive_gap_equivalence(&a, 10.0, 10.5, Some(&b), Some((10.0, 10.5)), &on());
         assert_eq!(v.class, AmbientQuiet);
         assert!(v.drop);
@@ -406,7 +518,7 @@ mod tests {
     #[test]
     fn derive_respects_disabled_params() {
         let a = vec![blk(9.75, -48.0), blk(10.0, -119.0), blk(10.5, -48.0)];
-        let b = vec![blk(10.0, -20.0)];
+        let b = vec![blk_silent(10.0, -20.0, false)];
         let v = derive_gap_equivalence(
             &a,
             10.0,

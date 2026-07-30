@@ -40,6 +40,16 @@ impl Gap {
     pub fn is_fillable(&self) -> bool {
         self.video_b_start_secs.is_some() && self.b_has_energy
     }
+
+    /// Operator-facing reason when [`is_fillable`](Self::is_fillable) is false.
+    pub fn unfillable_label(&self) -> &'static str {
+        if self.video_b_start_secs.is_some() {
+            // Mapped donor is silent — shared pause / nothing to copy (not a missing alignment).
+            "both sides silent"
+        } else {
+            "unmapped"
+        }
+    }
 }
 
 /// True when `[start_secs, end_secs]` lies entirely inside a timeline window.
@@ -77,6 +87,14 @@ pub struct GapReport {
     pub silence_peak_fraction: f32,
     /// When query-reference alignment is used, only gaps inside the mapped clip coverage are fillable.
     pub limit_fill_to_mapped_region: bool,
+    /// How far the B silence/level scan progressed on B's native timeline (seconds). `None` when B
+    /// was not scanned. Gaps whose mapped core extends past this were not reviewed for donor
+    /// occupancy (`b_has_energy` is fail-closed).
+    pub b_scanned_end_secs: Option<f64>,
+    /// `true` when the B walk aborted mid-file (decode/seek error). Continue is intentional
+    /// (report-only safe); callers should surface the truncation timestamp so users know later
+    /// mapped gaps were not reviewed.
+    pub b_scan_truncated: bool,
     /// Maximum |PTS − sample-clock| observed during gap scan on video A, when measurable.
     pub audio_timeline_skew: Option<AudioTimelineSkew>,
 }

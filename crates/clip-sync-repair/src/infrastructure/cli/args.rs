@@ -510,7 +510,13 @@ mod tests {
             &format!("[default: {}]", defaults.repair.decode_chunk_secs),
             &format!("[default: {}]", defaults.repair.scan_block_ms),
             &format!("[default: {}]", defaults.repair.silence_hold_ms),
-            &format!("[default: {}]", defaults.repair.absolute_silence_rms as u32),
+            &format!(
+                "[default: {}]",
+                crate::infrastructure::config::absolute_silence_rms_i16_units(
+                    defaults.repair.absolute_silence_rms
+                )
+                .round() as u32
+            ),
             &format!("[default: {}]", defaults.repair.min_fill_correlation),
             &format!(
                 "[default: {}]",

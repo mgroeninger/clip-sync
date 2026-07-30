@@ -315,6 +315,25 @@ fn default_silence_hold_ms() -> u64 {
 fn default_absolute_silence_rms() -> f32 {
     33.0 / 32767.0
 }
+
+/// Operator-facing `--absolute-silence-rms` uses a 0–32767 i16 amplitude scale; config / scanner
+/// consume normalized amplitude in `[0, 1]`. Convert CLI (and mistaken ≥1 TOML) values.
+pub fn normalize_absolute_silence_rms_i16(i16_units: f32) -> f32 {
+    if i16_units <= 0.0 {
+        0.0
+    } else {
+        i16_units / 32767.0
+    }
+}
+
+/// Full-scale i16 units for a normalized amplitude (for display / help text).
+pub fn absolute_silence_rms_i16_units(normalized: f32) -> f32 {
+    if normalized <= 0.0 {
+        0.0
+    } else {
+        normalized * 32767.0
+    }
+}
 fn default_true() -> bool {
     true
 }
@@ -946,6 +965,14 @@ impl RepairConfig {
             return Err(ConfigError::InvalidValue {
                 field: "absolute_silence_rms".into(),
                 reason: "must be non-negative".into(),
+            });
+        }
+        // Config / scanner use normalized amplitude. Values ≥ 1.0 are almost certainly the
+        // operator-facing 0–32767 scale (or a typo); CLI converts that scale — TOML must not.
+        if self.absolute_silence_rms >= 1.0 {
+            return Err(ConfigError::InvalidValue {
+                field: "absolute_silence_rms".into(),
+                reason: "must be a normalized amplitude in [0, 1) (default ≈ 0.001007); use CLI --absolute-silence-rms with the 0–32767 scale, or set the normalized float in TOML".into(),
             });
         }
         if self.gap_end_extend_max_ms == 0

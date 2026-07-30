@@ -116,6 +116,8 @@ fn synth_ab_inputs() -> (MultiChannelPcm, Vec<f32>, GapReport, PatchAudioRequest
         scan_block_ms: 20,
         silence_peak_fraction: 0.05,
         limit_fill_to_mapped_region: false,
+        b_scanned_end_secs: None,
+        b_scan_truncated: false,
         audio_timeline_skew: None,
     };
     let repair = RepairConfig {

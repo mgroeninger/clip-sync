@@ -2,6 +2,8 @@ use crate::domain::align::TimelineOverlap;
 
 use crate::domain::gap::interval_fully_within_window;
 use crate::domain::gap::{Gap, GapOffsetAgreement};
+use crate::domain::gap_equivalence::{GapEquivalenceClass, GapEquivalenceVerdict};
+use crate::domain::policies::BlockLevel;
 
 /// A silence interval on a single file's native timeline.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -14,6 +16,9 @@ pub struct SilenceInterval {
 ///
 /// Intervals must be sorted by `start_secs` (as produced by `SilenceRunScanner`). A range is
 /// considered to have energy if any sub-second of it is not covered by a silence interval.
+///
+/// Prefer [`b_has_energy_from_levels`] for fillability: hold-bridged silence runs can span
+/// real audio, so interval coverage is not a trustworthy occupancy oracle.
 pub fn b_has_energy_in_range(b_intervals: &[SilenceInterval], start: f64, end: f64) -> bool {
     if start >= end {
         return false;
@@ -34,14 +39,71 @@ pub fn b_has_energy_in_range(b_intervals: &[SilenceInterval], start: f64, end: f
     covered_up_to < end
 }
 
-/// Silence on A that is also silent on B at the mapped alignment offset (`!b_has_energy`).
+/// Absolute B occupancy from the per-block level timeline (fillability signal).
 ///
-/// Excludes A-side dropouts (repair targets) so cross-check uses co-occurring quiet on both
-/// timelines, not holes that only exist on the defective recording.
-pub fn mutual_silence_intervals_from_gaps(gaps: &[Gap]) -> Vec<SilenceInterval> {
+/// A range has energy when any analysis block whose center falls in `[start, end)` has
+/// [`BlockLevel::silent`] `false` — the scanner's peak-domain, per-channel predicate
+/// (including absolute RMS floor), recorded before hold bridging. Do **not** re-threshold
+/// `rms_db`: interleaved RMS is a different domain (downmix-diluted, typically 10–20 dB
+/// below peak) and would raise the effective bar vs the original `is_silent_interleaved`
+/// occupancy path.
+///
+/// Degenerate ranges and windows with no overlapping blocks return `false` (no evidence of
+/// donor energy). Distinct from the equivalence gate's relative `donor_silence_fraction`:
+/// this answers "is there anything to copy?", not "is this mutual/ambient quiet?".
+pub fn b_has_energy_from_levels(b_levels: &[BlockLevel], start: f64, end: f64) -> bool {
+    if start >= end {
+        debug_assert!(
+            start == end,
+            "degenerate B occupancy range [{start}, {end})"
+        );
+        return false;
+    }
+    b_levels.iter().any(|b| {
+        let c = (b.start_secs + b.end_secs) / 2.0;
+        c >= start && c < end && !b.silent
+    })
+}
+
+/// True when `[start, end]` lies entirely in the reviewed B scan prefix `[0, scanned_end]`.
+///
+/// Used to fail-closed absolute occupancy (and equivalence's B window) when the B walk truncated
+/// or the mapped core sticks past what was measured.
+pub fn b_range_fully_scanned(start: f64, end: f64, scanned_end_secs: Option<f64>) -> bool {
+    match scanned_end_secs {
+        Some(limit) if start < end => start >= 0.0 && end <= limit,
+        _ => false,
+    }
+}
+
+/// Silence on A for the mutual-silence offset cross-check.
+///
+/// Prefer [`GapEquivalenceClass::SharedSilence`] (donor metric) so fillability cannot poison
+/// alignment. When equivalence is [`NotEvaluated`] (e.g. no A noise-floor context on a
+/// file-spanning silent run), fall back to mapped `!b_has_energy` — occupancy alone, only
+/// when the gate made no decision. RepairableDropout / AmbientQuiet stay excluded.
+pub fn mutual_silence_intervals_from_gaps(
+    gaps: &[Gap],
+    gap_equivalence: &[GapEquivalenceVerdict],
+) -> Vec<SilenceInterval> {
+    debug_assert_eq!(
+        gaps.len(),
+        gap_equivalence.len(),
+        "gaps and equivalence must be index-parallel"
+    );
     gaps.iter()
-        .filter(|gap| !gap.b_has_energy)
-        .map(|gap| SilenceInterval {
+        .zip(gap_equivalence.iter())
+        .filter(|(gap, eq)| {
+            if gap.video_b_start_secs.is_none() {
+                return false;
+            }
+            match eq.class {
+                GapEquivalenceClass::SharedSilence => true,
+                GapEquivalenceClass::NotEvaluated => !gap.b_has_energy,
+                GapEquivalenceClass::RepairableDropout | GapEquivalenceClass::AmbientQuiet => false,
+            }
+        })
+        .map(|(gap, _)| SilenceInterval {
             start_secs: gap.video_a_start_secs,
             end_secs: gap.video_a_end_secs,
         })
@@ -181,29 +243,140 @@ mod tests {
     }
 
     use crate::domain::gap::Gap;
+    use crate::domain::policies::BLOCK_LEVEL_FLOOR_DB;
+
+    fn level(start: f64, end: f64, rms_db: f64, silent: bool) -> BlockLevel {
+        BlockLevel {
+            start_secs: start,
+            end_secs: end,
+            rms_db,
+            silent,
+        }
+    }
 
     #[test]
-    fn mutual_silence_intervals_exclude_a_only_dropouts() {
+    fn levels_occupancy_sees_energy_inside_hold_bridged_silence_span() {
+        // Hold-bridged run would cover [0, 4] as one silence interval, but block 2 is loud.
+        let levels = [
+            level(0.0, 1.0, BLOCK_LEVEL_FLOOR_DB, true),
+            level(1.0, 2.0, BLOCK_LEVEL_FLOOR_DB, true),
+            level(2.0, 3.0, -20.0, false),
+            level(3.0, 4.0, BLOCK_LEVEL_FLOOR_DB, true),
+        ];
+        let bridged = [interval(0.0, 4.0)];
+        assert!(
+            !b_has_energy_in_range(&bridged, 0.0, 4.0),
+            "interval coverage treats the hold-bridged span as fully silent"
+        );
+        assert!(
+            b_has_energy_from_levels(&levels, 0.0, 4.0),
+            "levels must still report the occupied block as energy"
+        );
+    }
+
+    #[test]
+    fn levels_occupancy_uses_scanner_silent_bit_not_rms_rethreshold() {
+        // Scanner marked both silent (abs floor / peak path); rms alone would be ambiguous.
+        let levels = [
+            level(0.0, 1.0, BLOCK_LEVEL_FLOOR_DB, true),
+            level(1.0, 2.0, -80.0, true),
+        ];
+        assert!(!b_has_energy_from_levels(&levels, 0.0, 2.0));
+        // Same rms, silent=false → occupied (center-only dialogue diluted in interleaved RMS).
+        let occupied = [level(0.0, 1.0, -55.0, false)];
+        assert!(b_has_energy_from_levels(&occupied, 0.0, 1.0));
+    }
+
+    #[test]
+    fn levels_occupancy_false_on_empty_window_or_degenerate_range() {
+        let levels = [level(0.0, 1.0, -20.0, false)];
+        assert!(!b_has_energy_from_levels(&levels, 5.0, 6.0));
+        assert!(!b_has_energy_from_levels(&levels, 1.0, 1.0));
+        assert!(!b_has_energy_from_levels(&[], 0.0, 1.0));
+    }
+
+    #[test]
+    fn b_range_fully_scanned_requires_complete_coverage() {
+        assert!(b_range_fully_scanned(1.0, 5.0, Some(5.0)));
+        assert!(!b_range_fully_scanned(1.0, 5.1, Some(5.0)));
+        assert!(!b_range_fully_scanned(-0.1, 4.0, Some(5.0)));
+        assert!(!b_range_fully_scanned(1.0, 4.0, None));
+        assert!(!b_range_fully_scanned(2.0, 2.0, Some(5.0)));
+    }
+
+    #[test]
+    fn mutual_silence_intervals_use_shared_silence_not_fillability() {
+        use crate::domain::gap_equivalence::GapEquivalenceVerdict;
+
         let gaps = [
             Gap {
                 video_a_start_secs: 10.0,
                 video_a_end_secs: 20.0,
                 video_b_start_secs: Some(3.0),
                 video_b_end_secs: Some(13.0),
-                b_has_energy: true,
+                // Absolute occupancy wrong (false) — still excluded via RepairableDropout.
+                b_has_energy: false,
             },
             Gap {
                 video_a_start_secs: 30.0,
                 video_a_end_secs: 40.0,
                 video_b_start_secs: Some(23.0),
                 video_b_end_secs: Some(33.0),
+                b_has_energy: true, // fillability would exclude; SharedSilence includes
+            },
+            Gap {
+                video_a_start_secs: 50.0,
+                video_a_end_secs: 60.0,
+                video_b_start_secs: None,
+                video_b_end_secs: None,
                 b_has_energy: false,
             },
+            Gap {
+                video_a_start_secs: 70.0,
+                video_a_end_secs: 80.0,
+                video_b_start_secs: Some(63.0),
+                video_b_end_secs: Some(73.0),
+                b_has_energy: false, // NotEvaluated fallback includes
+            },
         ];
-        let intervals = mutual_silence_intervals_from_gaps(&gaps);
-        assert_eq!(intervals.len(), 1);
+        let equivalence = [
+            GapEquivalenceVerdict {
+                class: GapEquivalenceClass::RepairableDropout,
+                drop: false,
+                a_gap_rms_db: Some(-100.0),
+                noise_floor_db: Some(-50.0),
+                a_below_noise_db: Some(-50.0),
+                donor_silence_fraction: Some(0.0),
+            },
+            GapEquivalenceVerdict {
+                class: GapEquivalenceClass::SharedSilence,
+                drop: true,
+                a_gap_rms_db: Some(-80.0),
+                noise_floor_db: Some(-70.0),
+                a_below_noise_db: Some(-10.0),
+                donor_silence_fraction: Some(1.0),
+            },
+            GapEquivalenceVerdict {
+                class: GapEquivalenceClass::NotEvaluated,
+                drop: false,
+                a_gap_rms_db: None,
+                noise_floor_db: None,
+                a_below_noise_db: None,
+                donor_silence_fraction: None,
+            },
+            GapEquivalenceVerdict {
+                class: GapEquivalenceClass::NotEvaluated,
+                drop: false,
+                a_gap_rms_db: None,
+                noise_floor_db: None,
+                a_below_noise_db: None,
+                donor_silence_fraction: None,
+            },
+        ];
+        let intervals = mutual_silence_intervals_from_gaps(&gaps, &equivalence);
+        assert_eq!(intervals.len(), 2);
         assert!((intervals[0].start_secs - 30.0).abs() < f64::EPSILON);
-        assert!((intervals[0].end_secs - 40.0).abs() < f64::EPSILON);
+        assert!((intervals[1].start_secs - 70.0).abs() < f64::EPSILON);
     }
 
     #[test]

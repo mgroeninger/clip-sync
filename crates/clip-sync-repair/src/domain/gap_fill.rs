@@ -564,6 +564,25 @@ pub fn build_gap_fill_plan(
     GapFillPlan { regions, skipped }
 }
 
+/// Stderr / progress note when the B silence walk aborted mid-file.
+pub(crate) fn format_b_scan_truncation_note(
+    truncated: bool,
+    scanned_end_secs: Option<f64>,
+) -> Option<String> {
+    if !truncated {
+        return None;
+    }
+    Some(match scanned_end_secs {
+        Some(t) => format!(
+            "B silence scan truncated at {t:.3}s; gaps mapping past that are unfillable (not reviewed)"
+        ),
+        None => {
+            "B silence scan failed before any audio; donor occupancy not reviewed (gaps unfillable)"
+                .into()
+        }
+    })
+}
+
 /// Second stderr line after gap scan when some detected gaps are not repairable.
 pub(crate) fn format_scan_fillable_followup(report: &GapReport) -> Option<String> {
     let found = report.gaps.len();
@@ -739,6 +758,8 @@ mod tests {
             scan_block_ms: 250,
             silence_peak_fraction: 0.01,
             limit_fill_to_mapped_region: true,
+            b_scanned_end_secs: None,
+            b_scan_truncated: false,
             audio_timeline_skew: None,
         }
     }
@@ -909,6 +930,16 @@ mod tests {
         let plan = build_gap_fill_plan(&report, 0, true, &GapSelection::all(report.gaps.len()));
         assert!(plan.regions.is_empty());
         assert_eq!(plan.skipped[0].reason, GapFillSkipReason::NotFillable);
+    }
+
+    #[test]
+    fn format_b_scan_truncation_note_only_when_truncated() {
+        assert!(super::format_b_scan_truncation_note(false, Some(12.0)).is_none());
+        let with_t = super::format_b_scan_truncation_note(true, Some(12.5)).expect("note");
+        assert!(with_t.contains("truncated at 12.500s"), "{with_t}");
+        assert!(with_t.contains("not reviewed"), "{with_t}");
+        let early = super::format_b_scan_truncation_note(true, None).expect("note");
+        assert!(early.contains("before any audio"), "{early}");
     }
 
     #[test]

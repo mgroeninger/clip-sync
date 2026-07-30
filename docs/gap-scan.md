@@ -4,7 +4,7 @@ How `clip-sync-repair` finds the **silent gaps** in A and decides which ones B c
 
 Output is a `GapReport`: a list of `Gap`s (each with A start/end, the mapped B start/end, and a `b_has_energy` flag) plus the alignment and scan parameters. The fill plan (phase 3) and patch (phase 4) consume it.
 
-Source: `application/scan_gaps.rs`; silence/energy helpers in `domain` (`b_has_energy_in_range`, `check_gap_offset_agreement_in_overlap`).
+Source: `application/scan_gaps.rs`; silence/energy helpers in `domain` (`b_has_energy_from_levels`, `check_gap_offset_agreement_in_overlap`).
 
 ---
 
@@ -29,10 +29,20 @@ Gap scan: 6 silent run(s) ≥500ms — block 100ms, silence 1.0% peak, hold 500m
 
 ## Mapping to B and fillability
 
-Each A gap is mapped onto B with the alignment offset (`b = a + recommended_offset_secs`), then checked for **energy on B** in that range (`b_has_energy_in_range`):
+Each A gap is mapped onto B with the alignment offset (`b = a + recommended_offset_secs`). Gap geometry uses the refined silent-run extent; **absolute occupancy** (`b_has_energy`) reads B's per-block [`BlockLevel::silent`] bit over the mapped **core** (same window as the equivalence gate) — the scanner's peak-domain, per-channel predicate recorded before hold bridging. Do not re-threshold interleaved `rms_db` against the abs floor: that raises the bar vs the original silence path and dilutes center-only dialogue on multi-channel layouts.
 
-- **`b_has_energy = true`** → B has audio where A is silent → the gap is a candidate **fillable** dropout.
-- **`b_has_energy = false`** → B is also silent there (a shared pause), or the mapped range is outside B's coverage → **unfillable** (nothing to copy).
+- **`b_has_energy = true`** → the mapped core lies fully in the reviewed B scan prefix **and** at least one B analysis block there has `silent == false` → candidate **fillable** dropout.
+- **`b_has_energy = false`** → B is also silent there (a shared pause), levels missing, the mapped core starts before B, or the core extends past what B's scan measured → **unfillable** (nothing to copy / not reviewed).
+
+This absolute check is distinct from the equivalence gate's `donor_silence_fraction` (fraction of B blocks that are scanner-silent or quieter than A's gap floor), which decides mutual/ambient quiet vs repairable dropout after fillability. Both signals honor `BlockLevel::silent` so they stay in the same measurement domain.
+
+### Truncated B scan
+
+The B silence/level walk is **report-only safe**: a mid-file decode/seek error does not abort the whole repair scan — B returns what it has, marks truncation, and continues. (The seek-loop fallback used by test fakes **propagates** mid-file seek/decode errors to that B handler; near declared EOF it still soft-breaks with `Ok`. Production Symphonia sequential scan skips individual corrupt packets until a consecutive-error limit.) The report records `b_scanned_end_secs` (last successfully fed time on B) and `b_scan_truncated = true` when the walk **hard-failed**. Ending >2 s before declared duration warns (container over-report / soft EOF) but does not alone set the truncated flag — occupancy fail-closes on `scanned_end_secs`, not the flag. Progress/stderr and human output include a line such as:
+
+```text
+B silence scan truncated at 118.000s; gaps mapping past that are unfillable (not reviewed)
+```
 
 Gaps outside the alignment **overlap / mapped region** are reported but marked unfillable when `limit_fill_to_mapped_region` is set (default) — e.g. A's first seconds before B's coverage starts.
 
@@ -42,8 +52,8 @@ Gaps outside the alignment **overlap / mapped region** are reported but marked u
 
 With `scan_both` (default on), B is also scanned for silence so the two timelines can be cross-checked:
 
-- **Mutual-silence cross-check** — co-occurring silence on *both* A and B is a shared pause, not a dropout; it is excluded from fillable gaps. The check feeds `gap_offset_agreement` (and the report's silence-based offset cross-check).
-- This is why an A-only dropout (B has energy) is the fillable case, and a both-silent stretch is not.
+- **Mutual-silence cross-check** — A gaps classified `shared_silence` feed `gap_offset_agreement`; when equivalence is `not_evaluated`, mapped `!b_has_energy` is used as a fallback. Decided repairable/ambient classes never fall back to fillability.
+- Plan-time fillability still uses `b_has_energy` separately: A-only dropout (B has energy) is fillable; both-silent is not.
 
 ## Output
 
@@ -80,7 +90,7 @@ With `scan_both` (default on), B is also scanned for silence so the two timeline
 | Step | Code |
 |------|------|
 | Scan orchestration, chunked decode, gap assembly | `application/scan_gaps.rs` |
-| B energy check in a mapped range | `domain` `b_has_energy_in_range` |
+| B energy check in a mapped range | `domain` `b_has_energy_from_levels` |
 | Mutual-silence agreement | `domain` `check_gap_offset_agreement_in_overlap` |
 | Gap type | `domain/gap.rs` (`Gap`, `is_fillable`) |
 
