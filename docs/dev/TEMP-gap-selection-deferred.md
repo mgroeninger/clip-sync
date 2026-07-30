@@ -9,7 +9,7 @@ reasons are the content.
 
 **Siblings:** [archive/TEMP-gap-selection-plan.md](archive/TEMP-gap-selection-plan.md) (v1 — **archived**),
 [archive/TEMP-gap-selection-ranges-plan.md](archive/TEMP-gap-selection-ranges-plan.md) (v1.5 — **archived**),
-[TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md) (prerequisite for the manifest below; **parked**).
+[TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md) (prerequisite for the manifest below; **unparked 2026-07-30**).
 
 ---
 
