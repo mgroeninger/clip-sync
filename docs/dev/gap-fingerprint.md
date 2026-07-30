@@ -294,6 +294,14 @@ scored at those placements against the **unchanged** gate thresholds:
 - `pre_seam_prom` / `post_seam_prom` — prominence over the best rival within ±30 ms (secondary; low on
   correct-but-periodic content).
 
+**A shoulders are raw `mono(refined ± w)`**, matching `build_dual_fit_input` / `try_dual_fit` exactly —
+**not** the `border_templates_for_gap` construction the seam gate uses (silence walk-off, standoff,
+low-energy trim). That is deliberate: this block exists to *predict* production's dual-fit decision, and a
+trimmed pre template moves `pre_lag`, which moves `post_seam_global_r`, which flips step-real (F14 —
+[TEMP-equivalence-divergence-findings.md](TEMP-equivalence-divergence-findings.md)). Consequence: the block
+is **absent** when either shoulder is shorter than `w`, the same range guard production declines on, rather
+than being computed against a clipped template.
+
 ### Diagnostic-only fields
 
 `wide_envelope`, `seam_probe`, diagnostic `lag`, and `b_levels` are **Tier-3** — emitted only with

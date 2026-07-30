@@ -348,20 +348,23 @@ pub struct DualFitRescueInput<'a> {
 /// dump and the corpus projection use, so the two paths cannot drift. See
 /// [`GateOutcome::dual_fit_rescue`] for what the value means and its limits.
 ///
-/// Models **every** condition `domain::dual_fit::try_dual_fit` accepts on, not just the seam gate —
-/// the same conjunction `gap_repair_spec::classify_bracket_exhausted_skip` uses for the `SilenceSplice`
-/// cell:
+/// Models the accept conditions of `domain::dual_fit::try_dual_fit` (same conjunction
+/// `gap_repair_spec::classify_bracket_exhausted_skip` uses for the `SilenceSplice` cell):
 ///
 /// 1. the bracket failure class is dual-fit-eligible ([`brackets_dual_fit_eligible`]);
-/// 2. `gate_pass` — both shoulders clear the seam floors;
-/// 3. the **step is real** — the post seam at its own lag beats the post seam at the *pre* lag by
-///    `DUALFIT_STEP_REAL_MARGIN`, i.e. a rigid single-lag map doesn't already explain it;
-/// 4. the **aligned donor bridges** the hole (`continuous`) — there is something to fill;
-/// 5. the **nominal donor is not program-quiet** — B isn't silent at the same program time.
+/// 2. `gate_pass` — both shoulders clear the seam floors (NaN-aware: matches production's
+///    `smin < floor` form, not `smin >= floor`);
+/// 3. shoulders do **not** cross — `bridge_frames > 0` (production declines when
+///    `b_post_seam <= b_pre_seam`);
+/// 4. the **step is real** — `post_seam_r` beats `post_seam_global_r` by
+///    `DUALFIT_STEP_REAL_MARGIN`, via the same `partial_cmp` production uses (so a non-finite
+///    global — OOB window or zero-variance silence — declines, never over-promises);
+/// 5. the **aligned donor bridges** the hole (`continuous`);
+/// 6. the **nominal donor is not program-quiet**.
 ///
-/// Dropping 3–5 makes this over-promise badly: a program-quiet gap has high seam correlation and a dead
-/// donor, so seam-gate-only would report a rescue on exactly the gaps production declines. The curated
-/// `04_program_quiet` fixture pins that.
+/// Dropping 3–6 makes this over-promise badly: a program-quiet gap has high seam correlation and a
+/// dead donor, and a crossed-shoulder / NaN-global case can still clear a naive `post − global ≥
+/// margin` arithmetic. The curated `04_program_quiet` fixture pins the donor case.
 ///
 /// `None` means "no claim": a patched gap never reaches `skip_or_dual_fit`, and a gap missing any input
 /// isn't measurable. Never a defaulted `false`.
@@ -373,14 +376,18 @@ pub fn dual_fit_rescue_flag(input: &DualFitRescueInput<'_>) -> Option<bool> {
     let aligned = input.donor_aligned?;
     let nominal = input.donor_nominal?;
 
-    let step_real =
-        df.post_seam_r - df.post_seam_global_r >= crate::domain::dual_fit::DUALFIT_STEP_REAL_MARGIN;
+    // Mirror `try_dual_fit`: decline when `partial_cmp` is None (NaN) or Less.
+    let step_real = df
+        .post_seam_r
+        .partial_cmp(&(df.post_seam_global_r + crate::domain::dual_fit::DUALFIT_STEP_REAL_MARGIN))
+        .is_some_and(|ord| ord != std::cmp::Ordering::Less);
     let program_quiet =
         nominal.silence_fraction >= crate::domain::donor::PROGRAM_QUIET_SILENCE_FRAC;
 
     Some(
         brackets_dual_fit_eligible(input.brackets)
             && df.gate_pass
+            && df.bridge_frames > 0
             && step_real
             && aligned.continuous
             && !program_quiet,
@@ -535,9 +542,18 @@ pub struct LagSummary {
 /// Read a residual dB that the writer emits as JSON `null` when it was non-finite (a fully-silent gap cancels
 /// to ~0 ⇒ `to_db(0) = -inf`, which serde_json can't represent) back as `NaN`. Without this, deserializing a
 /// corpus fingerprint into [`ResidualInfo`] fails on the whole gap (mirrors the harness `Residual` `Option`
-/// tolerance). `NaN` round-trips back to `null` on re-serialization, so the reader still reads "unavailable".
+/// tolerance). Pair with [`ser_nan_as_null`] so `NaN` round-trips as `null`.
 fn de_null_as_nan<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
     Ok(Option::<f64>::deserialize(d)?.unwrap_or(f64::NAN))
+}
+
+/// Emit JSON `null` for non-finite f64 (serde_json rejects bare NaN/Inf). Inverse of [`de_null_as_nan`].
+fn ser_nan_as_null<S: serde::Serializer>(v: &f64, s: S) -> Result<S::Ok, S::Error> {
+    if v.is_finite() {
+        s.serialize_f64(*v)
+    } else {
+        s.serialize_none()
+    }
 }
 
 /// Same-master confirmation at the decision seam: how deeply B cancels A (least-squares residual, dB)
@@ -591,17 +607,33 @@ pub struct SpliceSummary {
 /// own decode.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct SpliceDualfit {
+    /// Seam Pearson; non-finite (zero-variance / silence) serializes as JSON `null` — keep raw so
+    /// [`dual_fit_rescue_flag`] can mirror production's NaN decisions (F14).
+    #[serde(
+        serialize_with = "ser_nan_as_null",
+        deserialize_with = "de_null_as_nan"
+    )]
     pub pre_seam_r: f64,
+    #[serde(
+        serialize_with = "ser_nan_as_null",
+        deserialize_with = "de_null_as_nan"
+    )]
     pub post_seam_r: f64,
     pub gap_frames: usize,
     pub bridge_frames: i64,
     /// `bridge − gap`: >0 ⇒ trim, <0 ⇒ pad. Equals the registration step in frames.
     pub trim_frames: i64,
-    /// Does `min(pre, post)` clear both `min_fill_correlation` and `fill_absolute_floor`?
+    /// Does `min(pre, post)` clear both floors? Computed with production's `smin < floor` form so a
+    /// NaN `smin` does **not** fail the gate (IEEE: `NaN < x` is false).
     pub gate_pass: bool,
     /// **Validator — is the step necessary?** Post seam scored at the *pre* offset (step forced to 0).
     /// If this clears the gate too, a single constant shift suffices and the reported step is a
     /// registration artifact, not a real splice. If only `post_seam_r` (own lag) passes, the step is real.
+    /// Non-finite when the global window is OOB or zero-variance — same as `try_dual_fit`.
+    #[serde(
+        serialize_with = "ser_nan_as_null",
+        deserialize_with = "de_null_as_nan"
+    )]
     pub post_seam_global_r: f64,
     /// **Validator — is the seam unique?** Prominence of each seam's placement peak over its best rival
     /// within ±30 ms. Low prominence ⇒ the seam correlates at many lags (periodic/alias), so a PASS is not
@@ -661,10 +693,11 @@ pub struct GateOutcome {
     /// `splice_dualfit.gate_pass` is true. `Some(false)` ⇒ a skip that dual-fit would not rescue.
     /// `None` ⇒ not applicable (the gate patched it) or not measurable (no `splice_dualfit`).
     ///
-    /// **Predictive, not observed.** It assumes `--dual-fit` is on (the fingerprint has no request flag)
-    /// and reflects `try_dual_fit`'s *gate* verdict, not a real assembled fill — production still
-    /// re-validates the assembled seams and can decline. Read it as "is this a dual-fit rescue
-    /// candidate", not "this was patched".
+    /// **Predictive, not observed.** Assumes `--dual-fit` is on (the fingerprint has no request flag)
+    /// and reflects `try_dual_fit`'s accept conditions over dump measurements — production still
+    /// re-validates the assembled seams and can decline. A-border construction matches production
+    /// (`mono(refined ± w)` in `splice_dualfit_at`; F14). Read as "dual-fit rescue candidate", not
+    /// "this was patched".
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub dual_fit_rescue: Option<bool>,
 }
@@ -768,10 +801,10 @@ mod tests {
         );
     }
 
-    /// The seam gate alone is NOT the accept condition — `try_dual_fit` also requires a real step, a
-    /// continuous aligned donor, and a non-quiet nominal donor. Each must independently veto, or the
-    /// flag over-promises repair coverage on exactly the gaps production declines (the curated
-    /// `04_program_quiet` regression).
+    /// The seam gate alone is NOT the accept condition — `try_dual_fit` also requires non-crossed
+    /// shoulders, a real step, a continuous aligned donor, and a non-quiet nominal donor. Each must
+    /// independently veto, or the flag over-promises repair coverage on exactly the gaps production
+    /// declines (the curated `04_program_quiet` regression).
     #[test]
     fn dual_fit_rescue_requires_every_try_dual_fit_condition() {
         let scored = [bracket(Some(FailureStage::WaveformFloor))];
@@ -784,6 +817,29 @@ mod tests {
         rigid.post_seam_global_r = rigid.post_seam_r;
         assert_eq!(
             dual_fit_rescue_flag(&rescuable(&scored, &rigid, &occupied, &occupied)),
+            Some(false)
+        );
+
+        // Shoulders crossed / collapsed (`b_post_seam <= b_pre_seam`) — production declines; a
+        // ±600 ms lag pair can invert a 500 ms min-gap bridge.
+        let mut crossed = splice_dualfit(true);
+        crossed.bridge_frames = 0;
+        assert_eq!(
+            dual_fit_rescue_flag(&rescuable(&scored, &crossed, &occupied, &occupied)),
+            Some(false)
+        );
+        crossed.bridge_frames = -100;
+        assert_eq!(
+            dual_fit_rescue_flag(&rescuable(&scored, &crossed, &occupied, &occupied)),
+            Some(false)
+        );
+
+        // Non-finite global (OOB window or zero-variance silence): production's `partial_cmp` is
+        // None ⇒ decline. Arithmetic `post − 0.0 ≥ margin` would wrongly pass.
+        let mut nan_global = splice_dualfit(true);
+        nan_global.post_seam_global_r = f64::NAN;
+        assert_eq!(
+            dual_fit_rescue_flag(&rescuable(&scored, &nan_global, &occupied, &occupied)),
             Some(false)
         );
 

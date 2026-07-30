@@ -1050,10 +1050,16 @@ struct SpliceDualfitInput<'a> {
     sample_rate: u32,
 }
 
-/// Dual-fit viability: score the pre/post seams at lag 0 with each shoulder at its own baseline lag, over
-/// the gate's own `fill_seam_search_secs` window, and gate on `min(pre, post)`. The interior trim/pad does
-/// not touch the shoulder seams, so this is exactly "would the length-reconciled fill pass?" — the C3/C7
-/// question, on the scan's decode. `None` when either seam window falls out of range.
+/// Dual-fit viability: score the pre/post seams at each shoulder's own seam-local lag, over the gate's
+/// `fill_seam_search_secs` window, and gate on `min(pre, post)`. Mirrors production `try_dual_fit`'s
+/// shoulder search so [`dual_fit_rescue_flag`] can predict rescue from dump measurements (F14).
+///
+/// **A borders are raw `mono(refined ± w)`** — the same construction `build_dual_fit_input` /
+/// `try_dual_fit` use. Do **not** route through [`border_templates_for_gap`]: silence-skip + energy
+/// trim moves the pre template, which moves `pre_lag` and therefore `post_seam_global_r`, flipping
+/// the step-real term on gaps production rescues.
+///
+/// `None` when either seam window falls out of range.
 fn splice_dualfit_at(input: &SpliceDualfitInput<'_>) -> Option<SpliceDualfit> {
     let SpliceDualfitInput {
         a_samples,
@@ -1068,18 +1074,22 @@ fn splice_dualfit_at(input: &SpliceDualfitInput<'_>) -> Option<SpliceDualfit> {
     let gap_frames = refined.end_frame.saturating_sub(refined.start_frame);
     let rate = f64::from(sample_rate).max(1.0);
     let window = ((cfg.fill_seam_search_secs * rate).round() as usize).max(8);
-    let border_spec = GapBorderSpec {
-        gap_start_frame: refined.start_frame,
-        gap_end_frame: refined.end_frame,
-        border_frames: window,
-        border_standoff_frames: 0,
-        silence_peak_fraction: cfg.silence_peak_fraction,
-        absolute_rms_floor: cfg.absolute_silence_rms,
-    };
-    let (a_pre, a_post) = border_templates_for_gap(a_samples, ch, &border_spec);
+    let a_frames = a_samples.len() / ch;
+    // Same range guard as `build_dual_fit_input` — insufficient shoulder ⇒ no dual-fit claim.
+    if refined.start_frame < window || refined.end_frame + window > a_frames || gap_frames == 0 {
+        return None;
+    }
+    let a_pre = interleaved_to_mono(
+        &a_samples[(refined.start_frame - window) * ch..refined.start_frame * ch],
+        ch,
+    );
+    let a_post = interleaved_to_mono(
+        &a_samples[refined.end_frame * ch..(refined.end_frame + window) * ch],
+        ch,
+    );
+    debug_assert_eq!(a_pre.len(), window);
+    debug_assert_eq!(a_post.len(), window);
 
-    let w_pre = window.min(a_pre.len());
-    let w_post = window.min(a_post.len());
     let max_lag = (((SEAM_LOCAL_SEARCH_MS / 1000.0) * rate).round() as usize).max(1);
 
     // Seam-local viability, **re-anchored on nominal `b_mapped`**: the fill places each shoulder at the lag
@@ -1087,32 +1097,31 @@ fn splice_dualfit_at(input: &SpliceDualfitInput<'_>) -> Option<SpliceDualfit> {
     // `b_mapped_start`, post at `b_mapped_start + gap_frames`) and take the peak. Anchoring on the gross 1 s
     // `baseline_lag` (the prior behavior) clipped seams whose lag diverges far from the 1 s peak — e.g. 7·g3,
     // pre 1 s lag −319 ms but the seam is at +18 ms, outside any narrow window around the gross placement.
+    // Production `try_dual_fit` uses the same nominal centers (`dual_fit.rs`).
     let b_pre_nominal = b_mapped_start;
     let b_post_nominal = b_mapped_start + gap_frames;
-    let pre_start = b_pre_nominal.checked_sub(w_pre)?;
-    let (pre_seam_r, pre_lag, pre_seam_z) =
-        seam_local_peak(&a_pre[a_pre.len() - w_pre..], b_mono, pre_start, max_lag)?;
+    let pre_start = b_pre_nominal.checked_sub(window)?;
+    let (pre_seam_r, pre_lag, pre_seam_z) = seam_local_peak(&a_pre, b_mono, pre_start, max_lag)?;
     let (post_seam_r, post_lag, post_seam_z) =
-        seam_local_peak(&a_post[..w_post], b_mono, b_post_nominal, max_lag)?;
+        seam_local_peak(&a_post, b_mono, b_post_nominal, max_lag)?;
 
-    let pre_seam_r = finite_corr(pre_seam_r);
-    let post_seam_r = finite_corr(post_seam_r);
+    // Keep raw correlations — including NaN from zero-variance (digital silence) windows. Do **not**
+    // `finite_corr` here: mapping NaN→0.0 inverts both of production's NaN decisions (gate_pass would
+    // fail where `NaN < floor` does not; step-real would pass where `partial_cmp(NaN)` declines). F14.
     // The seam-local shoulder placements (nominal ± the per-seam search) define the bridge + step.
     let b_pre_seam = (b_pre_nominal as i64 + pre_lag).max(0) as usize;
     let b_post_seam = (b_post_nominal as i64 + post_lag).max(0) as usize;
     let bridge_frames = b_post_seam as i64 - b_pre_seam as i64;
     let smin = pre_seam_r.min(post_seam_r);
+    // Same form as `try_dual_fit`: decline only when `smin < floor` (NaN < x is false ⇒ gate passes).
     let gate_pass =
-        smin >= f64::from(cfg.min_fill_correlation) && smin >= f64::from(cfg.fill_absolute_floor);
+        !(smin < f64::from(cfg.min_fill_correlation) || smin < f64::from(cfg.fill_absolute_floor));
 
     // Validator 1 — is the step necessary? Post seam at the PRE shoulder's seam-local lag (step forced 0):
     // if the post seam also clears there, one constant shift fixes both ⇒ registration artifact, not a splice.
     let b_post_global = b_pre_seam + gap_frames;
-    let post_seam_global_r = if w_post >= 8 && b_post_global + w_post <= b_mono.len() {
-        finite_corr(normalized_correlation(
-            &a_post[..w_post],
-            &b_mono[b_post_global..b_post_global + w_post],
-        ))
+    let post_seam_global_r = if window >= 8 && b_post_global + window <= b_mono.len() {
+        normalized_correlation(&a_post, &b_mono[b_post_global..b_post_global + window])
     } else {
         f64::NAN
     };
@@ -1122,22 +1131,22 @@ fn splice_dualfit_at(input: &SpliceDualfitInput<'_>) -> Option<SpliceDualfit> {
     let ml = ((DUALFIT_SEAM_UNIQ_LAG_MS / 1000.0) * rate).round() as i64;
     let mlu = ml.max(0) as usize;
     let pre_seam_prom =
-        (w_pre >= 8 && b_pre_seam >= w_pre + mlu && b_pre_seam + mlu <= b_mono.len())
+        (window >= 8 && b_pre_seam >= window + mlu && b_pre_seam + mlu <= b_mono.len())
             .then(|| {
                 seam_prominence(
-                    &a_pre[a_pre.len() - w_pre..],
-                    &b_mono[b_pre_seam - w_pre - mlu..b_pre_seam + mlu],
+                    &a_pre,
+                    &b_mono[b_pre_seam - window - mlu..b_pre_seam + mlu],
                     ml,
                     sample_rate,
                 )
             })
             .flatten();
     let post_seam_prom =
-        (w_post >= 8 && b_post_seam >= mlu && b_post_seam + w_post + mlu <= b_mono.len())
+        (window >= 8 && b_post_seam >= mlu && b_post_seam + window + mlu <= b_mono.len())
             .then(|| {
                 seam_prominence(
-                    &a_post[..w_post],
-                    &b_mono[b_post_seam - mlu..b_post_seam + w_post + mlu],
+                    &a_post,
+                    &b_mono[b_post_seam - mlu..b_post_seam + window + mlu],
                     ml,
                     sample_rate,
                 )
