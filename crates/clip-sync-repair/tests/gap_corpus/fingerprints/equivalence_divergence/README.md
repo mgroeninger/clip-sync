@@ -1,6 +1,6 @@
 # Equivalence-divergence fixtures
 
-Originally: curated single-gap fingerprints where the **scan** equivalence verdict and the **fine**
+Originally: curated single-gap fingerprints where the **scan** equivalence verdict and the **diagnostic**
 one disagreed. Committed so the disagreement (and, once closed, the closure) is pinned media-free —
 the `gap-files/` corpora these come from are gitignored and deletable.
 
@@ -20,7 +20,7 @@ the two paths **agree**.
 
 ### Current (re-harvested from `silence-floor/fp_i1_bin_convergence/`)
 
-| | scan | fine |
+| | scan | diagnostic |
 |---|---|---|
 | `gap_floor_db` | −79.50 | **−79.50** |
 | `donor_silence_fraction` | 0.474 (< 0.5 ⇒ occupied) | **0.476** (< 0.5 ⇒ occupied) |
@@ -38,7 +38,7 @@ Provenance: corpus `silence-floor/fp_i1_bin_convergence`, same pair / gap index 
 
 ### Pre-fix numbers (retained as documentation — `fp_post_F14_fix`)
 
-| | scan | fine |
+| | scan | diagnostic |
 |---|---|---|
 | `gap_floor_db` | −79.50 | −58.39 |
 | `donor_silence_fraction` | 0.474 (< 0.5 ⇒ occupied) | 1.000 (⇒ silent) |
@@ -46,10 +46,10 @@ Provenance: corpus `silence-floor/fp_i1_bin_convergence`, same pair / gap index 
 | class | `repairable_dropout` (**keep**) | `shared_silence` (**drop**) |
 
 The donor's `donor_interior_nominal.rms_db` is **−66.94** — unchanged across harvests. Pre-fix it sat
-below fine's whole-span floor and above scan's silent-core floor. Fine's floor was the max over *all*
+below the diagnostic path's whole-span floor and above scan's silent-core floor. That floor was the max over *all*
 bins in the gap span (a content peak, not a floor); scan's was the max over A's *silent* blocks. That
 single definitional difference flipped the donor axis and with it the class. Divergence was in the
-**safe** direction — scan kept what fine would drop.
+**safe** direction — scan kept what the diagnostic path would drop.
 
 Those pre-fix numbers live as constants in `tests/equivalence_divergence.rs` (`pre_fix` module) so
 the mechanism stays evidenced after the JSON was re-harvested.
@@ -59,10 +59,10 @@ the mechanism stays evidenced after the JSON was re-harvested.
 1. **F15** (2026-07-30) — silent-core floor + A RMS, interleaved reduction, block-confirmed span.
    Floor collapsed −58.39 → −76.66 on an intermediate re-dump; the *class* did not yet converge
    because the classifier consumes the per-bin donor *fraction*, and granularity (50 ms vs 100 ms)
-   still pushed fine's fraction over 0.5. Lesson: **do not predict a donor verdict from a mean level**.
+   still pushed the diagnostic fraction over 0.5. Lesson: **do not predict a donor verdict from a mean level**.
 2. **I1** (2026-07-30) — equivalence overlay bins at `scan_block_ms`. g4 class returns to
    `repairable_dropout` on both paths; floors agree exactly. That is this harvest.
-3. **I3** (2026-07-31) — fine donor gains scan's silence disjunct. **No effect on this pair** (lossy
+3. **I3** (2026-07-31) — the diagnostic donor gains scan's silence disjunct. **No effect on this pair** (lossy
    AAC never reaches the −120 digital-silence floor); no further re-dump required.
 
 ### What the tests assert now
@@ -71,7 +71,7 @@ the mechanism stays evidenced after the JSON was re-harvested.
 |---|---|
 | `band_donor_now_agrees_on_repairable_dropout` | both paths keep; floors equal; both donors occupied |
 | `closed_band_mechanism_no_longer_straddles_donor` | live floors cannot band-straddle the donor; pre-fix constants still would |
-| `fine_noise_floor_reads_lower_than_scan` | I2 residual, sign pinned |
+| `diag_noise_floor_reads_lower_than_scan` | I2 residual, sign pinned |
 | `divergence_is_never_in_the_dangerous_direction` | safety invariant (holds under agreement too) |
 
 Wrong responses if something goes red: relaxing the assertions, or re-harvesting a *different*

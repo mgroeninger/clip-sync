@@ -193,10 +193,12 @@ pub struct GapFingerprint {
     /// `scan_equivalence` is the verdict production acts on. It was documented as "the fine reference"
     /// until 2026-07-30; that framing was wrong, because the differences from the scan path then biased
     /// *this* side toward `drop` (whole-span `gap_floor_db` inflated donor silence; the ±3 s / 50 ms noise
-    /// floor read lower). Those terms are fixed. What survives is the ±2.0 s vs ±3.0 s noise-floor context
-    /// window (median 0.606 dB, still the safe direction) and ~1 block of donor-window alignment.
-    /// Measured divergence: 1.7 % of gaps, never in the dangerous direction — but that population
-    /// predates I1/I3.
+    /// floor read lower). Those terms are fixed, and I1 removed the 50 ms binning outright — so do not
+    /// call this the "fine" side either; the axis is production vs **diagnostic**, not resolution.
+    /// What survives is the ±2.0 s vs ±3.0 s noise-floor context window (median 0.606 dB, the one
+    /// remaining one-signed residual, in the safe direction) and ~1 block of donor-window alignment
+    /// (mixed sign). Measured divergence: 1.7 % of gaps, never in the dangerous direction — but that
+    /// population was measured 2026-07-30, before I1/I3, and is not a current rate.
     /// See `docs/dev/gap-fingerprint.md` § *`equivalence` vs `scan_equivalence`*.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub equivalence: Option<crate::domain::gap_equivalence::GapEquivalenceVerdict>,

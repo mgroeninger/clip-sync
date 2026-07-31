@@ -1,13 +1,20 @@
-//! `equivalence-calibration` — diff the **coarse production scan gate** (the scan-block equivalence gate)
-//! against the **`--gap-fingerprints` second opinion**, per gap. Both feed the same
+//! `equivalence-calibration` — diff the **production scan gate** (the authoritative equivalence verdict)
+//! against the **`--gap-fingerprints` diagnostic second opinion**, per gap. Both feed the same
 //! `classify_gap_equivalence`.
+//!
+//! **Naming (corrected 2026-07-31).** Do not call the two sides "coarse" and "fine". Both now bin at
+//! `scan_block_ms`; the diagnostic side's 50 ms binning was inherited by proximity from
+//! `gap_signature_bin_ms` and was removed by I1. "Fine" also implied *more accurate* when the truth was
+//! *more biased* — the inversion that repeatedly bred "the coarse gate is inaccurate". The axis is
+//! **production/authoritative** vs **diagnostic**, not resolution. See `docs/dev/gap-vocabulary.md`
+//! § Silence-character pre-gate.
 //!
 //! **The two paths are now nearly converged, and the history matters for reading this tool's output.**
 //! They once differed in how all three inputs were *defined*, not merely sampled; through 2026-07-30/31
 //! those definitional differences were fixed one at a time, each validated on media. What is left is one
 //! window and one span mapping:
 //!
-//! | input | coarse (scan) | fingerprint second opinion | status |
+//! | input | production (scan) | diagnostic second opinion | status |
 //! |---|---|---|---|
 //! | A RMS | silent blocks only, over the silent **core** | *same* | **converged** (F15) — 0.00 dB apart on 10/10 |
 //! | `gap_floor` | max of **silent** A blocks (F2/R1-filtered) | *same* | **converged** (F15) — 0.00 dB apart on 10/10 |
@@ -21,7 +28,7 @@
 //! **The two accepted residuals, with measured sizes** (one characterized pair, ten gaps — this bounds
 //! the axes on that pair, not on the corpus):
 //!
-//! - **Noise-floor context window** (I2): median |fine − scan| **0.606 dB**, flipping **one** gap of ten,
+//! - **Noise-floor context window** (I2): median |diag − scan| **0.606 dB**, flipping **one** gap of ten,
 //!   in the safe direction. Deliberately not converged: 2.0 s and 3.0 s each encode a real judgement
 //!   about how much surrounding material defines "the noise floor here", and `gap_signature_context_secs`
 //!   is a configurable parameter with unrelated consumers. Re-open if a broader corpus flips gaps in the
@@ -30,19 +37,21 @@
 //! - **Donor window**: median `donor_silence_fraction` delta **0.008** (max 0.067), every gap within
 //!   ±1 `scan_block_ms` of alignment, mixed signs.
 //!
-//! **"Fine" is a second opinion, not an oracle** — but the reason has changed, so do not reach for the
-//! old one. Until 2026-07-30 this header argued that every known difference biased the fingerprint side
-//! toward `drop`, principally because its floor was unfiltered (inflated ⇒ more of B counts silent) and
-//! its noise floor read lower on 10/10 gaps by ~3–19 dB. **Both of those terms are gone**: the floor is
-//! silence-filtered and the reduction is fixed, so the two floors agree exactly and the noise-floor delta
-//! is mixed-sign at 0.606 dB. Bin-size granularity carried the drop-bias afterwards; I1 removed that too.
-//! What remains is small, and only the noise-floor window is still one-sided in the safe direction. Both
+//! **The diagnostic side is a second opinion, not an oracle** — but the reason has changed, so do not
+//! reach for the old one. Until 2026-07-30 this header argued that every known difference biased the
+//! fingerprint side toward `drop`, principally because its floor was unfiltered (inflated ⇒ more of B
+//! counts silent) and its noise floor read lower on 10/10 gaps by ~3–19 dB. **Both of those terms are
+//! gone**: the floor is silence-filtered and the reduction is fixed, so the two floors agree exactly and
+//! the noise-floor delta is mixed-sign at 0.606 dB. Bin-size granularity carried the drop-bias
+//! afterwards; I1 removed that too. What remains is small, and only the noise-floor window is still
+//! one-sided in the safe direction — the donor window is **mixed-sign**, so do not say *both* residuals
+//! bias toward `drop`. Both
 //! floors are recorded per gap (`GapEquivalenceVerdict::gap_floor_db`) so a divergence can be attributed
 //! rather than assumed.
 //!
 //! **Measured population (2026-07-30):** 5 divergent / 297 gaps (1.7 %) over a 17-pair corpus,
 //! recipe-invariant, with **0 dangerous**. The mechanism is a donor sitting *between* the two floors —
-//! silent to fine, occupied to scan — pinned media-free by
+//! silent to the diagnostic read, occupied to scan — pinned media-free by
 //! `tests/gap_corpus/fingerprints/equivalence_divergence/`. Note the population was measured **before**
 //! I1/I3 landed and against the pre-I1 instrument; the divergence count should now be lower.
 //!
@@ -53,16 +62,20 @@
 //! genuinely-muted material would have tripped it; the corpus simply could not.
 //!
 //! This tool quantifies where the two disagree on real media — especially the one dangerous direction:
-//! **scan says *drop* but fine says *keep*** (a potential false drop / unrepaired hole). That is the
-//! direction the surviving residual does **not** manufacture, which is what makes it worth gating on.
+//! **scan says *drop* but the diagnostic says *keep*** (a potential false drop / unrepaired hole). That is
+//! the direction the surviving residual does **not** manufacture, which is what makes it worth gating on.
 //!
-//! A single `--gap-fingerprints DIR` run carries **both** verdicts per gap (`equivalence` = fine,
-//! `scan_equivalence` = coarse). Two modes, auto-detected from the argument:
+//! A single `--gap-fingerprints DIR` run carries **both** verdicts per gap (`equivalence` = diagnostic,
+//! `scan_equivalence` = production). Two modes, auto-detected from the argument:
 //!
 //!   equivalence-calibration out_dir            # ONE corpus (dir or dir/corpus.json) → per-gap table
 //!   equivalence-calibration gap-files/equiv-coarse-vs-fine   # PARENT of numbered corpora → roll-up
 //!
-//! Exit code 1 if any **dangerous** divergence exists (scan drops, fine keeps), else 0 — so it can gate CI.
+//! (That last path is a real on-disk corpus directory, named before the 2026-07-31 correction. The name
+//! is left alone so the invocation keeps working; it is not the vocabulary.)
+//!
+//! Exit code 1 if any **dangerous** divergence exists (scan drops, diagnostic keeps), else 0 — so it can
+//! gate CI.
 //! See `docs/dev/gap-fingerprint.md` § *`equivalence` vs `scan_equivalence`* and `docs/dev/gap-vocabulary.md`
 //! § *Silence-character pre-gate*.
 
@@ -77,7 +90,7 @@ use clip_sync_repair::domain::gap_equivalence::{GapEquivalenceClass, GapEquivale
 
 #[derive(Parser)]
 #[command(
-    about = "Diff the scan-block equivalence gate against the fine-bin fingerprint second opinion"
+    about = "Diff the production scan equivalence gate against the fingerprint diagnostic second opinion"
 )]
 struct Args {
     /// A `--gap-fingerprints` corpus (dir or `corpus.json`) for the per-gap table, OR a parent directory
@@ -85,24 +98,25 @@ struct Args {
     path: PathBuf,
 }
 
-/// The per-gap comparison outcome between the coarse scan verdict and the fine second opinion.
+/// The per-gap comparison outcome between the production scan verdict and the diagnostic second opinion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PairVerdict {
     /// Both paths landed on the same class.
     Agree,
-    /// Classes differ but the scan does **not** drop a gap fine keeps — a missed optimization
-    /// (scan keeps, fine drops) or a benign class swap. Safe, and expected at a low rate: the surviving
-    /// noise-floor-window residual biases fine toward `drop`, so this is the direction it produces. The
-    /// ~2 % measured over the 17-pair corpus predates I1/I3 and should now read lower.
+    /// Classes differ but the scan does **not** drop a gap the diagnostic keeps — a missed optimization
+    /// (scan keeps, diagnostic drops) or a benign class swap. Safe, and expected at a low rate: the
+    /// surviving noise-floor-window residual biases the diagnostic side toward `drop`, so this is the
+    /// direction it produces. The ~2 % measured over the 17-pair corpus predates I1/I3 and should now
+    /// read lower.
     SafeDiverge,
-    /// Scan drops a gap the fine path would keep — a potential **false drop** (unrepaired hole). No
+    /// Scan drops a gap the diagnostic path would keep — a potential **false drop** (unrepaired hole). No
     /// surviving instrument residual produces this direction, so a hit here warrants investigation
     /// rather than a shrug.
     Dangerous,
 }
 
-/// Compare a coarse (scan) verdict against the fine one. The only unsafe divergence is the scan
-/// removing a gap fine would keep.
+/// Compare a production (scan) verdict against the diagnostic one. The only unsafe divergence is the
+/// scan removing a gap the diagnostic would keep.
 fn pair_verdict(scan: &GapEquivalenceVerdict, refv: &GapEquivalenceVerdict) -> PairVerdict {
     if scan.drop && !refv.drop {
         PairVerdict::Dangerous
@@ -219,8 +233,8 @@ fn print_detail(corpus: &GapCorpus) -> Summary {
         "gap",
         "range",
         format!("scan({block_ms}ms)"),
-        "ref(fine)",
-        "Δ(ref−scan)",
+        "diag",
+        "Δ(diag−scan)",
     );
     for fp in &corpus.gaps {
         let (Some(refv), Some(scanv)) = (fp.equivalence.as_ref(), fp.scan_equivalence.as_ref())
@@ -230,7 +244,7 @@ fn print_detail(corpus: &GapCorpus) -> Summary {
         let verdict = match pair_verdict(scanv, refv) {
             PairVerdict::Agree => "ok",
             PairVerdict::SafeDiverge => "diverge (safe)",
-            PairVerdict::Dangerous => "⚠ DANGEROUS (scan drops, ref keeps)",
+            PairVerdict::Dangerous => "⚠ DANGEROUS (scan drops, diag keeps)",
         };
         println!(
             "  {:<4} {:<20} {:<16} {:<16} {:<26} {verdict}",
@@ -243,7 +257,7 @@ fn print_detail(corpus: &GapCorpus) -> Summary {
     }
     let s = summarize(corpus_pairs(corpus));
     println!(
-        "\n{} gaps compared · {} divergent · {} dangerous (scan-drop / ref-keep)",
+        "\n{} gaps compared · {} divergent · {} dangerous (scan-drop / diag-keep)",
         s.compared, s.divergent, s.dangerous
     );
     if s.unpaired > 0 {
@@ -332,7 +346,7 @@ fn print_rollup(parent: &Path) -> ExitCode {
         },
     );
     println!(
-        "\n{} pair(s) · {} gaps compared · {} divergent · {} dangerous (scan-drop / ref-keep)",
+        "\n{} pair(s) · {} gaps compared · {} divergent · {} dangerous (scan-drop / diag-keep)",
         dirs.len() - read_errors,
         total.compared,
         total.divergent,
@@ -447,8 +461,8 @@ mod tests {
         let pairs = vec![
             (Some(&d), Some(&d)),   // agree
             (Some(&sh), Some(&sh)), // agree
-            (Some(&d), Some(&sh)),  // safe diverge (scan keeps, ref drops)
-            (Some(&sh), Some(&d)),  // dangerous (scan drops, ref keeps)
+            (Some(&d), Some(&sh)),  // safe diverge (scan keeps, diag drops)
+            (Some(&sh), Some(&d)),  // dangerous (scan drops, diag keeps)
             (Some(&am), Some(&d)),  // dangerous
             (None, Some(&d)),       // unpaired
         ];

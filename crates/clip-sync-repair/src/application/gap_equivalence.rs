@@ -230,7 +230,7 @@ pub fn silent_core_probe(
     }
 }
 
-/// How the fine path bins and thresholds A's gap interior — the scan path's block size and silence
+/// How the diagnostic path bins and thresholds A's gap interior — the scan path's block size and silence
 /// predicate, supplied by the caller because they are *scan recipe* knobs (`scan_block_ms`,
 /// `silence_peak_fraction`, `absolute_silence_rms`), not equivalence parameters.
 #[derive(Debug, Clone, Copy)]
@@ -244,7 +244,7 @@ pub struct SilentCoreConfig {
     /// discriminate. This overlay had inherited it by proximity. Keep this matched to scan so the
     /// diagnostic compares like-for-like with the path it audits.
     ///
-    /// The noise-floor **context window** is still split (2.0 s scan vs 3.0 s fine) — that is I2 and
+    /// The noise-floor **context window** is still split (2.0 s scan vs 3.0 s diagnostic) — that is I2 and
     /// remains open. See `docs/dev/archive/TEMP-equivalence-instrument-convergence.md`.
     pub bin_frames: usize,
     pub silence_peak_fraction: f32,
@@ -289,7 +289,7 @@ pub struct DonorSpan<'a> {
 /// is −120 too — and `-120.0 < -120.0` is **false**. A floor-only donor therefore reads digital silence as
 /// **occupied**, yielding `repairable_dropout` (keep) where scan yields `shared_silence` (drop).
 ///
-/// That is the **dangerous** direction — scan drops, fine keeps — and the one condition
+/// That is the **dangerous** direction — scan drops, diagnostic keeps — and the one condition
 /// `bin/equivalence_calibration` exits 1 on. It went unnoticed because every corpus pair measured to date
 /// is lossy (AAC), whose decoded floors bottom out near −101 dB and never reach the −120 clamp; the
 /// 17-pair population check (5/297 divergent, 0 dangerous) could not have produced it. Lossless or
@@ -697,7 +697,7 @@ mod tests {
 
     /// The grid is phase-locked to the media, not the gap: shifting a gap by less than a bin changes
     /// which block centres it captures, exactly as the scan path's filter does. This is the property that
-    /// made fine's tiling disagree with scan by one to two blocks at the edges.
+    /// made the diagnostic path's tiling disagree with scan by one to two blocks at the edges.
     #[test]
     fn block_grid_is_phase_locked_to_the_media_not_the_gap() {
         // Bin = 100 frames. Centres sit at 50, 150, 250, … Gap [120, 320) captures 150 and 250.
@@ -709,7 +709,7 @@ mod tests {
     }
 
     /// A block whose centre is inside the gap is measured **whole**, even where it overruns the gap edge.
-    /// That is scan's semantics and the reason the fine path's edge blocks used to differ: content ramps
+    /// That is scan's semantics and the reason the diagnostic path's edge blocks used to differ: content ramps
     /// live at the edges, and a max statistic is maximally sensitive to them.
     #[test]
     fn block_grid_blocks_are_whole_even_when_they_overrun_the_gap_edge() {
@@ -824,7 +824,7 @@ mod tests {
     // The corpus's fully-silent gaps showed silent-core (a downmix max) reading *above* scan (an
     // interleaved max) at the same bin size — which Cauchy–Schwarz forbids on the same samples. The
     // sample sets therefore differed, and the donor block counts pinned it to a 100–200 ms span delta:
-    // scan measures over the block-confirmed core, fine over the wider refined span, and the extra
+    // scan measures over the block-confirmed core, the diagnostic path over the wider refined span, and the extra
     // edge frames carry the ramp. These tests plant that geometry synthetically so the mechanism is
     // pinned without media.
 
@@ -882,7 +882,7 @@ mod tests {
     }
 
     /// **The invariant whose violation exposed the span delta.** On the *same* span the downmix floor
-    /// can never exceed the interleaved one — so a corpus gap where fine reads above scan at the same
+    /// can never exceed the interleaved one — so a corpus gap where the diagnostic reads above scan at the same
     /// bin size is proof the spans differ, not evidence about correlation. Pinned here so the
     /// diagnostic stays available.
     #[test]

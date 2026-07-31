@@ -140,7 +140,7 @@ pub struct GapEquivalenceVerdict {
 /// scaffolding so the silent-core floor could be evaluated before it was adopted
 /// (`docs/dev/archive/TEMP-equivalence-divergence-findings.md` § F15).
 ///
-/// **Provenance only.** Nothing classifies on these. The live fine path now *is* the silent-core
+/// **Provenance only.** Nothing classifies on these. The live diagnostic path now *is* the silent-core
 /// measurement at `scan_block_ms`, so this type is **vestigial** — remove the emit, the field, and
 /// this struct when next touching that path. Keep [`NoiseFloorProbe`] (I2 attribution). See
 /// `docs/dev/archive/TEMP-equivalence-instrument-convergence.md` § *Also carried over*.
@@ -176,7 +176,7 @@ pub struct SilentCoreProbe {
 #[serde(rename_all = "snake_case")]
 pub enum ChannelReduction {
     /// Average the channels per frame, **then** square: an amplitude mean, i.e. a mono downmix. What
-    /// the fine path's `mono_rms` / `interleaved_to_mono` do. The variant existing dumps recorded, so
+    /// the diagnostic path's `mono_rms` / `interleaved_to_mono` do. The variant existing dumps recorded, so
     /// it is the `serde` default.
     #[default]
     Downmix,
@@ -188,15 +188,15 @@ pub enum ChannelReduction {
 /// A candidate `noise_floor_db` — median dB over the context bins **outside** the gap — measured at one
 /// `(context window, bin size, channel reduction)` combination. This is the **one surviving** axis
 /// between the two front-ends (I2): both now bin at `scan_block_ms` and reduce interleaved, but the
-/// context window is ±2.0 s (scan) vs ±3.0 s (fine). Residual median **0.606 dB**, still biasing fine
-/// **lower**, which shrinks `a_below_noise` and pushes gaps out of `repairable_dropout` — the safe
+/// context window is ±2.0 s (scan) vs ±3.0 s (diagnostic). Residual median **0.606 dB**, still biasing
+/// the diagnostic side **lower**, which shrinks `a_below_noise` and pushes gaps out of `repairable_dropout` — the safe
 /// direction. Kept deliberately un-converged; these probes are what make it attributable.
 ///
 /// **Provenance only.** Emitted over a grid so the variables can be separated: the probe at scan's own
 /// `(2 s, scan_block_ms, Interleaved)` should reproduce `scan_equivalence.noise_floor_db`, and the
 /// crosses isolate each variable's contribution. The window/bin-only grid did *not* reproduce it —
 /// undershooting 3.13–7.96 dB uniformly — which is what added [`ChannelReduction`] as the third
-/// dimension. A residual after all three is most likely the excluded span (fine excludes the *refined*
+/// dimension. A residual after all three is most likely the excluded span (the diagnostic path excludes the *refined*
 /// gap, scan the block-confirmed *core*).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NoiseFloorProbe {
@@ -258,7 +258,7 @@ impl GapEquivalenceVerdict {
     }
 
     // `with_gap_floor_db` (attach `levels.gap_floor_db` — the whole-span content peak) was removed with
-    // F15 fix 1. The fine path now measures its own silent-core floor and carries it via
+    // F15 fix 1. The diagnostic path now measures its own silent-core floor and carries it via
     // `with_scan_provenance`; re-attaching the levels number would overwrite the fix with the statistic it
     // exists to replace. `levels.gap_floor_db` is still dumped in its own block.
 

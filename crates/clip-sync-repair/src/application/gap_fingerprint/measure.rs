@@ -2392,7 +2392,7 @@ pub fn characterize_gaps_from_decode(
         // Gap-equivalence classification overlay (gap-equivalence plan §7.4) — emitted for tuning/categorizing.
         // Silence-character signals: A gap RMS vs the recording's noise floor + donor silence at nominal.
         // `enabled: true` here so the dump always classifies (it never drops gaps — that's the v1 plan-time gate).
-        // F15 fixes 1–3. The fine equivalence read now owns its sensors instead of borrowing
+        // F15 fixes 1–3. The diagnostic equivalence read now owns its sensors instead of borrowing
         // `fp.levels.*`: those are amplitude-mean downmixes over the refined span with no silence
         // predicate, and all three properties bias this path toward `drop`. They cannot simply be fixed
         // in `level_profile` — `levels.gap_floor_db` / `levels.noise_floor_db` have other consumers
@@ -2459,7 +2459,7 @@ pub fn characterize_gaps_from_decode(
                 ..Default::default()
             },
         );
-        // Record the floor the fine donor fraction was measured against. It is a *different
+        // Record the floor the diagnostic donor fraction was measured against. It is a *different
         // statistic* from the scan path's (max over all gap bins vs max over silent A blocks only),
         // and the two differ by enough to flip a class — so both are now recorded per gap rather
         // than left to be inferred.

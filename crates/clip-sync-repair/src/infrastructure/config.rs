@@ -60,7 +60,7 @@ pub struct RepairConfig {
     pub scan_both: bool,
     /// Drop already-equivalent gaps (mutual/ambient silence — nothing to repair) from the fill plan at
     /// plan time, before decode/patch (`docs/dev/gap-vocabulary.md` § Silence-character pre-gate). **On by default** (2026-07-20)
-    /// after media validation (8 pairs, 121 gaps, 0 divergent vs the fine fingerprint reference). Disable
+    /// after media validation (8 pairs, 121 gaps, 0 divergent vs the fingerprint diagnostic path). Disable
     /// with `--no-skip-equivalent-gaps` to patch every scanned gap regardless of silence character.
     #[serde(default = "default_true")]
     pub skip_equivalent_gaps: bool,
@@ -303,9 +303,10 @@ fn default_silence_peak_fraction() -> f32 {
 }
 fn default_scan_block_ms() -> u64 {
     // 100 ms analysis blocks (sensitive default) — finer silence-run resolution and the equivalence gate's
-    // measurement granularity. Media-validated identical to the fine fingerprint reference (8 pairs, 121 gaps)
-    // — but see `docs/dev/archive/TEMP-equivalence-divergence-findings.md` F15: a divergent gap was found 2026-07-30, and the
-    // two paths differ by more than granularity, so "identical" holds for that corpus, not as an invariant.
+    // measurement granularity. Media-validated identical to the fingerprint diagnostic path (8 pairs, 121
+    // gaps) — but see `docs/dev/archive/TEMP-equivalence-divergence-findings.md` F15: a divergent gap was
+    // found 2026-07-30, and the two paths differ by more than granularity, so "identical" holds for that
+    // corpus, not as an invariant. Since I1 this value is *also* the diagnostic path's bin width.
     100
 }
 fn default_decode_chunk_secs() -> u64 {

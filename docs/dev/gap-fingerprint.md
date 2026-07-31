@@ -116,8 +116,8 @@ approaches were refuted by measurement. Full analysis + cost hierarchy: that pla
 | `splice_dualfit` | full, B present | dual-fit viability: seams scored at per-shoulder placement + `gate_pass` / `trim_frames` / validators (see below) |
 | `residual` | full, B present | least-squares same-source cancellation (dB) vs noise floor at the decision seam |
 | `outcome` | B present | plan_kind, tier, seam_shape, fit_path, signature_mode, skip_reason |
-| `equivalence` | B present | **gap-equivalence class (fine)** — does this gap need patching? (silence-character; see below) |
-| `scan_equivalence` | scan classified | the **coarse production** verdict for the same gap (`GapReport::gap_equivalence`; block size = the `scan_block_ms` knob), copied in so one dump holds both readings for calibration. **This is the authoritative one** — see below |
+| `equivalence` | B present | **gap-equivalence class (diagnostic)** — does this gap need patching? (silence-character; see below) |
+| `scan_equivalence` | scan classified | the **authoritative production** verdict for the same gap (`GapReport::gap_equivalence`; block size = the `scan_block_ms` knob), copied in so one dump holds both readings for calibration. **This is the authoritative one** — see below |
 | `lag` | diagnostics | **Tier-3** per pre/post anchor lag fingerprint at the best-energy bracket / structure throat — requires `--fingerprint-diagnostics` |
 | `wide_envelope` | diagnostics | **Tier-3** 100 ms-bin RMS-envelope lag peak at `b_mapped` — cross-scale confirmer of `baseline_lag` |
 | `seam_probe` | diagnostics | **Tier-3** encoding-robust seam metrics (R2/R4/spectrum/env/recovered); not used by any gate |
@@ -206,7 +206,7 @@ occupied → **keep**; `shared_silence` = B silent → nothing to fill → **dro
 tone (not a dropout) though B has content → genuine quiet → **drop**. Thresholds (`dropout_margin_db ≈ 35`,
 `donor_silence_thresh ≈ 0.5`) are tunable.
 
-The fingerprint **always emits** `equivalence` (fine) and `scan_equivalence` (coarse) for calibration —
+The fingerprint **always emits** `equivalence` (diagnostic) and `scan_equivalence` (production) for calibration —
 the dump itself never drops gaps. Production plan-time drop is separate and **on by default**
 (`skip_equivalent_gaps = true`; `--no-skip-equivalent-gaps` to patch all). See [gap-scan.md](../gap-scan.md).
 
@@ -224,29 +224,40 @@ media. **One difference remains, deliberately.** Read them accordingly.
   compared. Silent-core A gap RMS and floor, interleaved reduction, `scan_block_ms` bins — the same
   definitions the scan gate uses.
 
-**It was called "the fine reference" here until 2026-07-30. That was wrong**, and the wording bred a
-recurring error: reading a divergence as "the coarse gate is inaccurate". The label is still wrong, but
-the reason has changed — do not cite the old table, which described defects that no longer exist:
+**Do not call these two "fine" and "coarse" (rename completed 2026-07-31).** `equivalence` was called
+"the fine reference" here until 2026-07-30, and the wording bred a recurring error: reading a divergence
+as "the coarse gate is inaccurate". The label was never right. The 50 ms binning it named was itself an
+accident — inherited by proximity from `gap_signature_bin_ms`, a value tuned for structure *pattern
+matching*, where finer genuinely is better; a **max** statistic and a **threshold-crossing fraction**
+want the opposite. So "fine" described an accident, and implied *more accurate* where the truth was
+*more biased*. I1 then removed the binning difference outright, making the factual half false too. The
+axis is **production/authoritative** vs **diagnostic**, not resolution.
+
+Do not cite the old table either — it described defects that no longer exist:
 
 | input | status | note |
 |---|---|---|
-| `gap_floor_db` | **converged** (F15) | fine took the max over **all** bins in the span (a content peak); it now takes the max over A's **silent** bins, like scan. Measured 0.00 dB apart on 10/10 gaps |
+| `gap_floor_db` | **converged** (F15) | the diagnostic path took the max over **all** bins in the span (a content peak); it now takes the max over A's **silent** bins, like scan. Measured 0.00 dB apart on 10/10 gaps |
 | A gap RMS | **converged** (F15) | same silent-core filter and span rule; 0.00 dB apart on 10/10 |
 | channel reduction | **converged** (F15) | both interleaved power mean. This was the *dominant* noise-floor term (Cauchy–Schwarz bounds downmix ≤ interleaved, gap up to `10·log10(N)` = 7.78 dB at 6ch) |
-| bin width | **converged** (I1) | the overlay had inherited `gap_signature_bin_ms` = 50 ms; now `scan_block_ms`. Finer bins upward-bias a **max** and a **threshold-crossing fraction**, the opposite of what they do for structure pattern matching |
-| donor predicate | **converged** (I3) | fine now applies scan's `b.silent ‖ rms < floor` disjunction |
-| **noise-floor context** | **open by choice** (I2) | ±2.0 s (scan) vs ±3.0 s (fine). Median **0.606 dB**, fine still reads **lower** ⇒ smaller `a_below_noise` ⇒ away from `repairable_dropout`. One gap of ten flips, safe direction |
-| **donor window** | **open, small** | scan maps the **core**, fine the **nominal** `b_mapped` span. Median `donor_silence_fraction` delta 0.008 (max 0.067), every gap within ±1 block, mixed signs |
+| bin width | **converged** (I1) | the overlay had inherited `gap_signature_bin_ms` = 50 ms; now `scan_block_ms`. This is the row that retired the word "fine" |
+| donor predicate | **converged** (I3) | the diagnostic path now applies scan's `b.silent ‖ rms < floor` disjunction |
+| **noise-floor context** | **open by choice** (I2) | ±2.0 s (scan) vs ±3.0 s (diagnostic). Median **0.606 dB**, the diagnostic side still reads **lower** ⇒ smaller `a_below_noise` ⇒ away from `repairable_dropout`. One gap of ten flips, safe direction |
+| **donor window** | **open, small** | scan maps the **core**, the diagnostic path the **nominal** `b_mapped` span. Median `donor_silence_fraction` delta 0.008 (max 0.067), every gap within ±1 block, mixed signs |
 
-So fine is still the **more aggressive** side, but only by the last two rows, and only one of them is
-one-signed. Sizes are medians over **one pair, ten gaps** — they bound the axes on that pair, not on
+So the diagnostic path is still the **more aggressive** side, but only by the last two rows, and only
+**one** of them is one-signed — the donor window is mixed-sign, so do not say *both* open differences
+bias toward `drop` (that sentence was true of the F15-era pair and silently re-pointed when they
+converged). Sizes are medians over **one pair, ten gaps** — they bound the axes on that pair, not on
 the corpus.
 
-**Measured population:** 5 divergent / 297 gaps (1.7 %) across a 17-pair corpus, **0 in the dangerous
-direction** — measured *before* I1/I3, so the rate should now read lower. Read the `0 dangerous` with one
+**Measured population (2026-07-30):** 5 divergent / 297 gaps (1.7 %) across a 17-pair corpus, **0 in the
+dangerous direction**. Still exactly correct *as a historical measurement*, but do not quote it as a
+current rate: it was taken before I1/I3, so a fresh run should read lower. Read the `0 dangerous` with one
 caveat: every pair in that corpus is lossy and bottoms out near −101 dB, so it structurally could not
-reach the −120 digital-silence condition that I3 fixed. The original mechanism was a donor whose level sat *between* the two floors — silent to
-fine, occupied to scan. That band is closed (F15 + I1); the committed
+reach the −120 digital-silence condition that I3 fixed. The original mechanism was a donor whose level
+sat *between* the two floors — silent to the diagnostic read, occupied to scan. That band is closed
+(F15 + I1); the committed
 `tests/gap_corpus/fingerprints/equivalence_divergence/band_donor.json` is now a regression fixture
 pinning agreement on that gap. Full analysis in
 [archive/TEMP-equivalence-divergence-findings.md](archive/TEMP-equivalence-divergence-findings.md) § F15.
@@ -280,7 +291,8 @@ via empty `skip_serializing_if` if needed; do not strip committed fixtures. See
 
 **The one surviving axis** (I2). Both paths estimate the noise floor the *same way* (median of context
 bins outside the gap), both now at `scan_block_ms` bins under the interleaved reduction, but over
-**±2.0 s** (scan) vs **±3.0 s** (fine); fine reads systematically lower, by a median 0.606 dB. It began
+**±2.0 s** (scan) vs **±3.0 s** (diagnostic); the diagnostic side reads systematically lower, by a
+median 0.606 dB. It began
 as several variables against one observed difference, which is why the probe emits a grid — the grid is
 what let bin size and reduction be charged separately and removed, leaving the window alone:
 
@@ -302,8 +314,8 @@ deduped: the two reductions read identically there, but keeping both rows is wha
 
 - **`Interleaved`** — RMS over all interleaved samples, a **power** mean across channels. What scan's
   `block_rms_db` does (via `rms_interleaved`).
-- **`Downmix`** — average the channels per frame, *then* square: an **amplitude** mean. What fine's
-  `mono_rms` / `interleaved_to_mono` do.
+- **`Downmix`** — average the channels per frame, *then* square: an **amplitude** mean. What the
+  diagnostic path's `mono_rms` / `interleaved_to_mono` do.
 
 They differ by the zero-lag cross-correlation *between the channels*. With equal per-channel power and
 mean pairwise correlation `ρ̄` over `N` channels, `R_downmix² / R_interleaved² = (1 + (N−1)·ρ̄) / N`:
@@ -336,9 +348,10 @@ as a second tuple element rather than as a `LevelProfile` field: that type is se
 dumped gap, and this is scaffolding.
 
 `equivalence-calibration DIR` diffs the two per gap and exits 1 only on the **dangerous** direction —
-scan *drops* what fine would *keep*. That gate is worth keeping precisely because it is the one
-direction fine's biases do **not** produce, so a hit there is a real signal rather than a known offset.
-A merely "divergent" gap is expected at ~2 % and is not by itself a defect. See
+scan *drops* what the diagnostic path would *keep*. That gate is worth keeping precisely because it is
+the one direction the diagnostic side's biases do **not** produce, so a hit there is a real signal
+rather than a known offset. A merely "divergent" gap was seen at ~2 % pre-I1/I3 and is not by itself a
+defect. See
 [gap-vocabulary.md](gap-vocabulary.md) § *Silence-character pre-gate*.
 
 ## Lag fingerprint

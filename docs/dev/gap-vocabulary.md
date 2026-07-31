@@ -67,7 +67,8 @@ threshold is `silence_hold_blocks × scan_block_ms` — configured holds of 450 
 block produce the *same* gap list. Treat a `silence_hold_ms` edit as recipe-changing unless you have
 checked it survives quantization. This prose contract is the thing
 [TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md) makes a type (its §2/§3 own the effective-vs-configured
-rule); keep the two lists in step.
+rule). The row that must stay in step with the list above is that plan's carrier-note table
+(`:148`, `silence_hold_ms` — "**Not as configured**").
 
 ## Axes (read before the cells)
 

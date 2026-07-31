@@ -1,8 +1,8 @@
-//! The scan-vs-fine equivalence **divergence** contract (F15 → instrument convergence).
+//! The scan-vs-diagnostic equivalence **divergence** contract (F15 → instrument convergence).
 //!
 //! The two equivalence front-ends share `classify_gap_equivalence` but historically fed it
 //! differently-defined inputs (`docs/dev/gap-fingerprint.md` § *`equivalence` vs `scan_equivalence`*).
-//! F15 closed the three fine-path sensor defects; I1 converged the equivalence bin size onto
+//! F15 closed the three diagnostic-path sensor defects; I1 converged the equivalence bin size onto
 //! `scan_block_ms`. This file pins the resulting contract media-free:
 //!
 //! - **`band_donor.json`** is a **regression** fixture for g4 of the F15 pair (re-harvested from
@@ -10,9 +10,9 @@
 //!   arithmetic is kept as constants so the closed mechanism stays documented — never swap in a
 //!   still-diverging gap to restore a diverge assertion.
 //! - a change that flipped any remaining divergence into the **dangerous** direction (scan drops what
-//!   fine keeps) would break the safety assertion.
+//!   the diagnostic path keeps) would break the safety assertion.
 //!
-//! `fine_noise_floor_reads_lower_than_scan` and `divergence_is_never_in_the_dangerous_direction` are
+//! `diag_noise_floor_reads_lower_than_scan` and `divergence_is_never_in_the_dangerous_direction` are
 //! **not** scheduled to change — a failure in either is a real regression. (The noise-floor residual
 //! is the accepted I2 context-window term; see
 //! `docs/dev/archive/TEMP-equivalence-instrument-convergence.md` § I2.)
@@ -79,7 +79,7 @@ fn both(fp: &GapFingerprint) -> (&GapEquivalenceVerdict, &GapEquivalenceVerdict)
             .expect("fixture carries no scan_equivalence"),
         fp.equivalence
             .as_ref()
-            .expect("fixture carries no fine equivalence"),
+            .expect("fixture carries no diag equivalence"),
     )
 }
 
@@ -88,35 +88,35 @@ fn both(fp: &GapFingerprint) -> (&GapEquivalenceVerdict, &GapEquivalenceVerdict)
 #[test]
 fn band_donor_now_agrees_on_repairable_dropout() {
     let fp = load("band_donor.json");
-    let (scan, fine) = both(&fp);
+    let (scan, diag) = both(&fp);
 
     assert_eq!(
         reclassify(scan, "scan"),
         GapEquivalenceClass::RepairableDropout
     );
     assert_eq!(
-        reclassify(fine, "fine"),
+        reclassify(diag, "diag"),
         GapEquivalenceClass::RepairableDropout
     );
-    assert!(!scan.drop && !fine.drop, "both keep");
+    assert!(!scan.drop && !diag.drop, "both keep");
 
-    let (scan_floor, fine_floor) = (
+    let (scan_floor, diag_floor) = (
         scan.gap_floor_db.expect("scan gap_floor_db"),
-        fine.gap_floor_db.expect("fine gap_floor_db"),
+        diag.gap_floor_db.expect("diag gap_floor_db"),
     );
     assert_eq!(
-        scan_floor, fine_floor,
-        "post-I1 floors must match (scan {scan_floor}, fine {fine_floor})"
+        scan_floor, diag_floor,
+        "post-I1 floors must match (scan {scan_floor}, diag {diag_floor})"
     );
 
     let thresh = on().donor_silence_thresh;
-    let (scan_ds, fine_ds) = (
+    let (scan_ds, diag_ds) = (
         scan.donor_silence_fraction.expect("scan donor fraction"),
-        fine.donor_silence_fraction.expect("fine donor fraction"),
+        diag.donor_silence_fraction.expect("diag donor fraction"),
     );
     assert!(
-        scan_ds < thresh && fine_ds < thresh,
-        "both donors occupied below {thresh} (scan {scan_ds}, fine {fine_ds})"
+        scan_ds < thresh && diag_ds < thresh,
+        "both donors occupied below {thresh} (scan {scan_ds}, diag {diag_ds})"
     );
 }
 
@@ -126,20 +126,20 @@ fn band_donor_now_agrees_on_repairable_dropout() {
 #[test]
 fn closed_band_mechanism_no_longer_straddles_donor() {
     let fp = load("band_donor.json");
-    let (scan, fine) = both(&fp);
+    let (scan, diag) = both(&fp);
     let donor_rms = fp
         .donor_interior_nominal
         .as_ref()
         .expect("fixture carries no nominal donor read")
         .rms_db;
-    let (scan_floor, fine_floor) = (
+    let (scan_floor, diag_floor) = (
         scan.gap_floor_db.expect("scan gap_floor_db"),
-        fine.gap_floor_db.expect("fine gap_floor_db"),
+        diag.gap_floor_db.expect("diag gap_floor_db"),
     );
 
     assert!(
-        !(scan_floor < donor_rms && donor_rms < fine_floor),
-        "donor {donor_rms} must not sit in a floor band (scan {scan_floor}, fine {fine_floor})"
+        !(scan_floor < donor_rms && donor_rms < diag_floor),
+        "donor {donor_rms} must not sit in a floor band (scan {scan_floor}, diag {diag_floor})"
     );
 
     // Historical band (fp_post_F14_fix): donor mean between the two floors, fractions straddling 0.5.
@@ -162,21 +162,21 @@ fn closed_band_mechanism_no_longer_straddles_donor() {
     );
 }
 
-/// The fine path still reads a **lower** noise floor than the scan path on this gap — the accepted I2
+/// The diagnostic path still reads a **lower** noise floor than the scan path on this gap — the accepted I2
 /// context-window residual (median 0.606 dB on the pair; here ~0.78 dB). A lower floor shrinks
 /// `a_below_noise` and biases toward `drop`. Pinned so a sign reversal has to be deliberate.
 #[test]
-fn fine_noise_floor_reads_lower_than_scan() {
+fn diag_noise_floor_reads_lower_than_scan() {
     let fp = load("band_donor.json");
-    let (scan, fine) = both(&fp);
+    let (scan, diag) = both(&fp);
     let (s, f) = (
         scan.noise_floor_db.expect("scan noise floor"),
-        fine.noise_floor_db.expect("fine noise floor"),
+        diag.noise_floor_db.expect("diag noise floor"),
     );
-    assert!(f < s, "fine noise floor {f} should read below scan's {s}");
+    assert!(f < s, "diag noise floor {f} should read below scan's {s}");
 }
 
-/// Safety invariant: never scan-drops what fine keeps. Holds when the paths agree (both keep) and must
+/// Safety invariant: never scan-drops what the diagnostic path keeps. Holds when the paths agree (both keep) and must
 /// hold for any future divergence fixture added here. `equivalence-calibration` exits 1 on the
 /// dangerous direction.
 #[test]
@@ -184,10 +184,10 @@ fn divergence_is_never_in_the_dangerous_direction() {
     // One fixture today; extend this list as divergence / regression shapes are harvested.
     let name = "band_donor.json";
     let fp = load(name);
-    let (scan, fine) = both(&fp);
-    let dangerous = scan.drop && !fine.drop;
+    let (scan, diag) = both(&fp);
+    let dangerous = scan.drop && !diag.drop;
     assert!(
         !dangerous,
-        "{name}: scan drops a gap the fine path keeps — the dangerous direction"
+        "{name}: scan drops a gap the diagnostic path keeps — the dangerous direction"
     );
 }
