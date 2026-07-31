@@ -275,7 +275,7 @@ draft under-counted are marked **[+]**; stale line numbers are corrected in plac
 
 Harvested from [archive/TEMP-silence-floor-findings.md](archive/TEMP-silence-floor-findings.md)
 (F1–F12, especially F11) and
-[TEMP-equivalence-divergence-findings.md](TEMP-equivalence-divergence-findings.md) (F14/F15).
+[archive/TEMP-equivalence-divergence-findings.md](archive/TEMP-equivalence-divergence-findings.md) (F14/F15).
 **Not a second checklist** — §5 remains the work this plan implements. This section records *why*
 specific JSON fields belong in (or next to) the recipe contract, and which diagnostic fields the
 ledgers proved useful so they are not rediscovered as "missing recipe knobs."

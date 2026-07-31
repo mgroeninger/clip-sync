@@ -4,10 +4,13 @@
 >
 > Every finding here is fixed, delegated, or refuted. Two findings that were open at archival
 > time were **split into their own live ledger** rather than resolved here:
-> [../TEMP-equivalence-divergence-findings.md](../TEMP-equivalence-divergence-findings.md) —
+> [TEMP-equivalence-divergence-findings.md](TEMP-equivalence-divergence-findings.md) —
 > **F15** (high, scan-time vs fill-time equivalence contradict each other on one gap) and **F14**
 > (medium-high, the fingerprint corpus records `skip` where production patches via dual-fit).
-> Their IDs are unchanged, so the cross-references below still resolve. **F11** is delegated to
+> Their IDs are unchanged, so the cross-references below still resolve. That ledger has since been
+> **closed and archived too** (2026-07-30, now a sibling here); its own remaining items moved on to
+> [../TEMP-equivalence-instrument-convergence.md](../TEMP-equivalence-instrument-convergence.md).
+> **F11** is delegated to
 > [../TEMP-scan-recipe-plan.md](../TEMP-scan-recipe-plan.md).
 >
 > Kept for the rationale, which survives nowhere else: §3's refuted/withdrawn hypotheses
@@ -310,7 +313,7 @@ non-silent blocks inside the core; equivalence must use `BlockLevel::silent`.
 ### F14, F15 — SPLIT OUT 2026-07-30
 Both were opened 2026-07-30 from the §5 follow-up and were the only items still open when this
 ledger was archived. They now live in
-[../TEMP-equivalence-divergence-findings.md](../TEMP-equivalence-divergence-findings.md), IDs
+[TEMP-equivalence-divergence-findings.md](TEMP-equivalence-divergence-findings.md), IDs
 unchanged:
 
 - **F15** (high) — scan-time equivalence reports `donor_silence_fraction: 0.10` on a donor that
@@ -439,7 +442,7 @@ preview's `best_attempt { pre 0.0507, post 0.0499, source: anchor }` exactly. Su
 
 This closes §5 as a question about *mechanism*. It does **not** close the question of why the
 scan-time gate calls this donor 10% silent when it is ~87% silent — that is **F15**, now tracked in
-[../TEMP-equivalence-divergence-findings.md](../TEMP-equivalence-divergence-findings.md), and it is
+[TEMP-equivalence-divergence-findings.md](TEMP-equivalence-divergence-findings.md), and it is
 the more serious of the two.
 
 ---

@@ -304,7 +304,7 @@ fn default_silence_peak_fraction() -> f32 {
 fn default_scan_block_ms() -> u64 {
     // 100 ms analysis blocks (sensitive default) — finer silence-run resolution and the equivalence gate's
     // measurement granularity. Media-validated identical to the fine fingerprint reference (8 pairs, 121 gaps)
-    // — but see `TEMP-equivalence-divergence-findings.md` F15: a divergent gap was found 2026-07-30, and the
+    // — but see `docs/dev/archive/TEMP-equivalence-divergence-findings.md` F15: a divergent gap was found 2026-07-30, and the
     // two paths differ by more than granularity, so "identical" holds for that corpus, not as an invariant.
     100
 }

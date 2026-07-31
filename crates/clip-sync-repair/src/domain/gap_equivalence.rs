@@ -133,7 +133,7 @@ pub struct GapEquivalenceVerdict {
 
 /// A candidate `gap_floor_db` measured the **scan path's way** — max RMS over the *silent* bins of the
 /// gap only — but at a bin size the caller chooses. Recorded so the F15 fix can be evaluated before it
-/// is adopted (`docs/dev/TEMP-equivalence-divergence-findings.md` § F15).
+/// is adopted (`docs/dev/archive/TEMP-equivalence-divergence-findings.md` § F15).
 ///
 /// **Provenance only.** Nothing classifies on these; they exist so a corpus dump can answer three
 /// questions without changing any verdict: does a silent-core floor close the band that flips a class,

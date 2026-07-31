@@ -2397,7 +2397,7 @@ pub fn characterize_gaps_from_decode(
         // predicate, and all three properties bias this path toward `drop`. They cannot simply be fixed
         // in `level_profile` — `levels.gap_floor_db` / `levels.noise_floor_db` have other consumers
         // (`snr_db`, dual-fit's `a_gap_floor_db`) that must not move. See
-        // `docs/dev/TEMP-equivalence-divergence-findings.md` § *The three F15 fixes*.
+        // `docs/dev/archive/TEMP-equivalence-divergence-findings.md` § *The three F15 fixes*.
         //
         // The span is the **raw** gap, not `refined`: scan's block grid is media-absolute and selects
         // blocks by centre-containment in `[a_start_secs, a_end_secs)`, which is what fix 3 adopts. The

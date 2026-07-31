@@ -10,7 +10,7 @@
 //! **F15 (2026-07-30): three of those differences were defects and are now fixed here** — the silent-core
 //! filter on `gap_floor_db` / `a_gap_rms_db`, the interleaved channel reduction, and the block-confirmed
 //! span. All three previously biased this side toward `drop`, the dangerous direction. See
-//! [`measure_gap_equivalence`] and `docs/dev/TEMP-equivalence-divergence-findings.md`
+//! [`measure_gap_equivalence`] and `docs/dev/archive/TEMP-equivalence-divergence-findings.md`
 //! § *The three F15 fixes*.
 //!
 //! Consequently this module now measures its **own** A levels and donor occupancy from PCM rather than
@@ -64,7 +64,7 @@ pub fn gap_interior_rms_db(
 /// downmix, and the scan path's interleaved power mean (`block_rms_db` → [`rms_interleaved`]). They are
 /// **not** interchangeable — Cauchy–Schwarz makes `Downmix ≤ Interleaved` on the same samples, with
 /// equality only when every channel carries an identical signal, and the gap is `10·log10(N)` (7.78 dB at
-/// 6 channels) when they are uncorrelated. See `docs/dev/TEMP-equivalence-divergence-findings.md` § F15.
+/// 6 channels) when they are uncorrelated. See `docs/dev/archive/TEMP-equivalence-divergence-findings.md` § F15.
 fn bin_level_db(
     samples: &[f32],
     channels: usize,
@@ -301,7 +301,7 @@ fn donor_silence_fraction_at_floor(
 ///
 /// This front-end used to read three sensors differently from the authoritative scan path, each difference
 /// large enough to flip a class on its own, and **all three biased it toward `drop`** — the dangerous
-/// direction. All three are corrected here (`docs/dev/TEMP-equivalence-divergence-findings.md` § *The three
+/// direction. All three are corrected here (`docs/dev/archive/TEMP-equivalence-divergence-findings.md` § *The three
 /// F15 fixes*):
 ///
 /// 1. **silent core.** `a_gap_rms_db` and `gap_floor_db` are the energy mean and max over the bins the

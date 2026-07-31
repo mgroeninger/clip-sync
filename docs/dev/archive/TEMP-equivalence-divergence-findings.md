@@ -1,4 +1,28 @@
-# Equivalence divergence — open findings ledger
+# Equivalence divergence — findings ledger
+
+> # ARCHIVED 2026-07-30 — closed, do not update
+>
+> **F14** is fixed and media-validated. **F15**'s three fine-path fixes — silent-core floor + A RMS,
+> interleaved reduction, and span → block-confirmed core — are implemented and media-validated by the
+> combined re-dump (§ *Combined re-dump*). Sensor convergence, median `|fine − scan|`: A RMS
+> **0.101 dB**, floor **0.279**, donor fraction **0.012**, noise floor **2.129** (was one-signed to −19).
+>
+> Three items were open at archival time and were **split into their own live ledger** rather than
+> resolved here: [../TEMP-equivalence-instrument-convergence.md](../TEMP-equivalence-instrument-convergence.md)
+> — equivalence **bin size** (I1), noise-floor **context window** (I2), and the donor predicate's
+> missing `b.silent ||` **disjunct** (I3, still unmeasured). All three are the same axis: the two
+> front-ends now share corrected sensor *definitions* but sample them with different instruments.
+>
+> Kept for the rationale, which survives nowhere else: the probe-then-fix method and its results
+> (`fp_silent_core_probe/`, `fp_silent_core_floor_probe/`, `..._reduction/`), the Cauchy–Schwarz
+> argument that closed the fully-silent residual by *proving* the sample sets differ, the
+> reduction-vs-window-vs-span decomposition of the noise-floor axis, and the retracted claims —
+> including the § *Probe results* class prediction (*3 divergences → 1*) that the combined re-dump
+> **refuted**, and why: it reasoned from a donor's *mean* level where the classifier consumes a
+> *per-bin fraction*. Retracted claims are marked in place rather than deleted; the ⚠ callouts are
+> part of the record.
+>
+> Outbound doc links are relative to `docs/dev/archive/`.
 
 **Opened:** 2026-07-30. **Status:** **F14** border alignment **FIXED and media-validated** (dump A
 borders = `mono(refined ± w)` like `try_dual_fit`; `fp_post_F14_fix/` confirms). **F15** OPEN but
@@ -12,7 +36,7 @@ the pair still carries **3 class divergences**, all traceable to the one leg lef
 **window/bin**. What remains is a policy call on that leg — no longer cosmetic, since it is now the sole
 source of *action* divergence. Retracted claims are marked in place rather than deleted.
 
-Split out of [archive/TEMP-silence-floor-findings.md](archive/TEMP-silence-floor-findings.md) when
+Split out of [TEMP-silence-floor-findings.md](TEMP-silence-floor-findings.md) when
 that ledger was archived (2026-07-30). Everything else in it is closed; these two are not, and both
 came out of its §5 follow-up rather than its original F1–F12 sweep. Finding IDs **F14/F15** are kept
 from the parent ledger so its text still resolves.
@@ -1002,7 +1026,7 @@ three committed tests break on any `tier` change (`curated_golden_baseline_invar
 ### Implemented 2026-07-30 — additive field + full `try_dual_fit` conjunction
 
 Shipped: `GateOutcome.dual_fit_rescue`, roll-ups via `GapRow::production_patched()`, carve-out in
-[gap-vocabulary.md](gap-vocabulary.md). An early draft that keyed only on eligible failure class +
+[gap-vocabulary.md](../gap-vocabulary.md). An early draft that keyed only on eligible failure class +
 `gate_pass` was **wrong and dangerous** — it reported `Some(true)` for `04_program_quiet` (seams
 ~0.998, dead donor), the cell production declines. The shipped `dual_fit_rescue_flag`
 (`gap_fingerprint/schema.rs`) models all of `try_dual_fit`'s accept conditions:
@@ -1482,7 +1506,7 @@ Cost two failed runs to rediscover, so it is recorded here as well as in the run
 - Recipe knobs need no flags — the defaults (`min_gap` 500 ms, block 100 ms, rms 33/32767, hold
   500 ms) already equal the 2026-07-26 reference `scan_recipe`. Pin `--silence-hold-ms 500`
   explicitly anyway, because the manifest's `scan_recipe` does not record it (that is F11, tracked
-  in [TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md)).
+  in [TEMP-scan-recipe-plan.md](../TEMP-scan-recipe-plan.md)).
 - `--fingerprint-gap N` is **1-based** on the gap-table `#`, and emits **0-based** filenames.
 - Use `RUST_LOG=debug`, not `RUST_LOG=clip_sync_repair=debug`, when the question might involve the
   `clip_sync` crate (alignment, seek, decode) — the narrower filter hides those errors.

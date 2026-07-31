@@ -33,7 +33,7 @@ noise floor 9.35 dB lower on the fine side.
 
 Provenance: corpus `silence-floor/fp_post_F14_fix`, single-pair run, gap index 4, original filename
 `0c47aa95_6548_t00-42-53_g004_full_patch.json`. Background:
-`docs/dev/TEMP-equivalence-divergence-findings.md` § F15.
+`docs/dev/archive/TEMP-equivalence-divergence-findings.md` § F15.
 
 ### ⚠ This fixture is expected to stop diverging — do not "fix" the test when it does
 

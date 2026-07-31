@@ -235,7 +235,7 @@ the *fine* side toward `drop`, so it is the **more aggressive** of the two, not 
 direction**. The mechanism behind the divergences is a donor whose level sits *between* the two floors —
 silent to fine, occupied to scan. Pinned media-free by
 `tests/gap_corpus/fingerprints/equivalence_divergence/`; full analysis in
-[TEMP-equivalence-divergence-findings.md](TEMP-equivalence-divergence-findings.md) § F15.
+[archive/TEMP-equivalence-divergence-findings.md](archive/TEMP-equivalence-divergence-findings.md) § F15.
 
 #### `equivalence.silent_core_probes` — measuring the candidate fix before adopting it
 
@@ -307,7 +307,7 @@ difference between the two rows *is* the reduction term, read directly. The 3 mi
 ~+2.1 dB) track **window/bin estimator instability** on non-stationary context (those gaps' Interleaved
 NF swings several dB across the grid), not a fourth variable and not the excluded span — a fixed
 refined-vs-core offset would be stable across window/bin, and these residuals are not. Full write-up:
-[TEMP-equivalence-divergence-findings.md](TEMP-equivalence-divergence-findings.md) § *Probe results*
+[archive/TEMP-equivalence-divergence-findings.md](archive/TEMP-equivalence-divergence-findings.md) § *Probe results*
 under *Noise-floor probes*.
 
 Measured by calling `level_profile` itself, not by re-deriving the bin walk, so a probe cannot drift
@@ -401,7 +401,7 @@ scored at those placements against the **unchanged** gate thresholds:
 **not** the `border_templates_for_gap` construction the seam gate uses (silence walk-off, standoff,
 low-energy trim). That is deliberate: this block exists to *predict* production's dual-fit decision, and a
 trimmed pre template moves `pre_lag`, which moves `post_seam_global_r`, which flips step-real (F14 —
-[TEMP-equivalence-divergence-findings.md](TEMP-equivalence-divergence-findings.md)). Consequence: the block
+[archive/TEMP-equivalence-divergence-findings.md](archive/TEMP-equivalence-divergence-findings.md)). Consequence: the block
 is **absent** when either shoulder is shorter than `w`, the same range guard production declines on, rather
 than being computed against a clipped template.
 
