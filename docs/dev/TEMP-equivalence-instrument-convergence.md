@@ -1,8 +1,14 @@
 # Equivalence instrument convergence — open ledger
 
-**Opened:** 2026-07-30. **Status:** three open items, all one axis. The two equivalence front-ends
-now share corrected sensor *definitions*; what remains is that they sample those definitions with
-different instruments — bin size, context window, and one missing predicate disjunct.
+**Opened:** 2026-07-30. **Status:** **I1 done + media-validated**; **I2 decided** (accept-and-document);
+**I3 measured, and it turned up a latent defect** — the fine donor's missing silence disjunct is *not*
+vestigial; it is unexercised by this corpus (lossy media never reaches the −120 digital-silence floor
+that triggers it) and would misclassify in the **dangerous** direction when it is. Fix pending.
+
+After I1, the two front-ends agree **exactly** on the A side — `gap_floor_db` and `a_gap_rms_db` are
+0.00 apart on all ten gaps of the F15 pair — and the pair carries **one** class divergence (g5), on
+the accepted context-window axis, in the safe direction. What remains is I3: a donor-predicate
+disjunct that is present in scan, absent in fine, and has never been measured.
 
 Split out of [archive/TEMP-equivalence-divergence-findings.md](archive/TEMP-equivalence-divergence-findings.md)
 when that ledger was archived. Everything else in it is closed (**F14** fixed and media-validated;
@@ -48,7 +54,39 @@ sensitivity in a safety gate, which is the worse of the two.
 
 ## I1 — Equivalence bin size: 50 ms (fine) vs 100 ms (scan)
 
-**Status: IMPLEMENTED 2026-07-30. Awaiting one media re-dump to confirm.**
+**Status: DONE — implemented and media-validated 2026-07-30.**
+
+### Validated (`fp_i1_bin_convergence/`, same pair, 10 gaps)
+
+Every pre-registered prediction held. **3 divergences → 1**, survivor **g5**, on the predicted axis.
+
+| | pre-I1 | post-I1 |
+|---|---|---|
+| divergences | g4, g5, g8 | **g5 only** |
+| `gap_floor_db` median (max) | 0.279 (17.13) | **0.000 (0.000)** |
+| `a_gap_rms_db` median (max) | 0.101 (0.824) | **0.000 (0.000)** |
+| `donor_silence_fraction` | 0.012 (0.410) | **0.008 (0.067)** |
+| `noise_floor_db` | 2.129 (11.17) | **0.606 (8.574)** |
+
+- **g4 closed** — `ds` 0.610 → 0.476 vs scan 0.474; class returns to `repairable_dropout`.
+- **g8 closed** — `ds` 0.577 → 0.154 vs scan 0.167.
+- **g5 survived** — 8.57 dB noise-floor gap denies `is_dropout`. Scan keeps, fine drops: safe direction.
+  This is I2, and g5 is now a **single-variable case** on it.
+- **g2/g10 floor residuals collapsed** (7.18 → 0.00, 17.13 → 0.00), confirming they were pure
+  bin-granularity artifacts of a max statistic, not a defect.
+
+**Stronger than predicted:** `gap_floor_db` and `a_gap_rms_db` are **exactly 0.00 on all ten gaps**.
+The A-side sensors are not approximating each other — the two front-ends now compute the same numbers,
+given the same silent-core filter, reduction, span rule, and grid.
+
+**Two secondary findings:**
+
+1. **Bin size was the larger term on the noise floor as well.** With only the context window still
+   split, the NF median fell 2.129 → 0.606 dB. The archived ledger attributed that median to window/bin
+   *jointly*; it was mostly bin. **This shrinks I2's measured size considerably** — see I2.
+2. **`ds` is no longer exactly zero** (median 0.008, max 0.067) though the donor floor now matches
+   exactly. That is the donor *window* residual of ~1 × `scan_block_ms` recorded in the archived
+   ledger — independent of bin size, as that ledger predicted.
 
 The whole equivalence overlay now bins at `report.scan_block_ms` via a single `equiv_bin_ms` local at
 `gap_fingerprint/measure.rs` — both the silent-core bins (`SilentCoreConfig::bin_frames`) and the
@@ -121,17 +159,23 @@ sensitivity in that direction.
 would isolate g5 to one axis, which is itself informative — so a partial result here is a success, not
 a failure. Needs one media re-dump to confirm.
 
+*Outcome: all of the above held. See § Validated at the top of this section.*
+
 **Cost:** a few lines at one call site, plus the re-dump.
 
 ---
 
 ## I2 — Noise-floor context window: 2.0 s (scan) vs 3.0 s (fine)
 
-**Status: measured, unblocked, undecided.**
+**Status: isolated, re-measured smaller, undecided. Now the only remaining axis.**
 
-Worth a **median 2.13 dB** of the fine−scan noise-floor spread once the channel reduction is matched
-(pre-fix this axis was masked by the reduction's 3.65–7.89 dB). g5 is the poster gap: an 11.17 dB
-noise-floor split that flips `is_dropout` and produces a keep/drop divergence on its own.
+**Re-measured after I1 (2026-07-30) — and it shrank.** The 2.13 dB median previously attributed to
+this axis was mostly **bin size**, not window. With bin converged and the window still split at
+2.0 s vs 3.0 s, the noise-floor residual is a **median 0.606 dB**. g5 remains the poster gap at
+**8.57 dB** (was 11.17), and is now the **only** divergence in the pair — a clean single-variable case,
+which is exactly what sequencing I2 after I1 was meant to produce.
+
+It is also the only gap where this axis changes an action: scan keeps, fine drops. Safe direction.
 
 ### Recommendation — **decide after I1, and expect to accept it**
 
@@ -149,13 +193,84 @@ term rather than silently absorbed — *unless* the post-I1 re-dump shows this a
 more than the one gap. One gap out of ten, in the safe direction, does not justify perturbing a
 configurable parameter with unrelated consumers.
 
-**Blocked on:** the I1 re-dump. Not on any new measurement of its own.
+### Resolved test, 2026-07-30 — **accept-and-document**
+
+The condition above was pre-registered and the re-dump answered it: this axis flips **one** gap (g5),
+in the safe direction, and its median contribution re-measured at **0.606 dB** rather than the 2.13 dB
+it was charged with before bin size was separated out. Both facts point the same way.
+
+Recommendation stands, now on measured rather than anticipated grounds: **do not converge the context
+window.** Instead:
+
+- state the residual in `bin/equivalence_calibration.rs`'s header as a known, bounded term (median
+  0.606 dB, one gap of ten, conservative direction) — folded into the header correction already queued
+  in § *Why fidelity still matters here*;
+- keep g5 as the named single-variable case, so anyone re-opening this has a worked example.
+
+**Re-open if:** a broader corpus shows this axis flipping gaps in the **dangerous** direction (scan
+drops, fine keeps), or flipping more than a small minority. `equivalence-calibration` already exits 1
+on the former, so that trigger is automatic.
+
+Note the honest limit: 0.606 dB is a median over **one pair, ten gaps**. It bounds the axis on this
+pair, not on the corpus.
 
 ---
 
 ## I3 — Donor predicate: fine is missing scan's `b.silent ||` disjunct
 
-**Status: UNMEASURED. The only item here with no data.**
+**Status: MEASURED 2026-07-30 — and the finding inverts the original recommendation. Fix, don't retire.**
+
+### Measured: no effect on this pair, because this pair cannot trigger it
+
+Over `fp_i1_bin_convergence/`, every donor delta is within **±1 block** (max exactly 1.00) with mixed
+signs (4 negative, 3 positive, 3 zero). The disjunct can only ever *add* silent blocks to scan, so a
+real contribution would drive `fine − scan` systematically negative and could exceed one block. It
+doesn't. All residual donor disagreement is **window alignment**, as the archived ledger predicted.
+
+### But the triggering condition is absent here, and that is the finding
+
+`BLOCK_LEVEL_FLOOR_DB = −120.0` (`domain/policies/silence.rs:35`) and `block_rms_db` clamps a
+digitally-silent block to exactly that. `domain/gap_equivalence.rs:418` states the mechanism outright:
+*"digitally silent blocks sit at BLOCK_LEVEL_FLOOR_DB and `rms < gap_floor` is false when both are
+−120."*
+
+This pair's floors bottom out at **−101.48** — near-silence, not digital silence, as expected from
+lossy AAC-LC. **The condition the disjunct exists for never occurs in this corpus.** Absence of effect
+here is therefore *not* evidence the disjunct is vestigial; it is evidence the corpus lacks the case.
+
+`application/gap_equivalence.rs:297` implements the fine donor as `db < floor` with **no silence
+predicate**. So on a gap whose silent core is digitally silent, with a digitally-silent donor:
+
+| | donor reads | `b_occupied` | class | action |
+|---|---|---|---|---|
+| scan (`b.silent ‖ rms < floor`) | silent | false | `SharedSilence` | **drop** |
+| fine (`rms < floor` only) | **occupied** (`−120 < −120` is false) | true | `RepairableDropout` | **keep** |
+
+**Scan drops, fine keeps — the dangerous direction**, and exactly the condition
+`bin/equivalence_calibration.rs` exits 1 on. This is the only defect in this family that trips that
+gate, and it would trip it *spuriously*, on the material where the correct answer is least ambiguous.
+
+Derived from source semantics, **not observed on media** — no dump in hand contains a −120 floor.
+
+It also explains the population result (5/297 divergent, **0 dangerous**): every pair in that corpus is
+lossy and never reaches exact digital silence. A lossless or genuinely muted source would.
+
+### Recommendation — **add the disjunct to the fine path**
+
+Reverses the original "measure before fixing; do not add speculatively" guidance, and the reason that
+guidance existed is now spent: it warned that adding the disjunct would push fine's donor further
+toward *silent*, compounding I1's granularity bias in the same threshold region. **I1 is done** and the
+donor axis agrees to within one block, so there is nothing left to compound.
+
+Apply the same silence predicate the A-side silent core already uses (`is_silent_interleaved` per bin,
+via the existing `silent_core_levels` machinery), OR'd with the floor comparison, inside
+`donor_silence_fraction_at_floor`. That makes the two donors structurally identical rather than
+coincidentally agreeing.
+
+**Acceptance signal:** a synthetic-PCM unit test — digitally-silent gap core, digitally-silent donor —
+asserting fine now reads the donor silent and classifies `SharedSilence`. That test **fails today** and
+is the real signal, since no media dump on hand contains the case. Do not wait on a re-dump: the
+corpus cannot produce this gap, which is the whole point.
 
 Scan's donor test is a **disjunction** with the scanner's own silence bit; the fine path's is the
 floor comparison alone. So a donor block the scanner flagged silent, but whose level sits above the
@@ -181,10 +296,14 @@ fixed.
 
 ## Suggested order
 
-1. ~~**I1** — converge the equivalence bin size~~ **DONE 2026-07-30.**
-2. **Re-dump** the F15 pair ← **next**. Confirm g4/g8 close and g5 survives.
-3. **I3** — run the dead-disjunct count against the same dump (no extra media run needed).
-4. **I2** — decide accept-vs-converge with g5 isolated as a single-variable case.
+1. ~~**I1** — converge the equivalence bin size~~ **DONE + media-validated 2026-07-30.**
+2. ~~**Re-dump** the F15 pair~~ **DONE** (`fp_i1_bin_convergence/`): 3 divergences → 1, all predictions held.
+3. ~~**I2** — decide accept-vs-converge~~ **DECIDED: accept-and-document.** Residual re-measured at
+   0.606 dB median, one gap, safe direction.
+4. ~~**I3** — run the dead-disjunct count~~ **DONE**: no effect on this pair, but the pair cannot
+   trigger it. **Not** dead code — a latent fine-path defect in the *dangerous* direction.
+5. **I3 fix** ← **next.** Add the silence predicate to `donor_silence_fraction_at_floor`; acceptance is
+   a synthetic-PCM test (digital-silence gap + digital-silence donor), not a media re-dump.
 5. Fix the stale reduction-based justification in `equivalence_calibration.rs`'s header (see above).
 6. Re-harvest `band_donor.json` under the fixed path and convert it to a **regression** fixture, per
    the standing instructions in its README.

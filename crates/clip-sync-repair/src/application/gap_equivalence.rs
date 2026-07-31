@@ -262,40 +262,64 @@ pub struct DonorSpan<'a> {
 /// donor against an interleaved floor would reintroduce up to `10·log10(N)` of bias in the *dangerous*
 /// direction (donor reads spuriously silent ⇒ `shared_silence` ⇒ drop).
 ///
-/// `None` when there is no floor to compare against or no donor span, so "not evaluated" stays distinct
-/// from "measured as occupied".
+/// `None` when there is no donor span, so "not evaluated" stays distinct from "measured as occupied".
 ///
-/// One known difference from the scan path remains and is deliberately **not** closed here: scan's donor
-/// predicate is `b.silent || rms_db < gap_floor`, a disjunction with the scanner's own silence bit, where
-/// this is the floor test alone. That is a separate axis from the three fixes and is unmeasured.
+/// # I3 (2026-07-30): the predicate is a **disjunction**, matching scan
+///
+/// A bin counts silent when the scanner's own predicate ([`is_silent_interleaved`]) calls it silent
+/// **or** it is quieter than A's silent-core floor — the same `b.silent || rms_db < gap_floor` the scan
+/// path applies in `derive_gap_equivalence`. The floor test alone is **not** equivalent, and the gap is
+/// not cosmetic:
+///
+/// A digitally silent block reads exactly [`BLOCK_LEVEL_FLOOR_DB`] (−120), because `block_rms_db` clamps
+/// there rather than returning `-inf`. On a gap whose silent core is *also* digital silence, `gap_floor_db`
+/// is −120 too — and `-120.0 < -120.0` is **false**. A floor-only donor therefore reads digital silence as
+/// **occupied**, yielding `repairable_dropout` (keep) where scan yields `shared_silence` (drop).
+///
+/// That is the **dangerous** direction — scan drops, fine keeps — and the one condition
+/// `bin/equivalence_calibration` exits 1 on. It went unnoticed because every corpus pair measured to date
+/// is lossy (AAC), whose decoded floors bottom out near −101 dB and never reach the −120 clamp; the
+/// 17-pair population check (5/297 divergent, 0 dangerous) could not have produced it. Lossless or
+/// genuinely muted material can. See `docs/dev/TEMP-equivalence-instrument-convergence.md` § I3.
+///
+/// Consequently `floor_db: None` is **not** an early return: scan still evaluates the donor from the
+/// silence bit alone when A's gap has no silent block to set a floor, and so does this.
 fn donor_silence_fraction_at_floor(
     donor: &DonorSpan<'_>,
     channels: usize,
-    bin_frames: usize,
+    core: &SilentCoreConfig,
     floor_db: Option<f64>,
 ) -> Option<f64> {
-    let floor = floor_db?;
     let ch = channels.max(1);
     let total_frames = donor.samples.len() / ch;
     let end = donor.frames.end.min(total_frames);
     if donor.frames.start >= end {
         return None;
     }
-    let bf = bin_frames.max(1);
+    let bf = core.bin_frames.max(1);
     let (mut total, mut silent) = (0usize, 0usize);
     let mut frame = donor.frames.start;
     while frame < end {
         let bin_end = (frame + bf).min(end);
         total += 1;
-        if bin_level_db(
-            donor.samples,
+        let block = &donor.samples[frame * ch..bin_end * ch];
+        let scanner_silent = is_silent_interleaved(
+            block,
             ch,
-            frame,
-            bin_end,
-            ChannelReduction::Interleaved,
-        )
-        .is_some_and(|db| db < floor)
-        {
+            core.silence_peak_fraction,
+            core.absolute_silence_rms,
+        );
+        let below_floor = floor_db.is_some_and(|floor| {
+            bin_level_db(
+                donor.samples,
+                ch,
+                frame,
+                bin_end,
+                ChannelReduction::Interleaved,
+            )
+            .is_some_and(|db| db < floor)
+        });
+        if scanner_silent || below_floor {
             silent += 1;
         }
         frame = bin_end;
@@ -358,7 +382,7 @@ pub fn measure_gap_equivalence(
     );
     let donor_fraction = donor
         .as_ref()
-        .and_then(|d| donor_silence_fraction_at_floor(d, ch, core.bin_frames, floor_db));
+        .and_then(|d| donor_silence_fraction_at_floor(d, ch, core, floor_db));
     classify_gap_equivalence(a_rms, noise_floor_db, donor_fraction, params).with_scan_provenance(
         floor_db,
         silent_bins,
@@ -487,38 +511,98 @@ mod tests {
             samples: &b,
             frames: 0..48_000,
         };
+        // `absolute_silence_rms: 0.0` disables the scanner's absolute peak floor, isolating the *floor*
+        // term of the I3 disjunction. At the run recipe's 0.001 this 2e-4 donor would be scanner-silent
+        // outright and the floor comparison could not be observed. The relative rule stays live and does
+        // not fire here: rms == peak, so `rms < peak × 0.01` is false.
+        let floor_only = SilentCoreConfig {
+            absolute_silence_rms: 0.0,
+            ..core()
+        };
         let whole_span_peak = 20.0 * f64::from(0.5f32).log10();
         assert_eq!(
-            donor_silence_fraction_at_floor(&span, 1, 2_400, Some(whole_span_peak)),
+            donor_silence_fraction_at_floor(&span, 1, &floor_only, Some(whole_span_peak)),
             Some(1.0),
             "against the content peak the donor reads fully silent — the pre-fix bug"
         );
         let silent_core = 20.0 * f64::from(1e-5f32).log10();
         assert_eq!(
-            donor_silence_fraction_at_floor(&span, 1, 2_400, Some(silent_core)),
+            donor_silence_fraction_at_floor(&span, 1, &floor_only, Some(silent_core)),
             Some(0.0),
             "against the silent core it reads fully occupied"
         );
     }
 
-    /// No floor ⇒ no donor fraction, rather than a fraction measured against a substitute. Pairs with the
-    /// empty-context noise-floor rule: an unmeasurable input must reach the class as `None`.
+    /// No floor ⇒ the donor is still evaluated, from the **silence bit alone** — matching scan, which
+    /// computes `donor_blocks` whether or not A's gap yielded a floor (I3). Only an empty span is absent.
+    ///
+    /// Inert at the classifier: `floor_db` and `a_gap_rms_db` come from the same silent set, so a gap with
+    /// no floor also has no A RMS and classifies `NotEvaluated` regardless of the donor.
     #[test]
-    fn donor_fraction_is_absent_without_a_floor() {
+    fn donor_without_a_floor_is_evaluated_from_the_silence_bit() {
+        let floor_only = SilentCoreConfig {
+            absolute_silence_rms: 0.0,
+            ..core()
+        };
         let b = vec![1e-4f32; 4_800];
         let span = DonorSpan {
             samples: &b,
             frames: 0..4_800,
         };
-        assert_eq!(donor_silence_fraction_at_floor(&span, 1, 2_400, None), None);
+        assert_eq!(
+            donor_silence_fraction_at_floor(&span, 1, &floor_only, None),
+            Some(0.0),
+            "no floor and not scanner-silent ⇒ measured occupied, not absent"
+        );
         let empty = DonorSpan {
             samples: &b,
             frames: 4_800..4_800,
         };
         assert_eq!(
-            donor_silence_fraction_at_floor(&empty, 1, 2_400, Some(-60.0)),
-            None
+            donor_silence_fraction_at_floor(&empty, 1, &floor_only, Some(-60.0)),
+            None,
+            "an empty span is the only 'not evaluated' case"
         );
+    }
+
+    /// **I3 acceptance test.** A digitally silent gap with a digitally silent donor must classify
+    /// `SharedSilence` (drop), as the scan path does.
+    ///
+    /// This is the case the corpus cannot produce: every pair measured to date is lossy, whose decoded
+    /// floors bottom out near −101 dB and never reach the −120 clamp. Before the disjunct landed, the
+    /// floor-only predicate read this donor **occupied** — `−120 < −120` is false — giving
+    /// `RepairableDropout` (keep) against scan's drop. That is the *dangerous* direction and the one
+    /// condition `equivalence-calibration` exits 1 on.
+    #[test]
+    fn digitally_silent_donor_reads_silent_against_a_digitally_silent_floor() {
+        let a = vec![0.0f32; 48_000];
+        let b = vec![0.0f32; 48_000];
+
+        // The mechanism, pinned inline so this test cannot pass for an unrelated reason: a digitally
+        // silent bin sits *at* the floor, and the strict `<` therefore excludes it.
+        let bin = bin_level_db(&b, 1, 0, 2_400, ChannelReduction::Interleaved).expect("bin level");
+        assert_eq!(bin, SILENCE_FLOOR_DB, "digital silence clamps to the floor");
+        assert!(
+            !(bin < SILENCE_FLOOR_DB),
+            "floor-only reads digital silence as occupied — the I3 defect"
+        );
+
+        let v = measure_gap_equivalence(
+            &a,
+            1,
+            0..24_000,
+            Some(-50.0),
+            donor(&b),
+            &core(),
+            &GapEquivalenceParams {
+                enabled: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(v.donor_silence_fraction, Some(1.0), "{v:?}");
+        assert_eq!(v.gap_floor_db, Some(SILENCE_FLOOR_DB), "{v:?}");
+        assert_eq!(v.class, GapEquivalenceClass::SharedSilence, "{v:?}");
+        assert!(v.drop, "{v:?}");
     }
 
     /// An unmeasurable noise floor classifies `NotEvaluated` (⇒ keep) rather than falling back to a
