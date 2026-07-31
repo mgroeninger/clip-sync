@@ -317,7 +317,7 @@ fn context_from_fixture(
         b_end,
         &production_geometry_params(repair),
     );
-    let silence_peak_fraction = report.silence_peak_fraction;
+    let silence_peak_fraction = report.recipe.silence_peak_fraction();
     let request = patch_request_from_repair(report, repair);
 
     let ch = fixture.channels.max(1);

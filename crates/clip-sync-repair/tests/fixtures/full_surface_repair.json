@@ -104,8 +104,11 @@
       "agrees": true
     },
     "decode_chunk_secs": 10,
+    "min_gap_ms": 1000,
+    "silence_hold_ms": 500,
     "scan_block_ms": 250,
     "silence_peak_fraction": 0.01,
+    "absolute_silence_rms": 0.0010071108,
     "limit_fill_to_mapped_region": true
   },
   "patch": {

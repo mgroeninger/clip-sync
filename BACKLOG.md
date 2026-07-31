@@ -2,7 +2,7 @@
 
 Open follow-up work for `clip-sync`. See [PLAN.md](PLAN.md) for architecture, [docs/pipeline.md](docs/pipeline.md) for the repair pipeline (phase by phase), [docs/dev/corpus-validation.md](docs/dev/corpus-validation.md) for the test corpus, and [docs/error-mapping.md](docs/error-mapping.md) for error handling. Shipped work is recorded in `docs/dev/archive/*` and git history.
 
-Last updated: 2026-07-30.
+Last updated: 2026-07-31.
 
 **How this doc works**
 
@@ -17,7 +17,7 @@ Last updated: 2026-07-30.
 
 | Plan | Covers |
 |------|--------|
-| [TEMP-scan-recipe-plan.md](docs/dev/TEMP-scan-recipe-plan.md) | `ScanRecipe` on `GapReport` + JSON scan-params echo — **unparked 2026-07-30** (script same-recipe equality); ready to implement |
+| [TEMP-scan-recipe-plan.md](docs/dev/TEMP-scan-recipe-plan.md) | `ScanRecipe` on `GapReport` + JSON scan-params echo — **implemented 2026-07-31** (archive when convenient) |
 | [TEMP-gap-selection-deferred.md](docs/dev/TEMP-gap-selection-deferred.md) | Deferred/refused: `--scan-window`, `--gaps-from` manifest — recorded so they are not rediscovered |
 | [TEMP-nway-donor-alignment-plan.md](docs/dev/TEMP-nway-donor-alignment-plan.md) | N-way donor alignment: repair one damaged copy from multiple donors — draft, not started |
 
@@ -40,10 +40,12 @@ Survive archival of that meta doc. Not required for `--only-gaps` / `--skip-gaps
 
 | Item | Direction |
 |------|-----------|
-| JSON missing `min_gap_ms` / `silence_hold_ms` / `absolute_silence_rms` | Provenance; lands with unparked [TEMP-scan-recipe-plan.md](docs/dev/TEMP-scan-recipe-plan.md) |
-| Corpus `from_report` hardcodes `None` + `complete_recipe` back-fill | Deleted by the recipe plan checklist |
 | `limit_fill_to_mapped_region` on scan report | Wrong home; recipe plan explicitly out of scope — separate cleanup if ever moved |
 | Absolute B occupancy via `BlockLevel.silent` (not aggregate RMS) | Optional; `silent` is now retained for equivalence (F2). Fillability still uses aggregate `rms_db` vs abs floor — switch if multichannel false-unfillable shows up. |
+
+> **Done 2026-07-31** (recipe plan): JSON echoes `min_gap_ms` / effective `silence_hold_ms` /
+> normalized `absolute_silence_rms`; corpus `from_report` fills all five knobs — `complete_recipe`
+> deleted.
 
 ### Dual-fit confidence axis
 

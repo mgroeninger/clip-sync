@@ -68,7 +68,7 @@ pub use residual_gate::{
     DEFAULT_RESIDUAL_LAG_SECS,
 };
 
-pub use gap::{Gap, GapOffsetAgreement, GapReport};
+pub use gap::{Gap, GapOffsetAgreement, GapReport, ScanRecipe};
 pub use gap_fill::{
     build_gap_fill_plan, resolve_gap_selection, FillRegion, GapFillPlan, GapFillSkipped,
     GapSelection, GapSelectionMode,

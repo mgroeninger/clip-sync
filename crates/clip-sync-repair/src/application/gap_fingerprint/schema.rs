@@ -28,10 +28,14 @@ pub struct FileSource {
     pub duration_secs: f64,
 }
 
-/// The scan recipe a corpus entry was produced under, so two entries are known-comparable. Fields the
-/// `GapReport` doesn't carry stay `None` until the bin path fills them from config.
+/// The scan recipe a corpus entry was produced under, so two entries are known-comparable.
+/// `Option` fields stay for backward compat with corpora written before each knob existed; new dumps
+/// fill all five from [`crate::domain::GapReport::recipe`].
+///
+/// Named [`CorpusScanRecipe`] so it does not collide with the domain [`crate::domain::ScanRecipe`]
+/// (whose `PartialEq` means "same gap list"). JSON field names are unchanged.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct ScanRecipe {
+pub struct CorpusScanRecipe {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub min_gap_ms: Option<u64>,
     pub silence_peak_fraction: f32,
@@ -39,6 +43,9 @@ pub struct ScanRecipe {
     pub absolute_silence_rms: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub scan_block_ms: Option<u64>,
+    /// Effective hold (`silence_hold_blocks × scan_block_ms`), not the configured TOML value.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub silence_hold_ms: Option<u64>,
 }
 
 /// Non-identifying provenance for a corpus: the A/B file identities (pair = entry identity), the scan
@@ -47,7 +54,7 @@ pub struct ScanRecipe {
 pub struct SourceMeta {
     pub a_source: FileSource,
     pub b_source: FileSource,
-    pub scan_recipe: ScanRecipe,
+    pub scan_recipe: CorpusScanRecipe,
     pub gap_count: usize,
 }
 
@@ -88,14 +95,15 @@ pub(crate) fn file_source(samples: &[f32], sample_rate: u32, channels: u16) -> F
     }
 }
 
-impl ScanRecipe {
-    /// What the `GapReport` reliably carries; the bin path overwrites the rest from config.
+impl CorpusScanRecipe {
+    /// Echo the domain recipe that produced the report (all five knobs).
     pub(crate) fn from_report(report: &crate::domain::GapReport) -> Self {
         Self {
-            min_gap_ms: None,
-            silence_peak_fraction: report.silence_peak_fraction,
-            absolute_silence_rms: None,
-            scan_block_ms: Some(report.scan_block_ms),
+            min_gap_ms: Some(report.recipe.min_gap_ms()),
+            silence_peak_fraction: report.recipe.silence_peak_fraction(),
+            absolute_silence_rms: Some(report.recipe.absolute_silence_rms()),
+            scan_block_ms: Some(report.recipe.scan_block_ms()),
+            silence_hold_ms: Some(report.recipe.silence_hold_ms()),
         }
     }
 }

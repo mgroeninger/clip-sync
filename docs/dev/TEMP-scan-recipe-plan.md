@@ -1,6 +1,6 @@
 # `ScanRecipe` — let a `GapReport` state the recipe that produced it (DRAFT)
 
-Status: **unparked 2026-07-30 — ready to implement.** Consumer: external scripts that must compare
+Status: **implemented 2026-07-31.** Consumer: external scripts that must compare
 saved scan knobs to the next run; hand-rolled field checks are already incomplete as knobs scale.
 Sequencing record (archived):
 [archive/TEMP-gap-selection-sequencing-plan.md](archive/TEMP-gap-selection-sequencing-plan.md)
@@ -91,9 +91,10 @@ this with an epsilon comparison later — that would quietly break the property 
   `scan_block_secs` as `f64`; the recipe stores `u64` ms. Every production and fixture value today is
   whole-ms (e.g. `0.25` → 250). Sub-millisecond request knobs are not supported after this change —
   record that rather than rediscovering it when a fixture wants `0.001` secs.
-- **`silence_hold_blocks` stays on the request** as its own canonical form (§3). Construct
-  `recipe.silence_hold_ms` as `silence_hold_blocks * recipe.scan_block_ms` — **never**
-  `RepairConfig::silence_hold_ms` (configured, pre-quantization).
+- **`silence_hold_blocks` is not a request field** (revisited 2026-07-31 after review). Build
+  recipes via [`ScanRecipe::with_hold_blocks`] so `silence_hold_ms = blocks × scan_block_ms`
+  exists once; the scanner derives blocks with `recipe.silence_hold_blocks()`. Never store
+  configured (pre-quantization) `RepairConfig::silence_hold_ms` on the recipe.
 - **JSON stays flat.** `GapScanJson` reads `report.recipe.*` and emits the same five keys at top level.
   The contract change is purely additive; no nesting.
 
@@ -169,20 +170,20 @@ draft under-counted are marked **[+]**; stale line numbers are corrected in plac
 pass corrects `measure.rs` drift from equivalence-instrumentation growth (and fixes the report
 literal / named-read counts).
 
-- [ ] **Rename first, alone:** `gap_fingerprint::schema::ScanRecipe` → `CorpusScanRecipe`
+- [x] **Rename first, alone:** `gap_fingerprint::schema::ScanRecipe` → `CorpusScanRecipe`
   (`schema.rs:34` + `Default`/`PartialEq`/`Serialize`/`Deserialize` derives; `impl` at `:91`,
   `from_report` body at `:93`; `measure.rs:2604` `from_report`, `:2677` `Manifest` field type
   (`struct Manifest` at `:2674`), `:3839` `::default()`). Type rename only — serde emits field
   names, not the type name, so **no golden churn**. Its own commit, keeping the name collision
   out of the substantive diff
-- [ ] **New domain type** `ScanRecipe` (`domain/gap.rs`): `min_gap_ms: u64`, `silence_hold_ms: u64`,
+- [x] **New domain type** `ScanRecipe` (`domain/gap.rs`): `min_gap_ms: u64`, `silence_hold_ms: u64`,
   `scan_block_ms: u64`, `silence_peak_fraction: f32`, `absolute_silence_rms: f32`;
   `#[derive(Debug, Clone, Copy, PartialEq)]` — `PartialEq` is **bitwise** and intended (§2). Types
   match `RepairConfig` (`infrastructure/config.rs:40,43,46,53,57`). `decode_chunk_secs` is **not**
   a member. **[+]** Re-export from `domain/mod.rs` (`pub use gap::{…, ScanRecipe}`). Serde on the
   domain type is **not** required for this deliverable (JSON stays flat on `GapScanJson`); add
   later when `--gaps-from` embeds `domain::ScanRecipe` in a manifest
-- [ ] **`ScanGapsRequest` (`application/scan_gaps.rs:24-46`): recipe becomes canonical.** Replace
+- [x] **`ScanGapsRequest` (`application/scan_gaps.rs:24-46`): recipe becomes canonical.** Replace
   the four flats `min_gap_secs`, `scan_block_secs`, `silence_peak_fraction`, and
   `absolute_silence_rms` with `recipe: ScanRecipe`. **Do not** leave peak/rms as request flats
   beside the recipe — that is the dual-source-of-truth shape this is fixing. Derive
@@ -196,7 +197,7 @@ literal / named-read counts).
   fields, fix the stale “0–32767 scale” doc-comments on `ScanGapsRequest::absolute_silence_rms`
   and `RepairConfig::absolute_silence_rms` — storage is already normalized (`default ≈ 0.001007`);
   the operator i16 scale is CLI-only via `normalize_absolute_silence_rms_i16`
-- [ ] **Update the 10 `ScanGapsRequest` literal sites** — production `composition.rs:191`; test
+- [x] **Update the 10 `ScanGapsRequest` literal sites** — production `composition.rs:191`; test
   helpers `scan_gaps.rs:826` (`scan_request`), `query_reference_integration.rs:112`
   (`scan_request`), `clip-sync-repair-fixtures` `gap_corpus_fixtures.rs:697`
   (`build_scan_request`); direct literals `scan_gaps.rs:1267` (the `format_scan_summary` test),
@@ -205,13 +206,13 @@ literal / named-read counts).
   is smaller than the site count. Mechanical: four flats collapse into one `recipe:` initializer
   (hold_ms from blocks × block_ms). **[+]** `gap_corpus_fixtures` / `energy_signature_production`
   live in `crates/clip-sync-repair-fixtures`, not under `clip-sync-repair/tests`
-- [ ] **`format_scan_summary` — re-point only; both renderings are already correct (§3).** Point
+- [x] **`format_scan_summary` — re-point only; both renderings are already correct (§3).** Point
   the hold / block / min-gap / peak / rms-floor reads at `recipe.*` (same numbers by construction).
   The hold rendering was never a bug, and the RMS floor branch was fixed under F3/F4 — it now
   prints `rms floor {i16-scale} (at {dBFS})`, covered by
   `format_scan_summary_includes_thresholds_and_count` (`scan_gaps.rs:1266`). Do **not** re-open
   either; assert the existing printed form still holds after the re-point
-- [ ] **`GapReport`: `recipe: ScanRecipe`**, replacing the flat `scan_block_ms` /
+- [x] **`GapReport`: `recipe: ScanRecipe`**, replacing the flat `scan_block_ms` /
   `silence_peak_fraction` and sourced from the request that produced it
   (`scan_gaps.rs:356-370` → `recipe: request.recipe`). Full literals to update (**15**):
   production path above; unit/helpers —
@@ -226,21 +227,21 @@ literal / named-read counts).
   `silence_peak_fraction` at `:2240,:2255`, `scan_block_ms` at `:2420,:2483,:2504` (five reads;
   equivalence-instrumentation growth since the prior inventory); `patch_audio/mod.rs:167`,
   `cli/output.rs:727-728`, **[+]** `w5_anchor_rescue_diag.rs:320` (in fixtures crate)
-- [ ] Delete the back-fill: `complete_recipe` (`composition.rs:136-140`, called at `:144`) and the
+- [x] Delete the back-fill: `complete_recipe` (`composition.rs:136-140`, called at `:144`) and the
   two hardcoded `None`s + the "the bin path overwrites the rest from config" comment in
   `from_report` (`schema.rs:91-100`, body at `:93`). `CorpusScanRecipe` is now populated from
   `report.recipe` (all five knobs, including `silence_hold_ms`)
-- [ ] `CorpusScanRecipe`: add the missing fifth knob `silence_hold_ms: Option<u64>` (same
+- [x] `CorpusScanRecipe`: add the missing fifth knob `silence_hold_ms: Option<u64>` (same
   `skip_serializing_if` / `default` treatment as its siblings). **Options stay** — backward compat
   for corpora written before each field existed; new dumps fill all five. Confirmed no golden
   churn: curated fixtures are *deserialized* (`clip-sync-repair-fixtures`
   `gap_cell_fixtures.rs:187` → `GapCorpus`), never byte-compared against a fresh dump, so absent
   fields keep defaulting. (The plan previously cited `tests/gap_cell_fixtures.rs:28` — that file
   only *calls* the loader.)
-- [ ] `GapScanJson` (`infrastructure/cli/output.rs:688-713`): emit all five **flat**, reading
+- [x] `GapScanJson` (`infrastructure/cli/output.rs:688-713`): emit all five **flat**, reading
   `report.recipe.*` in `from_parts` (`:716+`). No nesting in the JSON contract — the change stays
   purely additive per [json-output.md](../json-output.md)
-- [ ] Golden JSON re-baseline: `tests/fixtures/full_surface_repair.json` only (today
+- [x] Golden JSON re-baseline: `tests/fixtures/full_surface_repair.json` only (today
   `:106-108` has `decode_chunk_secs` / `scan_block_ms` / `silence_peak_fraction`; add
   `min_gap_ms`, `silence_hold_ms`, `absolute_silence_rms`) + [json-output.md](../json-output.md)
   GapReport table (`:175-177`) and additive-revision list at `:3`, documenting `silence_hold_ms`
@@ -249,9 +250,9 @@ literal / named-read counts).
   [gap-scan.md](../gap-scan.md) (or the JSON section of the operator docs) that the JSON echo's
   `silence_hold_ms` is effective (`blocks × block_ms`), not the TOML `silence_hold_ms` — §3
   requires user-facing docs to say this so scripts are not surprised by 450 → 500
-- [ ] Sanity: values round-trip from the scan request that produced the report, not from a re-read
+- [x] Sanity: values round-trip from the scan request that produced the report, not from a re-read
   of config
-- [ ] **Not in scope:** `limit_fill_to_mapped_region` is a *fill* policy living on a scan report
+- [x] **Not in scope:** `limit_fill_to_mapped_region` is a *fill* policy living on a scan report
   (wrong home), and `GapReport` gets no `Default` — zero scan params are a meaningless report, and
   the spread-update sites make one unnecessary. Both recorded so they are not rediscovered as bugs.
   Flat-echo interim (sequencing §3) is also obsolete now that this plan is unparked. **Also not in
@@ -266,7 +267,7 @@ literal / named-read counts).
 | Axis | What changes | Out of scope / unchanged |
 |------|--------------|--------------------------|
 | Domain | New `ScanRecipe`; `GapReport.recipe` replaces two flats | `decode_chunk_secs`, `limit_fill_to_mapped_region` stay flat on the report |
-| Request | Four flats → `recipe`; `silence_hold_blocks` stays | `RepairConfig` / CLI args / TOML knobs unchanged (still configured hold); fix stale abs-rms scale comments while touching those fields |
+| Request | Four flats → `recipe`; hold blocks **not** a request field — `ScanRecipe::with_hold_blocks` / `silence_hold_blocks()` | `RepairConfig` / CLI args / TOML knobs unchanged (still configured hold); abs-rms scale comments fixed; fields private + getters (hardened 2026-07-31) |
 | Scanner boundary | Derive secs from `recipe.*` at two `SilenceRunScanner::new` sites | Scanner API unchanged |
 | Composition | Build recipe (effective hold); delete `complete_recipe` | Config → request mapping otherwise same |
 | Corpus DTO | Rename + `silence_hold_ms: Option`; `from_report` fills from `report.recipe` | Curated JSON fixtures need no rewrite |

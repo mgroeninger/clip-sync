@@ -132,16 +132,9 @@ fn dump_gap_fingerprints(
         .into_request(report.clone())
         .map_err(RepairError::GapSelection)?;
 
-    // Complete the scan recipe with params only config carries (report lacks min_gap / abs-silence).
-    let complete_recipe = |corpus: &mut crate::application::gap_fingerprint::GapCorpus| {
-        corpus.source.scan_recipe.min_gap_ms =
-            Some((config.repair.min_gap_secs() * 1000.0).round() as u64);
-        corpus.source.scan_recipe.absolute_silence_rms = Some(config.repair.absolute_silence_rms);
-    };
     let dump = |sub: &str,
-                mut corpus: crate::application::gap_fingerprint::GapCorpus|
+                corpus: crate::application::gap_fingerprint::GapCorpus|
      -> Result<(), RepairError> {
-        complete_recipe(&mut corpus);
         let out = if sub.is_empty() {
             dir.to_path_buf()
         } else {
@@ -193,11 +186,13 @@ pub fn repair_run_input(
         video_b,
         align: config.align.clone(),
         decode_chunk_secs: config.repair.decode_chunk_secs,
-        scan_block_secs: config.repair.scan_block_secs(),
-        silence_peak_fraction: config.repair.silence_peak_fraction,
-        absolute_silence_rms: config.repair.absolute_silence_rms,
-        silence_hold_blocks: config.repair.silence_hold_blocks(),
-        min_gap_secs: config.repair.min_gap_secs(),
+        recipe: crate::domain::ScanRecipe::with_hold_blocks(
+            config.repair.min_gap_ms,
+            config.repair.silence_hold_blocks(),
+            config.repair.scan_block_ms,
+            config.repair.silence_peak_fraction,
+            config.repair.absolute_silence_rms,
+        ),
         scan_both: config.repair.scan_both,
         gap_offset_tolerance_secs: config.repair.gap_offset_tolerance_secs,
         limit_fill_to_mapped_region: config.repair.limit_fill_to_mapped_region,

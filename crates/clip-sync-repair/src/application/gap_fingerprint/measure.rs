@@ -2237,7 +2237,7 @@ pub fn characterize_gaps_from_decode(
 
     let sample_rate = a_pcm.sample_rate;
     let channels = a_pcm.channels as usize;
-    let cfg = FingerprintConfig::from_request(request, report.silence_peak_fraction);
+    let cfg = FingerprintConfig::from_request(request, report.recipe.silence_peak_fraction());
     let mut corpus = characterize_gaps(
         report,
         &a_pcm.samples,
@@ -2252,7 +2252,7 @@ pub fn characterize_gaps_from_decode(
         request,
         sample_rate,
         channels,
-        report.silence_peak_fraction,
+        report.recipe.silence_peak_fraction(),
     );
     gate_derived.measure_residual = true;
     let rate = f64::from(sample_rate).max(1.0);
@@ -2417,7 +2417,7 @@ pub fn characterize_gaps_from_decode(
         // biased up on 5/6. `gap_signature_bin_ms` itself is untouched — it has production consumers in
         // `patch_audio::geometry` / `::region`. The context window (2.0 s vs 3.0 s) stays split; that is
         // I2 and still open. See `docs/dev/archive/TEMP-equivalence-instrument-convergence.md` § I1.
-        let equiv_bin_ms = report.scan_block_ms;
+        let equiv_bin_ms = report.recipe.scan_block_ms();
         //
         // The donor goes in as **PCM at the nominal `b_mapped` span**, not as
         // `donor_interior_nominal.silence_fraction`. That fraction is a mono-downmix read thresholded
@@ -2478,7 +2478,7 @@ pub fn characterize_gaps_from_decode(
                 cfg.absolute_silence_rms,
             )
         };
-        let probes = vec![probe(cfg.gap_signature_bin_ms), probe(report.scan_block_ms)];
+        let probes = vec![probe(cfg.gap_signature_bin_ms), probe(report.recipe.scan_block_ms())];
 
         // Candidate noise floors (F15, second axis) over the {context window} × {bin size} × {channel
         // reduction} grid the two front-ends straddle — also provenance, also classified on by nothing.
@@ -2499,7 +2499,7 @@ pub fn characterize_gaps_from_decode(
                 crate::domain::gap_equivalence::EQUIVALENCE_CONTEXT_SECS,
                 cfg.gap_signature_context_secs,
             ],
-            &[report.scan_block_ms, cfg.gap_signature_bin_ms],
+            &[report.recipe.scan_block_ms(), cfg.gap_signature_bin_ms],
             &[ChannelReduction::Interleaved, ChannelReduction::Downmix],
         );
 
@@ -2599,7 +2599,7 @@ pub fn characterize_gaps(
         source: SourceMeta {
             a_source: file_source(a_samples, sample_rate, channels as u16),
             b_source: file_source(b_samples, sample_rate, channels as u16),
-            scan_recipe: ScanRecipe::from_report(report),
+            scan_recipe: CorpusScanRecipe::from_report(report),
             gap_count: report.gaps.len(),
         },
         gaps,
@@ -2672,7 +2672,7 @@ struct ManifestEntry {
 struct Manifest<'a> {
     a_id: &'a str,
     b_id: &'a str,
-    scan_recipe: &'a ScanRecipe,
+    scan_recipe: &'a CorpusScanRecipe,
     gap_count: usize,
     entries: Vec<ManifestEntry>,
 }
@@ -3674,8 +3674,7 @@ mod tests {
             gap_equivalence: Vec::new(),
             gap_offset_agreement: None,
             decode_chunk_secs: 30,
-            scan_block_ms: 20,
-            silence_peak_fraction: 0.05,
+            recipe: crate::domain::ScanRecipe::with_hold_blocks(1000, 0, 20, 0.05, 0.0),
             limit_fill_to_mapped_region: false,
             b_scanned_end_secs: None,
             b_scan_truncated: false,
@@ -3834,7 +3833,7 @@ mod tests {
                     channels: 2,
                     duration_secs: 1000.0,
                 },
-                scan_recipe: ScanRecipe::default(),
+                scan_recipe: CorpusScanRecipe::default(),
                 gap_count: 2,
             },
             gaps: vec![mk_fp(0, false), mk_fp(3, true)],

@@ -51,8 +51,10 @@ pub struct RepairConfig {
     /// Derived from `silence_hold_ms / scan_block_ms`; use `silence_hold_blocks()`.
     #[serde(default = "default_silence_hold_ms")]
     pub silence_hold_ms: u64,
-    /// Absolute RMS floor (0–32767 scale) below which a block is always silent regardless of peak.
-    /// Catches low-level codec noise in compressed-audio gaps. Set to 0 to disable.
+    /// Absolute RMS floor as **normalized** amplitude in `[0, 1)` (default ≈ `0.001007`) below which
+    /// a block is always silent regardless of peak. Catches low-level codec noise in compressed-audio
+    /// gaps. Set to 0 to disable. Operator-facing 0–32767 i16 units are CLI-only via
+    /// [`normalize_absolute_silence_rms_i16`].
     #[serde(default = "default_absolute_silence_rms")]
     pub absolute_silence_rms: f32,
     /// Also scan B's native timeline for silence to produce `gap_offset_agreement`.
@@ -617,14 +619,6 @@ impl Default for RepairOutputConfig {
 }
 
 impl RepairConfig {
-    pub fn scan_block_secs(&self) -> f64 {
-        self.scan_block_ms as f64 / 1000.0
-    }
-
-    pub fn min_gap_secs(&self) -> f64 {
-        self.min_gap_ms as f64 / 1000.0
-    }
-
     pub fn silence_hold_blocks(&self) -> u32 {
         if self.scan_block_ms == 0 {
             return 0;

@@ -1,6 +1,6 @@
 # JSON output contract — v1
 
-Authoritative field-by-field contract for `--format json` output of both CLIs. **Frozen as v1 (2026-06-10).** Additive revisions: optional `end_clip_anchor` on analyzer/repair alignment reports (2026-06-17); optional `video_b_window_*` on clip entries when B differs from A; optional `audio_timeline_skew` on repair `GapReport` (2026-06-19).
+Authoritative field-by-field contract for `--format json` output of both CLIs. **Frozen as v1 (2026-06-10).** Additive revisions: optional `end_clip_anchor` on analyzer/repair alignment reports (2026-06-17); optional `video_b_window_*` on clip entries when B differs from A; optional `audio_timeline_skew` on repair `GapReport` (2026-06-19); additive scan-recipe echo keys `min_gap_ms`, `silence_hold_ms` (effective), and `absolute_silence_rms` (normalized) on repair `GapReport` (2026-07-31).
 
 Any change to field names, types, optionality, or nesting is a contract revision: update this document, regenerate the golden fixtures, and call the revision out explicitly in the changelog/commit.
 
@@ -173,8 +173,11 @@ Top-level object: **RepairJsonOutput**.
 | `gap_equivalence` | array of [GapEquivalenceVerdict](#gapequivalenceverdict) | when non-empty | Per-gap silence-character classification (advisory), index-parallel to `gaps`; input to the `skip_equivalent_gaps` drop |
 | `gap_offset_agreement` | [GapOffsetAgreement](#gapoffsetagreement) \| null | always | Present when `scan_both` ran and both files had silence intervals |
 | `decode_chunk_secs` | integer | always | Decode chunk size used during sequential scan |
+| `min_gap_ms` | integer | always | Minimum silent-run length (ms) that produced this gap list |
+| `silence_hold_ms` | integer | always | **Effective** hold (`silence_hold_blocks × scan_block_ms`), not the configured TOML `silence_hold_ms` |
 | `scan_block_ms` | integer | always | Analysis block size for silence-run detection |
 | `silence_peak_fraction` | number | always | Peak-fraction threshold used for silence classification |
+| `absolute_silence_rms` | number | always | Absolute RMS floor as **normalized** amplitude in `[0, 1)` (default ≈ `0.001007`, not the CLI 0–32767 display scale) |
 | `limit_fill_to_mapped_region` | bool | always | When true (default in query-reference mode), gaps outside mapped clip coverage are reported but not fillable |
 | `audio_timeline_skew` | [AudioTimelineSkew](#audiotimelineskew) \| null | always | Present when gap scan measured PTS vs decoded-sample clock; `null` when not measurable (e.g. seek-based scan fallback). Human report emits a warning when `delta_secs > 1.0` |
 

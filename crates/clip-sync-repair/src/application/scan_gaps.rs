@@ -27,16 +27,10 @@ pub struct ScanGapsRequest {
     pub align: AlignConfig,
     /// Decode chunk size (seconds) for sequential PCM scan.
     pub decode_chunk_secs: u64,
-    /// Analysis block size (seconds) for silence-run detection within decoded PCM.
-    pub scan_block_secs: f64,
-    /// Fraction of peak amplitude below which a block is considered silent.
-    pub silence_peak_fraction: f32,
-    /// Absolute RMS floor (0–32767 scale) below which a block is always silent regardless of peak.
-    pub absolute_silence_rms: f32,
-    /// Consecutive non-silent blocks to absorb before closing a silence run.
-    pub silence_hold_blocks: u32,
-    /// Minimum silent-window duration (seconds) to include in the gap report.
-    pub min_gap_secs: f64,
+    /// Scan knobs that determine which gaps are detected (`PartialEq` ⇔ same gap list).
+    /// Build via [`crate::domain::ScanRecipe::with_hold_blocks`] so effective hold and scanner
+    /// blocks stay one fact.
+    pub recipe: crate::domain::ScanRecipe,
     /// When true, also scan B's native timeline for silence and compute `gap_offset_agreement`.
     pub scan_both: bool,
     /// Tolerance (seconds) for the silence-based vs alignment offset agreement check.
@@ -62,18 +56,19 @@ impl std::ops::Deref for ScanGapsOutcome {
 
 /// One-line stderr summary after gap detection (thresholds + count).
 pub(crate) fn format_scan_summary(request: &ScanGapsRequest, gap_count: usize) -> String {
-    let min_gap_ms = (request.min_gap_secs * 1000.0).round() as u64;
-    let block_ms = (request.scan_block_secs * 1000.0).round() as u64;
-    let hold_ms = request.silence_hold_blocks as u64 * block_ms;
-    let silence_pct = request.silence_peak_fraction * 100.0;
+    let recipe = request.recipe;
+    let silence_pct = recipe.silence_peak_fraction() * 100.0;
     let scan_both = if request.scan_both { "on" } else { "off" };
     let mut line = format!(
-        "Gap scan: {gap_count} silent run(s) ≥{min_gap_ms}ms — block {block_ms}ms, silence {silence_pct:.1}% peak, hold {hold_ms}ms, decode {}s chunks, scan-both {scan_both}",
+        "Gap scan: {gap_count} silent run(s) ≥{}ms — block {}ms, silence {silence_pct:.1}% peak, hold {}ms, decode {}s chunks, scan-both {scan_both}",
+        recipe.min_gap_ms(),
+        recipe.scan_block_ms(),
+        recipe.silence_hold_ms(),
         request.decode_chunk_secs,
     );
-    if request.absolute_silence_rms > 0.0 {
-        let i16_units = request.absolute_silence_rms * 32767.0;
-        let db = 20.0 * f64::from(request.absolute_silence_rms).log10();
+    if recipe.absolute_silence_rms() > 0.0 {
+        let i16_units = recipe.absolute_silence_rms() * 32767.0;
+        let db = 20.0 * f64::from(recipe.absolute_silence_rms()).log10();
         line.push_str(&format!(
             ", rms floor {:.0} (at {db:.0} dBFS)",
             i16_units.round()
@@ -163,15 +158,15 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
 
         // Step 4: sequential decode + block-level silence-run detection on A.
         let decode_chunk_secs = request.decode_chunk_secs as f64;
-        let silence_peak_fraction = request.silence_peak_fraction;
-        let min_gap_secs = request.min_gap_secs;
+        let silence_peak_fraction = request.recipe.silence_peak_fraction();
+        let min_gap_secs = request.recipe.min_gap_secs();
         let progress = self.progress;
 
-        let absolute_silence_rms = request.absolute_silence_rms;
-        let silence_hold_blocks = request.silence_hold_blocks;
+        let absolute_silence_rms = request.recipe.absolute_silence_rms();
+        let silence_hold_blocks = request.recipe.silence_hold_blocks();
 
         let mut scanner_a = policies::SilenceRunScanner::new(
-            request.scan_block_secs,
+            request.recipe.scan_block_secs(),
             silence_peak_fraction,
             min_gap_secs,
             silence_hold_blocks,
@@ -223,9 +218,9 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
                 track_b,
                 decode_chunk_secs,
                 policies::SilenceRunScanner::new(
-                    request.scan_block_secs,
-                    request.silence_peak_fraction,
-                    request.min_gap_secs,
+                    request.recipe.scan_block_secs(),
+                    request.recipe.silence_peak_fraction(),
+                    request.recipe.min_gap_secs(),
                     silence_hold_blocks,
                     absolute_silence_rms,
                 )
@@ -362,8 +357,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             gap_equivalence,
             gap_offset_agreement,
             decode_chunk_secs: request.decode_chunk_secs,
-            scan_block_ms: (request.scan_block_secs * 1000.0).round() as u64,
-            silence_peak_fraction: request.silence_peak_fraction,
+            recipe: request.recipe,
             limit_fill_to_mapped_region: request.limit_fill_to_mapped_region,
             b_scanned_end_secs: b_scan.scanned_end_secs,
             b_scan_truncated: b_scan.truncated,
@@ -829,11 +823,7 @@ mod tests {
             video_b: PathBuf::from(b),
             align: AlignConfig::default(),
             decode_chunk_secs,
-            scan_block_secs: 0.25,
-            silence_peak_fraction: 0.01,
-            absolute_silence_rms: 0.0,
-            silence_hold_blocks: 0,
-            min_gap_secs: 1.0,
+            recipe: crate::domain::ScanRecipe::with_hold_blocks(1000, 0, 250, 0.01, 0.0),
             scan_both: false,
             gap_offset_tolerance_secs: 0.5,
             limit_fill_to_mapped_region: true,
@@ -1050,8 +1040,7 @@ mod tests {
             gap_equivalence: Vec::new(),
             gap_offset_agreement: None,
             decode_chunk_secs: 60,
-            scan_block_ms: 250,
-            silence_peak_fraction: 0.01,
+            recipe: crate::domain::ScanRecipe::with_hold_blocks(1000, 0, 250, 0.01, 0.0),
             limit_fill_to_mapped_region: true,
             b_scanned_end_secs: None,
             b_scan_truncated: false,
@@ -1269,11 +1258,13 @@ mod tests {
             video_b: PathBuf::from("b.wav"),
             align: AlignConfig::default(),
             decode_chunk_secs: 10,
-            scan_block_secs: 0.25,
-            silence_peak_fraction: 0.01,
-            absolute_silence_rms: 33.0 / 32767.0,
-            silence_hold_blocks: 2,
-            min_gap_secs: 1.0,
+            recipe: crate::domain::ScanRecipe::with_hold_blocks(
+                1000,
+                2,
+                250,
+                0.01,
+                33.0 / 32767.0,
+            ),
             scan_both: true,
             gap_offset_tolerance_secs: 0.5,
             limit_fill_to_mapped_region: false,
@@ -1290,6 +1281,49 @@ mod tests {
             line.contains("rms floor 33 (at -60 dBFS)"),
             "header must show i16-scale floor + dBFS, got {line}"
         );
+    }
+
+    #[test]
+    fn scan_report_recipe_round_trips_from_request() {
+        let dur = Duration::from_secs(60);
+        let reader = FixedReader::new()
+            .with("a.wav", SessionKind::Silent, dur)
+            .with("b.wav", SessionKind::Loud, dur);
+        let progress = FakeProgressReporter;
+        let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
+
+        let recipe = crate::domain::ScanRecipe::with_hold_blocks(
+            1000,
+            2,
+            250,
+            0.01,
+            production_abs_floor(),
+        );
+        let request = ScanGapsRequest {
+            video_a: PathBuf::from("a.wav"),
+            video_b: PathBuf::from("b.wav"),
+            align: AlignConfig::default(),
+            decode_chunk_secs: 60,
+            recipe,
+            scan_both: false,
+            gap_offset_tolerance_secs: 0.5,
+            limit_fill_to_mapped_region: true,
+        };
+
+        let report = scan
+            .scan_after_alignment(request, aligned_result(Some(0.0)))
+            .expect("scan should succeed")
+            .report;
+        assert_eq!(report.recipe, recipe);
+        assert_eq!(report.recipe.silence_hold_ms(), 500);
+        assert_eq!(report.recipe.silence_hold_blocks(), 2);
+
+        let corpus = crate::application::gap_fingerprint::CorpusScanRecipe::from_report(&report);
+        assert_eq!(corpus.min_gap_ms, Some(1000));
+        assert_eq!(corpus.silence_hold_ms, Some(500));
+        assert_eq!(corpus.scan_block_ms, Some(250));
+        assert_eq!(corpus.silence_peak_fraction, 0.01);
+        assert_eq!(corpus.absolute_silence_rms, Some(production_abs_floor()));
     }
 
     /// Production default floor (`33/32767`), not the fixture habit of `0.0`.
@@ -1324,7 +1358,7 @@ mod tests {
         let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
 
         let mut request = scan_request("a.wav", "b.wav", 60);
-        request.absolute_silence_rms = production_abs_floor();
+        request.recipe = request.recipe.with_absolute_silence_rms(production_abs_floor());
         request.scan_both = true;
 
         let report = scan
@@ -1350,7 +1384,7 @@ mod tests {
         let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
 
         let mut request = scan_request("a.wav", "b.wav", 60);
-        request.absolute_silence_rms = production_abs_floor();
+        request.recipe = request.recipe.with_absolute_silence_rms(production_abs_floor());
         request.scan_both = true;
 
         let report = scan

@@ -164,7 +164,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             sample_rate,
             max_refine_frames,
             global_a_rms,
-            silence_peak_fraction: request.report.silence_peak_fraction,
+            silence_peak_fraction: request.report.recipe.silence_peak_fraction(),
         };
 
         let region_count = plan.regions.len() as u64;

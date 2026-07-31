@@ -79,6 +79,98 @@ pub fn interval_fully_within_window(
     start_secs >= window_start_secs && end_secs <= window_end_secs
 }
 
+/// The scan knobs that determine **which gaps are detected**. Equality means "same gap list".
+///
+/// `PartialEq` is **bitwise** (including the two `f32` fields) and intentional: values are copied
+/// from config / request construction, never recomputed. Do not replace with an epsilon comparison.
+/// `decode_chunk_secs` is deliberately excluded — decode throughput only; it cannot move a gap
+/// boundary.
+///
+/// Fields are private so effective hold cannot drift from `blocks × scan_block_ms`. Construct with
+/// [`Self::with_hold_blocks`] (the only write path for hold geometry).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScanRecipe {
+    min_gap_ms: u64,
+    /// **Effective** hold — `silence_hold_blocks * scan_block_ms` (what the scan applied after block
+    /// quantization), not the configured `RepairConfig::silence_hold_ms`.
+    silence_hold_ms: u64,
+    scan_block_ms: u64,
+    silence_peak_fraction: f32,
+    /// Normalized amplitude in `[0, 1)` (default ≈ `0.001007`). Operator-facing 0–32767 i16 units
+    /// are CLI-only via `normalize_absolute_silence_rms_i16`.
+    absolute_silence_rms: f32,
+}
+
+impl ScanRecipe {
+    /// Build a recipe from the blocks the scanner will apply. Sets
+    /// [`Self::silence_hold_ms`] = `silence_hold_blocks × scan_block_ms` — the only place that
+    /// multiplication should live.
+    pub fn with_hold_blocks(
+        min_gap_ms: u64,
+        silence_hold_blocks: u32,
+        scan_block_ms: u64,
+        silence_peak_fraction: f32,
+        absolute_silence_rms: f32,
+    ) -> Self {
+        Self {
+            min_gap_ms,
+            silence_hold_ms: u64::from(silence_hold_blocks) * scan_block_ms,
+            scan_block_ms,
+            silence_peak_fraction,
+            absolute_silence_rms,
+        }
+    }
+
+    /// Replace the absolute RMS floor (normalized amplitude). Hold geometry is unchanged.
+    #[must_use]
+    pub fn with_absolute_silence_rms(mut self, absolute_silence_rms: f32) -> Self {
+        self.absolute_silence_rms = absolute_silence_rms;
+        self
+    }
+
+    pub fn min_gap_ms(self) -> u64 {
+        self.min_gap_ms
+    }
+
+    pub fn silence_hold_ms(self) -> u64 {
+        self.silence_hold_ms
+    }
+
+    pub fn scan_block_ms(self) -> u64 {
+        self.scan_block_ms
+    }
+
+    pub fn silence_peak_fraction(self) -> f32 {
+        self.silence_peak_fraction
+    }
+
+    pub fn absolute_silence_rms(self) -> f32 {
+        self.absolute_silence_rms
+    }
+
+    /// Blocks implied by the effective hold (`silence_hold_ms / scan_block_ms`). Exact when the
+    /// recipe was built via [`Self::with_hold_blocks`].
+    pub fn silence_hold_blocks(self) -> u32 {
+        if self.scan_block_ms == 0 {
+            return 0;
+        }
+        debug_assert_eq!(
+            self.silence_hold_ms % self.scan_block_ms,
+            0,
+            "silence_hold_ms must be a multiple of scan_block_ms (build via with_hold_blocks)"
+        );
+        (self.silence_hold_ms / self.scan_block_ms) as u32
+    }
+
+    pub fn scan_block_secs(self) -> f64 {
+        self.scan_block_ms as f64 / 1000.0
+    }
+
+    pub fn min_gap_secs(self) -> f64 {
+        self.min_gap_ms as f64 / 1000.0
+    }
+}
+
 /// Full gap scan report produced by `ScanGaps`.
 #[derive(Debug, Clone)]
 pub struct GapReport {
@@ -97,9 +189,8 @@ pub struct GapReport {
     pub gap_offset_agreement: Option<GapOffsetAgreement>,
     /// Decode chunk size used during sequential scan (seconds).
     pub decode_chunk_secs: u64,
-    /// Analysis block size used for silence-run detection (milliseconds).
-    pub scan_block_ms: u64,
-    pub silence_peak_fraction: f32,
+    /// Scan knobs that determined which gaps were detected (`PartialEq` ⇔ same gap list).
+    pub recipe: ScanRecipe,
     /// When query-reference alignment is used, only gaps inside the mapped clip coverage are fillable.
     pub limit_fill_to_mapped_region: bool,
     /// How far the B silence/level scan progressed on B's native timeline (seconds). `None` when B
