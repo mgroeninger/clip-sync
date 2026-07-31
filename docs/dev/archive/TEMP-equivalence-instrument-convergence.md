@@ -11,6 +11,12 @@
 > [../gap-fingerprint.md](../gap-fingerprint.md) § *`equivalence` vs `scan_equivalence`*, which carries
 > the converged/residual table.** Read this file for the *rationale* — in particular I3, where a null
 > measurement was correctly overturned by asking why the effect was absent.
+>
+> **One thing this ledger delegated forward:** I3's null result (`0 dangerous / 297 gaps`) is
+> uninterpretable while the dump records no codec or losslessness, and the probe scaffolding named
+> above cannot be deleted until something permanent replaces it. Both are specified in
+> [../TEMP-fingerprint-provenance-plan.md](../TEMP-fingerprint-provenance-plan.md) (**opened
+> 2026-07-31**), whose §2 blocks the next large fingerprint run.
 
 **Opened:** 2026-07-30. **Status:** **all three closed.** **I1** done + media-validated; **I2** decided
 (accept-and-document); **I3** measured, found a latent defect, **fixed 2026-07-31** — the fine donor's

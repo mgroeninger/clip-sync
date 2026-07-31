@@ -58,8 +58,16 @@ Provenance and the two defects this repaired:
 
 **Gap numbers are run-scoped.** A `#` is stable only within one scan recipe — change `min_gap_ms`,
 `silence_hold_ms`, `scan_block_ms`, `silence_peak_fraction`, or `absolute_silence_rms` and the detected
-run list moves. The recipe-stable handle is the A time range (`video_a_start_secs` /
+run list can move. The recipe-stable handle is the A time range (`video_a_start_secs` /
 `video_a_end_secs`). Never silently remap a remembered `#` onto a new scan.
+
+One precision note on that list: what the scan actually applies is the **quantized** hold. The scanner
+is constructed with `silence_hold_blocks` and never sees a millisecond value, so the effective
+threshold is `silence_hold_blocks × scan_block_ms` — configured holds of 450 and 500 ms at a 100 ms
+block produce the *same* gap list. Treat a `silence_hold_ms` edit as recipe-changing unless you have
+checked it survives quantization. This prose contract is the thing
+[TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md) makes a type (its §2/§3 own the effective-vs-configured
+rule); keep the two lists in step.
 
 ## Axes (read before the cells)
 
@@ -203,14 +211,28 @@ plan time **only** when `--skip-equivalent-gaps` is set, at **lowest precedence*
 and track blocks win (§ Unfillable). The classification is always computed and reported (advisory), so a plain
 scan (`--json`, no `--mux`/`--wav`) shows it with the flag off.
 
-**These are scan-time cells.** A `--gap-fingerprints` dump carries a *second* verdict per gap
-(`equivalence`) from a fine-bin front-end, and the two do not always agree — measured at 1.7 % of gaps.
-The cell named here is always the **scan** one (`scan_equivalence`): it is what production acts on, and
-the fine path's two known input differences both bias it toward `drop`, so it cannot serve as the
-arbiter of a `keep`. Curated fixtures are asserted against `scan_equivalence` for that reason, and a
-committed fixture pins the disagreement itself
-(`tests/gap_corpus/fingerprints/equivalence_divergence/`). Full treatment:
-[gap-fingerprint.md](gap-fingerprint.md) § *`equivalence` vs `scan_equivalence`*.
+**These are scan-time cells.** A `--gap-fingerprints` dump carries a *second*, **diagnostic** verdict
+per gap (`equivalence`), and the two can disagree. The cell named here is always the **scan** one
+(`scan_equivalence`): it is what production acts on, and the diagnostic path retains a residual bias
+toward `drop`, so it cannot serve as the arbiter of a `keep`. Curated fixtures are asserted against
+`scan_equivalence` for that reason.
+
+> **Do not call the diagnostic path "the fine path" or "fine-bin"** (corrected 2026-07-31). It was
+> re-binned onto `scan_block_ms` by I1 — the 50 ms binning was inherited by proximity from
+> `gap_signature_bin_ms`, a value tuned for structure *pattern matching*, where finer is better; a max
+> statistic and a threshold-crossing fraction want the opposite. Five of the seven inputs are now
+> **converged** (A RMS, `gap_floor_db`, channel reduction, bin width, donor predicate). Two remain
+> open: the noise-floor context window (±2.0 s vs ±3.0 s, median 0.606 dB, one-signed toward `drop` —
+> this is the bias the paragraph above rests on) and the donor window (core vs nominal, ≤1 block,
+> **mixed signs**). The older "*both* known differences bias toward drop" is no longer accurate for
+> the second one.
+>
+> **The 1.7 % divergence rate (5/297) is pre-I1/I3** and should now read lower; it was also measured
+> on an all-lossy corpus that structurally could not reach the digital-silence condition I3 fixed.
+> Do not quote it as a current rate. `tests/gap_corpus/fingerprints/equivalence_divergence/band_donor.json`
+> is now a **regression** fixture pinning *agreement* on the gap that used to diverge — it no longer
+> pins a disagreement. Full treatment, with the per-input status table:
+> [gap-fingerprint.md](gap-fingerprint.md) § *`equivalence` vs `scan_equivalence`*.
 
 ## Derived readouts (not primitives)
 

@@ -251,29 +251,30 @@ fine, occupied to scan. That band is closed (F15 + I1); the committed
 pinning agreement on that gap. Full analysis in
 [archive/TEMP-equivalence-divergence-findings.md](archive/TEMP-equivalence-divergence-findings.md) § F15.
 
-#### `equivalence.silent_core_probes` — measuring the candidate fix before adopting it
+#### `equivalence.silent_core_probes` — vestigial F15 scaffolding
 
-F15's decided direction is to give the fine path a **silent-core** `gap_floor_db` (max over A's *silent*
-bins, matching the scan path's definition). Rather than change the field and re-measure afterwards, each
-fine verdict now carries candidate floors computed that way and **classified on by nothing**:
+F15's silent-core fix is **landed**: live `gap_floor_db` / `a_gap_rms_db` *are* the silent-core
+measurement (max / energy mean over A's silent bins at `scan_block_ms`, matching scan). These probe
+rows were the pre-adoption measurement that justified that change — they remain in the dump as
+provenance only; **nothing classifies on them**.
 
 | field | meaning |
 |---|---|
-| `bin_ms` | bin width this candidate was measured at |
-| `floor_db` | max RMS over the **silent** bins — the candidate `gap_floor_db`. Absent when no bin was silent |
-| `a_rms_db` | energy mean over the same bins — the candidate A-side signal (the *other* open axis, free in the same pass) |
+| `bin_ms` | bin width this row was measured at |
+| `floor_db` | max RMS over the **silent** bins. Absent when no bin was silent |
+| `a_rms_db` | energy mean over the same bins |
 | `silent_bins` / `total_bins` | the population behind both, so a max can be read against how many bins it summarizes |
 
-Two probes are emitted per gap: one at `gap_signature_bin_ms` (the fingerprint's own binning) and one at
-the scan recipe's `scan_block_ms`, so the like-for-like comparison against `scan_equivalence.gap_floor_db`
-is available without assuming bin size is irrelevant — whether it is, is one of the open questions. An
-absent `floor_db` means the empty-silent-bin fallback is load-bearing on that gap and has to be decided
-before the fix lands; if it never occurs across the corpus, it is a defensive case and nothing more.
+Two rows are emitted per gap: one at `gap_signature_bin_ms` and one at `scan_block_ms`. The emit path
+is deliberately frozen at the *pre-fix* recipe (silence filter on, but downmix reduction and
+gap-anchored tiling) so a dump can still put old and new numbers side by side — comparing the two is
+its whole remaining purpose. An absent `floor_db` means the empty-silent-bin fallback applied on that
+gap (defensive; mirrors scan's empty-set → `None`).
 
-Originally scaffolding with a scheduled death after the fix landed. **Retained** — see
-[archive/TEMP-equivalence-instrument-convergence.md](archive/TEMP-equivalence-instrument-convergence.md) § *Also
-carried over*: `noise_floor_probes` stay for I2 attribution; `silent_core_probes` are vestigial and
-may drop later if dumps feel fat. Nothing classifies on either.
+**Vestigial** — drop first if dumps ever feel fat; leave `noise_floor_probes` (I2 attribution). Soft-retire
+via empty `skip_serializing_if` if needed; do not strip committed fixtures. See
+[archive/TEMP-equivalence-instrument-convergence.md](archive/TEMP-equivalence-instrument-convergence.md)
+§ *Also carried over*.
 
 #### `equivalence.noise_floor_probes` — separating the second axis's three variables
 
