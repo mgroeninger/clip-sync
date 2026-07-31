@@ -10,6 +10,15 @@
 //! - a change that flipped the divergence into the **dangerous** direction (scan drops what fine keeps)
 //!   would break the safety assertion.
 //!
+//! **If `band_donor_*` goes red after a change to fine's `gap_floor_db`, read the fixture README before
+//! touching anything here.** F15's decided direction (a silent-core floor on the fine path) is *predicted*
+//! to make that gap converge, which turns those two tests red **by design** — they are the fix's acceptance
+//! signal. The response is to convert them into regression assertions ("used to diverge, now agrees"), never
+//! to relax them or to swap in a different still-diverging gap.
+//!
+//! `fine_noise_floor_reads_lower_than_scan` and `divergence_is_never_in_the_dangerous_direction` are **not**
+//! scheduled to change — a failure in either is a real regression.
+//!
 //! Fixture provenance and the measured numbers: `tests/gap_corpus/fingerprints/equivalence_divergence/`.
 
 use clip_sync_repair::application::gap_fingerprint::{GapCorpus, GapFingerprint};

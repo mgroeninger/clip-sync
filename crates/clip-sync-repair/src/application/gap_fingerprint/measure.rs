@@ -10,6 +10,8 @@ use super::schema::*;
 
 use clip_sync::normalized_correlation;
 
+use crate::domain::gap_equivalence::NoiseFloorProbe;
+
 use crate::domain::gap_anchor_seam::{
     list_anchor_candidates_a, list_feasible_anchor_brackets, AnchorSeamParams, AnchorSource,
 };
@@ -38,12 +40,16 @@ struct LevelProfileSpan {
 /// context bins *outside* `[gap_start, gap_end)` and `gap_floor` the loudest bin *inside* it. `bin_rms(f,
 /// end)` returns the mono RMS (linear) over `[f, end)`. Shared by the A-side (interleaved downmix) and the
 /// symmetric B-side (mono) paths so the two profiles are computed by *identical* logic (D11) and cannot drift.
+///
+/// Also returns the **context bin count** behind `noise_floor_db`. It is not a [`LevelProfile`] field
+/// because that type is serialized into every dumped gap; returning it keeps the noise-floor probes
+/// (F15) from having to re-derive the bin walk and drift from the thing they characterize.
 fn level_profile(
     bin_rms: impl Fn(usize, usize) -> f32,
     span: LevelProfileSpan,
     bin_frames: usize,
     bin_ms: u32,
-) -> LevelProfile {
+) -> (LevelProfile, usize) {
     let mut profile_db = Vec::new();
     let mut context_bins_db = Vec::new();
     let mut f = span.context_start;
@@ -66,14 +72,89 @@ fn level_profile(
         }
         mx
     };
-    LevelProfile {
+    let context_bins = context_bins_db.len();
+    (
+        LevelProfile {
+            bin_ms,
+            speech_peak_db: profile_db.iter().copied().fold(SILENCE_FLOOR_DB, f32::max),
+            noise_floor_db: median(context_bins_db),
+            gap_floor_db,
+            floor_db: SILENCE_FLOOR_DB,
+            profile_db,
+        },
+        context_bins,
+    )
+}
+
+/// One candidate noise floor over A's gap context at `(context_secs, bin_ms)`, measured by
+/// [`level_profile`] itself so the probe cannot drift from the measurement it characterizes.
+///
+/// **Provenance only** — see [`NoiseFloorProbe`]. An empty context (zero window, or a gap that fills
+/// the track) yields `floor_db: None` rather than `median()`'s −120 placeholder, so "no context" stays
+/// distinguishable from "silent context".
+fn noise_floor_probe(
+    a_samples: &[f32],
+    channels: usize,
+    gap_frames: std::ops::Range<usize>,
+    sample_rate: u32,
+    context_secs: f64,
+    bin_ms: u64,
+) -> NoiseFloorProbe {
+    let ch = channels.max(1);
+    let rate = f64::from(sample_rate).max(1.0);
+    let context_frames = (context_secs.max(0.0) * rate).round() as usize;
+    let bin_frames = (((bin_ms as f64) / 1000.0) * rate).round().max(1.0) as usize;
+    let (lp, context_bins) = level_profile(
+        |f, end| mono_rms(a_samples, ch, f, end),
+        LevelProfileSpan {
+            gap_start: gap_frames.start,
+            gap_end: gap_frames.end,
+            context_start: gap_frames.start.saturating_sub(context_frames),
+            context_end: (gap_frames.end + context_frames).min(a_samples.len() / ch),
+        },
+        bin_frames,
+        bin_ms as u32,
+    );
+    NoiseFloorProbe {
+        context_secs,
         bin_ms,
-        speech_peak_db: profile_db.iter().copied().fold(SILENCE_FLOOR_DB, f32::max),
-        noise_floor_db: median(context_bins_db),
-        gap_floor_db,
-        floor_db: SILENCE_FLOOR_DB,
-        profile_db,
+        floor_db: (context_bins > 0).then(|| f64::from(lp.noise_floor_db)),
+        context_bins,
     }
+}
+
+/// The `{context window} × {bin size}` grid of [`noise_floor_probe`] reads, deduped.
+///
+/// Deduping matters for interpretation, not cost: when the two front-ends' recipes coincide the grid
+/// collapses, and a repeated row would read as corroboration rather than as the same measurement twice.
+fn noise_floor_probe_grid(
+    a_samples: &[f32],
+    channels: usize,
+    gap_frames: std::ops::Range<usize>,
+    sample_rate: u32,
+    context_secs: &[f64],
+    bin_ms: &[u64],
+) -> Vec<NoiseFloorProbe> {
+    let mut out: Vec<NoiseFloorProbe> = Vec::new();
+    for &secs in context_secs {
+        for &bin in bin_ms {
+            if out
+                .iter()
+                .any(|p| p.context_secs == secs && p.bin_ms == bin)
+            {
+                continue;
+            }
+            out.push(noise_floor_probe(
+                a_samples,
+                channels,
+                gap_frames.clone(),
+                sample_rate,
+                secs,
+                bin,
+            ));
+        }
+    }
+    out
 }
 
 /// Mono RMS (linear) over `b_mono[start..end]` — the B-side accessor for [`level_profile`] / nominal donor.
@@ -1401,7 +1482,7 @@ pub fn build_gap_fingerprint(
     // --- intrinsic (A-side) ---
     let pre_start = refined.start_frame.saturating_sub(context_frames);
     let post_end = (refined.end_frame + context_frames).min(total_a);
-    let levels = level_profile(
+    let (levels, _context_bins) = level_profile(
         |f, end| mono_rms(inputs.a_samples, ch, f, end),
         LevelProfileSpan {
             gap_start: refined.start_frame,
@@ -1986,17 +2067,20 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
         sample_rate,
     );
     let b_levels = if include_diagnostics {
-        Some(level_profile(
-            |f, end| mono_slice_rms(&b_mono, f, end),
-            LevelProfileSpan {
-                gap_start: b_mapped_start,
-                gap_end: b_gap_end,
-                context_start: b_mapped_start.saturating_sub(context_frames),
-                context_end: (b_gap_end + context_frames).min(b_mono.len()),
-            },
-            bin_frames,
-            cfg.gap_signature_bin_ms as u32,
-        ))
+        Some(
+            level_profile(
+                |f, end| mono_slice_rms(&b_mono, f, end),
+                LevelProfileSpan {
+                    gap_start: b_mapped_start,
+                    gap_end: b_gap_end,
+                    context_start: b_mapped_start.saturating_sub(context_frames),
+                    context_end: (b_gap_end + context_frames).min(b_mono.len()),
+                },
+                bin_frames,
+                cfg.gap_signature_bin_ms as u32,
+            )
+            .0,
+        )
     } else {
         None
     };
@@ -2300,7 +2384,49 @@ pub fn characterize_gaps_from_decode(
         // statistic* from the scan path's (max over all gap bins vs max over silent A blocks only),
         // and the two differ by enough to flip a class — so both are now recorded per gap rather
         // than left to be inferred.
-        fp.equivalence = Some(equiv.with_gap_floor_db(f64::from(fp.levels.gap_floor_db)));
+        // Candidate silent-core floors (F15), recorded and never classified on. Two bin sizes, because
+        // whether bin size moves the floor is itself an open axis: the fingerprint's own
+        // `gap_signature_bin_ms`, and the scan recipe's block size so the comparison against
+        // `scan_equivalence.gap_floor_db` is like-for-like. Cannot be folded into `levels.gap_floor_db` —
+        // that closure is mono-RMS-only with no silence predicate, and its other consumers (`snr_db`,
+        // dual-fit's `a_gap_floor_db`) would move with it.
+        let probe = |bin_ms: u64| {
+            crate::application::gap_equivalence::silent_core_probe(
+                &a_pcm.samples,
+                ch,
+                refined.start_frame..refined.end_frame,
+                sample_rate,
+                bin_ms,
+                cfg.silence_peak_fraction,
+                cfg.absolute_silence_rms,
+            )
+        };
+        let probes = vec![probe(cfg.gap_signature_bin_ms), probe(report.scan_block_ms)];
+
+        // Candidate noise floors (F15, second axis) over the {context window} × {bin size} grid the two
+        // front-ends straddle — also provenance, also classified on by nothing. Built by calling
+        // `level_profile` itself rather than re-deriving the bin walk, so a probe cannot drift from the
+        // measurement it characterizes. The `(EQUIVALENCE_CONTEXT_SECS, scan_block_ms)` row is the
+        // anchor: it should reproduce `scan_equivalence.noise_floor_db`, and if it does not, a third
+        // variable is in play (most likely refined-vs-core exclusion) and that shows up at once.
+        let nf_probes = noise_floor_probe_grid(
+            &a_pcm.samples,
+            ch,
+            refined.start_frame..refined.end_frame,
+            sample_rate,
+            &[
+                crate::domain::gap_equivalence::EQUIVALENCE_CONTEXT_SECS,
+                cfg.gap_signature_context_secs,
+            ],
+            &[report.scan_block_ms, cfg.gap_signature_bin_ms],
+        );
+
+        fp.equivalence = Some(
+            equiv
+                .with_gap_floor_db(f64::from(fp.levels.gap_floor_db))
+                .with_silent_core_probes(probes)
+                .with_noise_floor_probes(nf_probes),
+        );
         // Copy in the coarse scan-block verdict (block size = the `scan_block_ms` recipe knob, not a
         // constant — see `default_scan_block_ms`; this comment said "250 ms" until 2026-07-30, long
         // after the default moved to 100), index-parallel to report gaps, so the corpus holds both
@@ -2516,6 +2642,82 @@ pub(crate) fn write_corpus_dir(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- noise-floor probes (F15 second axis; provenance only) -------------------------------------
+
+    /// A gap flanked by −40 dBFS context: the probe reads that context, not the silent gap it excludes.
+    #[test]
+    fn noise_floor_probe_reads_the_context_not_the_gap() {
+        // 1 s context @ ~−40 dBFS, 1 s digital-silence gap, 1 s context.
+        let ctx = 0.01f32; // −40 dBFS constant ⇒ RMS = peak
+        let mut a = vec![ctx; 48_000];
+        a.extend(std::iter::repeat_n(0.0f32, 48_000));
+        a.extend(std::iter::repeat_n(ctx, 48_000));
+        let p = noise_floor_probe(&a, 1, 48_000..96_000, 48_000, 1.0, 50);
+        assert_eq!(p.context_bins, 40, "±1 s at 50 ms ⇒ 40 context bins");
+        let db = p.floor_db.expect("context present ⇒ a floor");
+        assert!(
+            (db - -40.0).abs() < 0.5,
+            "context floor should read ≈−40, got {db}"
+        );
+    }
+
+    /// The two variables move the read independently, which is the whole point of probing a grid:
+    /// each `(context_secs, bin_ms)` pair is a distinct row and none is silently reused.
+    #[test]
+    fn noise_floor_probe_grid_covers_the_cross_product() {
+        let a = vec![0.01f32; 144_000];
+        let g = noise_floor_probe_grid(&a, 1, 48_000..96_000, 48_000, &[2.0, 3.0], &[100, 50]);
+        assert_eq!(g.len(), 4, "2 windows × 2 bin sizes");
+        let mut seen: Vec<(u64, u64)> = g
+            .iter()
+            .map(|p| (p.context_secs.to_bits(), p.bin_ms))
+            .collect();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), 4, "every row must be a distinct combination");
+        // Halving the bin size doubles the population behind the median at a fixed window.
+        for secs in [2.0f64, 3.0] {
+            let at = |bin| {
+                g.iter()
+                    .find(|p| p.context_secs == secs && p.bin_ms == bin)
+                    .unwrap()
+                    .context_bins
+            };
+            assert!(
+                at(50) > at(100),
+                "50 ms must bin finer than 100 ms at {secs}s"
+            );
+        }
+    }
+
+    /// When the two front-ends' recipes coincide the grid collapses instead of emitting the same
+    /// measurement twice — a duplicate row would read as corroboration.
+    #[test]
+    fn noise_floor_probe_grid_dedupes_coinciding_recipes() {
+        let a = vec![0.01f32; 144_000];
+        let g = noise_floor_probe_grid(&a, 1, 48_000..96_000, 48_000, &[2.0, 2.0], &[50, 50]);
+        assert_eq!(g.len(), 1);
+    }
+
+    /// No context at all (zero window) ⇒ `None`, not `median()`'s −120 placeholder: "no context" must
+    /// stay distinguishable from "silent context".
+    #[test]
+    fn noise_floor_probe_without_context_reports_none() {
+        let a = vec![0.0f32; 96_000];
+        let p = noise_floor_probe(&a, 1, 0..96_000, 48_000, 0.0, 50);
+        assert_eq!(p.context_bins, 0);
+        assert_eq!(p.floor_db, None);
+    }
+
+    /// A genuinely silent context does read a floor — the counterpart to the case above.
+    #[test]
+    fn noise_floor_probe_with_silent_context_reports_the_floor() {
+        let a = vec![0.0f32; 144_000];
+        let p = noise_floor_probe(&a, 1, 48_000..96_000, 48_000, 1.0, 50);
+        assert!(p.context_bins > 0);
+        assert_eq!(p.floor_db, Some(f64::from(SILENCE_FLOOR_DB)));
+    }
 
     /// **8g.3b — `tags_from_measurements` reads the shared measurements correctly.** Builds a
     /// `RegionMeasurements` with distinctive values and asserts the D/R tags map the expected fields (brackets

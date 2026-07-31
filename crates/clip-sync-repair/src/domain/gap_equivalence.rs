@@ -121,6 +121,65 @@ pub struct GapEquivalenceVerdict {
     pub donor_silent_blocks: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub donor_total_blocks: Option<usize>,
+    /// Candidate **silent-core** floors at one or more bin sizes — see [`SilentCoreProbe`].
+    /// Provenance only; empty (and omitted) unless a front-end computes them.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub silent_core_probes: Vec<SilentCoreProbe>,
+    /// Candidate **noise floors** over a grid of context windows × bin sizes — see [`NoiseFloorProbe`].
+    /// Provenance only; empty (and omitted) unless a front-end computes them.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub noise_floor_probes: Vec<NoiseFloorProbe>,
+}
+
+/// A candidate `gap_floor_db` measured the **scan path's way** — max RMS over the *silent* bins of the
+/// gap only — but at a bin size the caller chooses. Recorded so the F15 fix can be evaluated before it
+/// is adopted (`docs/dev/TEMP-equivalence-divergence-findings.md` § F15).
+///
+/// **Provenance only.** Nothing classifies on these; they exist so a corpus dump can answer three
+/// questions without changing any verdict: does a silent-core floor close the band that flips a class,
+/// does bin size move it, and is the empty-silent-bin case real or hypothetical.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SilentCoreProbe {
+    /// Bin width in milliseconds this probe binned the gap at.
+    pub bin_ms: u64,
+    /// Max RMS (dB) over the **silent** bins — the candidate floor. `None` when no bin was silent,
+    /// mirroring the scan path's `NEG_INFINITY` fold → `None`.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub floor_db: Option<f64>,
+    /// Energy-mean RMS (dB) over the same silent bins — the candidate A-side signal, which is the
+    /// *other* open F15 axis. Free to measure in the same pass. `None` on an empty silent set.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub a_rms_db: Option<f64>,
+    /// Bins that passed the silence predicate — the population behind both statistics above.
+    pub silent_bins: usize,
+    /// Bins in the gap span at this bin size.
+    pub total_bins: usize,
+}
+
+/// A candidate `noise_floor_db` — median dB over the context bins **outside** the gap — measured at one
+/// `(context window, bin size)` combination. The second open F15 axis: the two front-ends estimate the
+/// same quantity the same *way* but over ±2 s / 100 ms (scan) vs ±3 s / 50 ms (fine), and fine reads
+/// systematically **lower**, which shrinks `a_below_noise` and pushes gaps out of `repairable_dropout`.
+///
+/// **Provenance only.** Emitted over a grid so the two variables can be separated: if the probe at
+/// scan's own `(2 s, scan_block_ms)` reproduces `scan_equivalence.noise_floor_db`, the variable space
+/// is closed at two and the crosses isolate them. If it does **not**, a third variable is in play —
+/// most likely the excluded span (fine excludes the *refined* gap, scan the block-confirmed *core*) —
+/// and that shows up immediately rather than after conclusions are drawn.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NoiseFloorProbe {
+    /// Context half-width in seconds each side of the gap.
+    pub context_secs: f64,
+    /// Bin width in milliseconds the context was binned at.
+    pub bin_ms: u64,
+    /// Median dB over the context bins — the candidate floor. `None` when the context was empty,
+    /// rather than the `median()` helper's −120 placeholder, so "no context" is distinguishable from
+    /// "silent context".
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub floor_db: Option<f64>,
+    /// Context bins behind the median — the population. A median over 40 bins and one over 400 are
+    /// not equally trustworthy, and the two windows differ in exactly this.
+    pub context_bins: usize,
 }
 
 impl GapEquivalenceVerdict {
@@ -139,6 +198,8 @@ impl GapEquivalenceVerdict {
             a_gap_silent_blocks: None,
             donor_silent_blocks: None,
             donor_total_blocks: None,
+            silent_core_probes: Vec::new(),
+            noise_floor_probes: Vec::new(),
         }
     }
 
@@ -164,6 +225,22 @@ impl GapEquivalenceVerdict {
     #[must_use]
     pub fn with_gap_floor_db(mut self, gap_floor_db: f64) -> Self {
         self.gap_floor_db = gap_floor_db.is_finite().then_some(gap_floor_db);
+        self
+    }
+
+    /// Attach candidate silent-core floors. Never changes `class` or `drop` — these are measured to
+    /// decide whether the F15 fix should be adopted, not acted on.
+    #[must_use]
+    pub fn with_silent_core_probes(mut self, probes: Vec<SilentCoreProbe>) -> Self {
+        self.silent_core_probes = probes;
+        self
+    }
+
+    /// Attach candidate noise floors. Never changes `class` or `drop` — same contract as
+    /// [`Self::with_silent_core_probes`].
+    #[must_use]
+    pub fn with_noise_floor_probes(mut self, probes: Vec<NoiseFloorProbe>) -> Self {
+        self.noise_floor_probes = probes;
         self
     }
 }
@@ -233,7 +310,7 @@ fn block_center(b: &BlockLevel) -> f64 {
 }
 
 /// Combine per-block dB levels into one aggregate RMS in dB (energy mean of the blocks). `None` when empty.
-fn aggregate_rms_db(levels: impl Iterator<Item = f64>) -> Option<f64> {
+pub(crate) fn aggregate_rms_db(levels: impl Iterator<Item = f64>) -> Option<f64> {
     let mut sum_sq = 0.0f64;
     let mut n = 0usize;
     for db in levels {

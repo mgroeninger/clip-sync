@@ -330,6 +330,160 @@ window is still open — see *What must be resolved first* and *Ready to impleme
 **run 2026-07-30**: a class, but a rare and safe-direction one — 5/297 on each of two 17-pair
 corpora, 0 dangerous. See § *Population check* under F15.
 
+### Silent-core probes — 2026-07-30, measurement before code
+
+The floor question is answered in *direction* **(a)** but not in *magnitude*, and the gaps it has to
+work on (4/5/6/8 — the mixed ones, part quiet part content) are exactly the gaps with the thinnest
+silent-bin populations. That is where a silent-core floor's behaviour is least predictable, so the
+candidate is now **measured before it is adopted**, not after.
+
+`equivalence.silent_core_probes` — additive, `Option`/`Vec`-shaped so old corpora still parse,
+**never read by the classifier**. Two probes per gap (`gap_signature_bin_ms` = 50 ms, and the scan
+recipe's `scan_block_ms`), each carrying `floor_db` (max over silent bins — the candidate
+`gap_floor_db`), `a_rms_db` (energy mean over the same bins — the candidate A signal, the *other*
+open axis, free in the same pass), and `silent_bins` / `total_bins`.
+
+Silence filter: `is_silent_interleaved`, the scanner's own predicate. It is pure, and all four of its
+inputs (`samples`, `channels`, `silence_peak_fraction`, `absolute_silence_rms`) already exist at the
+fingerprint call site — there was no predicate to design. What it could **not** do is land in
+`levels.gap_floor_db`: that closure is mono-RMS-only with no silence notion, and its other consumers
+(`snr_db`, dual-fit's `a_gap_floor_db`) would move with it. The equivalence overlay computes its own.
+
+Empty-set fallback (`floor_db: None` when no bin is silent) currently mirrors the scan path's
+`NEG_INFINITY` fold → `None` → `NotEvaluated` → keep. That is deliberately **not** a decision yet;
+the run below is what says whether the case is real.
+
+**The run, and the three questions it must answer.** One `--gap-fingerprints` re-dump of the F15 pair
+(pair index per the corpus manifest; build and recipe per § *Reproducing these runs*):
+
+1. **Does silent-core close the band?** Compare each candidate `floor_db` against the donor's
+   `rms_db` on gaps 4/5/6/8. Falsifiable: g4's floor should land near the scan path's −79.50, putting
+   the −66.94 donor *above* it and flipping fine's donor read to occupied.
+2. **Does bin size matter?** The two probes side by side with their silent-bin counts. If 50 ms and
+   `scan_block_ms` agree, the fine path can keep its own binning and only the *filter* changes.
+3. **Is the empty-set fallback hypothetical or real?** Any gap with `silent_bins == 0` makes it
+   load-bearing and forces a decision before coding. None, and it stays a defensive unit test.
+
+If (1) holds, `tests/equivalence_divergence.rs`'s two `band_donor_*` tests go red **by design** —
+that is the acceptance signal, and the response is spelled out in the fixture README.
+
+### Probe results — RUN 2026-07-30 (`fp_silent_core_probe/`, 11 gaps)
+
+All three questions answered. **Q1 yes, Q2 no, Q3 hypothetical** — and a fourth result says the floor
+must not ship alone.
+
+| idx | scan floor | fine floor | **p50** | **p100** | silent 50 ms | silent 100 ms | donor `rms_db` | scan ds |
+|---|---|---|---|---|---|---|---|---|
+| 1 | −101.34 | −95.68 | −95.68 | −98.56 | 38/38 | 19/19 | −51.60 | 0.000 |
+| 2 | −101.35 | −81.50 | −81.50 | −88.14 | 86/86 | 43/43 | −39.89 | 0.000 |
+| 3 | −72.40 | −69.74 | −75.64 | −75.65 | 80/82 | 39/41 | −61.23 | 0.974 |
+| **4** | **−79.50** | **−58.39** | **−80.96** | **−81.99** | 30/41 | 10/21 | **−66.94** | 0.474 |
+| **5** | **−74.53** | **−51.03** | **−79.89** | **−80.20** | 15/23 | 8/12 | −54.81 | 0.100 |
+| **6** | **−84.51** | **−58.61** | **−83.08** | **−84.87** | 18/32 | 2/16 | −67.57 | 0.533 |
+| 7 | −74.01 | −78.91 | −78.91 | −79.39 | 16/23 | 8/12 | −81.10 | 0.900 |
+| **8** | **−74.86** | **−58.79** | **−79.32** | **−82.01** | 16/26 | 3/13 | −67.32 | 0.167 |
+| 9 | −101.48 | −94.93 | −94.93 | −98.11 | 14/14 | 7/7 | −43.77 | 0.000 |
+| 10 | −101.27 | −89.66 | −89.66 | −92.62 | 3406/3406 | 1703/1703 | −109.12 | 1.000 |
+
+(Gap 0 is `summary_na` — no B, no equivalence block, no probes.)
+
+**Q1 — the band closes. Prediction confirmed, magnitudes included.** On the four band gaps the floor
+drops **21–25 dB** (g4 −58.39 → −80.96; g5 −51.03 → −79.89; g6 −58.61 → −83.08; g8 −58.79 → −79.32),
+landing within **1.4–5.4 dB** of the scan floor instead of 21–25 dB above it. The fixture's specific
+prediction for g4 — "falls from −58.39 toward −79.50" — measured **−80.96**, 1.5 dB past the target.
+
+The donor consequence follows from monotonicity rather than a second measurement: the fine donor
+predicate is `bin_rms < gap_floor` (`domain/donor.rs`), so lowering the floor can only *lower* the
+silent fraction. Reading each new fine floor against the scan floor whose `ds` is already known:
+
+| idx | new fine floor vs scan floor | ⇒ fine `ds` vs scan `ds` | predicted fine class | scan class | |
+|---|---|---|---|---|---|
+| 3 | 3.2 dB lower | ≲ 0.974 ⇒ still silent | `shared_silence` | `shared_silence` | agrees |
+| 4 | 1.5 dB lower | ≲ 0.474 ⇒ occupied | `repairable_dropout` | `repairable_dropout` | **fixed** |
+| 5 | 5.4 dB lower | ≲ 0.100 ⇒ occupied | `ambient_quiet` | `repairable_dropout` | **still diverges** |
+| 6 | 1.4 dB **higher** | ≳ 0.533 ⇒ still silent | `shared_silence` | `shared_silence` | agrees |
+| 7 | 4.9 dB lower | ≲ 0.900 | `shared_silence` | `shared_silence` | agrees |
+| 8 | 4.5 dB lower | ≲ 0.167 ⇒ occupied | `ambient_quiet` | `ambient_quiet` | **fixed** |
+
+Pair-level: **3 divergences → 1**. The survivor is g5, and it is no longer a floor problem — its
+floor is fixed and its donor now reads occupied; it diverges because fine's noise floor reads
+**−64.83 against scan's −45.85**, a 19 dB spread (the widest in the table), which drags
+`a_below_noise` to −22.68 and denies the dropout. g5 is the noise-floor axis's poster gap.
+
+These are *predictions from the probes*, not post-fix verdicts. The direction is a monotonicity
+argument and is sound; the exact fractions depend on donor bin shape and need the fix to land.
+
+**Q2 — bin size does not matter for any verdict; prefer 50 ms for population.** The 100 ms floor is
+uniformly ≤ the 50 ms floor (0.01–6.64 dB, median ≈ 2 dB — larger bins average more, so the max over
+them sits lower). On the band gaps the two differ by 0.3–2.7 dB while the decision distance is
+12–25 dB, so nothing flips either way. The tiebreak is the *population*, not the value: at 100 ms g6
+keeps **2 of 16** bins and g8 **3 of 13**, versus 18/32 and 16/26 at 50 ms. Keep the fingerprint's own
+`gap_signature_bin_ms`; the filter is what changes, not the binning.
+
+**Q3 — the empty set never occurred.** Minimum silent-bin count at 50 ms is 14 (g9, fully silent);
+the thinnest *fraction* is g6 at 18/32. The `None → NotEvaluated → keep` fallback stays as written and
+stays a defensive unit test. It is not load-bearing and does not need designing.
+
+**Bonus — the A-RMS axis is validated by the same data.** Fine's `a_gap_rms_db` on the band gaps is
+13–23 dB too *high* (g4: −66.88 vs scan's −86.41) because it averages the whole refined span. The
+silent-core mean lands at **−89.62**, within 3.2 dB of scan. Moving A RMS with the floor is confirmed,
+not just assumed.
+
+**The result that changes the plan: do not ship the floor alone.** g4 converges on a margin of
+**0.41 dB** — silent-core `a_rms` −89.62 against fine's noise floor −54.21 is −35.41, and the dropout
+threshold is −35.0. That convergence is real but fragile, and it is fragile *because* the noise-floor
+axis is still unfixed: against scan's −44.86 floor the same gap sits 44.8 dB down, nowhere near the
+threshold. The two open axes are complementary — fixing the floor moves the donor, fixing the noise
+floor moves the A side — and fixing only the first leaves g4 balanced on 0.41 dB and g5 divergent.
+
+**One expectation to correct.** Silent-core does **not** make the two floors equal. On the fully-silent
+gaps (1, 2, 9, 10 — `silent_bins == total_bins`) the silent-core floor is *identical* to the current
+fine floor to the last digit, and still sits **5.7–19.9 dB** above scan's. The silence filter removes
+content-peak contamination and nothing else; the residual is granularity, mono downmix, and refined-
+vs-core span. Anyone expecting the floors to converge after the fix will read that residual as a bug.
+
+### Noise-floor probes — 2026-07-30, built; run pending
+
+Same method as the silent-core probes, for the axis that is now binding. Unlike the floor, this
+difference is **not a defect**: both paths take the median of context bins outside the gap
+(`measure.rs` `level_profile` and `domain/gap_equivalence.rs` `derive_gap_equivalence` agree
+structurally, gap excluded on both sides). They differ only in **±2 s / 100 ms** vs **±3 s / 50 ms**.
+Two variables, one observed difference, so neither can be blamed yet:
+
+- **bin size** — 50 ms bins resolve short quiet troughs (between words, between notes) that 100 ms
+  blocks average over, fattening the low tail and dragging the median down. If this dominates, fine is
+  measuring something real that scan cannot see, and *accept-and-document* gets much stronger.
+- **window** — the extra second beside a dropout is often quieter. If this dominates, it is closer to
+  an artifact and converging is easier to justify.
+
+`equivalence.noise_floor_probes`: the cross product of `{EQUIVALENCE_CONTEXT_SECS,
+gap_signature_context_secs}` × `{scan_block_ms, gap_signature_bin_ms}`, deduped, each row carrying
+`floor_db` and `context_bins`. Provenance only, `Vec`-shaped, classified on by nothing.
+
+**The anchor row.** `(2 s, scan_block_ms)` is scan's own definition and should **reproduce**
+`scan_equivalence.noise_floor_db`. If it does, the variable space is closed at two and the crosses
+separate them. If it does not, a third variable exists — most likely the excluded span, since fine
+excludes the *refined* gap and scan the block-confirmed *core* — and it surfaces before any conclusion
+rests on it. That check is the highest-value row in the grid and costs nothing extra.
+
+Built by calling `level_profile` itself rather than re-deriving the bin walk, so a probe cannot drift
+from what it characterizes. `level_profile` now returns its context-bin count as a second tuple
+element; deliberately *not* a `LevelProfile` field, because that type is serialized into every dumped
+gap and this is scaffolding.
+
+**Offline was checked first and is not available.** All four combinations are derivable from a single
+50 ms envelope — coarser bins recompose exactly (100 ms RMS = √(mean of the two 50 ms squares)) and
+narrower windows are a subset — but the corpus carries no envelope: the writer emits a *projected*
+`LevelProfile` that drops it (`project.rs`, "the RMS envelope is X (unread)"), leaving `profile_db`
+empty and `bin_ms` 0. Only the two scalars survive. So the probes need A PCM and the answer needs one
+re-dump of the same pair. Emitting the envelope instead would make this and every future floor
+question answerable offline, at the cost of thousands of floats per gap in every dump, forever, to
+save one re-run of a scaffold that is scheduled for deletion — declined.
+
+**What the run must answer.** Which variable drives the offset; whether the anchor row reproduces
+scan; whether adopting scan's definition converges g5; and how much margin g4 actually gains (it needs
+more than the 0.41 dB it has under the floor fix alone).
+
 ### The whole scan verdict set for this pair
 
 Preserved because it is the population context, and because the source file is deletable. All 11
@@ -712,8 +866,8 @@ additive.
 |---|---|---|
 | **F14:** `splice_dualfit_at` A borders → raw `mono(refined ± w)` like `try_dual_fit` | **Done + media-validated** | `fp_post_F14_fix/`: `g1` flag `true`, `trim_frames −9` = production. |
 | **F14 residual:** `bridge_frames > 0` + NaN-aware step-real/`gate_pass` (no `finite_corr` on dual-fit scores) | **Done** | Fixed from source, not measurement — neither edge fired on this pair. |
-| **F15:** fine `gap_floor_db` + A RMS → silent-core **(a)** | **Decided; needs design** | Fine has no `BlockLevel.silent` — pick a silence filter (abs-floor / peak test on bins, or reuse scan signals) before coding. Move floor and A RMS together. |
-| **F15:** noise-floor / context window (±2 s/100 ms vs ±3 s/50 ms) | **Open — now characterized** | Decisive alone on g4/g5. Fine reads lower on **10/10** gaps (~8 dB median), biasing toward `drop`: a systematic offset, not noise. Do not claim divergence closed until decided or accepted. |
+| **F15:** fine `gap_floor_db` + A RMS → silent-core **(a)** | **Measured and validated; ship with the noise-floor fix, not before** | Filter = `is_silent_interleaved` per bin at `gap_signature_bin_ms`. Probes measured 2026-07-30: closes the band on 4/4 gaps (floor −21 to −25 dB, within 1.4–5.4 dB of scan), 3 divergences → 1, A RMS converges to within 3.2 dB. **But** g4 then converges on a 0.41 dB margin — see § *Probe results*. |
+| **F15:** noise-floor / context window (±2 s/100 ms vs ±3 s/50 ms) | **Binding axis; probes shipped, awaiting measurement** | Sole cause of the one surviving divergence (g5: fine −64.83 vs scan −45.85, 19 dB), and what makes g4's post-floor-fix margin 0.41 dB instead of ~9.8. The floor fix is not worth shipping without it. `equivalence.noise_floor_probes` now emits the `{window} × {bin}` grid — see § *Noise-floor probes*. |
 | **F15:** population check via `equivalence-calibration` | **Done 2026-07-30** | 17-pair corpus **297 gaps / 5 divergent / 0 dangerous**, reproduced on a second 17-pair set at another recipe. Sets the severity and unblocks the fork below. |
 | **F15 fork:** (A) converge the sensors vs (B) keep them different and fix the *interpretation* | **(B) DONE 2026-07-30** | See § *(B) applied* below. No behaviour change — the fine block was already read by nothing in the plan/patch path. |
 | **F15:** curated fixture with a band-donor gap | **DONE 2026-07-30** | `tests/gap_corpus/fingerprints/equivalence_divergence/band_donor.json` + `tests/equivalence_divergence.rs` (4 tests). |

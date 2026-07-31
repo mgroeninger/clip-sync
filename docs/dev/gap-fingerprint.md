@@ -237,6 +237,54 @@ silent to fine, occupied to scan. Pinned media-free by
 `tests/gap_corpus/fingerprints/equivalence_divergence/`; full analysis in
 [TEMP-equivalence-divergence-findings.md](TEMP-equivalence-divergence-findings.md) § F15.
 
+#### `equivalence.silent_core_probes` — measuring the candidate fix before adopting it
+
+F15's decided direction is to give the fine path a **silent-core** `gap_floor_db` (max over A's *silent*
+bins, matching the scan path's definition). Rather than change the field and re-measure afterwards, each
+fine verdict now carries candidate floors computed that way and **classified on by nothing**:
+
+| field | meaning |
+|---|---|
+| `bin_ms` | bin width this candidate was measured at |
+| `floor_db` | max RMS over the **silent** bins — the candidate `gap_floor_db`. Absent when no bin was silent |
+| `a_rms_db` | energy mean over the same bins — the candidate A-side signal (the *other* open axis, free in the same pass) |
+| `silent_bins` / `total_bins` | the population behind both, so a max can be read against how many bins it summarizes |
+
+Two probes are emitted per gap: one at `gap_signature_bin_ms` (the fingerprint's own binning) and one at
+the scan recipe's `scan_block_ms`, so the like-for-like comparison against `scan_equivalence.gap_floor_db`
+is available without assuming bin size is irrelevant — whether it is, is one of the open questions. An
+absent `floor_db` means the empty-silent-bin fallback is load-bearing on that gap and has to be decided
+before the fix lands; if it never occurs across the corpus, it is a defensive case and nothing more.
+
+This is scaffolding with a scheduled death: once the fix is adopted or rejected, the probes come out.
+
+#### `equivalence.noise_floor_probes` — separating the second axis's two variables
+
+The other open F15 axis. Both paths estimate the noise floor the *same way* (median of context bins
+outside the gap) but over **±2 s / 100 ms** (scan) vs **±3 s / 50 ms** (fine), and fine reads
+systematically lower. Two variables, one observed difference — so the probe emits the grid:
+
+| field | meaning |
+|---|---|
+| `context_secs` / `bin_ms` | the combination this row was measured at |
+| `floor_db` | median dB over the context bins. Absent when the context was empty — *not* the −120 placeholder, so "no context" stays distinguishable from "silent context" |
+| `context_bins` | the population behind the median; the two windows differ in exactly this |
+
+Rows are the cross product of `{EQUIVALENCE_CONTEXT_SECS, gap_signature_context_secs}` ×
+`{scan_block_ms, gap_signature_bin_ms}`, deduped so a collapsed grid doesn't emit the same measurement
+twice and read as corroboration.
+
+The `(2 s, scan_block_ms)` row is the **anchor**: it should reproduce
+`scan_equivalence.noise_floor_db`. If it does, the variable space is closed at two and the crosses
+isolate them. If it does not, a third variable is in play — most likely the excluded span, since fine
+excludes the *refined* gap and scan the block-confirmed *core* — and that surfaces immediately rather
+than after conclusions are drawn.
+
+Measured by calling `level_profile` itself, not by re-deriving the bin walk, so a probe cannot drift
+from the measurement it characterizes. That is also why `level_profile` returns its context-bin count
+as a second tuple element rather than as a `LevelProfile` field: that type is serialized into every
+dumped gap, and this is scaffolding.
+
 `equivalence-calibration DIR` diffs the two per gap and exits 1 only on the **dangerous** direction —
 scan *drops* what fine would *keep*. That gate is worth keeping precisely because it is the one
 direction fine's biases do **not** produce, so a hit there is a real signal rather than a known offset.
