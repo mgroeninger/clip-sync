@@ -2401,11 +2401,23 @@ pub fn characterize_gaps_from_decode(
         //
         // The span is the **raw** gap, not `refined`: scan's block grid is media-absolute and selects
         // blocks by centre-containment in `[a_start_secs, a_end_secs)`, which is what fix 3 adopts. The
-        // noise floor keeps the fingerprint's own context window and bin size — converging *those* is the
-        // open policy leg and deliberately not part of these fixes — but is now read under the same
-        // interleaved reduction as A, since a level-dependent reduction error does not cancel between the
-        // two sides of `a < nf − margin`. No downmix fallback when the context is empty — that would
-        // un-apply fix 2 on exactly the gaps too thin to measure; `None` classifies `NotEvaluated` ⇒ keep.
+        // noise floor is read under the same interleaved reduction as A, since a level-dependent
+        // reduction error does not cancel between the two sides of `a < nf − margin`. No downmix
+        // fallback when the context is empty — that would un-apply fix 2 on exactly the gaps too thin to
+        // measure; `None` classifies `NotEvaluated` ⇒ keep.
+        //
+        // I1 (2026-07-30): the whole equivalence overlay now bins at **`scan_block_ms`**, not
+        // `gap_signature_bin_ms`. That parameter is documented as the bin width for *active/silent
+        // structure signatures* and every other consumer uses it for exactly that — a binary seam pattern
+        // match, where 50 ms is well chosen because finer bins discriminate syllable-scale structure. This
+        // overlay is a different job (level + threshold estimation for comparison against scan) and had
+        // inherited the value by proximity, never by choice. The property inverts between the two jobs:
+        // for `gap_floor_db` (a **max**) and `donor_silence_fraction` (a **threshold-crossing fraction**)
+        // finer bins are upward-biased, measured at max ≥ coarser on 10/10 gaps and the donor fraction
+        // biased up on 5/6. `gap_signature_bin_ms` itself is untouched — it has production consumers in
+        // `patch_audio::geometry` / `::region`. The context window (2.0 s vs 3.0 s) stays split; that is
+        // I2 and still open. See `docs/dev/TEMP-equivalence-instrument-convergence.md` § I1.
+        let equiv_bin_ms = report.scan_block_ms;
         //
         // The donor goes in as **PCM at the nominal `b_mapped` span**, not as
         // `donor_interior_nominal.silence_fraction`. That fraction is a mono-downmix read thresholded
@@ -2420,7 +2432,7 @@ pub fn characterize_gaps_from_decode(
             gap_frames.clone(),
             sample_rate,
             cfg.gap_signature_context_secs,
-            cfg.gap_signature_bin_ms,
+            equiv_bin_ms,
             ChannelReduction::Interleaved,
         );
         let donor_span = fp
@@ -2438,9 +2450,7 @@ pub fn characterize_gaps_from_decode(
             equiv_nf.floor_db,
             donor_span,
             &crate::application::gap_equivalence::SilentCoreConfig {
-                bin_frames: (((cfg.gap_signature_bin_ms as f64) / 1000.0) * rate)
-                    .round()
-                    .max(1.0) as usize,
+                bin_frames: (((equiv_bin_ms as f64) / 1000.0) * rate).round().max(1.0) as usize,
                 silence_peak_fraction: cfg.silence_peak_fraction,
                 absolute_silence_rms: cfg.absolute_silence_rms,
             },

@@ -304,7 +304,7 @@ fn db(x: f64) -> f64 {
 /// `~bin`-sample RMS envelope.
 fn rms_envelope(x: &[f64], bin: usize) -> Vec<f64> {
     let bin = bin.max(1);
-    x.chunks(bin).map(|c| rms(c)).collect()
+    x.chunks(bin).map(rms).collect()
 }
 
 /// Cross-correlation curve of `a` against `b_ctx` over integer lags `-max_lag..=max_lag`, where
@@ -372,17 +372,43 @@ fn uniqueness_stats(curve: &[(i64, f64)], peaks: &[Peak]) -> (f64, f64, f64) {
 
 // ── window reconstruction ────────────────────────────────────────────────────────
 
-/// A pre-border window of `w` samples ending at frame `end`, and the matching B context spanning
-/// `±max_lag` around B frame `b_anchor` (B's position aligned to the gap edge). `None` if out of range.
+/// A↔B seam placement: A's gap-edge frame, B's mapped anchor, and which shoulder (`pre`).
+#[derive(Clone, Copy)]
+struct SeamSite {
+    a_edge: usize,
+    b_anchor: usize,
+    pre: bool,
+}
+
+impl SeamSite {
+    fn shifted(self, off: usize) -> Option<Self> {
+        let (a_edge, b_anchor) = if self.pre {
+            (self.a_edge.checked_sub(off)?, self.b_anchor.checked_sub(off)?)
+        } else {
+            (self.a_edge + off, self.b_anchor + off)
+        };
+        Some(Self {
+            a_edge,
+            b_anchor,
+            pre: self.pre,
+        })
+    }
+}
+
+/// A pre-border window of `w` samples ending at the site's A edge, and the matching B context spanning
+/// `±max_lag` around B's mapped anchor. `None` if out of range.
 fn seam_windows(
     a: &[f64],
     b: &[f64],
-    a_edge: usize,
-    b_anchor: usize,
+    site: SeamSite,
     w: usize,
     max_lag: usize,
-    pre: bool,
 ) -> Option<(Vec<f64>, Vec<f64>)> {
+    let SeamSite {
+        a_edge,
+        b_anchor,
+        pre,
+    } = site;
     if pre {
         if a_edge < w || b_anchor < w + max_lag || b_anchor + max_lag > b.len() {
             return None;
@@ -404,14 +430,12 @@ fn seam_windows(
 fn lag_probe(
     a: &[f64],
     b: &[f64],
-    a_edge: usize,
-    b_anchor: usize,
+    site: SeamSite,
     w: usize,
     max_lag: usize,
-    pre: bool,
     rate: f64,
 ) -> Option<(f64, f64, f64, f64)> {
-    let (a_win, b_ctx) = seam_windows(a, b, a_edge, b_anchor, w, max_lag, pre)?;
+    let (a_win, b_ctx) = seam_windows(a, b, site, w, max_lag)?;
     let curve = lag_curve(&a_win, &b_ctx, max_lag as i64);
     if curve.is_empty() {
         return None;
@@ -428,11 +452,9 @@ fn lag_probe(
 fn outward_anchor(
     a: &[f64],
     b: &[f64],
-    a_edge: usize,
-    b_anchor: usize,
+    site: SeamSite,
     w: usize,
     max_lag: usize,
-    pre: bool,
     rate: f64,
 ) -> Option<(f64, f64, f64, f64, f64)> {
     let step = ((ANCHOR_STEP_MS / 1000.0 * rate).round() as usize).max(1);
@@ -440,13 +462,8 @@ fn outward_anchor(
     let mut best: Option<(usize, f64)> = None; // (offset frames, rms) of the loudest reachable window
     let mut off = 0usize;
     while off <= max_out {
-        let (ae, ba) = if pre {
-            (a_edge.checked_sub(off), b_anchor.checked_sub(off))
-        } else {
-            (Some(a_edge + off), Some(b_anchor + off))
-        };
-        if let (Some(ae), Some(ba)) = (ae, ba) {
-            if let Some((a_win, _)) = seam_windows(a, b, ae, ba, w, max_lag, pre) {
+        if let Some(shifted) = site.shifted(off) {
+            if let Some((a_win, _)) = seam_windows(a, b, shifted, w, max_lag) {
                 let r = rms(&a_win);
                 if best.is_none_or(|(_, br)| r > br) {
                     best = Some((off, r));
@@ -456,12 +473,8 @@ fn outward_anchor(
         off += step;
     }
     let (off, _) = best?;
-    let (ae, ba) = if pre {
-        (a_edge - off, b_anchor - off)
-    } else {
-        (a_edge + off, b_anchor + off)
-    };
-    let (rms_db, peak_r, peak_lag_ms, peak_z) = lag_probe(a, b, ae, ba, w, max_lag, pre, rate)?;
+    let shifted = site.shifted(off)?;
+    let (rms_db, peak_r, peak_lag_ms, peak_z) = lag_probe(a, b, shifted, w, max_lag, rate)?;
     Some((
         off as f64 * 1000.0 / rate,
         rms_db,
@@ -555,19 +568,24 @@ fn run_gap(
     let mono_b = b_pcm.mono();
     let b_pre_anchor = ((geo.b_mapped_start_secs - b_start) * r).round() as usize;
     let b_post_anchor = ((geo.b_mapped_end_secs - b_start) * r).round() as usize;
+    let pre_site = SeamSite {
+        a_edge: a_pre_edge,
+        b_anchor: b_pre_anchor,
+        pre: true,
+    };
+    let post_site = SeamSite {
+        a_edge: a_post_edge,
+        b_anchor: b_post_anchor,
+        pre: false,
+    };
     println!(
         "  [fine uniqueness] mono waveform, ±{:.0}ms:  peak@lag | prom | peak_z | top2_gap_ms",
         fine_max_lag_ms()
     );
-    for (label, a_edge, b_anchor, pre) in [
-        ("pre", a_pre_edge, b_pre_anchor, true),
-        ("post", a_post_edge, b_post_anchor, false),
-    ] {
+    for (label, site) in [("pre", pre_site), ("post", post_site)] {
         for &wm in &WINDOW_MS {
             let w = (wm / 1000.0 * r).round() as usize;
-            let Some((a_win, b_ctx)) =
-                seam_windows(&mono_a, &mono_b, a_edge, b_anchor, w, max_lag, pre)
-            else {
+            let Some((a_win, b_ctx)) = seam_windows(&mono_a, &mono_b, site, w, max_lag) else {
                 continue;
             };
             let curve = lag_curve(&a_win, &b_ctx, max_lag as i64);
@@ -603,25 +621,24 @@ fn run_gap(
         ("weighted".into(), a_pcm.weighted_mono()),
         (format!("loud-ch{loudest_ch}"), a_pcm.channel(loudest_ch)),
     ];
-    let peak_prom =
-        |sig: &[f64], a_edge: usize, b_anchor: usize, pre: bool| -> Option<(f64, f64)> {
-            let (a_win, b_ctx) = seam_windows(sig, &mono_b, a_edge, b_anchor, rep_w, max_lag, pre)?;
-            let curve = lag_curve(&a_win, &b_ctx, max_lag as i64);
-            if curve.is_empty() {
-                return None;
-            }
-            let pk = top_peaks(&curve, rate, TOP_K);
-            let (prom, _, _) = uniqueness_stats(&curve, &pk);
-            Some((pk.first().map(|p| p.r).unwrap_or(f64::NAN), prom))
-        };
+    let peak_prom = |sig: &[f64], site: SeamSite| -> Option<(f64, f64)> {
+        let (a_win, b_ctx) = seam_windows(sig, &mono_b, site, rep_w, max_lag)?;
+        let curve = lag_curve(&a_win, &b_ctx, max_lag as i64);
+        if curve.is_empty() {
+            return None;
+        }
+        let pk = top_peaks(&curve, rate, TOP_K);
+        let (prom, _, _) = uniqueness_stats(&curve, &pk);
+        Some((pk.first().map(|p| p.r).unwrap_or(f64::NAN), prom))
+    };
     println!("  [repr @1s] A-downmix vs B-mono:  repr     | pre peak/prom | post peak/prom");
     let fmt = |o: Option<(f64, f64)>| {
         o.map(|(r, p)| format!("{r:.3}/{p:.3}"))
             .unwrap_or_else(|| "   -   ".into())
     };
     for (label, sig) in &reps {
-        let pre = peak_prom(sig, a_pre_edge, b_pre_anchor, true);
-        let post = peak_prom(sig, a_post_edge, b_post_anchor, false);
+        let pre = peak_prom(sig, pre_site);
+        let post = peak_prom(sig, post_site);
         println!("    {label:<8} | {:>11} | {:>11}", fmt(pre), fmt(post));
     }
 
@@ -634,12 +651,9 @@ fn run_gap(
         ANCHOR_WIN_MS, anchor_max_out_ms()
     );
     println!("    side | edge:  rms   peak@lag   z | anchor: off     rms   peak@lag   z");
-    for (label, a_edge, b_anchor, pre) in [
-        ("pre", a_pre_edge, b_pre_anchor, true),
-        ("post", a_post_edge, b_post_anchor, false),
-    ] {
-        let edge = lag_probe(&mono_a, &mono_b, a_edge, b_anchor, anch_w, max_lag, pre, r);
-        let anc = outward_anchor(&mono_a, &mono_b, a_edge, b_anchor, anch_w, max_lag, pre, r);
+    for (label, site) in [("pre", pre_site), ("post", post_site)] {
+        let edge = lag_probe(&mono_a, &mono_b, site, anch_w, max_lag, r);
+        let anc = outward_anchor(&mono_a, &mono_b, site, anch_w, max_lag, r);
         let fe = edge
             .map(|(rms, pr, lag, z)| format!("{rms:6.1} {pr:.3}@{lag:+7.1} z{z:5.1}"))
             .unwrap_or_else(|| "        -        ".into());
@@ -655,15 +669,7 @@ fn run_gap(
     println!("  [wide-env segment] 2 s window, ±{WIDE_MAX_LAG_MS:.0}ms:  bin_ms | peak@lag | prom | peak_z");
     let wide_w = (2.0 * r).round() as usize;
     let wide_lag = (WIDE_MAX_LAG_MS / 1000.0 * r).round() as usize;
-    if let Some((a_win, b_ctx)) = seam_windows(
-        &mono_a,
-        &mono_b,
-        a_pre_edge,
-        b_pre_anchor,
-        wide_w,
-        wide_lag,
-        true,
-    ) {
+    if let Some((a_win, b_ctx)) = seam_windows(&mono_a, &mono_b, pre_site, wide_w, wide_lag) {
         for &bm in &ENV_BIN_MS {
             let bin = (bm / 1000.0 * r).round() as usize;
             let ea = rms_envelope(&a_win, bin);

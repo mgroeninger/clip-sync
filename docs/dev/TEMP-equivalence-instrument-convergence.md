@@ -48,7 +48,19 @@ sensitivity in a safety gate, which is the worse of the two.
 
 ## I1 — Equivalence bin size: 50 ms (fine) vs 100 ms (scan)
 
-**Status: open, specified, recommended. Not implemented.**
+**Status: IMPLEMENTED 2026-07-30. Awaiting one media re-dump to confirm.**
+
+The whole equivalence overlay now bins at `report.scan_block_ms` via a single `equiv_bin_ms` local at
+`gap_fingerprint/measure.rs` — both the silent-core bins (`SilentCoreConfig::bin_frames`) and the
+noise-floor probe, so the overlay cannot bin two ways internally. `gap_signature_bin_ms` is untouched
+and keeps its production consumers. The context window is deliberately *not* converged — that is I2.
+
+**Not yet confirmed on media.** Prediction: g4 and g8 close, **g5 survives** on I2. Treat a surviving
+g5 as the expected result, not a failed fix. Nothing in the committed test suite can observe this
+change (same limitation as `band_donor.json` — fixtures re-derive from recorded numbers), so the
+re-dump *is* the acceptance signal.
+
+The rest of this section is the reasoning as it stood when the change was made.
 
 ### What was measured (parent § *Combined re-dump*)
 
@@ -61,6 +73,31 @@ After the three F15 fixes, this is the **only** source of *action* divergence le
 - **Donor-fraction granularity.** `donor_silence_fraction` ran **higher** on 5 of the 6 gaps with a
   donor (+0.136, +0.154, +0.410, +0.030, +0.013, −0.011): finer bins dip below the floor more often,
   so fine reads donors as more silent. This is the larger term and the direct cause of g4 and g8.
+
+### Where the 50 ms came from — inherited, not chosen
+
+Traced 2026-07-30. `gap_signature_bin_ms` is documented at `infrastructure/config.rs:114` as *"Bin
+width (milliseconds) for active/silent **structure signatures**"*, and all three production call sites
+(`gap_fingerprint/measure.rs:1475`, `patch_audio/geometry.rs:36`, `patch_audio/region.rs:1512`) pair it
+with `context_frames` to build exactly that: a binary active/silent pattern matched across seams and
+gated by `min_structure_match_score` (0.55) / `strong_structure_trust`.
+
+**50 ms is well chosen for that job.** A binary pattern match wants fine bins — 50 ms resolves
+syllable-scale on/off structure, where 100 ms would smear speech gaps and blunt discrimination. (Cf.
+the `lag_window_secs` note at `measure.rs:2424`, frozen at 1 s for the mirror-image reason.) Scan's
+100 ms answers a different question: level estimation across a whole-file scan, trading resolution
+against cost and stability.
+
+Equivalence is a **third** job — level and threshold estimation for comparison against scan — and it
+inherited 50 ms by proximity, because the value was already in `FingerprintConfig` when the overlay was
+written. There is no evidence anyone selected 50 ms *for equivalence*.
+
+**The desirable property inverts between the jobs.** For a binary pattern match, finer bins are more
+discriminative. For a **max** statistic (`gap_floor_db`) and a **threshold-crossing fraction**
+(`donor_silence_fraction`), finer bins are upward-biased and noisier — which is precisely what the
+re-dump measured (max ≥ coarser on 10/10; donor fraction up on 5/6). So this is not merely an
+inconsistency between two paths: the fine path is applying a value tuned for *discrimination* to two
+statistics where discrimination is not the goal and granularity is a bias source.
 
 ### Recommendation — **converge, narrowly**
 
@@ -144,8 +181,8 @@ fixed.
 
 ## Suggested order
 
-1. **I1** — converge the equivalence bin size (narrow change, one call site).
-2. **Re-dump** the F15 pair. Confirm g4/g8 close and g5 survives.
+1. ~~**I1** — converge the equivalence bin size~~ **DONE 2026-07-30.**
+2. **Re-dump** the F15 pair ← **next**. Confirm g4/g8 close and g5 survives.
 3. **I3** — run the dead-disjunct count against the same dump (no extra media run needed).
 4. **I2** — decide accept-vs-converge with g5 isolated as a single-variable case.
 5. Fix the stale reduction-based justification in `equivalence_calibration.rs`'s header (see above).

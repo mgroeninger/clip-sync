@@ -63,17 +63,17 @@ fn noise(seed: u32, frame: usize) -> f32 {
 /// Hann-enveloped tone — a single clean energy peak (a flat plateau has no strict local max).
 fn write_speech(buf: &mut [f32], start: usize, end: usize, freq: f64, amp: f32) {
     let n = (end - start) as f64;
-    for f in start..end {
-        let t = (f - start) as f64;
+    for (i, sample) in buf[start..end].iter_mut().enumerate() {
+        let t = i as f64;
         let env = 0.5 - 0.5 * (std::f64::consts::TAU * t / n).cos();
         let s = (std::f64::consts::TAU * freq * t / RATE as f64).sin();
-        buf[f] = (env * s) as f32 * amp;
+        *sample = (env * s) as f32 * amp;
     }
 }
 
 fn write_noise(buf: &mut [f32], start: usize, end: usize, seed: u32, amp: f32) {
-    for f in start..end {
-        buf[f] = noise(seed, f) * amp;
+    for (offset, sample) in buf[start..end].iter_mut().enumerate() {
+        *sample = noise(seed, start + offset) * amp;
     }
 }
 
@@ -361,8 +361,8 @@ fn anchor_rescue_under_global_b_offset() {
         search_radius_secs
     );
     println!(
-        "{:>10}  {:>14}  {:>16}  {:>8}  {:>20}  {}",
-        "shift", "would_run", "baseline(min)", "brackets", "winner", "best_pass / failures"
+        "{:>10}  {:>14}  {:>16}  {:>8}  {:>20}  best_pass / failures",
+        "shift", "would_run", "baseline(min)", "brackets", "winner"
     );
 
     for &shift_secs in &[0.0, 2.0, 4.0, 6.0] {

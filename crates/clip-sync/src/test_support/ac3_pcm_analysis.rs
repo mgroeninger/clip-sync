@@ -1,10 +1,10 @@
 //! PCM metrics for AC-3 decode characterization (oxideav vs ffmpeg reference).
 
-/// Count interleaved S16 samples with `abs(sample) >= i16::MAX` (full-scale railing).
+/// Count interleaved S16 samples with `abs(sample) == i16::MAX` (full-scale railing).
 pub fn railed_sample_count(samples: &[i16]) -> usize {
     samples
         .iter()
-        .filter(|sample| sample.abs() >= i16::MAX)
+        .filter(|sample| sample.abs() == i16::MAX)
         .count()
 }
 

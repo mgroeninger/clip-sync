@@ -223,8 +223,17 @@ pub fn silent_core_probe(
 /// `silence_peak_fraction`, `absolute_silence_rms`), not equivalence parameters.
 #[derive(Debug, Clone, Copy)]
 pub struct SilentCoreConfig {
-    /// Bin width in frames. The fine path keeps its **own** bin size here; matching scan's is the
-    /// undecided window/bin policy leg, deliberately *not* part of the three F15 fixes.
+    /// Bin width in frames. **I1 (2026-07-30): this is `scan_block_ms`, not `gap_signature_bin_ms`.**
+    ///
+    /// The two statistics this feeds are a **max** ([`GapEquivalenceVerdict::gap_floor_db`]) and a
+    /// **threshold-crossing fraction** (the donor), and both are upward-biased by finer bins — measured
+    /// at max ≥ coarser on 10/10 gaps, donor fraction up on 5/6. `gap_signature_bin_ms` is tuned for the
+    /// opposite property: it bins the binary active/silent *structure signature*, where fine bins
+    /// discriminate. This overlay had inherited it by proximity. Keep this matched to scan so the
+    /// diagnostic compares like-for-like with the path it audits.
+    ///
+    /// The noise-floor **context window** is still split (2.0 s scan vs 3.0 s fine) — that is I2 and
+    /// remains open. See `docs/dev/TEMP-equivalence-instrument-convergence.md`.
     pub bin_frames: usize,
     pub silence_peak_fraction: f32,
     pub absolute_silence_rms: f32,
