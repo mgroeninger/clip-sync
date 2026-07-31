@@ -68,6 +68,26 @@ At that point `band_donor_diverges_on_the_donor_axis` and
 `band_donor_divergence_is_attributable_to_the_donor_axis` **will fail**. That failure is the fix's
 **acceptance signal**, not a broken test.
 
+### ⚠ The fix landed 2026-07-30 and these tests did **not** go red — that is expected, and it is a limit
+
+All three F15 fixes are now implemented in `application/gap_equivalence.rs`. These assertions stayed
+green, because **they never execute that code**: they read the numbers recorded in `band_donor.json` and
+re-derive the classification from them. A fixture cannot observe a change to the measurement path that
+produced it.
+
+So the "acceptance signal" framing above is only true of a **re-harvested** fixture. Until this artifact
+is re-dumped from media under the fixed path, the green here means "the pre-fix numbers still say what
+they said", not "the fix works".
+
+The fix *is* verified by execution, elsewhere: `band_donor_mechanism_now_classifies_as_repairable` in
+`application::gap_equivalence` reproduces this fixture's shape from synthetic PCM — a gap with one loud
+bin and a donor in the band between the silent-core floor and the whole-span peak — and asserts the class
+is now `repairable_dropout`, with `donor_would_read_silent_against_the_unfixed_whole_span_floor` pinning
+that the two floors genuinely disagree on that donor. That pair is the real acceptance signal.
+
+When this fixture is re-harvested, convert it as described below and expect the recorded fine verdict to
+change; do not re-harvest a *different* gap to keep it diverging.
+
 The correct response is to convert this into a *regression* fixture — retain the artifact and the
 recorded pre-fix numbers, and rewrite the assertions to state that this gap used to diverge and now
 agrees, keeping the band arithmetic as documentation of the mechanism that was closed. The wrong
@@ -78,6 +98,33 @@ responses, in rough order of how tempting they will look:
 - re-harvesting a *different* still-diverging gap into this file to keep the test green — that hides
   the fix's effect and silently changes what the fixture means;
 - concluding the fix is wrong because the test went red.
+
+### ⚠ Re-dumped from media under the fixed path — the mechanism closed, the class did **not** converge
+
+Corpus `silence-floor/fp_band_donor_mechanism_now_classifies_as_repairable_check`, same pair, all 10 gaps.
+
+The floor prediction above is **confirmed**: fine's `gap_floor_db` fell **−58.39 → −76.66**, an 18 dB
+collapse onto scan's −79.50. The band mechanism that this fixture documents is closed.
+
+The class prediction is **refuted**: fine still reads `shared_silence`, because
+`donor_silence_fraction` went **0.474 → 0.610** and stayed on the far side of 0.5.
+
+The prediction was made with the wrong instrument. It reasoned from the donor's
+`donor_interior_nominal.rms_db` of **−66.94** — a *mean*, ~10 dB above the new floor, hence "occupied".
+But the classifier consumes the **per-bin fraction**, and 61 % of this donor's bins sit below −76.66
+despite that mean. The donor is peaky. **Do not predict a donor verdict from a mean level**; the
+fraction and the mean can disagree arbitrarily on non-stationary content.
+
+Two residual terms keep it apart, both on the deliberately-open window/bin leg:
+
+- a 2.84 dB floor residual (fine's floor is a max over 50 ms bins, scan's over 100 ms blocks — a max
+  over finer bins can only be **greater**, and was on all 10 gaps, 0 negatives);
+- a granularity bias in the donor itself: fine's fraction ran **higher** on 5 of the 6 gaps that have a
+  donor (+0.136, +0.154, +0.410, +0.030, +0.013, −0.011), because finer bins dip below the floor more
+  often. This biases fine toward `drop` — the safe direction, but it is now the dominant remaining term,
+  larger than anything the three fixes left behind.
+
+`divergence_is_never_in_the_dangerous_direction` still holds across the whole pair.
 
 ### The donor axis here is one block from the threshold
 

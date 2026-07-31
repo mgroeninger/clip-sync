@@ -2392,15 +2392,58 @@ pub fn characterize_gaps_from_decode(
         // Gap-equivalence classification overlay (gap-equivalence plan §7.4) — emitted for tuning/categorizing.
         // Silence-character signals: A gap RMS vs the recording's noise floor + donor silence at nominal.
         // `enabled: true` here so the dump always classifies (it never drops gaps — that's the v1 plan-time gate).
+        // F15 fixes 1–3. The fine equivalence read now owns its sensors instead of borrowing
+        // `fp.levels.*`: those are amplitude-mean downmixes over the refined span with no silence
+        // predicate, and all three properties bias this path toward `drop`. They cannot simply be fixed
+        // in `level_profile` — `levels.gap_floor_db` / `levels.noise_floor_db` have other consumers
+        // (`snr_db`, dual-fit's `a_gap_floor_db`) that must not move. See
+        // `docs/dev/TEMP-equivalence-divergence-findings.md` § *The three F15 fixes*.
+        //
+        // The span is the **raw** gap, not `refined`: scan's block grid is media-absolute and selects
+        // blocks by centre-containment in `[a_start_secs, a_end_secs)`, which is what fix 3 adopts. The
+        // noise floor keeps the fingerprint's own context window and bin size — converging *those* is the
+        // open policy leg and deliberately not part of these fixes — but is now read under the same
+        // interleaved reduction as A, since a level-dependent reduction error does not cancel between the
+        // two sides of `a < nf − margin`. No downmix fallback when the context is empty — that would
+        // un-apply fix 2 on exactly the gaps too thin to measure; `None` classifies `NotEvaluated` ⇒ keep.
+        //
+        // The donor goes in as **PCM at the nominal `b_mapped` span**, not as
+        // `donor_interior_nominal.silence_fraction`. That fraction is a mono-downmix read thresholded
+        // against `levels.gap_floor_db` — the unfiltered whole-span peak — so passing it here would leave
+        // fix 1 half-applied: A's floor would move while the predicate that actually reaches the class
+        // still tested against the old one. On the band-donor mechanism that predicate *is* the flip.
+        let gap_frames = (fp.geometry.a_start_secs * rate).round().max(0.0) as usize
+            ..(fp.geometry.a_end_secs * rate).round().max(0.0) as usize;
+        let equiv_nf = noise_floor_probe(
+            &a_pcm.samples,
+            ch,
+            gap_frames.clone(),
+            sample_rate,
+            cfg.gap_signature_context_secs,
+            cfg.gap_signature_bin_ms,
+            ChannelReduction::Interleaved,
+        );
+        let donor_span = fp
+            .geometry
+            .b_mapped_start_secs
+            .zip(fp.geometry.b_mapped_end_secs)
+            .map(|(s, e)| crate::application::gap_equivalence::DonorSpan {
+                samples: b_samples_full,
+                frames: (s * rate).round().max(0.0) as usize..(e * rate).round().max(0.0) as usize,
+            });
         let equiv = crate::application::gap_equivalence::measure_gap_equivalence(
             &a_pcm.samples,
             ch,
-            refined.start_frame,
-            refined.end_frame,
-            f64::from(fp.levels.noise_floor_db),
-            fp.donor_interior_nominal
-                .as_ref()
-                .map(|d| d.silence_fraction),
+            gap_frames.clone(),
+            equiv_nf.floor_db,
+            donor_span,
+            &crate::application::gap_equivalence::SilentCoreConfig {
+                bin_frames: (((cfg.gap_signature_bin_ms as f64) / 1000.0) * rate)
+                    .round()
+                    .max(1.0) as usize,
+                silence_peak_fraction: cfg.silence_peak_fraction,
+                absolute_silence_rms: cfg.absolute_silence_rms,
+            },
             &crate::domain::gap_equivalence::GapEquivalenceParams {
                 enabled: true,
                 ..Default::default()
@@ -2452,9 +2495,13 @@ pub fn characterize_gaps_from_decode(
             &[ChannelReduction::Interleaved, ChannelReduction::Downmix],
         );
 
+        // No `with_gap_floor_db` here any more: `equivalence.gap_floor_db` is now the **silent-core**
+        // floor this path measured (fix 1), carried by `with_scan_provenance` alongside the silent-bin
+        // count behind it. Re-attaching `levels.gap_floor_db` would overwrite the fix with the whole-span
+        // content peak it exists to replace. `levels.gap_floor_db` is still dumped in its own block for
+        // anyone who wants the old number.
         fp.equivalence = Some(
             equiv
-                .with_gap_floor_db(f64::from(fp.levels.gap_floor_db))
                 .with_silent_core_probes(probes)
                 .with_noise_floor_probes(nf_probes),
         );

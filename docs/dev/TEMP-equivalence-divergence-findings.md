@@ -6,9 +6,11 @@ borders = `mono(refined ± w)` like `try_dual_fit`; `fp_post_F14_fix/` confirms)
 the two floors on exactly the divergent gaps), and its noise-floor axis is **decomposed into three
 variables** — channel reduction (dominant, confirmed), window/bin (median 2.1 dB), and span. All
 **three fine-path fixes** — silent-core floor + A RMS, interleaved reduction, and span → block-confirmed
-core — are now specified with **none blocked on a measurement**; see § *The three F15 fixes*. What
-remains is implementation, one confirming re-dump of the three combined, and a policy call on the
-window/bin leg. Retracted claims are marked in place rather than deleted.
+core — are **implemented and media-validated** (2026-07-30); see § *The three F15 fixes* and
+§ *Combined re-dump*. The sensors converged (A RMS to a 0.101 dB median, floor 0.279, donor 0.012), but
+the pair still carries **3 class divergences**, all traceable to the one leg left open on purpose:
+**window/bin**. What remains is a policy call on that leg — no longer cosmetic, since it is now the sole
+source of *action* divergence. Retracted claims are marked in place rather than deleted.
 
 Split out of [archive/TEMP-silence-floor-findings.md](archive/TEMP-silence-floor-findings.md) when
 that ledger was archived (2026-07-30). Everything else in it is closed; these two are not, and both
@@ -416,6 +418,12 @@ silent fraction. Reading each new fine floor against the scan floor whose `ds` i
 | 6 | 1.4 dB **higher** | ≳ 0.533 ⇒ still silent | `shared_silence` | `shared_silence` | agrees |
 | 7 | 4.9 dB lower | ≲ 0.900 | `shared_silence` | `shared_silence` | agrees |
 | 8 | 4.5 dB lower | ≲ 0.167 ⇒ occupied | `ambient_quiet` | `ambient_quiet` | **fixed** |
+
+> **⚠ Refuted by the combined re-dump (2026-07-30).** The prediction below did not hold: the pair
+> still carries **3** divergences (g4, g5, g8), not 1. The probes were right about the *floor* — g4's
+> fine floor did collapse 18 dB as predicted — but the class did not follow, because the donor axis is
+> a per-bin fraction and the probes reasoned about levels. See § *Combined re-dump, 2026-07-30*. The
+> g5 diagnosis below survives intact. Everything else in this subsection is superseded.
 
 Pair-level: **3 divergences → 1**. The survivor is g5, and it is no longer a floor problem — its
 floor is fixed and its donor now reads occupied; it diverges because fine's noise floor reads
@@ -1339,6 +1347,44 @@ dB constant (its *character* is settled — max−mean = 0.13–0.27 dB over 6�
 decode floor — and a source test should wait until the constant is named rather than goldening the
 number).
 
+### Implemented 2026-07-30 — and a fourth defect the implementation exposed
+
+All three landed in `application/gap_equivalence.rs`, which now measures its **own** A levels and donor
+occupancy from PCM instead of reusing `fp.levels.*` and `donor_interior_nominal`. 488 lib tests green,
+clippy clean. Four things worth recording, because three of them were nearly shipped wrong:
+
+**A fourth sensor was on the old floor: the donor.** The first cut moved A's floor, reduction and span
+and left `donor_interior_nominal.silence_fraction` as the donor input — which is a **mono downmix of B
+thresholded against `levels.gap_floor_db`**, the unfiltered whole-span peak. That leaves fix 1
+*half-applied*: A's floor moves, but the predicate that actually reaches the class still tests against
+the number the fix exists to replace, and on the band mechanism **that predicate is the class flip**.
+Caught in review before the re-dump. The donor is now passed as **PCM** (`DonorSpan`) so
+`measure_gap_equivalence` thresholds it against the floor it just measured — the coupling is structural,
+not a convention a later refactor can quietly break.
+
+**The donor's reduction had to move with it.** Not in the original three-fix spec, and it is forced:
+thresholding a *mono* donor against an *interleaved* floor reintroduces up to `10·log10(N)` of bias in
+the **dangerous** direction (the donor reads spuriously silent ⇒ `shared_silence` ⇒ drop). Both sides of
+a comparison must share a reduction; fix 2 is a property of the comparison, not of the A side.
+
+**No fallbacks that silently un-apply a fix.** An unmeasurable noise floor now yields `None` ⇒
+`NotEvaluated` ⇒ keep, rather than substituting `levels.noise_floor_db` — which is a downmix, so the
+fallback would have un-applied fix 2 on exactly the gaps too thin to measure. Same rule for an absent
+donor floor.
+
+**`band_donor.json` cannot be the acceptance signal, and stayed green.** It re-derives a class from
+*recorded* numbers, so it can never observe a change to the measurement path that produced them. Its
+README said the fix "will fail" these tests; that is only true of a **re-harvested** fixture, and is now
+corrected in place. The executable acceptance signal is
+`band_donor_mechanism_now_classifies_as_repairable`, which rebuilds the band shape from synthetic PCM and
+asserts the class flip, paired with a test that the two floor definitions genuinely disagree on that
+donor so it cannot pass for an unrelated reason.
+
+**Still deliberately open**, and now stated in the module docs rather than only here: the noise-floor
+context window and bin size (the policy leg), and the donor predicate's missing `b.silent ||` disjunct —
+scan's donor test is a disjunction with the scanner's own silence bit, the fine path's is the floor
+comparison alone. That axis is unmeasured and was not part of the three fixes.
+
 **The one thing that is not measured.** Nobody has run all three together. Each is measured in
 isolation, and the residuals are known to interact in sign — fix 1 raises nothing on fully-silent gaps,
 fix 2 raises fine's floor (interleaved ≥ downmix), fix 3 lowers it (narrower span, but a *max*, so the
@@ -1346,13 +1392,67 @@ direction is not guaranteed per-gap). Expect the combined result to need one con
 **after** implementation. That is a validation step, not a specification gap — the distinction the
 heading rests on.
 
+### Combined re-dump, 2026-07-30 — sensors converged, classes did not
+
+Corpus `silence-floor/fp_band_donor_mechanism_now_classifies_as_repairable_check`, same pair, 10 gaps,
+all three fixes live. This is the confirming run the paragraph above called for.
+
+**The sensors closed.** Median `|fine − scan|`, pre-fix → post-fix:
+
+| sensor | pre-fix spread | post median | post max |
+|---|---|---|---|
+| `a_gap_rms_db` | to **21.62** dB | **0.101** | 0.824 |
+| `gap_floor_db` | to **25.89** dB | **0.279** | 17.13 |
+| `donor_silence_fraction` | to **0.83** | **0.012** | 0.410 |
+| `noise_floor_db` | −2.3 … −19.0, **10/10 same sign** | **2.129** | 11.17 |
+
+The noise-floor column is the cleanest confirmation of fix 2: a systematic one-signed bias consistent
+with `10·log10(6)` became a mixed-sign 2.13 dB median, which is the window/bin residual this document
+predicted and did not fix.
+
+**The classes did not.** The § *Probe results* prediction — *pair-level 3 divergences → 1* — is **refuted**.
+Still 3: g4, g5, g8. But the causes have changed, and each is now attributable:
+
+| gap | why it still diverges | action-relevant? |
+|---|---|---|
+| g4 | floor residual 2.84 dB + donor granularity ⇒ `ds` 0.474 → 0.610, straddling 0.5 | keep vs drop |
+| g5 | `is_dropout` splits on an 11.17 dB noise-floor gap — the open context-window leg | keep vs drop |
+| g8 | floors agree to 0.18 dB; `ds` 0.167 → 0.577 on bin granularity alone | no — both drop |
+
+`divergence_is_never_in_the_dangerous_direction` **holds**: g4 and g5 are both scan-keep / fine-drop.
+
+**What the run newly establishes.** The residual is no longer a sensor-definition problem; it is
+almost entirely the one leg left open on purpose, and it has two distinct signatures:
+
+- *max-statistic granularity.* Fine's floor is a max over 50 ms bins, scan's over 100 ms blocks, so
+  fine's can only be **≥** scan's — and was, on **10/10 gaps, 0 negatives**. Magnitude tracks how
+  peaky the silence is, not gap length alone: g1/g3/g9 sit at 0.08 dB while g2 (7.18) and g10 (17.13)
+  are near-digital-silence gaps whose isolated ticks the 100 ms blocks average away. g10's apparent
+  "regression" (11.61 → 17.13 dB) is this effect, not a defect; both paths still classify it the same.
+- *donor-fraction granularity.* Fine's `donor_silence_fraction` ran **higher** on 5 of 6 gaps with a
+  donor (+0.136, +0.154, +0.410, +0.030, +0.013, −0.011): finer bins dip below the floor more often.
+  This biases fine toward `drop` and is now the **largest remaining term** — bigger than anything the
+  three fixes left behind, and the direct cause of g4 and g8.
+
+**A prediction-method error to carry forward.** The `band_donor` README predicted g4 would converge
+because the donor's `donor_interior_nominal.rms_db` is −66.94, ~10 dB above the new floor. That
+reasoned from a **mean**; the classifier consumes the **per-bin fraction**, and 61 % of that donor's
+bins fall below −76.66 despite the mean. Never predict a donor verdict from a mean level on
+non-stationary content. Corrected in place in that README.
+
+**What this changes downstream.** The window/bin leg can no longer be deferred as cosmetic — it is the
+sole remaining source of *action* divergence (g4, g5). Converging `gap_signature_bin_ms` onto
+`scan_block_ms` for the equivalence path specifically is now the obvious next lever, and unlike the
+three fixes it is a policy call rather than a defect repair.
+
 ### Ready to implement
 
 | Work | Status | Notes |
 |---|---|---|
 | **F14:** `splice_dualfit_at` A borders → raw `mono(refined ± w)` like `try_dual_fit` | **Done + media-validated** | `fp_post_F14_fix/`: `g1` flag `true`, `trim_frames −9` = production. |
 | **F14 residual:** `bridge_frames > 0` + NaN-aware step-real/`gate_pass` (no `finite_corr` on dual-fit scores) | **Done** | Fixed from source, not measurement — neither edge fired on this pair. |
-| **F15:** fine `gap_floor_db` + A RMS → silent-core **(a)** | **Specified + measured; unblocked. Ship with the reduction fix, not before** | Filter = `is_silent_interleaved` per bin at `gap_signature_bin_ms`. Probes measured 2026-07-30: closes the band on 4/4 gaps (floor −21 to −25 dB, within 1.4–5.4 dB of scan), 3 divergences → 1, A RMS converges to within 3.2 dB. **But** g4 then converges on a 0.41 dB margin — see § *Probe results*. |
+| **F15:** fine `gap_floor_db` + A RMS → silent-core **(a)**, interleaved reduction, block-confirmed span | **Done + media-validated (2026-07-30)** | All three shipped together in `application/gap_equivalence.rs`. Combined re-dump: A RMS median 0.101 dB, floor 0.279, donor 0.012, NF 2.129 (was one-signed to −19). Band mechanism closed — g4's fine floor −58.39 → −76.66. **But 3 class divergences remain** (g4/g5/g8), all on the window/bin leg; safety invariant holds. See § *Combined re-dump*. |
+| **F15 follow-on:** converge `gap_signature_bin_ms` → `scan_block_ms` for equivalence | **Open — policy call, now the only action-relevant axis** | Post-fix, every remaining *action* divergence (g4, g5) traces here. Two signatures: max-statistic granularity (fine floor ≥ scan on 10/10) and donor-fraction granularity (fine higher on 5/6). Not a defect repair — decide converge vs accept-and-document. |
 | **F15:** noise-floor / context window (±2 s/100 ms vs ±3 s/50 ms) | **Measured; demoted to the smaller term; accept-vs-converge open** | Median 2.1 dB of the fine−scan spread once reduction is matched. Reduction confirmed (row below), so this decision is unblocked. g5 remains the poster gap (−13.13 dB window/bin of −18.98 total pre-fix). |
 | **F15 (new):** multichannel reduction — downmix (fine `mono_rms`) vs interleaved power (scan `block_rms_db`) | **CONFIRMED 2026-07-30 — ready to fix** | Anchor `(2 s, scan_block_ms, Interleaved)` reproduces scan NF on **7/10** gaps (err −0.78…+0.51, median +0.03); direct reduction **3.65–7.89 dB**, measured `ρ̄` **+0.318…−0.005** (none anti-correlated). The 3 misses (g5/g6/g10, all ~+2.1 dB) are **estimator instability** on the pair's most window-unstable contexts — not a fourth variable; span-provenance retired for this axis. Level-dependent, so it does **not** cancel between `a_rms` and `nf`. Defect, not a design choice. See § *Probe results* (`fp_silent_core_floor_probe_reduction/`). |
 | **F15:** population check via `equivalence-calibration` | **Done 2026-07-30** | 17-pair corpus **297 gaps / 5 divergent / 0 dangerous**, reproduced on a second 17-pair set at another recipe. Sets the severity and unblocks the fork below. |

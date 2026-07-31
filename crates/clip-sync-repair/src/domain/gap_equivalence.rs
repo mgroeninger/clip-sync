@@ -250,13 +250,10 @@ impl GapEquivalenceVerdict {
         self
     }
 
-    /// Attach the fingerprint path's gap floor (`levels.gap_floor_db`) so the two paths' floors sit
-    /// side by side in one corpus. Never changes `class` or `drop`.
-    #[must_use]
-    pub fn with_gap_floor_db(mut self, gap_floor_db: f64) -> Self {
-        self.gap_floor_db = gap_floor_db.is_finite().then_some(gap_floor_db);
-        self
-    }
+    // `with_gap_floor_db` (attach `levels.gap_floor_db` — the whole-span content peak) was removed with
+    // F15 fix 1. The fine path now measures its own silent-core floor and carries it via
+    // `with_scan_provenance`; re-attaching the levels number would overwrite the fix with the statistic it
+    // exists to replace. `levels.gap_floor_db` is still dumped in its own block.
 
     /// Attach candidate silent-core floors. Never changes `class` or `drop` — these are measured to
     /// decide whether the F15 fix should be adopted, not acted on.
