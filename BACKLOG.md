@@ -17,9 +17,11 @@ Last updated: 2026-07-31.
 
 | Plan | Covers |
 |------|--------|
-| [TEMP-scan-recipe-plan.md](docs/dev/TEMP-scan-recipe-plan.md) | `ScanRecipe` on `GapReport` + JSON scan-params echo — **implemented 2026-07-31** (archive when convenient) |
 | [TEMP-gap-selection-deferred.md](docs/dev/TEMP-gap-selection-deferred.md) | Deferred/refused: `--scan-window`, `--gaps-from` manifest — recorded so they are not rediscovered |
 | [TEMP-nway-donor-alignment-plan.md](docs/dev/TEMP-nway-donor-alignment-plan.md) | N-way donor alignment: repair one damaged copy from multiple donors — draft, not started |
+| [TEMP-fingerprint-provenance-plan.md](docs/dev/TEMP-fingerprint-provenance-plan.md) | Fingerprint-dump provenance (`FileSource` / measurement recipe) — §2 blocks the next large corpus run |
+
+> **Recently archived:** [TEMP-scan-recipe-plan.md](docs/dev/archive/TEMP-scan-recipe-plan.md) — `ScanRecipe` + JSON scan-params echo, **archived 2026-07-31**.
 
 > Gap-selection docs were split out of one ~1200-line plan on 2026-07-29; order settled the same day
 > ([archive/TEMP-gap-selection-sequencing-plan.md](docs/dev/archive/TEMP-gap-selection-sequencing-plan.md)):

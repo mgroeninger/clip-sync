@@ -5,7 +5,7 @@ shipped and archived ([TEMP-gap-selection-plan.md](TEMP-gap-selection-plan.md),
 [TEMP-gap-selection-ranges-plan.md](TEMP-gap-selection-ranges-plan.md)). Recipe stays parked.
 Feature semantics stay in those sibling plans — do not treat this file as current behavior.
 
-**Why this existed.** Preparing [TEMP-scan-recipe-plan.md](../TEMP-scan-recipe-plan.md) and the
+**Why this existed.** Preparing [TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md) and the
 selection siblings kept surfacing further adjacent defects (stale source claims *and* real nearby
 bugs). That pattern is a sequencing smell: the program was settling the whole gap-identity /
 provenance stack while the stated user need is a plan-time subset filter. This doc recorded the
@@ -13,13 +13,13 @@ chosen order and the hard scope rule so the implementation PR did not re-absorb 
 
 **Rejected alternative (do not reopen):** recipe-first (`ScanRecipe` on `GapReport` + JSON echo
 before `--only-gaps`). That pays provenance / `PartialEq` cost for a deferred consumer
-(`--gaps-from`). Revisit only by **unparking** [TEMP-scan-recipe-plan.md](../TEMP-scan-recipe-plan.md)
+(`--gaps-from`). Revisit only by **unparking** [TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md)
 when a real same-recipe consumer exists — not by restoring a parallel “path” here.
 
 **Siblings (one deliverable each; each owns a complete checklist):**
 [TEMP-gap-selection-plan.md](TEMP-gap-selection-plan.md) (v1 — **archived**),
 [TEMP-gap-selection-ranges-plan.md](TEMP-gap-selection-ranges-plan.md) (v1.5 — **archived**),
-[TEMP-scan-recipe-plan.md](../TEMP-scan-recipe-plan.md) (recipe type — **parked**),
+[TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md) (recipe type — **parked**),
 [TEMP-gap-selection-deferred.md](../TEMP-gap-selection-deferred.md) (`--scan-window`, `--gaps-from`).
 
 ---
@@ -60,7 +60,7 @@ time-to-operator-value, and the next PR must not absorb adjacent scan/provenance
 
 | Doc | Status claim |
 |-----|--------------|
-| [TEMP-scan-recipe-plan.md](../TEMP-scan-recipe-plan.md) | **Parked until a consumer**; not a gate on selection |
+| [TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md) | **Parked until a consumer**; not a gate on selection |
 | [TEMP-gap-selection-plan.md](TEMP-gap-selection-plan.md) | **v1 archived** (shipped + promoted) |
 | [TEMP-gap-selection-ranges-plan.md](TEMP-gap-selection-ranges-plan.md) | **v1.5 archived** (shipped) |
 | [TEMP-gap-selection-deferred.md](../TEMP-gap-selection-deferred.md) | Unchanged; `--gaps-from` remains the recipe’s main consumer |
@@ -110,7 +110,7 @@ Executed as **audit residuals + status flip + archive meta** (most operator pros
 
 ### Step 3 — Unpark recipe only with a consumer
 
-When unparking, use [TEMP-scan-recipe-plan.md](../TEMP-scan-recipe-plan.md) as written. Trigger examples:
+When unparking, use [TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md) as written. Trigger examples:
 
 - Implementing `--gaps-from`
 - An external script that must compare saved scan knobs to the next run and cannot tolerate a

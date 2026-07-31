@@ -1,9 +1,9 @@
-# `ScanRecipe` — let a `GapReport` state the recipe that produced it (DRAFT)
+# `ScanRecipe` — let a `GapReport` state the recipe that produced it
 
-Status: **implemented 2026-07-31.** Consumer: external scripts that must compare
+Status: **archived 2026-07-31** — implemented. Live contract: [json-output.md](../../json-output.md), [gap-scan.md](../../gap-scan.md). Consumer: external scripts that must compare
 saved scan knobs to the next run; hand-rolled field checks are already incomplete as knobs scale.
 Sequencing record (archived):
-[archive/TEMP-gap-selection-sequencing-plan.md](archive/TEMP-gap-selection-sequencing-plan.md)
+[TEMP-gap-selection-sequencing-plan.md](TEMP-gap-selection-sequencing-plan.md)
 (§3 trigger: same-recipe equality). The deferred `--gaps-from` loader remains a future in-tree
 consumer of the same `PartialEq`; it is not required to start.
 
@@ -13,19 +13,19 @@ golden revision, and no dependency on selection. It was briefly sequenced before
 only; that gate was dropped — selection has no code dependency on this type.
 
 **Siblings:**
-[archive/TEMP-gap-selection-sequencing-plan.md](archive/TEMP-gap-selection-sequencing-plan.md) (unpark rule),
-[archive/TEMP-gap-selection-plan.md](archive/TEMP-gap-selection-plan.md) (v1 — **archived**),
-[archive/TEMP-gap-selection-ranges-plan.md](archive/TEMP-gap-selection-ranges-plan.md) (v1.5 — **archived**),
-[TEMP-gap-selection-deferred.md](TEMP-gap-selection-deferred.md) (the `--gaps-from` manifest, a
+[TEMP-gap-selection-sequencing-plan.md](TEMP-gap-selection-sequencing-plan.md) (unpark rule),
+[TEMP-gap-selection-plan.md](TEMP-gap-selection-plan.md) (v1 — **archived**),
+[TEMP-gap-selection-ranges-plan.md](TEMP-gap-selection-ranges-plan.md) (v1.5 — **archived**),
+[TEMP-gap-selection-deferred.md](../TEMP-gap-selection-deferred.md) (the `--gaps-from` manifest, a
 future in-tree consumer of the `PartialEq`),
-[archive/TEMP-gap-index-convention-plan.md](archive/TEMP-gap-index-convention-plan.md) (shipped),
-[archive/TEMP-silence-floor-findings.md](archive/TEMP-silence-floor-findings.md) (**archived
+[TEMP-gap-index-convention-plan.md](TEMP-gap-index-convention-plan.md) (shipped),
+[TEMP-silence-floor-findings.md](TEMP-silence-floor-findings.md) (**archived
 2026-07-30**; F11 — JSON provenance — is the one item it delegated here, closed by this plan's
 `GapScanJson` checklist item),
-[TEMP-fingerprint-provenance-plan.md](TEMP-fingerprint-provenance-plan.md) (**split out of this doc
+[TEMP-fingerprint-provenance-plan.md](../TEMP-fingerprint-provenance-plan.md) (**split out of this doc
 2026-07-31** — the fingerprint-dump provenance axis: what media was measured, and how. Formerly §7e
 plus three rows of §7c; its §2 blocks the next large corpus run),
-[archive/TEMP-equivalence-instrument-convergence.md](archive/TEMP-equivalence-instrument-convergence.md)
+[TEMP-equivalence-instrument-convergence.md](TEMP-equivalence-instrument-convergence.md)
 (**archived 2026-07-31**; I1–I3 — the ledger that produced the split-out plan).
 
 > **Verification rule for this document.** A `file:line` reference or a claim about current behavior
@@ -116,7 +116,7 @@ The consequence for the recipe: two configs with `silence_hold_ms` 450 and 500 a
 produce **identical** gap lists, so they must compare **equal**. Therefore:
 
 - The recipe's `silence_hold_ms` is defined as `silence_hold_blocks * scan_block_ms` — the effective,
-  post-quantization hold. [json-output.md](../json-output.md) and the user docs must say *effective*,
+  post-quantization hold. [json-output.md](../../json-output.md) and the user docs must say *effective*,
   so a script comparing the echo against its own TOML `silence_hold_ms` is not surprised by 450 → 500.
 - **`ScanGapsRequest` therefore needs no new field.** `silence_hold_blocks` is already canonical for
   the only property that matters; the ms value is a derived display/echo form. This supersedes the
@@ -131,7 +131,7 @@ summary helper had a *different*, live defect: the RMS floor branch formatted th
 `absolute_silence_rms` (`33.0 / 32767.0` ≈ `0.001007`) with `{:.0}`, printing `rms floor 0` on every
 production scan, with a covering test that constructed the old 0–32767 scale and asserted
 `"rms floor 33"`. That was diagnosed and fixed **2026-07-29** outside this plan as F3/F4/F5 of
-[archive/TEMP-silence-floor-findings.md](archive/TEMP-silence-floor-findings.md): the CLI now normalizes the
+[TEMP-silence-floor-findings.md](TEMP-silence-floor-findings.md): the CLI now normalizes the
 documented 0–32767 input, and the header prints `rms floor 33 (at -60 dBFS)`. **Nothing is left for
 this plan to fix here** — the checklist step below is now a pure re-pointing of the reads at
 `recipe.*`. Kept as history because the retraction above made this defect easy to wave away twice.
@@ -240,14 +240,14 @@ literal / named-read counts).
   only *calls* the loader.)
 - [x] `GapScanJson` (`infrastructure/cli/output.rs:688-713`): emit all five **flat**, reading
   `report.recipe.*` in `from_parts` (`:716+`). No nesting in the JSON contract — the change stays
-  purely additive per [json-output.md](../json-output.md)
+  purely additive per [json-output.md](../../json-output.md)
 - [x] Golden JSON re-baseline: `tests/fixtures/full_surface_repair.json` only (today
   `:106-108` has `decode_chunk_secs` / `scan_block_ms` / `silence_peak_fraction`; add
-  `min_gap_ms`, `silence_hold_ms`, `absolute_silence_rms`) + [json-output.md](../json-output.md)
+  `min_gap_ms`, `silence_hold_ms`, `absolute_silence_rms`) + [json-output.md](../../json-output.md)
   GapReport table (`:175-177`) and additive-revision list at `:3`, documenting `silence_hold_ms`
   as the **effective** hold and `absolute_silence_rms` as **normalized** (`f32`, default ≈
   `0.001007`, not the legacy 0–32767 display scale). **[+]** One sentence in
-  [gap-scan.md](../gap-scan.md) (or the JSON section of the operator docs) that the JSON echo's
+  [gap-scan.md](../../gap-scan.md) (or the JSON section of the operator docs) that the JSON echo's
   `silence_hold_ms` is effective (`blocks × block_ms`), not the TOML `silence_hold_ms` — §3
   requires user-facing docs to say this so scripts are not surprised by 450 → 500
 - [x] Sanity: values round-trip from the scan request that produced the report, not from a re-read
@@ -258,7 +258,7 @@ literal / named-read counts).
   Flat-echo interim (sequencing §3) is also obsolete now that this plan is unparked. **Also not in
   scope: fingerprint-dump provenance** (`FileSource.codec` / `bit_depth` / B's native rate; the
   permanent equivalence measurement recipe; `a_gap_total_blocks`) — a separate deliverable with its
-  own plan, [TEMP-fingerprint-provenance-plan.md](TEMP-fingerprint-provenance-plan.md). Its §2 is
+  own plan, [TEMP-fingerprint-provenance-plan.md](../TEMP-fingerprint-provenance-plan.md). Its §2 is
   **blocking the next large fingerprint run**, which this plan is not; do not fold any of it into
   `ScanRecipe`, whose equality must stay exactly "same gap list"
 
@@ -284,7 +284,7 @@ literal / named-read counts).
 - **`--gaps-from` (v2, deferred)** remains a future in-tree consumer: its staleness check becomes
   `manifest.scan != report.recipe` — one bitwise `PartialEq`, not a hand-rolled five-field
   comparison that drifts the first time a knob is added. See
-  [TEMP-gap-selection-deferred.md](TEMP-gap-selection-deferred.md) § `--gaps-from`.
+  [TEMP-gap-selection-deferred.md](../TEMP-gap-selection-deferred.md) § `--gaps-from`.
 - **If a `--scan-window` is ever added** (also deferred), it joins the recipe — it is a knob that
   changes which gaps are detected, which is exactly the membership test.
 
@@ -292,12 +292,12 @@ literal / named-read counts).
 
 ## 7. Findings-derived JSON fields — inventory and rationale (2026-07-30)
 
-Harvested from [archive/TEMP-silence-floor-findings.md](archive/TEMP-silence-floor-findings.md)
+Harvested from [TEMP-silence-floor-findings.md](TEMP-silence-floor-findings.md)
 (F1–F12, especially F11) and
-[archive/TEMP-equivalence-divergence-findings.md](archive/TEMP-equivalence-divergence-findings.md) (F14/F15).
+[TEMP-equivalence-divergence-findings.md](TEMP-equivalence-divergence-findings.md) (F14/F15).
 Scoped to **scan-output** provenance since 2026-07-31: the fingerprint-dump axis harvested from the
 I1–I3 ledger now lives in
-[TEMP-fingerprint-provenance-plan.md](TEMP-fingerprint-provenance-plan.md).
+[TEMP-fingerprint-provenance-plan.md](../TEMP-fingerprint-provenance-plan.md).
 **Not a second checklist** — §5 remains the work this plan implements. This section records *why*
 specific JSON fields belong in (or next to) the recipe contract, and which diagnostic fields the
 ledgers proved useful so they are not rediscovered as "missing recipe knobs."
@@ -326,7 +326,7 @@ problems of the same kind §1 names for the recipe:
    the condition; all corpus pairs being lossy makes it an artifact. This is the same "echo what
    produced you" principle on a **third** axis — not the knobs, not the sensors, but the media and the
    instrument. It is out of this plan's deliverable and owned by
-   [TEMP-fingerprint-provenance-plan.md](TEMP-fingerprint-provenance-plan.md); recorded here because
+   [TEMP-fingerprint-provenance-plan.md](../TEMP-fingerprint-provenance-plan.md); recorded here because
    it is why that plan exists and why it is not a sixth recipe knob.
 
 ### 7a. `ScanRecipe` / `GapScanJson` knobs — include in this plan
@@ -356,7 +356,7 @@ gap list property (§3) — two configs that quantize to the same hold must comp
 ### 7b. Already added during the ledgers — keep; do not fold into `ScanRecipe`
 
 Emitted today on scan / fingerprint JSON. Listed so recipe work does not treat them as missing
-echo fields, and so [json-output.md](../json-output.md) can catch up in a separate pass (its
+echo fields, and so [json-output.md](../../json-output.md) can catch up in a separate pass (its
 `GapEquivalenceVerdict` table is still the pre-provenance shape).
 
 **Rationale for inclusion (in JSON at all).** Classification outputs without sensor provenance
@@ -403,7 +403,7 @@ for scripts, none of them load-bearing for recipe equality.
 | i16-scale / dBFS echo of `absolute_silence_rms` beside normalized | `GapScanJson` | human header only | F3/F4 unit confusion for script consumers | **Speculative** (normalized + docs should suffice once F11 lands) |
 | Machine-readable unfillable cause (`both_sides_silent` \| `unmapped`) | `Gap` or plan tags | human label only; JSON still has `b_has_energy` + null B mapping | F6 — scripts repeating the operator confusion | **Speculative** (reconstructible from existing fields) |
 
-**Moved out 2026-07-31** to [TEMP-fingerprint-provenance-plan.md](TEMP-fingerprint-provenance-plan.md),
+**Moved out 2026-07-31** to [TEMP-fingerprint-provenance-plan.md](../TEMP-fingerprint-provenance-plan.md),
 which owns the fingerprint-dump axis: the permanent equivalence measurement recipe and the donor/A
 window identity that merges into its `span` axis (§3a); `a_gap_total_blocks`, re-classed **Derived**
 (§3b); the span-provenance arg-max and the declined `levels.profile_db` envelope (§3c). They were
@@ -421,5 +421,5 @@ coarser reuses lists after edits that move boundaries.
 | `limit_fill_to_mapped_region` | fill policy parked on the scan report (wrong home; §5 out of scope) |
 | Equivalence floors, probes, `dual_fit_rescue`, truncation flags | classify / diagnose / patch — they do not redefine the detected gap set |
 | Fingerprint envelope / Tier-3 seams | calibration path only |
-| `FileSource.codec` / `bit_depth` / native rate | *source* provenance — describes the media, not the knobs. Own plan: [TEMP-fingerprint-provenance-plan.md](TEMP-fingerprint-provenance-plan.md) §2 |
+| `FileSource.codec` / `bit_depth` / native rate | *source* provenance — describes the media, not the knobs. Own plan: [TEMP-fingerprint-provenance-plan.md](../TEMP-fingerprint-provenance-plan.md) §2 |
 | Equivalence measurement recipe; `a_gap_total_blocks` | *measurement* provenance — describes the instrument. Same plan, §3 |

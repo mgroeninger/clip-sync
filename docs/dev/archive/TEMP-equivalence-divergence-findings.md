@@ -1506,7 +1506,7 @@ Cost two failed runs to rediscover, so it is recorded here as well as in the run
 - Recipe knobs need no flags — the defaults (`min_gap` 500 ms, block 100 ms, rms 33/32767, hold
   500 ms) already equal the 2026-07-26 reference `scan_recipe`. Pin `--silence-hold-ms 500`
   explicitly anyway, because the manifest's `scan_recipe` does not record it (that is F11, tracked
-  in [TEMP-scan-recipe-plan.md](../TEMP-scan-recipe-plan.md)).
+  in [TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md)).
 - `--fingerprint-gap N` is **1-based** on the gap-table `#`, and emits **0-based** filenames.
 - Use `RUST_LOG=debug`, not `RUST_LOG=clip_sync_repair=debug`, when the question might involve the
   `clip_sync` crate (alignment, seek, decode) — the narrower filter hides those errors.

@@ -13,14 +13,15 @@ work only.
 |-----|--------|------------------|
 | [TEMP-equivalence-instrument-convergence.md](TEMP-equivalence-instrument-convergence.md) | 2026-07-31 | I1–I3: scan vs fine equivalence **instruments** after F14/F15. Current table lives in [../gap-fingerprint.md](../gap-fingerprint.md) § *`equivalence` vs `scan_equivalence`*. |
 | [TEMP-equivalence-divergence-findings.md](TEMP-equivalence-divergence-findings.md) | 2026-07-30 | F14/F15 scan-vs-fill divergence; probe-then-fix method; reduction/window/span decomposition |
-| [TEMP-silence-floor-findings.md](TEMP-silence-floor-findings.md) | 2026-07-30 | F1–F12 silence-floor / fillability; F11 delegated to [../TEMP-scan-recipe-plan.md](../TEMP-scan-recipe-plan.md) |
+| [TEMP-silence-floor-findings.md](TEMP-silence-floor-findings.md) | 2026-07-30 | F1–F12 silence-floor / fillability; F11 closed by [TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md) |
 | [TEMP-rust-review-findings.md](TEMP-rust-review-findings.md) | 2026-07-27 | Correctness / silent-failure / perf findings; withdrawn M-FRAMES; will-not-fix M-RESAMPLE |
 
 ## Gap-selection family
 
 Shipped thin selection v1 + v1.5 ranges first; recipe stayed parked until a same-recipe consumer
-(unparked 2026-07-30 — see [../TEMP-scan-recipe-plan.md](../TEMP-scan-recipe-plan.md)). Deferred
-manifest / `--gaps-from` remains active: [../TEMP-gap-selection-deferred.md](../TEMP-gap-selection-deferred.md).
+(unparked 2026-07-30, **implemented and archived 2026-07-31** — see
+[TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md)). Deferred manifest / `--gaps-from` remains
+active: [../TEMP-gap-selection-deferred.md](../TEMP-gap-selection-deferred.md).
 
 | Doc | Role |
 |-----|------|
@@ -28,6 +29,7 @@ manifest / `--gaps-from` remains active: [../TEMP-gap-selection-deferred.md](../
 | [TEMP-gap-selection-plan.md](TEMP-gap-selection-plan.md) | Selection v1 (shipped) |
 | [TEMP-gap-selection-ranges-plan.md](TEMP-gap-selection-ranges-plan.md) | Selection v1.5 ranges (shipped) |
 | [TEMP-gap-index-convention-plan.md](TEMP-gap-index-convention-plan.md) | Gap index convention (shipped) |
+| [TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md) | `ScanRecipe` + JSON scan-params echo (shipped 2026-07-31) |
 
 ## Module splits & large refactors (shipped)
 

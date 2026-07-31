@@ -11,7 +11,7 @@
 > **closed and archived too** (2026-07-30, now a sibling here); its own remaining items moved on to
 > [TEMP-equivalence-instrument-convergence.md](TEMP-equivalence-instrument-convergence.md).
 > **F11** is delegated to
-> [../TEMP-scan-recipe-plan.md](../TEMP-scan-recipe-plan.md).
+> [TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md).
 >
 > Kept for the rationale, which survives nowhere else: §3's refuted/withdrawn hypotheses
 > (including two that were *re-reversed* on media), §6a's three-way differential showing the fixes
@@ -20,7 +20,7 @@
 > `docs/dev/archive/`.
 
 **Opened:** 2026-07-29. **Status:** fixes landed 2026-07-29 (F1–F10/F12 fixed; F11 delegated to
-[../TEMP-scan-recipe-plan.md](../TEMP-scan-recipe-plan.md); R1–R4 review follow-ups).
+[TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md); R1–R4 review follow-ups).
 Media follow-ups ran 2026-07-30 (§6): the three-way fingerprint differential **passed**, R3 is
 **closed**, §5 is **answered**, and two things reversed — **E1 is refuted** (it measured the wrong
 window, so §0's original conclusion was wrong in the direction the fixes already corrected) and the
@@ -300,7 +300,7 @@ human header prints them; the machine-readable output does not, which is backwar
 it matters: the same pair produces different gap *composition* under different recipes, and the
 JSON cannot say which recipe produced it.
 
-**Delegated to [../TEMP-scan-recipe-plan.md](../TEMP-scan-recipe-plan.md)** (that plan's §1 "the visible
+**Delegated to [TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md)** (that plan's §1 "the visible
 one" is this finding; its `GapScanJson` checklist item closes it). That plan was **unparked
 2026-07-30** for script same-recipe equality; F11 lands with it. The flat-echo interim in
 `TEMP-gap-selection-sequencing-plan.md` §3 (same folder) is no longer needed. Tracked in `BACKLOG.md`
@@ -398,7 +398,7 @@ unit tests green).
    no longer lift a −101 dB dropout to −52 dB.
 4. ~~**F6**~~ — done. `unfillable_label()` splits `both sides silent` from `unmapped`.
 5. ~~**F7 / F8**~~ — done (F7 caught R1 on its first outing). **F11** delegated to
-   [../TEMP-scan-recipe-plan.md](../TEMP-scan-recipe-plan.md).
+   [TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md).
 6. ~~**F9 / F10 / F12**~~ — done. F10 closed on a second pass via `Gap::mapped_b_span` after the
    audit found two live instances in the fingerprint path.
 

@@ -9,7 +9,7 @@ reasons are the content.
 
 **Siblings:** [archive/TEMP-gap-selection-plan.md](archive/TEMP-gap-selection-plan.md) (v1 — **archived**),
 [archive/TEMP-gap-selection-ranges-plan.md](archive/TEMP-gap-selection-ranges-plan.md) (v1.5 — **archived**),
-[TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md) (prerequisite for the manifest below; **unparked 2026-07-30**).
+[archive/TEMP-scan-recipe-plan.md](archive/TEMP-scan-recipe-plan.md) (prerequisite for the manifest below; **archived 2026-07-31** — type shipped).
 
 ---
 
@@ -23,7 +23,7 @@ Shape, if it were ever built:
 
 - A **scan** knob, not a repair knob: lives on `ScanGapsRequest` next to `min_gap_secs` /
   `silence_hold_blocks`, set from `RepairConfig` in `composition.rs::repair_run_input`.
-- Must join `ScanRecipe` ([TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md)) and the manifest
+- Must join `ScanRecipe` ([archive/TEMP-scan-recipe-plan.md](archive/TEMP-scan-recipe-plan.md)) and the manifest
   `scan` block below — otherwise a saved gap list cannot be checked against its recipe.
 - Named `--scan-window`, **never** as a mode of `--only-gaps`. Sharing a flag between "which gaps
   exist" and "which gaps to patch" is exactly the conflation that makes two-lists confusion real.
@@ -85,7 +85,7 @@ documentation problem, not a semantic conflict.
 ## 2. `--gaps-from` manifest (would be v2)
 
 Blocked on selection v1.5 (range tokens) and on
-[TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md) (the recipe type it embeds).
+[archive/TEMP-scan-recipe-plan.md](archive/TEMP-scan-recipe-plan.md) (the recipe type it embeds).
 
 Minimal manifest:
 

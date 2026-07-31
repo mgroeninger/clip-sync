@@ -18,7 +18,7 @@ before the recipe provenance PR.
 |---------------|------|
 | [TEMP-gap-index-convention-plan.md](TEMP-gap-index-convention-plan.md) | The gap-index prep PR (was §0). **Shipped 2026-07-28.** Its one durable rule now lives in [gap-vocabulary.md](../gap-vocabulary.md) § Gap numbering |
 | [TEMP-gap-selection-sequencing-plan.md](TEMP-gap-selection-sequencing-plan.md) | Meta: thin v1 before recipe — **archived** after promote |
-| [TEMP-scan-recipe-plan.md](../TEMP-scan-recipe-plan.md) | `ScanRecipe` on `GapReport` + the JSON scan-params echo. **Not a selection feature**; **parked** (no code dependency from v1) |
+| [TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md) | `ScanRecipe` on `GapReport` + the JSON scan-params echo. **Not a selection feature**; **parked** (no code dependency from v1) |
 | [TEMP-gap-selection-ranges-plan.md](TEMP-gap-selection-ranges-plan.md) | v1.5 range tokens: `START-END` identity, `START..END` containment, dual ε, straddler diagnostics — **done** |
 | [TEMP-gap-selection-deferred.md](../TEMP-gap-selection-deferred.md) | `--scan-window` (refused in its cheap form) and the `--gaps-from` manifest (v2) |
 
@@ -71,7 +71,7 @@ stability, without pretending gap numbers are global IDs.
 - If `min_gap_ms`, `silence_hold_ms`, `scan_block_ms`, `silence_peak_fraction`, or
   `absolute_silence_rms` will change before the next patch attempt, record the **Range** (or JSON
   `video_a_start_secs` / `video_a_end_secs`) and use a **range token** (v1.5), not a remembered `#`.
-  Those five knobs are exactly `ScanRecipe` — see [TEMP-scan-recipe-plan.md](../TEMP-scan-recipe-plan.md),
+  Those five knobs are exactly `ScanRecipe` — see [TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md),
   which makes the report state its own recipe so a script can check this instead of trusting the user.
 - Do **not** silently remap old gap numbers onto a new scan.
 
@@ -491,7 +491,7 @@ reasoning, shape, and the measurement anyone revisiting it must take first:
 
 ## 8. Implementation checklist
 
-No recipe prerequisite. [TEMP-scan-recipe-plan.md](../TEMP-scan-recipe-plan.md) is parked; accept any
+No recipe prerequisite. [TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md) is parked; accept any
 golden churn in this PR (beyond the new `plan_skip_reason` value). Hard scope rule: adjacent scan /
 display / provenance defects discovered during prep go to BACKLOG or a tiny separate PR — see
 [TEMP-gap-selection-sequencing-plan.md](TEMP-gap-selection-sequencing-plan.md) §4 and
@@ -559,7 +559,7 @@ Kept because each one has a reason someone would otherwise re-derive wrongly.
 
 Settled elsewhere: gap numbering / display split and the all-0-based rejection →
 [TEMP-gap-index-convention-plan.md](TEMP-gap-index-convention-plan.md); the JSON
-scan-params contract → [TEMP-scan-recipe-plan.md](../TEMP-scan-recipe-plan.md); range ε and containment →
+scan-params contract → [TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md); range ε and containment →
 [TEMP-gap-selection-ranges-plan.md](TEMP-gap-selection-ranges-plan.md).
 
 ---

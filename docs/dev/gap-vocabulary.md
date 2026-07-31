@@ -65,10 +65,10 @@ One precision note on that list: what the scan actually applies is the **quantiz
 is constructed with `silence_hold_blocks` and never sees a millisecond value, so the effective
 threshold is `silence_hold_blocks × scan_block_ms` — configured holds of 450 and 500 ms at a 100 ms
 block produce the *same* gap list. Treat a `silence_hold_ms` edit as recipe-changing unless you have
-checked it survives quantization. This prose contract is the thing
-[TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md) makes a type (its §2/§3 own the effective-vs-configured
-rule). The row that must stay in step with the list above is that plan's carrier-note table
-(`:148`, `silence_hold_ms` — "**Not as configured**").
+checked it survives quantization. The type that owns that rule is domain `ScanRecipe`
+(`PartialEq` ⇔ same gap list; JSON echo on the scan object — see [gap-scan.md](../gap-scan.md) /
+[json-output.md](../json-output.md)). Rationale:
+[archive/TEMP-scan-recipe-plan.md](archive/TEMP-scan-recipe-plan.md) §2/§3.
 
 ## Axes (read before the cells)
 
