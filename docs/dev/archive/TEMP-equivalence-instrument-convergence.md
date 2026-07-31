@@ -1,16 +1,31 @@
-# Equivalence instrument convergence — open ledger
+# Equivalence instrument convergence — ledger
 
-**Opened:** 2026-07-30. **Status:** **I1 done + media-validated**; **I2 decided** (accept-and-document);
-**I3 measured, and it turned up a latent defect** — the fine donor's missing silence disjunct is *not*
-vestigial; it is unexercised by this corpus (lossy media never reaches the −120 digital-silence floor
-that triggers it) and would misclassify in the **dangerous** direction when it is. Fix pending.
+> # ARCHIVED 2026-07-31 — closed, do not update
+>
+> All three instrument axes are resolved and the follow-up work is done: `band_donor.json` re-harvested
+> as a regression fixture (`tests/equivalence_divergence.rs`), and the probe scaffolding decided —
+> `noise_floor_probes` **retained** for I2 attribution, `silent_core_probes` vestigial and to be removed
+> opportunistically when that file is next touched.
+>
+> **Current behaviour lives in the code and in
+> [../gap-fingerprint.md](../gap-fingerprint.md) § *`equivalence` vs `scan_equivalence`*, which carries
+> the converged/residual table.** Read this file for the *rationale* — in particular I3, where a null
+> measurement was correctly overturned by asking why the effect was absent.
+
+**Opened:** 2026-07-30. **Status:** **all three closed.** **I1** done + media-validated; **I2** decided
+(accept-and-document); **I3** measured, found a latent defect, **fixed 2026-07-31** — the fine donor's
+missing silence disjunct was *not* vestigial; it was unexercised by this corpus (lossy media never
+reaches the −120 digital-silence floor that triggers it) and misclassified in the **dangerous**
+direction when it was reached.
 
 After I1, the two front-ends agree **exactly** on the A side — `gap_floor_db` and `a_gap_rms_db` are
 0.00 apart on all ten gaps of the F15 pair — and the pair carries **one** class divergence (g5), on
-the accepted context-window axis, in the safe direction. What remains is I3: a donor-predicate
-disjunct that is present in scan, absent in fine, and has never been measured.
+the accepted context-window axis, in the safe direction. After I3 the donor predicate matches scan's
+disjunction as well, so the only surviving instrument difference is I2's 2.0 s / 3.0 s window.
 
-Split out of [archive/TEMP-equivalence-divergence-findings.md](archive/TEMP-equivalence-divergence-findings.md)
+Remaining work is cleanup, not measurement: see [Also carried over](#also-carried-over-lower-priority).
+
+Split out of [TEMP-equivalence-divergence-findings.md](TEMP-equivalence-divergence-findings.md)
 when that ledger was archived. Everything else in it is closed (**F14** fixed and media-validated;
 **F15**'s three fine-path fixes implemented and media-validated). These three were open at archival
 time and are carried here unchanged. Read the parent for the forensics — the measurements below are
@@ -45,10 +60,13 @@ but they **can mask true ones**: a gap where scan genuinely false-drops and fine
 gets pushed to `drop` by an instrument artifact, and the gate stays silent. The failure mode is lost
 sensitivity in a safety gate, which is the worse of the two.
 
-> **Stale justification to fix when I1 lands.** That module header still argues the drop-bias from
-> "fine reads lower on 10/10 gaps, ~3–19 dB" — that was the **channel-reduction** term, which is now
-> fixed. Post-fix the noise-floor delta is mixed-sign, median 2.13 dB. The drop-bias survives, but
-> **granularity** carries it now, not reduction. The conclusion holds; the stated reason does not.
+> **Stale justification — CORRECTED 2026-07-31.** That module header argued the drop-bias from "fine
+> reads lower on 10/10 gaps, ~3–19 dB" (the **channel-reduction** term, fixed in F15) and from an
+> unfiltered fingerprint floor (also fixed in F15). Granularity carried the argument afterwards, and I1
+> removed that too. The header now states the converged/residual split per input, names the two accepted
+> residuals with their measured sizes, and flags that the `0 dangerous` population result predates I1/I3
+> and was measured on all-lossy media — the corpus that structurally cannot trigger I3. The `PairVerdict`
+> variant docs were corrected to match.
 
 ---
 
@@ -94,9 +112,9 @@ noise-floor probe, so the overlay cannot bin two ways internally. `gap_signature
 and keeps its production consumers. The context window is deliberately *not* converged — that is I2.
 
 **Not yet confirmed on media.** Prediction: g4 and g8 close, **g5 survives** on I2. Treat a surviving
-g5 as the expected result, not a failed fix. Nothing in the committed test suite can observe this
-change (same limitation as `band_donor.json` — fixtures re-derive from recorded numbers), so the
-re-dump *is* the acceptance signal.
+g5 as the expected result, not a failed fix. At the time, nothing in the committed test suite could
+observe this change (fixtures re-derive from recorded numbers) — the re-dump *was* the acceptance
+signal. `band_donor.json` has since been re-harvested from that dump as a regression fixture.
 
 The rest of this section is the reasoning as it stood when the change was made.
 
@@ -276,6 +294,40 @@ Scan's donor test is a **disjunction** with the scanner's own silence bit; the f
 floor comparison alone. So a donor block the scanner flagged silent, but whose level sits above the
 floor, reads silent to scan and occupied to fine.
 
+### Outcome — **fixed 2026-07-31**
+
+`donor_silence_fraction_at_floor` now takes the whole `SilentCoreConfig` and counts a bin silent on
+`is_silent_interleaved(...) || below_floor`, structurally matching scan. Two consequences beyond the
+planned one:
+
+- **The `floor_db?` early return is gone.** Scan evaluates the donor from the silence bit whether or
+  not A's gap produced a floor, so fine now does too. The change is inert at the classifier —
+  `gap_floor_db` and `a_gap_rms_db` come from the same silent set, so a gap with no floor also has no
+  A RMS and classifies `NotEvaluated` regardless of the donor — but it removes a second structural
+  difference rather than leaving it to be rediscovered.
+- **Two existing unit tests failed, and they were right to.** `silent_gap_occupied_donor_is_repairable`
+  and `band_donor_mechanism_now_classifies_as_repairable` built "occupied" donors at 1e-4 and 2e-4 —
+  *below* the run recipe's `absolute_silence_rms` of 0.001. Those donors are scanner-silent, so the
+  tests were asserting the I3 divergence itself: occupied to fine, silent to scan, class `keep` against
+  scan's `drop`. Both donors were raised to 2e-3, which preserves each test's actual subject (a donor
+  above A's silent-core floor; in `band_donor`'s case still strictly inside the band between floor and
+  content peak) while being occupied on both paths. This is a second, independent sighting of the
+  defect — the first from source, this one from fixtures written before the disjunction was understood.
+
+The acceptance test asserts the mechanism inline before asserting the class, so it cannot pass for an
+unrelated reason: `bin_level_db` on a digitally-silent bin returns exactly `SILENCE_FLOOR_DB`, and
+`!(bin < SILENCE_FLOOR_DB)` — the floor-only predicate reading digital silence as occupied — is
+asserted as an executed fact. Suite: **504 passed, 0 failed**, clippy clean.
+
+### Superseded — the original recommendation, kept for the record
+
+> **Retained because the reversal is the useful part.** This was the guidance before the measurement
+> ran: it predicted the disjunct would prove to be dead code and warned against fixing from source. The
+> measurement did find no effect on media — and that null result, taken at face value, would have closed
+> this as a no-op. What changed the conclusion was asking *why* the effect was absent: the corpus is
+> all-lossy and structurally cannot reach the −120 floor the disjunct exists for. A null measurement over
+> a corpus that cannot produce the condition is not evidence about the code.
+
 ### Recommendation — **measure before deciding; do not fix from source**
 
 This is the one item where the direction of the bias is not established. Note it points the
@@ -302,19 +354,32 @@ fixed.
    0.606 dB median, one gap, safe direction.
 4. ~~**I3** — run the dead-disjunct count~~ **DONE**: no effect on this pair, but the pair cannot
    trigger it. **Not** dead code — a latent fine-path defect in the *dangerous* direction.
-5. **I3 fix** ← **next.** Add the silence predicate to `donor_silence_fraction_at_floor`; acceptance is
-   a synthetic-PCM test (digital-silence gap + digital-silence donor), not a media re-dump.
-5. Fix the stale reduction-based justification in `equivalence_calibration.rs`'s header (see above).
-6. Re-harvest `band_donor.json` under the fixed path and convert it to a **regression** fixture, per
-   the standing instructions in its README.
+5. ~~**I3 fix** — add the silence predicate to `donor_silence_fraction_at_floor`~~ **DONE 2026-07-31.**
+   Acceptance was the synthetic-PCM test, as pre-registered; two pre-existing tests also had to be
+   corrected because they encoded the defect. See [Outcome](#outcome--fixed-2026-07-31).
+6. **Fix the stale reduction-based justification in `equivalence_calibration.rs`'s header** ← **next**
+   (see above). It argues fine's drop-bias from the channel-reduction term, which is fixed; granularity
+   carried it afterwards, and post-I1 even that is nearly gone. Fold in I2's accepted residual
+   (0.606 dB median, one gap, safe direction).
+7. ~~**Re-harvest `band_donor.json`** under the fixed path and convert it to a **regression** fixture~~
+   **DONE 2026-07-31.** Re-harvested from `fp_i1_bin_convergence/` g4 (post-I1; I3 is a no-op on this
+   pair). Both paths now `repairable_dropout`; floors match exactly. Pre-fix band arithmetic retained
+   as constants in `tests/equivalence_divergence.rs`. See the fixture README.
 
-## Also carried over, lower priority
+## Also carried over — probes retained, not deleted
 
-- **Probe scaffolding is now redundant.** `SilentCoreProbe` and `NoiseFloorProbe` existed to predict
-  the three F15 fixes before they landed. The combined re-dump exists; both probe sets can be deleted.
-- **`band_donor.json` is a pre-fix artifact.** Its assertions still pass because they re-derive from
-  recorded numbers and never execute the measurement path — see the ⚠ sections in its README. Green
-  there currently means "the pre-fix numbers still say what they said", not "the fix works".
+The F15 probe fields (`silent_core_probes` / `noise_floor_probes`) were scheduled for deletion once the
+fixes landed. **Demoted 2026-07-31: do not delete as an archive chore.** They are dump-schema
+provenance (builder + `measure.rs` emit + committed corpus JSON), not dead locals — removing them
+changes what new dumps emit. Nothing classifies on them; the cost is dump size / measure time only.
+
+| | Keep? | Why |
+|---|---|---|
+| `noise_floor_probes` | **Yes** | I2 was accept-and-document with a re-open trigger. The window×bin×reduction grid is the cheapest offline attribution for NF residuals, and the only dump-native record of the reduction proof. |
+| `silent_core_probes` | Vestigial | Live `gap_floor_db` / `a_gap_rms_db` *are* the silent-core path at `scan_block_ms`. The dual-bin rows answered I1. Drop these first if dumps ever feel fat; leave the NF grid. |
+
+Soft-retire later via empty `skip_serializing_if` if needed — old corpora keep parsing. Do not strip
+committed fixtures (including `band_donor.json`) just to tidy the schema.
 
 ## Reproducing
 

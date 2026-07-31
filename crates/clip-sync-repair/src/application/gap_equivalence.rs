@@ -15,9 +15,19 @@
 //!
 //! Consequently this module now measures its **own** A levels and donor occupancy from PCM rather than
 //! reusing `fp.levels.*` and `donor_interior_nominal`, which are downmix, whole-span, unfiltered reads with
-//! other consumers that must not move. Two differences remain open by choice: the noise-floor context
-//! window and bin size (a policy call, median 2.1 dB), and the donor predicate's missing `b.silent ||`
-//! disjunct. A surviving divergence is therefore informative, but still not proof the scan gate is wrong.
+//! other consumers that must not move.
+//!
+//! **Instrument convergence (2026-07-30/31) closed two more differences:** **I1** moved the whole overlay
+//! onto `scan_block_ms` bins (it had inherited `gap_signature_bin_ms` = 50 ms by proximity, a value tuned
+//! for structure *pattern matching*, where finer is better — the opposite of what a max statistic and a
+//! threshold-crossing fraction want); **I3** gave the donor predicate scan's `b.silent ||` disjunct. After
+//! I1 the two front-ends compute `gap_floor_db` and `a_gap_rms_db` **identically** — 0.00 dB apart on all
+//! ten gaps of the characterized pair.
+//!
+//! **One difference remains open by choice:** the noise-floor context window, ±2.0 s (scan) vs ±3.0 s
+//! (here). Measured residual **0.606 dB** median, flipping one gap of ten in the safe direction; not
+//! converged because both values encode a real judgement and `gap_signature_context_secs` has unrelated
+//! consumers. A surviving divergence is therefore informative, but still not proof the scan gate is wrong.
 //! `docs/dev/gap-fingerprint.md` § *`equivalence` vs `scan_equivalence`*.
 
 use crate::domain::gap_equivalence::{
@@ -173,12 +183,14 @@ fn block_grid_bins(
 /// **This is the pre-fix recipe, deliberately frozen.** It applies the silence filter (F15 fix 1) but keeps
 /// the *downmix* reduction and gap-anchored tiling that fixes 2 and 3 replaced, so a re-dump can put the old
 /// and new numbers side by side. It is no longer "the scan path's way" and no longer previews what
-/// [`measure_gap_equivalence`] computes — comparing the two is its whole remaining purpose. Delete both
-/// probe sets once the combined re-dump has validated the fixes.
+/// [`measure_gap_equivalence`] computes — comparing the two is its whole remaining purpose.
+///
+/// **Vestigial — remove on next touch** (emit in `measure.rs`, this fn, [`SilentCoreProbe`], and the
+/// probe-only unit tests below). Do **not** delete `noise_floor_probes` with it; those stay for I2
+/// attribution. See `docs/dev/archive/TEMP-equivalence-instrument-convergence.md` § *Also carried over*.
 ///
 /// **Provenance only** — see [`SilentCoreProbe`]. The empty-silent-set case returns `None` for both
-/// statistics rather than a floored value, mirroring the scan path's `NEG_INFINITY` fold; whether that
-/// fallback is load-bearing is one of the things this probe exists to find out.
+/// statistics rather than a floored value, mirroring the scan path's `NEG_INFINITY` fold.
 ///
 /// A trailing partial bin is included (it is a real part of the gap); a zero-length span yields a probe
 /// with `total_bins == 0`.
@@ -233,7 +245,7 @@ pub struct SilentCoreConfig {
     /// diagnostic compares like-for-like with the path it audits.
     ///
     /// The noise-floor **context window** is still split (2.0 s scan vs 3.0 s fine) — that is I2 and
-    /// remains open. See `docs/dev/TEMP-equivalence-instrument-convergence.md`.
+    /// remains open. See `docs/dev/archive/TEMP-equivalence-instrument-convergence.md`.
     pub bin_frames: usize,
     pub silence_peak_fraction: f32,
     pub absolute_silence_rms: f32,
@@ -256,9 +268,10 @@ pub struct DonorSpan<'a> {
 
 /// Fraction of donor bins reading below `floor_db`, under the interleaved reduction.
 ///
-/// Mirrors `domain::donor::donor_interior_at`'s `r < floor` predicate and its 50 ms binning, changing only
-/// the two things F15 fixes: the floor is A's **silent-core** floor, and levels are an **interleaved power
-/// mean** rather than a downmix. Both sides of the comparison must move together — thresholding a mono
+/// Mirrors `domain::donor::donor_interior_at`'s `r < floor` predicate, changing the two things F15 fixes:
+/// the floor is A's **silent-core** floor, and levels are an **interleaved power
+/// mean** rather than a downmix. Binning is `scan_block_ms`, not that function's `gap_signature_bin_ms`
+/// (I1). Both sides of the comparison must move together — thresholding a mono
 /// donor against an interleaved floor would reintroduce up to `10·log10(N)` of bias in the *dangerous*
 /// direction (donor reads spuriously silent ⇒ `shared_silence` ⇒ drop).
 ///
@@ -280,7 +293,7 @@ pub struct DonorSpan<'a> {
 /// `bin/equivalence_calibration` exits 1 on. It went unnoticed because every corpus pair measured to date
 /// is lossy (AAC), whose decoded floors bottom out near −101 dB and never reach the −120 clamp; the
 /// 17-pair population check (5/297 divergent, 0 dangerous) could not have produced it. Lossless or
-/// genuinely muted material can. See `docs/dev/TEMP-equivalence-instrument-convergence.md` § I3.
+/// genuinely muted material can. See `docs/dev/archive/TEMP-equivalence-instrument-convergence.md` § I3.
 ///
 /// Consequently `floor_db: None` is **not** an early return: scan still evaluates the donor from the
 /// silence bit alone when A's gap has no silent block to set a floor, and so does this.
@@ -420,10 +433,15 @@ mod tests {
     }
 
     /// A silent gap (dig-silence) with an occupied donor → RepairableDropout (end-to-end from PCM).
+    ///
+    /// The donor must clear **both** occupancy terms (I3): above A's silent-core floor *and* above the
+    /// recipe's `absolute_silence_rms`. It was 1e-4 until 2026-07-31 — below the 0.001 absolute floor, so
+    /// the scan path would have read it silent while this path read it occupied. That is the divergence
+    /// I3 fixes, and encoding it here made the test assert the defect.
     #[test]
     fn silent_gap_occupied_donor_is_repairable() {
         let a = vec![0.0f32; 48_000]; // A gap interior = digital silence
-        let b = vec![1e-4f32; 48_000]; // −80 dBFS: above A's −120 floor ⇒ occupied
+        let b = vec![2e-3f32; 48_000]; // −54 dBFS: above A's −120 floor and the 0.001 abs floor ⇒ occupied
         let v = measure_gap_equivalence(&a, 1, 0..48_000, Some(-50.0), donor(&b), &core(), &on());
         assert_eq!(v.class, GapEquivalenceClass::RepairableDropout);
         // Digital silence floors at SILENCE_FLOOR_DB (−120), the same scale as noise_floor_db.
@@ -456,9 +474,15 @@ mod tests {
     /// whole-span peak. Pre-fix, the whole-span max became the silence threshold, the donor read silent,
     /// and the class was `SharedSilence` ⇒ **drop** a repairable gap. Post-fix the floor is the silent
     /// core, the donor reads occupied, and the class is `RepairableDropout` ⇒ keep.
+    ///
+    /// The donor was 2e-4 until 2026-07-31, when I3 added the scanner's own silence bit to the donor
+    /// predicate: 2e-4 is below the recipe's 0.001 `absolute_silence_rms`, so scan read that donor silent
+    /// and only this path read it occupied. 2e-3 preserves the band (it still sits strictly between the
+    /// silent-core floor and the content peak, which is what the test is about) while being occupied on
+    /// both paths.
     #[test]
     fn band_donor_mechanism_now_classifies_as_repairable() {
-        let (quiet, loud, donor) = (1e-5f32, 0.5f32, 2e-4f32);
+        let (quiet, loud, donor) = (1e-5f32, 0.5f32, 2e-3f32);
         let mut a = vec![quiet; 48_000];
         for v in &mut a[24_000..26_400] {
             *v = loud; // the content peak that used to become `gap_floor_db`
@@ -582,8 +606,9 @@ mod tests {
         // silent bin sits *at* the floor, and the strict `<` therefore excludes it.
         let bin = bin_level_db(&b, 1, 0, 2_400, ChannelReduction::Interleaved).expect("bin level");
         assert_eq!(bin, SILENCE_FLOOR_DB, "digital silence clamps to the floor");
+        let floor_only_says_silent = bin < SILENCE_FLOOR_DB;
         assert!(
-            !(bin < SILENCE_FLOOR_DB),
+            !floor_only_says_silent,
             "floor-only reads digital silence as occupied — the I3 defect"
         );
 

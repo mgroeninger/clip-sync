@@ -8,7 +8,7 @@
 > **0.101 dB**, floor **0.279**, donor fraction **0.012**, noise floor **2.129** (was one-signed to −19).
 >
 > Three items were open at archival time and were **split into their own live ledger** rather than
-> resolved here: [../TEMP-equivalence-instrument-convergence.md](../TEMP-equivalence-instrument-convergence.md)
+> resolved here: [TEMP-equivalence-instrument-convergence.md](TEMP-equivalence-instrument-convergence.md)
 > — equivalence **bin size** (I1), noise-floor **context window** (I2), and the donor predicate's
 > missing `b.silent ||` **disjunct** (I3, still unmeasured). All three are the same axis: the two
 > front-ends now share corrected sensor *definitions* but sample them with different instruments.

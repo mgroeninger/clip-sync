@@ -123,21 +123,27 @@ pub struct GapEquivalenceVerdict {
     pub donor_total_blocks: Option<usize>,
     /// Candidate **silent-core** floors at one or more bin sizes — see [`SilentCoreProbe`].
     /// Provenance only; empty (and omitted) unless a front-end computes them.
+    ///
+    /// **Vestigial — remove on next touch** of this field / its emit path. Live `gap_floor_db` /
+    /// `a_gap_rms_db` already *are* the silent-core measurement. Do **not** delete
+    /// [`noise_floor_probes`] with it (kept for I2 attribution).
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub silent_core_probes: Vec<SilentCoreProbe>,
     /// Candidate **noise floors** over a grid of context windows × bin sizes — see [`NoiseFloorProbe`].
-    /// Provenance only; empty (and omitted) unless a front-end computes them.
+    /// Provenance only; empty (and omitted) unless a front-end computes them. **Retained** for I2
+    /// residual attribution — not scheduled for deletion with [`silent_core_probes`].
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub noise_floor_probes: Vec<NoiseFloorProbe>,
 }
 
-/// A candidate `gap_floor_db` measured the **scan path's way** — max RMS over the *silent* bins of the
-/// gap only — but at a bin size the caller chooses. Recorded so the F15 fix can be evaluated before it
-/// is adopted (`docs/dev/archive/TEMP-equivalence-divergence-findings.md` § F15).
+/// A candidate `gap_floor_db` measured with a silence filter at a caller-chosen bin size — F15
+/// scaffolding so the silent-core floor could be evaluated before it was adopted
+/// (`docs/dev/archive/TEMP-equivalence-divergence-findings.md` § F15).
 ///
-/// **Provenance only.** Nothing classifies on these; they exist so a corpus dump can answer three
-/// questions without changing any verdict: does a silent-core floor close the band that flips a class,
-/// does bin size move it, and is the empty-silent-bin case real or hypothetical.
+/// **Provenance only.** Nothing classifies on these. The live fine path now *is* the silent-core
+/// measurement at `scan_block_ms`, so this type is **vestigial** — remove the emit, the field, and
+/// this struct when next touching that path. Keep [`NoiseFloorProbe`] (I2 attribution). See
+/// `docs/dev/archive/TEMP-equivalence-instrument-convergence.md` § *Also carried over*.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SilentCoreProbe {
     /// Bin width in milliseconds this probe binned the gap at.
@@ -180,10 +186,11 @@ pub enum ChannelReduction {
 }
 
 /// A candidate `noise_floor_db` — median dB over the context bins **outside** the gap — measured at one
-/// `(context window, bin size, channel reduction)` combination. The second open F15 axis: the two
-/// front-ends estimate the same quantity the same *way* but over ±2 s / 100 ms (scan) vs ±3 s / 50 ms
-/// (fine), and fine reads systematically **lower**, which shrinks `a_below_noise` and pushes gaps out
-/// of `repairable_dropout`.
+/// `(context window, bin size, channel reduction)` combination. This is the **one surviving** axis
+/// between the two front-ends (I2): both now bin at `scan_block_ms` and reduce interleaved, but the
+/// context window is ±2.0 s (scan) vs ±3.0 s (fine). Residual median **0.606 dB**, still biasing fine
+/// **lower**, which shrinks `a_below_noise` and pushes gaps out of `repairable_dropout` — the safe
+/// direction. Kept deliberately un-converged; these probes are what make it attributable.
 ///
 /// **Provenance only.** Emitted over a grid so the variables can be separated: the probe at scan's own
 /// `(2 s, scan_block_ms, Interleaved)` should reproduce `scan_equivalence.noise_floor_db`, and the
@@ -255,16 +262,17 @@ impl GapEquivalenceVerdict {
     // `with_scan_provenance`; re-attaching the levels number would overwrite the fix with the statistic it
     // exists to replace. `levels.gap_floor_db` is still dumped in its own block.
 
-    /// Attach candidate silent-core floors. Never changes `class` or `drop` — these are measured to
-    /// decide whether the F15 fix should be adopted, not acted on.
+    /// Attach candidate silent-core floors. Never changes `class` or `drop`.
+    ///
+    /// **Vestigial** — remove with [`SilentCoreProbe`] on next touch; see that type's docs.
     #[must_use]
     pub fn with_silent_core_probes(mut self, probes: Vec<SilentCoreProbe>) -> Self {
         self.silent_core_probes = probes;
         self
     }
 
-    /// Attach candidate noise floors. Never changes `class` or `drop` — same contract as
-    /// [`Self::with_silent_core_probes`].
+    /// Attach candidate noise floors. Never changes `class` or `drop`. **Retained** for I2
+    /// attribution — not paired for deletion with [`Self::with_silent_core_probes`].
     #[must_use]
     pub fn with_noise_floor_probes(mut self, probes: Vec<NoiseFloorProbe>) -> Self {
         self.noise_floor_probes = probes;

@@ -383,7 +383,10 @@ struct SeamSite {
 impl SeamSite {
     fn shifted(self, off: usize) -> Option<Self> {
         let (a_edge, b_anchor) = if self.pre {
-            (self.a_edge.checked_sub(off)?, self.b_anchor.checked_sub(off)?)
+            (
+                self.a_edge.checked_sub(off)?,
+                self.b_anchor.checked_sub(off)?,
+            )
         } else {
             (self.a_edge + off, self.b_anchor + off)
         };

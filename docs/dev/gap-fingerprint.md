@@ -212,29 +212,43 @@ the dump itself never drops gaps. Production plan-time drop is separate and **on
 
 ### `equivalence` vs `scan_equivalence` — a second opinion, not an oracle
 
-They feed the **same classifier** from **differently defined** inputs. This is deliberate and is not
-scheduled to converge; read them accordingly.
+They feed the **same classifier**. They once did so from **differently defined** inputs; through
+2026-07-30/31 those definitions were converged one at a time (F15, then I1, then I3), each validated on
+media. **One difference remains, deliberately.** Read them accordingly.
 
 - **`scan_equivalence` is authoritative.** It is the verdict production acts on (`skip_equivalent_gaps`),
   measured on scan blocks (size = the `scan_block_ms` recipe knob — not a constant, and not 250 ms).
   The curated gap **cells** in [gap-vocabulary.md](gap-vocabulary.md) are scan-time cells, so a fixture's
   declared cell is checked against *this* field.
 - **`equivalence` is diagnostic only.** Nothing in the plan or patch path reads it; it exists to be
-  compared. Sample-level A gap RMS over the **refined** span, fine-bin noise floor, 50 ms donor bins.
+  compared. Silent-core A gap RMS and floor, interleaved reduction, `scan_block_ms` bins — the same
+  definitions the scan gate uses.
 
 **It was called "the fine reference" here until 2026-07-30. That was wrong**, and the wording bred a
-recurring error: reading a divergence as "the coarse gate is inaccurate". Both known differences bias
-the *fine* side toward `drop`, so it is the **more aggressive** of the two, not the safer one:
+recurring error: reading a divergence as "the coarse gate is inaccurate". The label is still wrong, but
+the reason has changed — do not cite the old table, which described defects that no longer exist:
 
-| bias | mechanism | direction |
+| input | status | note |
 |---|---|---|
-| `gap_floor_db` | fine takes the max over **all** bins in the span (a content peak); scan takes the max over A's **silent** blocks (an actual floor) | fine's floor is higher ⇒ more donor blocks read silent ⇒ toward `shared_silence` |
-| noise floor | **dominant:** fine `mono_rms` (amplitude / downmix) vs scan interleaved power; **secondary:** ±3 s / 50 ms vs ±2 s / 100 ms | fine reads **lower** — measured on 10/10 gaps of one pair (~3–19 dB), 5/5 on a 17-pair corpus, and 3/3 on the committed curated fixtures ⇒ smaller `a_below_noise` ⇒ away from `repairable_dropout`. Matching reduction alone collapses the bias on 7/10 gaps (see below) |
+| `gap_floor_db` | **converged** (F15) | fine took the max over **all** bins in the span (a content peak); it now takes the max over A's **silent** bins, like scan. Measured 0.00 dB apart on 10/10 gaps |
+| A gap RMS | **converged** (F15) | same silent-core filter and span rule; 0.00 dB apart on 10/10 |
+| channel reduction | **converged** (F15) | both interleaved power mean. This was the *dominant* noise-floor term (Cauchy–Schwarz bounds downmix ≤ interleaved, gap up to `10·log10(N)` = 7.78 dB at 6ch) |
+| bin width | **converged** (I1) | the overlay had inherited `gap_signature_bin_ms` = 50 ms; now `scan_block_ms`. Finer bins upward-bias a **max** and a **threshold-crossing fraction**, the opposite of what they do for structure pattern matching |
+| donor predicate | **converged** (I3) | fine now applies scan's `b.silent ‖ rms < floor` disjunction |
+| **noise-floor context** | **open by choice** (I2) | ±2.0 s (scan) vs ±3.0 s (fine). Median **0.606 dB**, fine still reads **lower** ⇒ smaller `a_below_noise` ⇒ away from `repairable_dropout`. One gap of ten flips, safe direction |
+| **donor window** | **open, small** | scan maps the **core**, fine the **nominal** `b_mapped` span. Median `donor_silence_fraction` delta 0.008 (max 0.067), every gap within ±1 block, mixed signs |
+
+So fine is still the **more aggressive** side, but only by the last two rows, and only one of them is
+one-signed. Sizes are medians over **one pair, ten gaps** — they bound the axes on that pair, not on
+the corpus.
 
 **Measured population:** 5 divergent / 297 gaps (1.7 %) across a 17-pair corpus, **0 in the dangerous
-direction**. The mechanism behind the divergences is a donor whose level sits *between* the two floors —
-silent to fine, occupied to scan. Pinned media-free by
-`tests/gap_corpus/fingerprints/equivalence_divergence/`; full analysis in
+direction** — measured *before* I1/I3, so the rate should now read lower. Read the `0 dangerous` with one
+caveat: every pair in that corpus is lossy and bottoms out near −101 dB, so it structurally could not
+reach the −120 digital-silence condition that I3 fixed. The original mechanism was a donor whose level sat *between* the two floors — silent to
+fine, occupied to scan. That band is closed (F15 + I1); the committed
+`tests/gap_corpus/fingerprints/equivalence_divergence/band_donor.json` is now a regression fixture
+pinning agreement on that gap. Full analysis in
 [archive/TEMP-equivalence-divergence-findings.md](archive/TEMP-equivalence-divergence-findings.md) § F15.
 
 #### `equivalence.silent_core_probes` — measuring the candidate fix before adopting it
@@ -256,13 +270,18 @@ is available without assuming bin size is irrelevant — whether it is, is one o
 absent `floor_db` means the empty-silent-bin fallback is load-bearing on that gap and has to be decided
 before the fix lands; if it never occurs across the corpus, it is a defensive case and nothing more.
 
-This is scaffolding with a scheduled death: once the fix is adopted or rejected, the probes come out.
+Originally scaffolding with a scheduled death after the fix landed. **Retained** — see
+[archive/TEMP-equivalence-instrument-convergence.md](archive/TEMP-equivalence-instrument-convergence.md) § *Also
+carried over*: `noise_floor_probes` stay for I2 attribution; `silent_core_probes` are vestigial and
+may drop later if dumps feel fat. Nothing classifies on either.
 
 #### `equivalence.noise_floor_probes` — separating the second axis's three variables
 
-The other open F15 axis. Both paths estimate the noise floor the *same way* (median of context bins
-outside the gap) but over **±2 s / 100 ms** (scan) vs **±3 s / 50 ms** (fine), and fine reads
-systematically lower. Several variables, one observed difference — so the probe emits the grid:
+**The one surviving axis** (I2). Both paths estimate the noise floor the *same way* (median of context
+bins outside the gap), both now at `scan_block_ms` bins under the interleaved reduction, but over
+**±2.0 s** (scan) vs **±3.0 s** (fine); fine reads systematically lower, by a median 0.606 dB. It began
+as several variables against one observed difference, which is why the probe emits a grid — the grid is
+what let bin size and reduction be charged separately and removed, leaving the window alone:
 
 | field | meaning |
 |---|---|
@@ -436,10 +455,11 @@ per gap cell (see [gap-vocabulary.md](gap-vocabulary.md)), the media-free input 
 tests (`gap_cell_fixtures`, `golden_baseline_invariance`, `gap_repair_spec_diff`).
 
 A second, smaller committed set sits alongside it at
-`crates/clip-sync-repair/tests/gap_corpus/fingerprints/equivalence_divergence/` — gaps where
-`scan_equivalence` and `equivalence` disagree, pinning the divergence class for `equivalence_divergence`.
-Deliberately **not** in `curated/`: a cell is a property of a gap, a divergence is a property of the two
-front-ends reading it, so it has no `GapCellType` and is not subject to the per-cell coverage invariants.
+`crates/clip-sync-repair/tests/gap_corpus/fingerprints/equivalence_divergence/` — originally gaps where
+`scan_equivalence` and `equivalence` disagreed; `band_donor.json` is now a **regression** fixture for
+the closed F15 band mechanism (paths agree post-F15 + I1). Deliberately **not** in `curated/`: a cell
+is a property of a gap, a divergence is a property of the two front-ends reading it, so it has no
+`GapCellType` and is not subject to the per-cell coverage invariants.
 
 **Licensing guardrail:** the only place the real `id → title/path` mapping should live is a
 **git-ignored** local file (e.g. `corpus/.sources.local.toml`). Keep it out of the committed corpus.

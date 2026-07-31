@@ -2416,7 +2416,7 @@ pub fn characterize_gaps_from_decode(
         // finer bins are upward-biased, measured at max ≥ coarser on 10/10 gaps and the donor fraction
         // biased up on 5/6. `gap_signature_bin_ms` itself is untouched — it has production consumers in
         // `patch_audio::geometry` / `::region`. The context window (2.0 s vs 3.0 s) stays split; that is
-        // I2 and still open. See `docs/dev/TEMP-equivalence-instrument-convergence.md` § I1.
+        // I2 and still open. See `docs/dev/archive/TEMP-equivalence-instrument-convergence.md` § I1.
         let equiv_bin_ms = report.scan_block_ms;
         //
         // The donor goes in as **PCM at the nominal `b_mapped` span**, not as
@@ -2463,12 +2463,10 @@ pub fn characterize_gaps_from_decode(
         // statistic* from the scan path's (max over all gap bins vs max over silent A blocks only),
         // and the two differ by enough to flip a class — so both are now recorded per gap rather
         // than left to be inferred.
-        // Candidate silent-core floors (F15), recorded and never classified on. Two bin sizes, because
-        // whether bin size moves the floor is itself an open axis: the fingerprint's own
-        // `gap_signature_bin_ms`, and the scan recipe's block size so the comparison against
-        // `scan_equivalence.gap_floor_db` is like-for-like. Cannot be folded into `levels.gap_floor_db` —
-        // that closure is mono-RMS-only with no silence predicate, and its other consumers (`snr_db`,
-        // dual-fit's `a_gap_floor_db`) would move with it.
+        // Candidate silent-core floors (F15 scaffolding) — recorded, never classified on.
+        // **Vestigial: remove on next touch** of this emit (live `equiv` already *is* silent-core at
+        // `equiv_bin_ms`). Keep the `noise_floor_probes` grid below (I2 attribution). Two bin sizes
+        // remain only as a side-by-side with `gap_signature_bin_ms` vs `scan_block_ms`.
         let probe = |bin_ms: u64| {
             crate::application::gap_equivalence::silent_core_probe(
                 &a_pcm.samples,

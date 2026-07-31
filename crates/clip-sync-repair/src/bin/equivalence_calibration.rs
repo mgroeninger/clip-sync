@@ -1,42 +1,60 @@
 //! `equivalence-calibration` — diff the **coarse production scan gate** (the scan-block equivalence gate)
-//! against the **fine `--gap-fingerprints` second opinion** (sample-level A RMS + fine-bin noise floor + 50 ms
-//! donor bins), per gap. Both paths feed the same `classify_gap_equivalence`, but that is where the
-//! commonality ends.
+//! against the **`--gap-fingerprints` second opinion**, per gap. Both feed the same
+//! `classify_gap_equivalence`.
 //!
-//! **They do NOT differ only in measurement granularity** (this doc comment said so until 2026-07-30; it
-//! was wrong, and it was the stated justification for treating "fine" as ground truth). All three inputs
-//! are differently *defined*, not merely differently sampled:
+//! **The two paths are now nearly converged, and the history matters for reading this tool's output.**
+//! They once differed in how all three inputs were *defined*, not merely sampled; through 2026-07-30/31
+//! those definitional differences were fixed one at a time, each validated on media. What is left is one
+//! window and one span mapping:
 //!
-//! | input | coarse (scan) | fine (fingerprint) |
-//! |---|---|---|
-//! | A RMS | silent blocks only, over the silent **core** | full PCM RMS over the **refined** span |
-//! | noise floor | median, ±2 s, scan blocks | median, ±3 s, 50 ms bins |
-//! | donor window | **core**, offset-mapped | **nominal** refined span |
-//! | donor predicate | `silent` bit **OR** `rms < gap_floor` | `rms < gap_floor` only |
-//! | `gap_floor` | max of **silent** A blocks (F2/R1-filtered) | max over **all** gap bins (unfiltered) |
+//! | input | coarse (scan) | fingerprint second opinion | status |
+//! |---|---|---|---|
+//! | A RMS | silent blocks only, over the silent **core** | *same* | **converged** (F15) — 0.00 dB apart on 10/10 |
+//! | `gap_floor` | max of **silent** A blocks (F2/R1-filtered) | *same* | **converged** (F15) — 0.00 dB apart on 10/10 |
+//! | reduction | interleaved | *same* | **converged** (F15) |
+//! | A span | scan blocks by centre-containment in the raw gap | *same* | **converged** (F15) |
+//! | bin width | `scan_block_ms` | *same* | **converged** (I1, 2026-07-30) |
+//! | donor predicate | `silent` bit **OR** `rms < gap_floor` | *same* | **converged** (I3, 2026-07-31) |
+//! | noise floor | median, ±2.0 s (`EQUIVALENCE_CONTEXT_SECS`) | median, **±3.0 s** (`gap_signature_context_secs`) | **accepted residual** (I2) |
+//! | donor window | the **core**, offset-mapped | the **nominal** `b_mapped` span | **accepted residual** — ~1 block |
 //!
-//! The last row matters most and cuts *against* the fine side: the fingerprint floor has no silence
-//! filter, so it is inflated by exactly the hold-bridged / edge-refined content that
-//! `TEMP-silence-floor-findings` F2 identified and fixed — on the coarse path only. A higher floor counts
-//! more of B as silent, biasing toward `shared_silence`/drop, which is the dangerous direction. So
-//! **"fine" is a second opinion, not an oracle**, and a divergence reported here is not by itself proof
-//! that the scan path is the wrong one. Both floors are now recorded per gap
-//! (`GapEquivalenceVerdict::gap_floor_db`) so a divergence can be attributed instead of assumed.
+//! **The two accepted residuals, with measured sizes** (one characterized pair, ten gaps — this bounds
+//! the axes on that pair, not on the corpus):
 //!
-//! The **noise-floor** row biases the same way, and that is now measured rather than argued: fine reads
-//! **lower** on 10/10 gaps of one characterized pair (~3–19 dB), 5/5 of the divergences on a 17-pair
-//! corpus, and 3/3 of the committed curated fixtures. A lower floor shrinks `a_below_noise`, pushing gaps
-//! out of `repairable_dropout`. So both known differences push fine toward **drop** — fine is the more
-//! aggressive path, not the safer one.
+//! - **Noise-floor context window** (I2): median |fine − scan| **0.606 dB**, flipping **one** gap of ten,
+//!   in the safe direction. Deliberately not converged: 2.0 s and 3.0 s each encode a real judgement
+//!   about how much surrounding material defines "the noise floor here", and `gap_signature_context_secs`
+//!   is a configurable parameter with unrelated consumers. Re-open if a broader corpus flips gaps in the
+//!   **dangerous** direction, or flips more than a small minority — this tool's exit code already
+//!   automates the former trigger.
+//! - **Donor window**: median `donor_silence_fraction` delta **0.008** (max 0.067), every gap within
+//!   ±1 `scan_block_ms` of alignment, mixed signs.
+//!
+//! **"Fine" is a second opinion, not an oracle** — but the reason has changed, so do not reach for the
+//! old one. Until 2026-07-30 this header argued that every known difference biased the fingerprint side
+//! toward `drop`, principally because its floor was unfiltered (inflated ⇒ more of B counts silent) and
+//! its noise floor read lower on 10/10 gaps by ~3–19 dB. **Both of those terms are gone**: the floor is
+//! silence-filtered and the reduction is fixed, so the two floors agree exactly and the noise-floor delta
+//! is mixed-sign at 0.606 dB. Bin-size granularity carried the drop-bias afterwards; I1 removed that too.
+//! What remains is small, and only the noise-floor window is still one-sided in the safe direction. Both
+//! floors are recorded per gap (`GapEquivalenceVerdict::gap_floor_db`) so a divergence can be attributed
+//! rather than assumed.
 //!
 //! **Measured population (2026-07-30):** 5 divergent / 297 gaps (1.7 %) over a 17-pair corpus,
-//! recipe-invariant, with **0 dangerous**. Divergence at this rate is expected, not a defect. The
-//! mechanism is a donor sitting *between* the two floors — silent to fine, occupied to scan — pinned
-//! media-free by `tests/gap_corpus/fingerprints/equivalence_divergence/`.
+//! recipe-invariant, with **0 dangerous**. The mechanism is a donor sitting *between* the two floors —
+//! silent to fine, occupied to scan — pinned media-free by
+//! `tests/gap_corpus/fingerprints/equivalence_divergence/`. Note the population was measured **before**
+//! I1/I3 landed and against the pre-I1 instrument; the divergence count should now be lower.
+//!
+//! Read `0 dangerous` with one caveat: every pair in that corpus is lossy and never reaches exact digital
+//! silence. Until I3 (2026-07-31) the fingerprint donor predicate lacked scan's `silent`-bit disjunct, and
+//! on a digitally-silent gap with a digitally-silent donor it would have read the donor **occupied**
+//! (`−120 < −120` is false) and reported this tool's dangerous direction spuriously. Lossless or
+//! genuinely-muted material would have tripped it; the corpus simply could not.
 //!
 //! This tool quantifies where the two disagree on real media — especially the one dangerous direction:
-//! **scan says *drop* but fine says *keep*** (a potential false drop / unrepaired hole). That direction is
-//! the one fine's biases do **not** manufacture, which is what makes it worth gating on.
+//! **scan says *drop* but fine says *keep*** (a potential false drop / unrepaired hole). That is the
+//! direction the surviving residual does **not** manufacture, which is what makes it worth gating on.
 //!
 //! A single `--gap-fingerprints DIR` run carries **both** verdicts per gap (`equivalence` = fine,
 //! `scan_equivalence` = coarse). Two modes, auto-detected from the argument:
@@ -73,11 +91,13 @@ enum PairVerdict {
     /// Both paths landed on the same class.
     Agree,
     /// Classes differ but the scan does **not** drop a gap fine keeps — a missed optimization
-    /// (scan keeps, fine drops) or a benign class swap. Safe, and **expected at ~2 %**: both known
-    /// input differences bias fine toward `drop`, so this is the direction they produce.
+    /// (scan keeps, fine drops) or a benign class swap. Safe, and expected at a low rate: the surviving
+    /// noise-floor-window residual biases fine toward `drop`, so this is the direction it produces. The
+    /// ~2 % measured over the 17-pair corpus predates I1/I3 and should now read lower.
     SafeDiverge,
-    /// Scan drops a gap the fine path would keep — a potential **false drop** (unrepaired hole). Neither
-    /// known bias produces this direction, so a hit here warrants investigation rather than a shrug.
+    /// Scan drops a gap the fine path would keep — a potential **false drop** (unrepaired hole). No
+    /// surviving instrument residual produces this direction, so a hit here warrants investigation
+    /// rather than a shrug.
     Dangerous,
 }
 

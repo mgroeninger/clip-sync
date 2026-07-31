@@ -9,7 +9,7 @@
 > (medium-high, the fingerprint corpus records `skip` where production patches via dual-fit).
 > Their IDs are unchanged, so the cross-references below still resolve. That ledger has since been
 > **closed and archived too** (2026-07-30, now a sibling here); its own remaining items moved on to
-> [../TEMP-equivalence-instrument-convergence.md](../TEMP-equivalence-instrument-convergence.md).
+> [TEMP-equivalence-instrument-convergence.md](TEMP-equivalence-instrument-convergence.md).
 > **F11** is delegated to
 > [../TEMP-scan-recipe-plan.md](../TEMP-scan-recipe-plan.md).
 >

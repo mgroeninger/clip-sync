@@ -186,13 +186,17 @@ pub struct GapFingerprint {
     /// Gap-equivalence classification (`docs/dev/gap-vocabulary.md` § Silence-character pre-gate): does this gap need patching?
     /// Derived from the **silence character** — A's gap RMS vs the recording's noise floor (dropout vs room
     /// tone) + donor silence (is B occupied) — the signals that separate real dropouts from mutual/program
-    /// silence. Sample-level A RMS over the refined span + fine-bin noise floor + 50 ms donor bins.
+    /// silence. Silent-core A RMS and floor, interleaved reduction, `scan_block_ms` bins — the same
+    /// definitions the scan gate uses, since F15 + I1.
     ///
     /// **Diagnostic only, and not a reference.** Nothing in the plan or patch path reads this field —
     /// `scan_equivalence` is the verdict production acts on. It was documented as "the fine reference"
-    /// until 2026-07-30; that framing was wrong, because both known differences from the scan path bias
-    /// *this* side toward `drop` (whole-span `gap_floor_db` inflates donor silence; the ±3 s / 50 ms noise
-    /// floor reads lower). Measured divergence: 1.7 % of gaps, never in the dangerous direction.
+    /// until 2026-07-30; that framing was wrong, because the differences from the scan path then biased
+    /// *this* side toward `drop` (whole-span `gap_floor_db` inflated donor silence; the ±3 s / 50 ms noise
+    /// floor read lower). Those terms are fixed. What survives is the ±2.0 s vs ±3.0 s noise-floor context
+    /// window (median 0.606 dB, still the safe direction) and ~1 block of donor-window alignment.
+    /// Measured divergence: 1.7 % of gaps, never in the dangerous direction — but that population
+    /// predates I1/I3.
     /// See `docs/dev/gap-fingerprint.md` § *`equivalence` vs `scan_equivalence`*.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub equivalence: Option<crate::domain::gap_equivalence::GapEquivalenceVerdict>,
