@@ -10,7 +10,7 @@ use super::schema::*;
 
 use clip_sync::normalized_correlation;
 
-use crate::domain::gap_equivalence::NoiseFloorProbe;
+use crate::domain::gap_equivalence::{ChannelReduction, NoiseFloorProbe};
 
 use crate::domain::gap_anchor_seam::{
     list_anchor_candidates_a, list_feasible_anchor_brackets, AnchorSeamParams, AnchorSource,
@@ -25,7 +25,8 @@ use crate::domain::patch_result::GapPatchSkipReason;
 use crate::domain::pcm::{interleaved_to_channels, interleaved_to_mono};
 use crate::domain::policies::{
     border_templates_for_gap, border_templates_per_channel_for_gap, refine_gap_frames,
-    seam_channel_diagnostics, GapBorderSpec, RefinedGapFrames, SeamPlacement, SeamTemplates,
+    rms_interleaved, seam_channel_diagnostics, GapBorderSpec, RefinedGapFrames, SeamPlacement,
+    SeamTemplates,
 };
 
 /// Span args for [`level_profile`]: the gap window and the surrounding context window (in frames).
@@ -86,8 +87,12 @@ fn level_profile(
     )
 }
 
-/// One candidate noise floor over A's gap context at `(context_secs, bin_ms)`, measured by
+/// One candidate noise floor over A's gap context at `(context_secs, bin_ms, reduction)`, measured by
 /// [`level_profile`] itself so the probe cannot drift from the measurement it characterizes.
+///
+/// The two reductions are taken from the functions the two front-ends actually use — `mono_rms` for
+/// [`ChannelReduction::Downmix`], `rms_interleaved` (what the scan's `block_rms_db` calls) for
+/// [`ChannelReduction::Interleaved`] — rather than reimplemented here, for the same reason.
 ///
 /// **Provenance only** — see [`NoiseFloorProbe`]. An empty context (zero window, or a gap that fills
 /// the track) yields `floor_db: None` rather than `median()`'s −120 placeholder, so "no context" stays
@@ -99,13 +104,26 @@ fn noise_floor_probe(
     sample_rate: u32,
     context_secs: f64,
     bin_ms: u64,
+    reduction: ChannelReduction,
 ) -> NoiseFloorProbe {
     let ch = channels.max(1);
     let rate = f64::from(sample_rate).max(1.0);
     let context_frames = (context_secs.max(0.0) * rate).round() as usize;
     let bin_frames = (((bin_ms as f64) / 1000.0) * rate).round().max(1.0) as usize;
+    let frames = a_samples.len() / ch;
+    let accessor = |f: usize, end: usize| match reduction {
+        ChannelReduction::Downmix => mono_rms(a_samples, ch, f, end),
+        ChannelReduction::Interleaved => {
+            let end = end.min(frames);
+            if f >= end {
+                0.0
+            } else {
+                rms_interleaved(&a_samples[f * ch..end * ch])
+            }
+        }
+    };
     let (lp, context_bins) = level_profile(
-        |f, end| mono_rms(a_samples, ch, f, end),
+        accessor,
         LevelProfileSpan {
             gap_start: gap_frames.start,
             gap_end: gap_frames.end,
@@ -118,15 +136,19 @@ fn noise_floor_probe(
     NoiseFloorProbe {
         context_secs,
         bin_ms,
+        reduction,
         floor_db: (context_bins > 0).then(|| f64::from(lp.noise_floor_db)),
         context_bins,
     }
 }
 
-/// The `{context window} × {bin size}` grid of [`noise_floor_probe`] reads, deduped.
+/// The `{context window} × {bin size} × {channel reduction}` grid of [`noise_floor_probe`] reads,
+/// deduped.
 ///
 /// Deduping matters for interpretation, not cost: when the two front-ends' recipes coincide the grid
 /// collapses, and a repeated row would read as corroboration rather than as the same measurement twice.
+/// Mono material makes the two reductions identical *numerically* but they stay separate rows — they
+/// are different recipes, and collapsing them would hide that the run had nothing to say about the axis.
 fn noise_floor_probe_grid(
     a_samples: &[f32],
     channels: usize,
@@ -134,24 +156,28 @@ fn noise_floor_probe_grid(
     sample_rate: u32,
     context_secs: &[f64],
     bin_ms: &[u64],
+    reductions: &[ChannelReduction],
 ) -> Vec<NoiseFloorProbe> {
     let mut out: Vec<NoiseFloorProbe> = Vec::new();
     for &secs in context_secs {
         for &bin in bin_ms {
-            if out
-                .iter()
-                .any(|p| p.context_secs == secs && p.bin_ms == bin)
-            {
-                continue;
+            for &reduction in reductions {
+                if out
+                    .iter()
+                    .any(|p| p.context_secs == secs && p.bin_ms == bin && p.reduction == reduction)
+                {
+                    continue;
+                }
+                out.push(noise_floor_probe(
+                    a_samples,
+                    channels,
+                    gap_frames.clone(),
+                    sample_rate,
+                    secs,
+                    bin,
+                    reduction,
+                ));
             }
-            out.push(noise_floor_probe(
-                a_samples,
-                channels,
-                gap_frames.clone(),
-                sample_rate,
-                secs,
-                bin,
-            ));
         }
     }
     out
@@ -2403,12 +2429,16 @@ pub fn characterize_gaps_from_decode(
         };
         let probes = vec![probe(cfg.gap_signature_bin_ms), probe(report.scan_block_ms)];
 
-        // Candidate noise floors (F15, second axis) over the {context window} × {bin size} grid the two
-        // front-ends straddle — also provenance, also classified on by nothing. Built by calling
-        // `level_profile` itself rather than re-deriving the bin walk, so a probe cannot drift from the
-        // measurement it characterizes. The `(EQUIVALENCE_CONTEXT_SECS, scan_block_ms)` row is the
-        // anchor: it should reproduce `scan_equivalence.noise_floor_db`, and if it does not, a third
-        // variable is in play (most likely refined-vs-core exclusion) and that shows up at once.
+        // Candidate noise floors (F15, second axis) over the {context window} × {bin size} × {channel
+        // reduction} grid the two front-ends straddle — also provenance, also classified on by nothing.
+        // Built by calling `level_profile` itself rather than re-deriving the bin walk, so a probe
+        // cannot drift from the measurement it characterizes.
+        //
+        // The `(EQUIVALENCE_CONTEXT_SECS, scan_block_ms, Interleaved)` row is the anchor: it matches
+        // scan's recipe on all three variables and so should reproduce `scan_equivalence.noise_floor_db`.
+        // Its `Downmix` twin was the anchor before the reduction dimension existed, and undershot by
+        // 3.13–7.96 dB on every gap of the first run — the two rows now sit side by side, and their
+        // difference *is* the reduction term.
         let nf_probes = noise_floor_probe_grid(
             &a_pcm.samples,
             ch,
@@ -2419,6 +2449,7 @@ pub fn characterize_gaps_from_decode(
                 cfg.gap_signature_context_secs,
             ],
             &[report.scan_block_ms, cfg.gap_signature_bin_ms],
+            &[ChannelReduction::Interleaved, ChannelReduction::Downmix],
         );
 
         fp.equivalence = Some(
@@ -2653,7 +2684,15 @@ mod tests {
         let mut a = vec![ctx; 48_000];
         a.extend(std::iter::repeat_n(0.0f32, 48_000));
         a.extend(std::iter::repeat_n(ctx, 48_000));
-        let p = noise_floor_probe(&a, 1, 48_000..96_000, 48_000, 1.0, 50);
+        let p = noise_floor_probe(
+            &a,
+            1,
+            48_000..96_000,
+            48_000,
+            1.0,
+            50,
+            ChannelReduction::Downmix,
+        );
         assert_eq!(p.context_bins, 40, "±1 s at 50 ms ⇒ 40 context bins");
         let db = p.floor_db.expect("context present ⇒ a floor");
         assert!(
@@ -2667,7 +2706,15 @@ mod tests {
     #[test]
     fn noise_floor_probe_grid_covers_the_cross_product() {
         let a = vec![0.01f32; 144_000];
-        let g = noise_floor_probe_grid(&a, 1, 48_000..96_000, 48_000, &[2.0, 3.0], &[100, 50]);
+        let g = noise_floor_probe_grid(
+            &a,
+            1,
+            48_000..96_000,
+            48_000,
+            &[2.0, 3.0],
+            &[100, 50],
+            &[ChannelReduction::Downmix],
+        );
         assert_eq!(g.len(), 4, "2 windows × 2 bin sizes");
         let mut seen: Vec<(u64, u64)> = g
             .iter()
@@ -2696,7 +2743,15 @@ mod tests {
     #[test]
     fn noise_floor_probe_grid_dedupes_coinciding_recipes() {
         let a = vec![0.01f32; 144_000];
-        let g = noise_floor_probe_grid(&a, 1, 48_000..96_000, 48_000, &[2.0, 2.0], &[50, 50]);
+        let g = noise_floor_probe_grid(
+            &a,
+            1,
+            48_000..96_000,
+            48_000,
+            &[2.0, 2.0],
+            &[50, 50],
+            &[ChannelReduction::Downmix],
+        );
         assert_eq!(g.len(), 1);
     }
 
@@ -2705,7 +2760,7 @@ mod tests {
     #[test]
     fn noise_floor_probe_without_context_reports_none() {
         let a = vec![0.0f32; 96_000];
-        let p = noise_floor_probe(&a, 1, 0..96_000, 48_000, 0.0, 50);
+        let p = noise_floor_probe(&a, 1, 0..96_000, 48_000, 0.0, 50, ChannelReduction::Downmix);
         assert_eq!(p.context_bins, 0);
         assert_eq!(p.floor_db, None);
     }
@@ -2714,9 +2769,166 @@ mod tests {
     #[test]
     fn noise_floor_probe_with_silent_context_reports_the_floor() {
         let a = vec![0.0f32; 144_000];
-        let p = noise_floor_probe(&a, 1, 48_000..96_000, 48_000, 1.0, 50);
+        let p = noise_floor_probe(
+            &a,
+            1,
+            48_000..96_000,
+            48_000,
+            1.0,
+            50,
+            ChannelReduction::Downmix,
+        );
         assert!(p.context_bins > 0);
         assert_eq!(p.floor_db, Some(f64::from(SILENCE_FLOOR_DB)));
+    }
+
+    // --- noise-floor probes: the channel-reduction dimension (F15 third variable) -------------------
+
+    /// `channels`-channel interleaved tone bed, 3 s @ 48 kHz. `amps[c]` scales channel `c`'s sinusoid
+    /// at `freqs[c]` Hz. All frequencies are multiples of 20 Hz, so every one completes a whole number
+    /// of periods in a 50 ms bin and distinct channels are *exactly* orthogonal over each bin — the
+    /// decorrelated case is deterministic here, with no PRNG and no statistical tolerance.
+    fn tone_bed(freqs: &[f64], amps: &[f64]) -> Vec<f32> {
+        let ch = freqs.len();
+        let mut out = Vec::with_capacity(144_000 * ch);
+        for f in 0..144_000usize {
+            for c in 0..ch {
+                let t = f as f64 / 48_000.0;
+                out.push((amps[c] * (std::f64::consts::TAU * freqs[c] * t).sin()) as f32);
+            }
+        }
+        out
+    }
+
+    fn nf_db(samples: &[f32], ch: usize, reduction: ChannelReduction) -> f64 {
+        noise_floor_probe(samples, ch, 48_000..96_000, 48_000, 1.0, 50, reduction)
+            .floor_db
+            .expect("context present")
+    }
+
+    /// **ρ̄ = 1 ⇒ 0 dB.** Six channels carrying the *identical* waveform: the downmix returns exactly
+    /// that waveform, so the amplitude mean and the power mean coincide. This is the only configuration
+    /// where they do — equality in Cauchy–Schwarz requires pointwise-identical channels, not merely
+    /// similar ones.
+    #[test]
+    fn reduction_agrees_only_when_the_channels_are_identical() {
+        let a = tone_bed(&[440.0; 6], &[0.05; 6]);
+        let (i, d) = (
+            nf_db(&a, 6, ChannelReduction::Interleaved),
+            nf_db(&a, 6, ChannelReduction::Downmix),
+        );
+        assert!(
+            (i - d).abs() < 0.01,
+            "identical channels must read the same both ways, got {i} vs {d}"
+        );
+    }
+
+    /// **ρ̄ = 0 ⇒ 10·log10(N).** Six equal-power channels, mutually orthogonal over every bin. The
+    /// coherent sum grows as √N against a divisor of N, so the downmix under-reads by exactly 7.78 dB
+    /// at six channels. This is the ceiling the *measured* corpus penalties (3.13–7.96 dB) straddle.
+    #[test]
+    fn reduction_differs_by_ten_log_n_when_the_channels_are_decorrelated() {
+        let a = tone_bed(&[200.0, 400.0, 600.0, 800.0, 1000.0, 1200.0], &[0.05; 6]);
+        let delta =
+            nf_db(&a, 6, ChannelReduction::Interleaved) - nf_db(&a, 6, ChannelReduction::Downmix);
+        let expect = 10.0 * 6.0f64.log10();
+        assert!(
+            (delta - expect).abs() < 0.05,
+            "decorrelated 6ch must differ by 10·log10(6) = {expect:.2} dB, got {delta:.2}"
+        );
+    }
+
+    /// **Decorrelation is not the only route to 7.78 dB.** One active channel over five digitally
+    /// silent ones hits the *same* `1/N` ratio. The penalty measures coherent-sum gain, which power
+    /// concentration moves just as correlation does — so a large reduction term must not be read as
+    /// evidence that the content is decorrelated.
+    #[test]
+    fn reduction_penalty_is_also_reached_by_a_single_active_channel() {
+        let a = tone_bed(&[440.0; 6], &[0.05, 0.0, 0.0, 0.0, 0.0, 0.0]);
+        let delta =
+            nf_db(&a, 6, ChannelReduction::Interleaved) - nf_db(&a, 6, ChannelReduction::Downmix);
+        let expect = 10.0 * 6.0f64.log10();
+        assert!(
+            (delta - expect).abs() < 0.05,
+            "one-of-six active must also differ by {expect:.2} dB, got {delta:.2}"
+        );
+    }
+
+    /// **The sign is forced, not observed.** `(Σ x_c)² ≤ N·Σ x_c²` pointwise, so the downmix can never
+    /// read *above* the interleaved power mean whatever the content. Recorded as a test because the
+    /// corpus's "uniformly signed" result was briefly treated as evidence *for* the reduction
+    /// hypothesis; it is a theorem, and carries no evidential weight.
+    #[test]
+    fn downmix_never_reads_above_interleaved() {
+        for freqs in [
+            [440.0, 440.0, 440.0, 440.0, 440.0, 440.0],
+            [200.0, 400.0, 600.0, 800.0, 1000.0, 1200.0],
+            [200.0, 200.0, 600.0, 600.0, 1000.0, 1000.0],
+            [1200.0, 200.0, 800.0, 400.0, 600.0, 1000.0],
+        ] {
+            for amps in [[0.05; 6], [0.09, 0.01, 0.05, 0.02, 0.07, 0.03]] {
+                let a = tone_bed(&freqs, &amps);
+                let (i, d) = (
+                    nf_db(&a, 6, ChannelReduction::Interleaved),
+                    nf_db(&a, 6, ChannelReduction::Downmix),
+                );
+                assert!(
+                    d <= i + 0.01,
+                    "downmix {d} exceeded interleaved {i} at {freqs:?} / {amps:?}"
+                );
+            }
+        }
+    }
+
+    /// The reduction is a third grid dimension, not a replacement for either of the first two: the
+    /// cross-product is emitted whole.
+    #[test]
+    fn noise_floor_probe_grid_covers_the_reduction_dimension() {
+        let a = tone_bed(&[200.0, 400.0, 600.0, 800.0, 1000.0, 1200.0], &[0.05; 6]);
+        let g = noise_floor_probe_grid(
+            &a,
+            6,
+            48_000..96_000,
+            48_000,
+            &[2.0, 3.0],
+            &[100, 50],
+            &[ChannelReduction::Interleaved, ChannelReduction::Downmix],
+        );
+        assert_eq!(g.len(), 8, "2 windows × 2 bin sizes × 2 reductions");
+        for &secs in &[2.0f64, 3.0] {
+            for &bin in &[100u64, 50] {
+                let at = |r| {
+                    g.iter()
+                        .find(|p| p.context_secs == secs && p.bin_ms == bin && p.reduction == r)
+                        .unwrap_or_else(|| panic!("missing row {secs}/{bin}/{r:?}"))
+                        .floor_db
+                        .unwrap()
+                };
+                assert!(
+                    at(ChannelReduction::Downmix) < at(ChannelReduction::Interleaved),
+                    "the reduction must move the read at every ({secs}, {bin})"
+                );
+            }
+        }
+    }
+
+    /// Mono makes the two reductions numerically identical, but they stay **separate rows**. Collapsing
+    /// them would hide that a mono run had nothing to say about the axis, which is exactly the case a
+    /// reader of the dump needs to distinguish from "measured, and the axis was flat".
+    #[test]
+    fn mono_keeps_both_reduction_rows_despite_reading_the_same() {
+        let a = tone_bed(&[440.0], &[0.05]);
+        let g = noise_floor_probe_grid(
+            &a,
+            1,
+            48_000..96_000,
+            48_000,
+            &[2.0],
+            &[50],
+            &[ChannelReduction::Interleaved, ChannelReduction::Downmix],
+        );
+        assert_eq!(g.len(), 2, "mono must not collapse the reduction dimension");
+        assert_eq!(g[0].floor_db, g[1].floor_db);
     }
 
     /// **8g.3b — `tags_from_measurements` reads the shared measurements correctly.** Builds a

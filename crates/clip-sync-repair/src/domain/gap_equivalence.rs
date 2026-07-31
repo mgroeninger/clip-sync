@@ -156,22 +156,52 @@ pub struct SilentCoreProbe {
     pub total_bins: usize,
 }
 
-/// A candidate `noise_floor_db` — median dB over the context bins **outside** the gap — measured at one
-/// `(context window, bin size)` combination. The second open F15 axis: the two front-ends estimate the
-/// same quantity the same *way* but over ±2 s / 100 ms (scan) vs ±3 s / 50 ms (fine), and fine reads
-/// systematically **lower**, which shrinks `a_below_noise` and pushes gaps out of `repairable_dropout`.
+/// How a bin's multiple channels are collapsed to one level before it is expressed in dB — the
+/// **third** F15 noise-floor variable, and the one the `(2 s, scan_block_ms)` probe row exposed by
+/// failing to reproduce the scan floor on any gap.
 ///
-/// **Provenance only.** Emitted over a grid so the two variables can be separated: if the probe at
-/// scan's own `(2 s, scan_block_ms)` reproduces `scan_equivalence.noise_floor_db`, the variable space
-/// is closed at two and the crosses isolate them. If it does **not**, a third variable is in play —
-/// most likely the excluded span (fine excludes the *refined* gap, scan the block-confirmed *core*) —
-/// and that shows up immediately rather than after conclusions are drawn.
+/// The two differ by the zero-lag cross-correlation between the channels. With mean pairwise
+/// correlation `ρ̄` over `N` channels the ratio is `(1 + (N−1)·ρ̄) / N`: identical channels agree
+/// exactly, decorrelated ones differ by `10·log10(N)` (7.78 dB at 6 channels), and anti-correlated
+/// ones diverge without bound. Cauchy–Schwarz makes [`Downmix`](ChannelReduction::Downmix) ≤
+/// [`Interleaved`](ChannelReduction::Interleaved) *always*, so the sign of the gap carries no
+/// information — only its size does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelReduction {
+    /// Average the channels per frame, **then** square: an amplitude mean, i.e. a mono downmix. What
+    /// the fine path's `mono_rms` / `interleaved_to_mono` do. The variant existing dumps recorded, so
+    /// it is the `serde` default.
+    #[default]
+    Downmix,
+    /// RMS over all interleaved samples: a power mean across channels, independent of inter-channel
+    /// phase. What the scan path's `block_rms_db` does via `rms_interleaved`.
+    Interleaved,
+}
+
+/// A candidate `noise_floor_db` — median dB over the context bins **outside** the gap — measured at one
+/// `(context window, bin size, channel reduction)` combination. The second open F15 axis: the two
+/// front-ends estimate the same quantity the same *way* but over ±2 s / 100 ms (scan) vs ±3 s / 50 ms
+/// (fine), and fine reads systematically **lower**, which shrinks `a_below_noise` and pushes gaps out
+/// of `repairable_dropout`.
+///
+/// **Provenance only.** Emitted over a grid so the variables can be separated: the probe at scan's own
+/// `(2 s, scan_block_ms, Interleaved)` should reproduce `scan_equivalence.noise_floor_db`, and the
+/// crosses isolate each variable's contribution. The window/bin-only grid did *not* reproduce it —
+/// undershooting 3.13–7.96 dB uniformly — which is what added [`ChannelReduction`] as the third
+/// dimension. A residual after all three is most likely the excluded span (fine excludes the *refined*
+/// gap, scan the block-confirmed *core*).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NoiseFloorProbe {
     /// Context half-width in seconds each side of the gap.
     pub context_secs: f64,
     /// Bin width in milliseconds the context was binned at.
     pub bin_ms: u64,
+    /// How each bin's channels were collapsed to one level. Defaults to
+    /// [`Downmix`](ChannelReduction::Downmix) when absent, which is what dumps predating this field
+    /// recorded.
+    #[serde(default)]
+    pub reduction: ChannelReduction,
     /// Median dB over the context bins — the candidate floor. `None` when the context was empty,
     /// rather than the `median()` helper's −120 placeholder, so "no context" is distinguishable from
     /// "silent context".

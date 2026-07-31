@@ -228,4 +228,117 @@ mod tests {
         let v = measure_gap_equivalence(&a, 1, 50, 50, -50.0, Some(0.0), &on());
         assert_eq!(v.class, GapEquivalenceClass::NotEvaluated);
     }
+
+    // --- span sensitivity of the silent-core floor (F15, fully-silent residual) --------------------
+    //
+    // The corpus's fully-silent gaps showed silent-core (a downmix max) reading *above* scan (an
+    // interleaved max) at the same bin size — which Cauchy–Schwarz forbids on the same samples. The
+    // sample sets therefore differed, and the donor block counts pinned it to a 100–200 ms span delta:
+    // scan measures over the block-confirmed core, fine over the wider refined span, and the extra
+    // edge frames carry the ramp. These tests plant that geometry synthetically so the mechanism is
+    // pinned without media.
+
+    /// Deterministic low-level bed for `ch` channels, with an optional louder region planted in
+    /// `[edge_start, edge_end)`. Channels use distinct 20 Hz-multiple frequencies, so they are exactly
+    /// orthogonal over a 50 ms bin (`ρ̄ = 0`) and the downmix penalty sits at its `10·log10(N)` maximum.
+    fn bed(ch: usize, frames: usize, quiet: f64, edge: Option<(usize, usize, f64)>) -> Vec<f32> {
+        let mut out = Vec::with_capacity(frames * ch);
+        for f in 0..frames {
+            let amp = match edge {
+                Some((s, e, a)) if f >= s && f < e => a,
+                _ => quiet,
+            };
+            for c in 0..ch {
+                let hz = 200.0 * (c as f64 + 1.0);
+                let t = f as f64 / 48_000.0;
+                out.push((amp * (std::f64::consts::TAU * hz * t).sin()) as f32);
+            }
+        }
+        out
+    }
+
+    fn probe_floor(a: &[f32], ch: usize, span: std::ops::Range<usize>) -> f64 {
+        silent_core_probe(a, ch, span, 48_000, 100, 0.01, 1.0)
+            .floor_db
+            .expect("bins present")
+    }
+
+    /// **The floor is a property of the span, not only of the content.** Widening the measured span by
+    /// two 100 ms blocks to take in a planted 20 dB edge moves the floor by ~20 dB, while the interior
+    /// is unchanged. This is the fully-silent residual's mechanism: 2.78–13.20 dB on the corpus came
+    /// from a 100–200 ms span delta at the gap edges, not from the reduction or the bin size.
+    #[test]
+    fn silent_core_floor_is_set_by_the_span_not_only_the_content() {
+        // 1.0 s bed at ~−80 dBFS, with the last 200 ms 20 dB louder.
+        let frames = 48_000;
+        let quiet = 1e-4;
+        let a = bed(
+            6,
+            frames,
+            quiet,
+            Some((frames - 9_600, frames, quiet * 10.0)),
+        );
+        let core = probe_floor(&a, 6, 0..frames - 9_600);
+        let refined = probe_floor(&a, 6, 0..frames);
+        assert!(
+            refined - core > 15.0,
+            "the wider span must catch the planted edge: core {core:.2}, refined {refined:.2}"
+        );
+        assert!(
+            (refined - core - 20.0).abs() < 3.0,
+            "and by about the planted 20 dB, got {:.2}",
+            refined - core
+        );
+    }
+
+    /// **The invariant whose violation exposed the span delta.** On the *same* span the downmix floor
+    /// can never exceed the interleaved one — so a corpus gap where fine reads above scan at the same
+    /// bin size is proof the spans differ, not evidence about correlation. Pinned here so the
+    /// diagnostic stays available.
+    #[test]
+    fn silent_core_downmix_floor_never_exceeds_interleaved_on_the_same_span() {
+        let frames = 48_000;
+        for edge in [None, Some((38_400usize, 48_000usize, 1e-3f64))] {
+            for ch in [1usize, 2, 6] {
+                let a = bed(ch, frames, 1e-4, edge);
+                let downmix = probe_floor(&a, ch, 0..frames);
+                // Interleaved max over the same bins, built the scan path's way.
+                let bin = 4_800usize;
+                let mut interleaved = f64::NEG_INFINITY;
+                let mut f = 0usize;
+                while f < frames {
+                    let end = (f + bin).min(frames);
+                    let r = f64::from(crate::domain::policies::rms_interleaved(
+                        &a[f * ch..end * ch],
+                    ));
+                    interleaved = interleaved.max(20.0 * r.log10());
+                    f = end;
+                }
+                assert!(
+                    downmix <= interleaved + 0.01,
+                    "ch={ch} edge={edge:?}: downmix {downmix:.2} exceeded interleaved {interleaved:.2}"
+                );
+            }
+        }
+    }
+
+    /// The gap between the two reductions on the same span is the `10·log10(N)` penalty when the
+    /// channels are decorrelated — the same quantity the noise-floor probe measures, confirmed here on
+    /// the *floor* statistic (a max) rather than on a median.
+    #[test]
+    fn silent_core_floor_carries_the_full_downmix_penalty_when_decorrelated() {
+        let frames = 48_000;
+        let ch = 6;
+        let a = bed(ch, frames, 1e-4, None);
+        let downmix = probe_floor(&a, ch, 0..frames);
+        let bin = 4_800usize;
+        let r = f64::from(crate::domain::policies::rms_interleaved(&a[0..bin * ch]));
+        let interleaved = 20.0 * r.log10();
+        let expect = 10.0 * (ch as f64).log10();
+        assert!(
+            (interleaved - downmix - expect).abs() < 0.2,
+            "expected a {expect:.2} dB penalty, got {:.2}",
+            interleaved - downmix
+        );
+    }
 }

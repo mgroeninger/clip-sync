@@ -57,6 +57,13 @@ dropout threshold by only **0.41 dB** (silent-core A RMS −89.62 vs fine's nois
 *noise-floor* axis is still unfixed. Do not read this fixture going green as proof the class is
 robustly closed.
 
+Since identified: the dominant term on that axis is the **channel reduction**, not the context
+window — fine downmixes (amplitude mean) where scan takes an interleaved power mean, which under-reads
+by up to `10·log10(6)` = 7.78 dB on 6-channel material. This gap is a *partial* one (`silent_bins <
+total_bins`), and its post-floor-fix residual of −2.49 dB sits inside that band, so the 0.41 dB margin
+above is expected to widen once the reduction is fixed too. That is the reason the floor fix should
+ship *with* the noise-floor fix rather than before it.
+
 At that point `band_donor_diverges_on_the_donor_axis` and
 `band_donor_divergence_is_attributable_to_the_donor_axis` **will fail**. That failure is the fix's
 **acceptance signal**, not a broken test.
@@ -71,6 +78,18 @@ responses, in rough order of how tempting they will look:
 - re-harvesting a *different* still-diverging gap into this file to keep the test green — that hides
   the fix's effect and silently changes what the fixture means;
 - concluding the fix is wrong because the test went red.
+
+### The donor axis here is one block from the threshold
+
+Measured offline 2026-07-30. Scan's `donor_silence_fraction` of **0.474** is `9/19` blocks, so one
+`scan_block_ms` is worth **0.053** of the fraction and the threshold is 0.026 away. Scan's donor window
+is also ~1 block narrower than the gap (block-grid truncation), which is true on every gap of this pair.
+
+The band mechanism is unaffected — the floor split driving it is 21 dB, orders of magnitude larger than
+one block of donor — but the `keep` verdict here is **one block of window alignment from flipping,
+independently of the floor**. Read this as a caution against treating the donor fraction as a smooth
+quantity near 0.5, not as a defect in the fixture. Only two gaps in the pair straddle that way (this one
+and g6); the rest sit ≥ 0.4 from the threshold.
 
 Two assertions here are **not** scheduled to change and should keep passing throughout:
 `fine_noise_floor_reads_lower_than_scan` (a separate, still-open axis) and

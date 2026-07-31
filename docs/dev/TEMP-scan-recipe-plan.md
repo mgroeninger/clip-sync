@@ -268,3 +268,80 @@ draft under-counted are marked **[+]**; stale line numbers are corrected in plac
   [TEMP-gap-selection-deferred.md](TEMP-gap-selection-deferred.md) § `--gaps-from`.
 - **If a `--scan-window` is ever added** (also deferred), it joins the recipe — it is a knob that
   changes which gaps are detected, which is exactly the membership test.
+
+---
+
+## 7. Findings-derived JSON field inventory (2026-07-30)
+
+Harvested from [archive/TEMP-silence-floor-findings.md](archive/TEMP-silence-floor-findings.md)
+(F1–F12, F11) and [TEMP-equivalence-divergence-findings.md](TEMP-equivalence-divergence-findings.md)
+(F14/F15). **Not a second checklist** — §5 remains the work to implement. This section is the
+provenance map: what the recipe echo must cover, what troubleshooting already added elsewhere, and
+what would have shortened the two ledgers if it had been present earlier.
+
+**Legend — evidence class**
+
+| Class | Meaning |
+|-------|---------|
+| **Derived** | The investigation *needed* this field (or its absence forced a re-run / arithmetic bound / wrong path). Shipping it is justified by a concrete failure mode in the ledgers. |
+| **Speculative** | Would likely have helped, but no measured incident required it; optional / nice-to-have. |
+
+### 7a. `ScanRecipe` / `GapScanJson` knobs — this plan's contract
+
+These are the fields whose equality means "same gap list". Flat on `GapScanJson`; nested only on the
+domain type.
+
+| Field | JSON today | Action | Evidence | Class |
+|-------|------------|--------|----------|-------|
+| `scan_block_ms` | present | keep (read from `report.recipe`) | already echoed | — |
+| `silence_peak_fraction` | present | keep | already echoed | — |
+| `min_gap_ms` | **absent** | **add** | F11; E3 hold-diff recomposed the gap list while the count stayed 11 | **Derived** |
+| `silence_hold_ms` | **absent** | **add** (effective = `blocks × block_ms`, §3) | F11; E3 — 500→100 ms flipped a dropout to `shared_silence` (−52 vs −101 dB A RMS) | **Derived** |
+| `absolute_silence_rms` | **absent** | **add** (normalized `f32`, default ≈ `0.001007`) | F11; E2/F3/F4 — active floor looked disabled in the human header; JSON could not confirm which floor produced `b_has_energy: false` | **Derived** |
+| `decode_chunk_secs` | present (report flat) | **exclude from recipe** | decode throughput only; cannot move a gap boundary (§2) | — |
+| `CorpusScanRecipe.silence_hold_ms` | **absent** on corpus DTO | **add** `Option<u64>` | same F11 hole; `from_report` currently hardcodes related knobs to `None` and back-fills from config | **Derived** |
+
+### 7b. Already added during the ledgers (outside this plan's checklist)
+
+Emitted today on scan / fingerprint JSON. Documented here so recipe work does not rediscover them as
+missing, and so [json-output.md](../json-output.md) can catch up in a separate pass (its
+`GapEquivalenceVerdict` table is still the pre-provenance shape).
+
+| Field | Carrier | Status | Why it landed | Class |
+|-------|---------|--------|---------------|-------|
+| `gap_floor_db` | `GapEquivalenceVerdict` | **added** | F15 — early dumps had no scan floor; donor band was first a bound (`≤ −71.9`), then measured (−74.53). Without this, scan vs fine floors are incomparable. | **Derived** |
+| `a_gap_silent_blocks` | `GapEquivalenceVerdict` | **added** | Population behind `a_gap_rms_db` / `gap_floor_db` (silent-blocks aggregate). | **Derived** |
+| `donor_silent_blocks` / `donor_total_blocks` | `GapEquivalenceVerdict` | **added** | F15 — JSON recorded `donor_silence_fraction` only; `0.10` could be `1/10` or not; counts remove the ambiguity when binning differs. | **Derived** |
+| `silent_core_probes[]` (`bin_ms`, `floor_db`, `a_rms_db`, `silent_bins`, `total_bins`) | `GapEquivalenceVerdict` | **added** (scaffolding; classifier ignores) | F15 — measure silent-core floor + A RMS *before* adopting the fine-path fix. | **Derived** |
+| `noise_floor_probes[]` (`context_secs`, `bin_ms`, `reduction`, `floor_db`, `context_bins`) | `GapEquivalenceVerdict` | **added** (scaffolding) | F15 — separate window × bin × channel-reduction; Interleaved anchor reproduced scan NF. | **Derived** |
+| `reduction: ChannelReduction` | on each noise-floor probe | **added** | Dominant NF term (~5.7 dB median); was invisible until the 2-variable grid failed. | **Derived** |
+| `dual_fit_rescue` | fingerprint `GateOutcome` / `GapRow` | **added** (derived flag) | F14 — `outcome.tier: skip` while production patched; additive so `tier` stays the bracket `any_ok` axis. | **Derived** |
+| `b_scanned_end_secs` / `b_scan_truncated` | `GapScanJson` | present (semantics fixed under F8/R3) | Truncation / incomplete B walk; fail-closed occupancy. | **Derived** |
+| Human unfillable split (`both sides silent` vs `unmapped`) | CLI text via `Gap::unfillable_label` | **added** (human; not a new JSON key) | F6 — `unfillable` conflated two causes and started the silence-floor investigation. | **Derived** |
+| Human `rms floor 33 (at -60 dBFS)` | `format_scan_summary` | **added** (human) | F4 — `{:.0}` on normalized amplitude printed `0` (= disabled). | **Derived** |
+
+### 7c. Would have made troubleshooting easier — not in this plan's deliverable
+
+Candidates the ledgers named or implied. None of these join `ScanRecipe` (they do not change which
+gaps are *detected*); they are diagnostic / attribution fields for scan or fingerprint JSON.
+
+| Field / signal | Surface | Status | Would have helped | Class |
+|----------------|---------|--------|-------------------|-------|
+| Full `levels.profile_db` RMS envelope in fingerprint dumps | fingerprint `LevelProfile` | **declined** as permanent emit (`project.rs` drops it; `bin_ms: 0`) | F15 — all NF crosses recomposable offline from one 50 ms envelope; absence forced ~15 GB re-dumps | **Derived** need; permanent emit remains a cost trade-off (declined for scaffold that may be deleted) |
+| Equivalence measurement recipe on the verdict (context secs, bin ms, reduction, span = core\|refined) as *permanent* fields (not only probes) | `GapEquivalenceVerdict` | probes cover it temporarily | Attribute scan↔fine NF / floor deltas after probes are removed | **Speculative** as permanent shape; **Derived** that *some* provenance was required |
+| `core_start_secs` / `core_end_secs` on each `Gap` in scan JSON | `Gap` / `GapScanJson` | silent-run has them; not echoed on the gap DTO | F2/F15 — hold-bridged refined span vs silent core; without this, core-vs-refined had to be inferred from code + fingerprint spans | **Speculative** for scan JSON (available in-process; fingerprint already carries refined bounds) |
+| `a_gap_total_blocks` (companion to `a_gap_silent_blocks`) | `GapEquivalenceVerdict` | not shipped | Silent fraction of the A gap window (mirrors donor counts) | **Speculative** |
+| Configured `silence_hold_ms` *and* effective hold | recipe / JSON | this plan stores **effective only** (§3) | Scripts comparing JSON to TOML without reading docs | **Speculative** second field; docs note is **Derived** |
+| i16-scale / dBFS echo of `absolute_silence_rms` beside normalized | `GapScanJson` | human header only | F3/F4 unit confusion for script consumers | **Speculative** (normalized + docs should suffice once F11 lands) |
+| Machine-readable unfillable cause (`both_sides_silent` \| `unmapped`) | `Gap` or plan tags | human label only; JSON still has `b_has_energy` + null B mapping | F6 — scripts repeating the operator confusion | **Speculative** (reconstructible from existing fields) |
+| Donor / A window identity used for each fraction (core-mapped vs refined-nominal) | equivalence provenance | not a field; documented in F15 | F15 third donor axis; decision-relevant only near the 0.5 threshold (g4/g6) | **Speculative** permanent field; close with a unit test per F15 ready-table |
+| Span-provenance arg-max (which edge block set the max floor) | probe / verdict | optional; F15 downgraded | Confirm fully-silent residual location | **Speculative** (mechanism closed offline) |
+
+### 7d. What stays out of recipe equality
+
+| Field | Why not in `ScanRecipe` |
+|-------|-------------------------|
+| `decode_chunk_secs` | throughput; same gap list |
+| `limit_fill_to_mapped_region` | fill policy parked on the scan report (wrong home; §5 out of scope) |
+| Equivalence floors, probes, `dual_fit_rescue`, truncation flags | classify / diagnose / patch — they do not redefine the detected gap set |
+| Fingerprint envelope / Tier-3 seams | calibration path only |

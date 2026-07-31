@@ -229,7 +229,7 @@ the *fine* side toward `drop`, so it is the **more aggressive** of the two, not 
 | bias | mechanism | direction |
 |---|---|---|
 | `gap_floor_db` | fine takes the max over **all** bins in the span (a content peak); scan takes the max over A's **silent** blocks (an actual floor) | fine's floor is higher ⇒ more donor blocks read silent ⇒ toward `shared_silence` |
-| noise floor | ±3 s / 50 ms bins vs ±2 s / 100 ms blocks | fine reads **lower** — measured on 10/10 gaps of one pair (~3–19 dB), 5/5 on a 17-pair corpus, and 3/3 on the committed curated fixtures ⇒ smaller `a_below_noise` ⇒ away from `repairable_dropout` |
+| noise floor | **dominant:** fine `mono_rms` (amplitude / downmix) vs scan interleaved power; **secondary:** ±3 s / 50 ms vs ±2 s / 100 ms | fine reads **lower** — measured on 10/10 gaps of one pair (~3–19 dB), 5/5 on a 17-pair corpus, and 3/3 on the committed curated fixtures ⇒ smaller `a_below_noise` ⇒ away from `repairable_dropout`. Matching reduction alone collapses the bias on 7/10 gaps (see below) |
 
 **Measured population:** 5 divergent / 297 gaps (1.7 %) across a 17-pair corpus, **0 in the dangerous
 direction**. The mechanism behind the divergences is a donor whose level sits *between* the two floors —
@@ -258,27 +258,57 @@ before the fix lands; if it never occurs across the corpus, it is a defensive ca
 
 This is scaffolding with a scheduled death: once the fix is adopted or rejected, the probes come out.
 
-#### `equivalence.noise_floor_probes` — separating the second axis's two variables
+#### `equivalence.noise_floor_probes` — separating the second axis's three variables
 
 The other open F15 axis. Both paths estimate the noise floor the *same way* (median of context bins
 outside the gap) but over **±2 s / 100 ms** (scan) vs **±3 s / 50 ms** (fine), and fine reads
-systematically lower. Two variables, one observed difference — so the probe emits the grid:
+systematically lower. Several variables, one observed difference — so the probe emits the grid:
 
 | field | meaning |
 |---|---|
-| `context_secs` / `bin_ms` | the combination this row was measured at |
+| `context_secs` / `bin_ms` / `reduction` | the combination this row was measured at |
 | `floor_db` | median dB over the context bins. Absent when the context was empty — *not* the −120 placeholder, so "no context" stays distinguishable from "silent context" |
 | `context_bins` | the population behind the median; the two windows differ in exactly this |
 
 Rows are the cross product of `{EQUIVALENCE_CONTEXT_SECS, gap_signature_context_secs}` ×
-`{scan_block_ms, gap_signature_bin_ms}`, deduped so a collapsed grid doesn't emit the same measurement
-twice and read as corroboration.
+`{scan_block_ms, gap_signature_bin_ms}` × `{Interleaved, Downmix}`, deduped so a collapsed grid doesn't
+emit the same measurement twice and read as corroboration. Mono material is the one case that is *not*
+deduped: the two reductions read identically there, but keeping both rows is what lets a reader tell
+"the axis was measured and was flat" from "the material had nothing to say about the axis".
 
-The `(2 s, scan_block_ms)` row is the **anchor**: it should reproduce
-`scan_equivalence.noise_floor_db`. If it does, the variable space is closed at two and the crosses
-isolate them. If it does not, a third variable is in play — most likely the excluded span, since fine
-excludes the *refined* gap and scan the block-confirmed *core* — and that surfaces immediately rather
-than after conclusions are drawn.
+##### The third variable: `reduction`
+
+`ChannelReduction` is how a bin's channels are collapsed to one level before it goes to dB:
+
+- **`Interleaved`** — RMS over all interleaved samples, a **power** mean across channels. What scan's
+  `block_rms_db` does (via `rms_interleaved`).
+- **`Downmix`** — average the channels per frame, *then* square: an **amplitude** mean. What fine's
+  `mono_rms` / `interleaved_to_mono` do.
+
+They differ by the zero-lag cross-correlation *between the channels*. With equal per-channel power and
+mean pairwise correlation `ρ̄` over `N` channels, `R_downmix² / R_interleaved² = (1 + (N−1)·ρ̄) / N`:
+
+| `ρ̄` | difference | reached by |
+|---|---|---|
+| 1 | 0 dB | pointwise-**identical** channels only (mono duplicated into 5.1, hard-centred mix) |
+| 0 | `10·log10(N)` = 7.78 dB at 6ch | decorrelated channels — **or** one active channel over `N−1` silent ones, which hits the same ratio |
+| → `−1/(N−1)` | → −∞ dB | cancelling channels |
+
+Two traps this table is here to close. **7.78 dB is not a bound** — it is the `ρ̄ = 0` point, and real
+content reads past it whenever `ρ̄` goes slightly negative; a measurement "over the ceiling" is not an
+anomaly. And **the sign is a theorem**: Cauchy–Schwarz gives `Downmix ≤ Interleaved` always, so a
+uniformly-signed corpus result is not evidence *for* the reduction hypothesis, only compatible with it.
+
+The `(2 s, scan_block_ms, Interleaved)` row is the **anchor**: it matches scan's recipe on all three
+variables and should reproduce `scan_equivalence.noise_floor_db`. **Measured 2026-07-30** on the F15
+pair (`fp_silent_core_floor_probe_reduction/`): it does so on **7/10** gaps (err −0.78…+0.51 dB,
+median +0.03); its `Downmix` twin was the old anchor and undershot by 3.13–7.96 dB on every gap — the
+difference between the two rows *is* the reduction term, read directly. The 3 misses (g5/g6/g10, all
+~+2.1 dB) track **window/bin estimator instability** on non-stationary context (those gaps' Interleaved
+NF swings several dB across the grid), not a fourth variable and not the excluded span — a fixed
+refined-vs-core offset would be stable across window/bin, and these residuals are not. Full write-up:
+[TEMP-equivalence-divergence-findings.md](TEMP-equivalence-divergence-findings.md) § *Probe results*
+under *Noise-floor probes*.
 
 Measured by calling `level_profile` itself, not by re-deriving the bin walk, so a probe cannot drift
 from the measurement it characterizes. That is also why `level_profile` returns its context-bin count
