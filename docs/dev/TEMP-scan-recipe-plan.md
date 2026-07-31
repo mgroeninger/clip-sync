@@ -159,21 +159,24 @@ gains the missing fifth knob, `silence_hold_ms`.
 
 Ordered — each step depends on the one above.
 
-**Line refs re-verified 2026-07-30** against current source (verification rule). Sites the prior
-draft under-counted are marked **[+]**; stale line numbers are corrected in place.
+**Line refs re-verified 2026-07-31** against current source (verification rule). Sites the prior
+draft under-counted are marked **[+]**; stale line numbers are corrected in place. The 2026-07-31
+pass corrects `measure.rs` drift from equivalence-instrumentation growth (and fixes the report
+literal / named-read counts).
 
 - [ ] **Rename first, alone:** `gap_fingerprint::schema::ScanRecipe` → `CorpusScanRecipe`
-  (`schema.rs:34` + `Default`/`PartialEq`/`Serialize`/`Deserialize` derives; `impl` at `:91`;
-  `measure.rs:2360` `from_report`, `:2433` `Manifest` field type, `:3336` `::default()`). Type
-  rename only — serde emits field names, not the type name, so **no golden churn**. Its own
-  commit, keeping the name collision out of the substantive diff
+  (`schema.rs:34` + `Default`/`PartialEq`/`Serialize`/`Deserialize` derives; `impl` at `:91`,
+  `from_report` body at `:93`; `measure.rs:2604` `from_report`, `:2677` `Manifest` field type
+  (`struct Manifest` at `:2674`), `:3839` `::default()`). Type rename only — serde emits field
+  names, not the type name, so **no golden churn**. Its own commit, keeping the name collision
+  out of the substantive diff
 - [ ] **New domain type** `ScanRecipe` (`domain/gap.rs`): `min_gap_ms: u64`, `silence_hold_ms: u64`,
   `scan_block_ms: u64`, `silence_peak_fraction: f32`, `absolute_silence_rms: f32`;
   `#[derive(Debug, Clone, Copy, PartialEq)]` — `PartialEq` is **bitwise** and intended (§2). Types
-  match `RepairConfig` (`config.rs:40,43,46,53,57`). `decode_chunk_secs` is **not** a member.
-  **[+]** Re-export from `domain/mod.rs` (`pub use gap::{…, ScanRecipe}`). Serde on the domain type
-  is **not** required for this deliverable (JSON stays flat on `GapScanJson`); add later when
-  `--gaps-from` embeds `domain::ScanRecipe` in a manifest
+  match `RepairConfig` (`infrastructure/config.rs:40,43,46,53,57`). `decode_chunk_secs` is **not**
+  a member. **[+]** Re-export from `domain/mod.rs` (`pub use gap::{…, ScanRecipe}`). Serde on the
+  domain type is **not** required for this deliverable (JSON stays flat on `GapScanJson`); add
+  later when `--gaps-from` embeds `domain::ScanRecipe` in a manifest
 - [ ] **`ScanGapsRequest` (`application/scan_gaps.rs:24-46`): recipe becomes canonical.** Replace
   the four flats `min_gap_secs`, `scan_block_secs`, `silence_peak_fraction`, and
   `absolute_silence_rms` with `recipe: ScanRecipe`. **Do not** leave peak/rms as request flats
@@ -184,7 +187,10 @@ draft under-counted are marked **[+]**; stale line numbers are corrected in plac
   `composition.rs:191-204` with `silence_hold_ms: silence_hold_blocks as u64 * scan_block_ms` —
   **never** `config.repair.silence_hold_ms`. Whole-ms narrowing is intentional (§2).
   **[+]** Post-construction mutations of the abs floor become `request.recipe.absolute_silence_rms`
-  (`scan_gaps.rs:1327`, `:1353` — production-floor unit tests)
+  (`scan_gaps.rs:1327`, `:1353` — production-floor unit tests). **[+]** While rewriting these
+  fields, fix the stale “0–32767 scale” doc-comments on `ScanGapsRequest::absolute_silence_rms`
+  and `RepairConfig::absolute_silence_rms` — storage is already normalized (`default ≈ 0.001007`);
+  the operator i16 scale is CLI-only via `normalize_absolute_silence_rms_i16`
 - [ ] **Update the 10 `ScanGapsRequest` literal sites** — production `composition.rs:191`; test
   helpers `scan_gaps.rs:826` (`scan_request`), `query_reference_integration.rs:112`
   (`scan_request`), `clip-sync-repair-fixtures` `gap_corpus_fixtures.rs:697`
@@ -202,21 +208,23 @@ draft under-counted are marked **[+]**; stale line numbers are corrected in plac
   either; assert the existing printed form still holds after the re-point
 - [ ] **`GapReport`: `recipe: ScanRecipe`**, replacing the flat `scan_block_ms` /
   `silence_peak_fraction` and sourced from the request that produced it
-  (`scan_gaps.rs:356-370` → `recipe: request.recipe`). Full literals to update (**16**, not ~15):
+  (`scan_gaps.rs:356-370` → `recipe: request.recipe`). Full literals to update (**15**):
   production path above; unit/helpers —
   `scan_gaps.rs:1029`, `gap_fill.rs:749` (`base_report`), `cli/output.rs:995,1124,1366`,
-  `patch_audio/region.rs:2415,2602`, `measure.rs:3152`,
+  `patch_audio/region.rs:2415,2602`, `measure.rs:3655`,
   `tests/patch_audio_integration.rs:727,746` (`make_report` helpers);
   **[+]** also `clip-sync-repair-fixtures`
   `energy_signature_production.rs:46,108`, `fingerprint_corpus_fixtures.rs:92`, and
   **[+]** `clip-sync-repair-harness` `patch_audio.rs:205` (`make_report`). The ~12 spread-update
-  sites in `patch_audio_integration.rs` (`..report` / `..make_report(...)`) inherit it. Read sites
-  re-point to `report.recipe.*`: `measure.rs:2108,2123`, `patch_audio/mod.rs:167`,
+  sites in `patch_audio_integration.rs` (`..report` / `..make_report(...)`) inherit it. Read
+  sites re-point to `report.recipe.*` (**8** named): `measure.rs` —
+  `silence_peak_fraction` at `:2240,:2255`, `scan_block_ms` at `:2420,:2483,:2504` (five reads;
+  equivalence-instrumentation growth since the prior inventory); `patch_audio/mod.rs:167`,
   `cli/output.rs:727-728`, **[+]** `w5_anchor_rescue_diag.rs:320` (in fixtures crate)
 - [ ] Delete the back-fill: `complete_recipe` (`composition.rs:136-140`, called at `:144`) and the
   two hardcoded `None`s + the "the bin path overwrites the rest from config" comment in
-  `from_report` (`schema.rs:91-100`). `CorpusScanRecipe` is now populated from `report.recipe`
-  (all five knobs, including `silence_hold_ms`)
+  `from_report` (`schema.rs:91-100`, body at `:93`). `CorpusScanRecipe` is now populated from
+  `report.recipe` (all five knobs, including `silence_hold_ms`)
 - [ ] `CorpusScanRecipe`: add the missing fifth knob `silence_hold_ms: Option<u64>` (same
   `skip_serializing_if` / `default` treatment as its siblings). **Options stay** — backward compat
   for corpora written before each field existed; new dumps fill all five. Confirmed no golden
@@ -243,17 +251,17 @@ draft under-counted are marked **[+]**; stale line numbers are corrected in plac
   the spread-update sites make one unnecessary. Both recorded so they are not rediscovered as bugs.
   Flat-echo interim (sequencing §3) is also obsolete now that this plan is unparked
 
-### Audit notes (2026-07-30) — integration inventory
+### Audit notes (2026-07-31) — integration inventory
 
 | Axis | What changes | Out of scope / unchanged |
 |------|--------------|--------------------------|
 | Domain | New `ScanRecipe`; `GapReport.recipe` replaces two flats | `decode_chunk_secs`, `limit_fill_to_mapped_region` stay flat on the report |
-| Request | Four flats → `recipe`; `silence_hold_blocks` stays | `RepairConfig` / CLI args / TOML knobs unchanged (still configured hold) |
+| Request | Four flats → `recipe`; `silence_hold_blocks` stays | `RepairConfig` / CLI args / TOML knobs unchanged (still configured hold); fix stale abs-rms scale comments while touching those fields |
 | Scanner boundary | Derive secs from `recipe.*` at two `SilenceRunScanner::new` sites | Scanner API unchanged |
 | Composition | Build recipe (effective hold); delete `complete_recipe` | Config → request mapping otherwise same |
 | Corpus DTO | Rename + `silence_hold_ms: Option`; `from_report` fills from `report.recipe` | Curated JSON fixtures need no rewrite |
 | JSON contract | Three additive keys on `GapScanJson` (flat) | No nesting; human `format_scan_summary` re-point only |
-| Call sites | 10 request literals; 16 report full literals; 4 named read sites; 2 field mutations | Patch/fingerprint thresholds that take `silence_peak_fraction` as a bare `f32` stay bare `f32` — only the *report/request carrier* changes |
+| Call sites | 10 request literals; 15 report full literals; 8 named read sites (5 in `measure.rs`); 2 field mutations | Patch/fingerprint thresholds that take `silence_peak_fraction` as a bare `f32` stay bare `f32` — only the *report/request carrier* changes |
 
 ## 6. Downstream
 
