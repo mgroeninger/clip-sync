@@ -271,25 +271,48 @@ draft under-counted are marked **[+]**; stale line numbers are corrected in plac
 
 ---
 
-## 7. Findings-derived JSON field inventory (2026-07-30)
+## 7. Findings-derived JSON fields — inventory and rationale (2026-07-30)
 
 Harvested from [archive/TEMP-silence-floor-findings.md](archive/TEMP-silence-floor-findings.md)
-(F1–F12, F11) and [TEMP-equivalence-divergence-findings.md](TEMP-equivalence-divergence-findings.md)
-(F14/F15). **Not a second checklist** — §5 remains the work to implement. This section is the
-provenance map: what the recipe echo must cover, what troubleshooting already added elsewhere, and
-what would have shortened the two ledgers if it had been present earlier.
+(F1–F12, especially F11) and
+[TEMP-equivalence-divergence-findings.md](TEMP-equivalence-divergence-findings.md) (F14/F15).
+**Not a second checklist** — §5 remains the work this plan implements. This section records *why*
+specific JSON fields belong in (or next to) the recipe contract, and which diagnostic fields the
+ledgers proved useful so they are not rediscovered as "missing recipe knobs."
 
-**Legend — evidence class**
+**Evidence class.** **Derived** = the investigation needed the field (or its absence forced a
+re-run, an arithmetic bound, or a wrong path). **Speculative** = would likely have helped, but no
+measured incident required it.
 
-| Class | Meaning |
-|-------|---------|
-| **Derived** | The investigation *needed* this field (or its absence forced a re-run / arithmetic bound / wrong path). Shipping it is justified by a concrete failure mode in the ledgers. |
-| **Speculative** | Would likely have helped, but no measured incident required it; optional / nice-to-have. |
+### Why this section exists
 
-### 7a. `ScanRecipe` / `GapScanJson` knobs — this plan's contract
+Two failure modes drove the silence-floor and equivalence ledgers, and both are *report-provenance*
+problems of the same kind §1 names for the recipe:
 
-These are the fields whose equality means "same gap list". Flat on `GapScanJson`; nested only on the
-domain type.
+1. **A saved scan cannot be trusted without knowing the knobs that produced it.** E3 showed that
+   changing only `silence_hold_ms` recomposes the gap list (and can flip a deep dropout into
+   `shared_silence`) while the gap *count* stays coincidentally the same. Hand-rolled "did we use
+   the same recipe?" checks that omit hold / min-gap / abs floor are already incomplete — that is
+   F11, and it is exactly what `ScanRecipe` + the three additive `GapScanJson` keys close.
+2. **A verdict cannot be audited without the sensors behind it.** F15's donor-band and noise-floor
+   splits were invisible until `gap_floor_db` and block counts landed; F14's corpus/`skip` vs
+   production/`patched` disagreement needed an additive `dual_fit_rescue` rather than overloading
+   `tier`. Those fields are *not* recipe members (they do not change which gaps are detected), but
+   they are the reason this plan's "echo what produced you" principle generalizes beyond five knobs.
+
+### 7a. `ScanRecipe` / `GapScanJson` knobs — include in this plan
+
+These five (plus the corpus DTO's missing hold) are the fields whose equality means "same gap
+list." Flat on `GapScanJson`; nested only on the domain type.
+
+**Rationale for inclusion.** The human scan header already prints hold, min-gap, and the abs floor;
+machine-readable output did not. That inversion is what made E2/E3 and every subsequent
+same-pair re-run harder than they needed to be: you could change a knob, get a different gap
+composition or occupancy verdict, and the JSON would not say which recipe produced either run.
+Script consumers that persist a gap list (and the future `--gaps-from` loader) need the full set,
+not the two knobs that happened to be echoed first. Storing **effective** `silence_hold_ms`
+(`blocks × block_ms`) rather than the configured TOML value is required for the `PartialEq` ⇔ same
+gap list property (§3) — two configs that quantize to the same hold must compare equal.
 
 | Field | JSON today | Action | Evidence | Class |
 |-------|------------|--------|----------|-------|
@@ -301,11 +324,21 @@ domain type.
 | `decode_chunk_secs` | present (report flat) | **exclude from recipe** | decode throughput only; cannot move a gap boundary (§2) | — |
 | `CorpusScanRecipe.silence_hold_ms` | **absent** on corpus DTO | **add** `Option<u64>` | same F11 hole; `from_report` currently hardcodes related knobs to `None` and back-fills from config | **Derived** |
 
-### 7b. Already added during the ledgers (outside this plan's checklist)
+### 7b. Already added during the ledgers — keep; do not fold into `ScanRecipe`
 
-Emitted today on scan / fingerprint JSON. Documented here so recipe work does not rediscover them as
-missing, and so [json-output.md](../json-output.md) can catch up in a separate pass (its
+Emitted today on scan / fingerprint JSON. Listed so recipe work does not treat them as missing
+echo fields, and so [json-output.md](../json-output.md) can catch up in a separate pass (its
 `GapEquivalenceVerdict` table is still the pre-provenance shape).
+
+**Rationale for inclusion (in JSON at all).** Classification outputs without sensor provenance
+forced F15 into bounds and re-dumps: early artifacts had no `gap_floor_db`, so the donor sitting
+between the two floors was inferred rather than measured; `donor_silence_fraction` alone could not
+distinguish `1/10` from a different binning of the same span. The probe vectors exist so a fix can
+be *measured before it is adopted* without changing any verdict. `dual_fit_rescue` exists so the
+calibration oracle can see production's dual-fit path without rewriting `outcome.tier` (which is
+contractually the bracket `any_ok` result). None of these belong on `ScanRecipe` — changing them
+does not change the detected gap set — but omitting them from the inventory would invite another
+"add it to the recipe" proposal the next time a script wants same-run attribution.
 
 | Field | Carrier | Status | Why it landed | Class |
 |-------|---------|--------|---------------|-------|
@@ -320,10 +353,19 @@ missing, and so [json-output.md](../json-output.md) can catch up in a separate p
 | Human unfillable split (`both sides silent` vs `unmapped`) | CLI text via `Gap::unfillable_label` | **added** (human; not a new JSON key) | F6 — `unfillable` conflated two causes and started the silence-floor investigation. | **Derived** |
 | Human `rms floor 33 (at -60 dBFS)` | `format_scan_summary` | **added** (human) | F4 — `{:.0}` on normalized amplitude printed `0` (= disabled). | **Derived** |
 
-### 7c. Would have made troubleshooting easier — not in this plan's deliverable
+### 7c. Diagnostic fields that would have shortened the ledgers — out of this plan's deliverable
 
-Candidates the ledgers named or implied. None of these join `ScanRecipe` (they do not change which
-gaps are *detected*); they are diagnostic / attribution fields for scan or fingerprint JSON.
+Candidates the ledgers named or implied. None join `ScanRecipe`. Recorded with class tags so a
+future provenance pass can pick **Derived** items first and leave **Speculative** ones optional.
+
+**Rationale for recording them here.** The recipe plan is the natural place to park "what should a
+report say about how it was produced?" after two ledgers spent days reconstructing that from code
+and re-runs. The expensive lesson was the projected-away RMS envelope: every noise-floor cross is
+recomputable from one 50 ms `profile_db`, but dumps drop it, so each question cost another full-pair
+fingerprint. That is a **derived** need with a deliberate **decline** on permanent emit (thousands
+of floats per gap, forever, for a scaffold scheduled for deletion). The rest are smaller: core
+bounds on the gap DTO, a machine-readable unfillable cause, dual configured/effective hold — useful
+for scripts, none of them load-bearing for recipe equality.
 
 | Field / signal | Surface | Status | Would have helped | Class |
 |----------------|---------|--------|-------------------|-------|
@@ -338,6 +380,10 @@ gaps are *detected*); they are diagnostic / attribution fields for scan or finge
 | Span-provenance arg-max (which edge block set the max floor) | probe / verdict | optional; F15 downgraded | Confirm fully-silent residual location | **Speculative** (mechanism closed offline) |
 
 ### 7d. What stays out of recipe equality
+
+Inclusion in JSON (or in a future diagnostic pass) is not membership in `ScanRecipe`. Equality must
+stay exactly as fine as "same gap list" — finer rejects reused lists after harmless config edits;
+coarser reuses lists after edits that move boundaries.
 
 | Field | Why not in `ScanRecipe` |
 |-------|-------------------------|
