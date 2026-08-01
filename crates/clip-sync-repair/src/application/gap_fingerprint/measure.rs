@@ -2214,6 +2214,14 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
 ///
 /// B's `channels` / `duration_secs` / `id` use **B's** layout (not A's). Rate may still be A's after
 /// `decode_ab` resample. Callers must not index `b_samples` with `a_channels`.
+///
+/// This is the **opposite** rule from the non-refused path, where both sides are described at A's
+/// layout because that is the layout everything was measured at. The split is deliberate: there is no
+/// common measurement here to describe B against, so B is described honestly against itself. Note the
+/// consequence — `b_source.id` digests B's own channel count, so a refused corpus and a normal one over
+/// the same media carry different `b_source.id`s. Harmless today (`gaps` is empty, so `entry_filename`
+/// never runs), but a `(a_id, b_id)` join across the two would not match. Both halves of the rule are
+/// asserted: `characterize_gaps_refuses_channel_layout_mismatch` and the from-decode threading test.
 fn refused_channel_mismatch_corpus(
     report: &crate::domain::GapReport,
     a_samples: &[f32],
@@ -3790,8 +3798,13 @@ mod tests {
 
         // Threading check: the descriptors must land on the matching side of `source`, and the two sides
         // must stay distinguishable — a swap or a copy would pass every `file_source` unit test.
-        // `native_channels` must match the mono PCM fixture (`ch = 1`); rate may still differ so
-        // `was_resampled` stays exercisable. Sides are distinguished by codec / bit_depth / bitrate.
+        //
+        // **Do not give the two sides different `native_channels` to strengthen this.** Equal counts are
+        // the refuse gate's precondition (`channel_layout_mismatch`); making them differ turns this into
+        // a refuse test — `gaps` empties and every assertion below stops exercising the from-decode path.
+        // Per-side channel mapping is asserted where it is observable, in
+        // `characterize_gaps_refuses_channel_layout_mismatch`. Here the sides are distinguished by
+        // codec / bit_depth / native_sample_rate / bitrate instead.
         let sources = crate::application::AbSources {
             a: crate::application::SourceDescriptor {
                 codec: "flac".into(),
@@ -3825,8 +3838,32 @@ mod tests {
             Some("s24")
         );
         assert_eq!(with_sources.source.b_source.native_channels, Some(ch as u16));
+        // The gate's precondition, asserted so the reason the counts match is explicit rather than
+        // incidental — see the comment above before changing either side.
+        assert_eq!(
+            with_sources.source.a_source.native_channels,
+            with_sources.source.b_source.native_channels
+        );
         assert_eq!(with_sources.source.a_source.was_resampled(), Some(false));
         assert_eq!(with_sources.source.b_source.was_resampled(), Some(true));
+        // Bitrate is the one per-side field that is *asymmetric* on the positive path, so it is the
+        // strongest available side-mapping check here: a swap flips both of these.
+        assert_eq!(with_sources.source.a_source.source_audio_bitrate_bps, None);
+        assert_eq!(
+            with_sources.source.b_source.source_audio_bitrate_bps,
+            Some(192_000)
+        );
+        // Counterpart to the refuse path's B-uses-B's-layout rule: when the layouts agree, **both**
+        // sides are described at the decoded/analysis layout (A's), because that is what was measured.
+        // The two rules are deliberate and differ; asserting only the refuse half made this look like a
+        // quirk of that path. See `refused_channel_mismatch_corpus`'s doc comment.
+        assert_eq!(with_sources.source.a_source.channels, ch as u16);
+        assert_eq!(with_sources.source.b_source.channels, ch as u16);
+        assert_eq!(
+            with_sources.source.a_source.sample_rate,
+            with_sources.source.b_source.sample_rate,
+            "both sides are described at the measurement rate (A's), not their native rates"
+        );
         assert_eq!(with_sources.source.incomparable, None);
         assert!(
             !with_sources.gaps.is_empty(),
