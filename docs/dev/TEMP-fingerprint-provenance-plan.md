@@ -1,8 +1,9 @@
 # Fingerprint-dump provenance — let a corpus state what it measured, and on what (DRAFT)
 
-Status: **Track A implemented 2026-07-31 (emit + consume, code-complete); Track B open.** §2 no longer
-blocks the next large fingerprint run on *code* — the one remaining Track A item is a real single-pair
-smoke dump to prove the media half of its definition of done (§5). Both tracks were reviewed and
+Status: **Track A implemented 2026-07-31 (emit + consume, code-complete, smoke-covered); Track B open.**
+§2 no longer blocks the next large fingerprint run on *code*, and the media half of the definition of
+done is now covered against real containers by a synthetic lossless pair (§5, *Smoke coverage*); a dump
+over licensed media remains desirable but is no longer the gate. Both tracks were reviewed and
 specified before implementation (readiness review 2026-07-31; the open design decisions it surfaced are
 settled inline), and Track A was re-reviewed after landing (§5, *Post-implementation review*). Consumer: any corpus-level
 analysis pass (`equivalence-calibration` and successors) that must qualify a result rather than just
@@ -383,12 +384,36 @@ known set appearing under their own probe string rather than folded into an "unk
 pre-Track-A rows counted explicitly as *absent* rather than silently zero.
 
 **Track A — source provenance (§2)** — *implemented 2026-07-31.* Every box below is code-complete and
-covered by unit tests; the one item the tree cannot prove is the **media** half of the DoD ("a fresh
-single-pair dump shows `codec` / `bit_depth` / `native_sample_rate` / `native_channels` on both sides"),
-which needs a real `--gap-fingerprints` run (`--features calibration,he-aac`, one pair at a time). The wiring itself is
-proven media-free by `schema.rs`'s `descriptor_populates_provenance` / `was_resampled_*` /
-`bit_depth_tokens_are_pinned` tests, and the *threading* by `measure.rs`'s from-decode test (asserts the
-two sides stay distinguishable and that a descriptor-less call leaves provenance absent, not defaulted).
+covered by unit tests. The wiring is proven media-free by `schema.rs`'s `descriptor_populates_provenance`
+/ `was_resampled_*` / `bit_depth_tokens_are_pinned` tests, and the *threading* by `measure.rs`'s
+from-decode test (asserts the two sides stay distinguishable and that a descriptor-less call leaves
+provenance absent, not defaulted).
+
+*Smoke coverage (added 2026-07-31).* The DoD's media half — "a fresh single-pair dump shows `codec` /
+`bit_depth` / `native_sample_rate` / `native_channels` on both sides" — is covered by
+`tests/cli_gap_fingerprint_provenance.rs`, which runs the **real binary** (align → scan →
+`dump_gap_fingerprints` → `corpus.json`) over
+`clip_sync_repair_fixtures::lossless_silence_pair`. Every unit test injects the `SourceDescriptor` it
+then asserts on; this one reads it off an actual container probe. The pair is deliberately asymmetric —
+A 48 kHz/s16, B 44.1 kHz/s24, both mono — so it pins per-side `bit_depth` and `native_sample_rate`, and
+pins `sample_rate` as A's on *both* sides, which is what makes `was_resampled()` read false for A and
+true for B. It is PCM WAV because of the codecs this tree decodes (`symphonia` = `default, isomp4, aac,
+mp3, mkv, flac`) only FLAC and PCM reproduce zeros exactly, and PCM needs no encoder and so never skips.
+
+The same fixture is the only thing in the tree that can reach the **−120 digital-silence condition** of
+§1.1: its gap core is bit-exact zero on both sides (zeros survive the 44.1 → 48 kHz resample — every
+filter tap is multiplied by zero, and the core is far longer than any filter tail), so `block_rms_db`
+clamps to `BLOCK_LEVEL_FLOOR_DB` and `gap_floor_db` is −120 too. Lossy material structurally cannot:
+AAC/MP3/Vorbis reconstruct silence through quantization and the IMDCT and bottom out near −101 dB.
+
+*Two limits, both deliberate.* (a) It is not a substitute for a licensed-media dump — it proves the
+probe→`FileSource` wiring against a genuine container, not that the reading is sensible across the codec
+variety real media carries. (b) PCM has no arm in `codec_name` (`probe.rs:253-263`), so both sides fall
+through to `format!("{codec}")`, which as of 2026-07-31 renders a bare **hex id** (`0x108` for s16,
+`0x104` for s24). That satisfies the specified behavior — an unmapped codec keeps its own distinct string
+rather than collapsing into an "unknown" bucket — but a census over PCM reads `0x108→0x104`, which no
+reader can interpret. **Open, unscheduled:** add `pcm_*` arms to `codec_name`. Not done here; it changes
+a `clip-sync` mapping that other consumers read, and the fingerprint census is not the only caller.
 
 *Post-implementation review corrections (same day), all applied:* `DecodedAb.sources` is
 `#[cfg_attr(not(feature = "calibration"), allow(dead_code))]` — `calibration` is off by default and
@@ -525,10 +550,16 @@ column** — deserializing it is not the deliverable.
 
 ## 6. Downstream
 
-- **The next large fingerprint run** is unblocked on code (Track A emit landed 2026-07-31), but should
-  be preceded by a **single-pair smoke dump** — the media half of §5's definition of done is the one
-  Track A item the tree cannot prove by itself. A run dumped from a build without Track A produces
-  another corpus that cannot answer the question motivating the run (§1.1).
+- **The next large fingerprint run** is unblocked (Track A emit landed 2026-07-31; the media half of
+  §5's DoD is covered by `cli_gap_fingerprint_provenance`). A run dumped from a build without Track A
+  produces another corpus that cannot answer the question motivating the run (§1.1) — confirm the build
+  carries it before committing a multi-hour run.
+- **Scope of that run is a separate decision, and Track A does not settle it.** Track A changes what the
+  run can *report*, not what it can *find*. Re-fingerprinting the existing pairs yields a census reading
+  one codec pair and a `0 dangerous` correctly labelled as a null the population could not have broken —
+  real progress over a bare count, but still not evidence. Making the null *informative* needs at least
+  one pair whose source can reach the −120 clamp, i.e. lossless. That is media acquisition, not code, and
+  it is worth establishing whether such a pair exists **before** committing to the run rather than after.
 - **`equivalence-calibration`** now qualifies its `0 dangerous / N gaps` verdict by naming the
   population it was measured over (`codecs (a→b): flac→aac 12`), instead of reporting a bare count over
   a corpus whose composition the reader has to already know.

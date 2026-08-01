@@ -20,6 +20,7 @@ pub mod energy_signature_production;
 pub mod fingerprint_corpus_fixtures;
 pub mod gap_cell_fixtures;
 pub mod gap_corpus_fixtures;
+pub mod lossless_silence_pair;
 pub mod patch_geometry_preview;
 pub mod test_align;
 pub mod w5_anchor_rescue_diag;

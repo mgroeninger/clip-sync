@@ -83,6 +83,10 @@ name = "cli_wav_integration"
 path = "tests/cli_wav_integration.rs"
 
 [[test]]
+name = "cli_gap_fingerprint_provenance"
+path = "tests/cli_gap_fingerprint_provenance.rs"
+
+[[test]]
 name = "wav_bit_depth_integration"
 path = "tests/wav_bit_depth_integration.rs"
 

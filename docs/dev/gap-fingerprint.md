@@ -460,8 +460,15 @@ different result). So identity is **per file**, not per logical source:
 - **Source provenance** (Track A of
   [TEMP-fingerprint-provenance-plan.md](TEMP-fingerprint-provenance-plan.md) §2): each `FileSource` also
   records what the probe read off that side's container, so a corpus can state what media it measured:
-  - `codec` — the probe's codec name (`aac`, `ac3`, `eac3`, `mp3`, `flac`, `vorbis`, `alac`, else the raw
-    Symphonia name). Note there is **no `pcm` arm**, so absent ≠ lossless.
+  - `codec` — the codec **family** the probe read (`aac`, `ac3`, `eac3`, `mp3`, `flac`, `vorbis`,
+    `alac`, `pcm`, `alaw`, `mulaw`, else the raw Symphonia name, which renders as a bare hex id like
+    `0x1f2`). Family, not format: Symphonia has 36 linear-PCM ids because the id encodes depth,
+    signedness, endianness and planarity together, and all 36 collapse to one `pcm` — depth is
+    `bit_depth`'s axis, and per-id tokens would split one population across dozens of census buckets.
+    **G.711 `alaw` / `mulaw` are deliberately *not* `pcm`** despite Symphonia naming them
+    `CODEC_ID_PCM_*`: companding is lossy, and folding them in would let a census assert losslessness
+    about lossy material. Separately, an **absent** `codec` means a pre-Track-A corpus, not PCM and
+    not lossless — absence is unanswerable, never a reading.
   - `bit_depth` — one of the pinned tokens `s16` / `s24` / `s32` / `f32` / `other:<bits>`.
   - `native_sample_rate` / `native_channels` — that side's **own** rate/layout, which differ from the
     sibling `sample_rate` / `channels` (the rate everything was *measured* at: A's, with B resampled to

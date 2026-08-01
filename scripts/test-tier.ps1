@@ -83,6 +83,16 @@ try {
             Write-Host '>> skip cli_mux_integration (ffmpeg not on PATH)' -ForegroundColor DarkYellow
         }
 
+        # Needs its own invocation: `--gap-fingerprints` only exists under `calibration`, and the
+        # test file is `#![cfg(feature = "calibration")]`, so folding it into the batch above would
+        # build an empty binary and pass vacuously. ~55 s in debug (~2 s release) — kept in debug so
+        # the tier stays on one profile rather than paying for a whole optimized build.
+        Invoke-CargoTest @(
+            '-p', 'clip-sync-repair',
+            '--features', 'calibration',
+            '--test', 'cli_gap_fingerprint_provenance'
+        )
+
         Invoke-CargoTest @('-p', 'clip-sync-repair-harness', '--lib')
     }
 

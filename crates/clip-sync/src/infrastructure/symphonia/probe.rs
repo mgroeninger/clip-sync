@@ -4,7 +4,16 @@ use std::time::Duration;
 
 use symphonia::core::codecs::audio::well_known::{
     CODEC_ID_AAC, CODEC_ID_AC3, CODEC_ID_ALAC, CODEC_ID_EAC3, CODEC_ID_FLAC, CODEC_ID_MP3,
-    CODEC_ID_VORBIS,
+    CODEC_ID_PCM_ALAW, CODEC_ID_PCM_F32BE, CODEC_ID_PCM_F32BE_PLANAR, CODEC_ID_PCM_F32LE,
+    CODEC_ID_PCM_F32LE_PLANAR, CODEC_ID_PCM_F64BE, CODEC_ID_PCM_F64BE_PLANAR, CODEC_ID_PCM_F64LE,
+    CODEC_ID_PCM_F64LE_PLANAR, CODEC_ID_PCM_MULAW, CODEC_ID_PCM_S16BE, CODEC_ID_PCM_S16BE_PLANAR,
+    CODEC_ID_PCM_S16LE, CODEC_ID_PCM_S16LE_PLANAR, CODEC_ID_PCM_S24BE, CODEC_ID_PCM_S24BE_PLANAR,
+    CODEC_ID_PCM_S24LE, CODEC_ID_PCM_S24LE_PLANAR, CODEC_ID_PCM_S32BE, CODEC_ID_PCM_S32BE_PLANAR,
+    CODEC_ID_PCM_S32LE, CODEC_ID_PCM_S32LE_PLANAR, CODEC_ID_PCM_S8, CODEC_ID_PCM_S8_PLANAR,
+    CODEC_ID_PCM_U16BE, CODEC_ID_PCM_U16BE_PLANAR, CODEC_ID_PCM_U16LE, CODEC_ID_PCM_U16LE_PLANAR,
+    CODEC_ID_PCM_U24BE, CODEC_ID_PCM_U24BE_PLANAR, CODEC_ID_PCM_U24LE, CODEC_ID_PCM_U24LE_PLANAR,
+    CODEC_ID_PCM_U32BE, CODEC_ID_PCM_U32BE_PLANAR, CODEC_ID_PCM_U32LE, CODEC_ID_PCM_U32LE_PLANAR,
+    CODEC_ID_PCM_U8, CODEC_ID_PCM_U8_PLANAR, CODEC_ID_VORBIS,
 };
 use symphonia::core::codecs::audio::{AudioCodecId, AudioCodecParameters, AudioDecoderOptions};
 use symphonia::core::codecs::CodecParameters;
@@ -250,6 +259,64 @@ fn ac3_channels_from_dec3(extra: &[u8]) -> u16 {
     base + u16::from(lfeon)
 }
 
+/// Every **linear** PCM codec id: signed/unsigned integer and IEEE float, both endiannesses, both
+/// interleaved and planar. All collapse to one `"pcm"` token.
+///
+/// Listed by name rather than matched as the `0x100..=0x123` numeric range on purpose. The range is
+/// an implementation detail of Symphonia's well-known table and a renumbering would silently
+/// mis-bucket; a removed or renamed constant here is a compile error instead.
+///
+/// **A-law and Mu-law are deliberately absent.** Symphonia names them `CODEC_ID_PCM_*` and places
+/// them immediately after this block (0x124, 0x125), but G.711 companding is *lossy*. Folding them
+/// into `"pcm"` would make a corpus census assert losslessness about lossy material, which is the one
+/// question the census exists to answer.
+const LINEAR_PCM_CODECS: [AudioCodecId; 36] = [
+    CODEC_ID_PCM_S32LE,
+    CODEC_ID_PCM_S32LE_PLANAR,
+    CODEC_ID_PCM_S32BE,
+    CODEC_ID_PCM_S32BE_PLANAR,
+    CODEC_ID_PCM_S24LE,
+    CODEC_ID_PCM_S24LE_PLANAR,
+    CODEC_ID_PCM_S24BE,
+    CODEC_ID_PCM_S24BE_PLANAR,
+    CODEC_ID_PCM_S16LE,
+    CODEC_ID_PCM_S16LE_PLANAR,
+    CODEC_ID_PCM_S16BE,
+    CODEC_ID_PCM_S16BE_PLANAR,
+    CODEC_ID_PCM_S8,
+    CODEC_ID_PCM_S8_PLANAR,
+    CODEC_ID_PCM_U32LE,
+    CODEC_ID_PCM_U32LE_PLANAR,
+    CODEC_ID_PCM_U32BE,
+    CODEC_ID_PCM_U32BE_PLANAR,
+    CODEC_ID_PCM_U24LE,
+    CODEC_ID_PCM_U24LE_PLANAR,
+    CODEC_ID_PCM_U24BE,
+    CODEC_ID_PCM_U24BE_PLANAR,
+    CODEC_ID_PCM_U16LE,
+    CODEC_ID_PCM_U16LE_PLANAR,
+    CODEC_ID_PCM_U16BE,
+    CODEC_ID_PCM_U16BE_PLANAR,
+    CODEC_ID_PCM_U8,
+    CODEC_ID_PCM_U8_PLANAR,
+    CODEC_ID_PCM_F32LE,
+    CODEC_ID_PCM_F32LE_PLANAR,
+    CODEC_ID_PCM_F32BE,
+    CODEC_ID_PCM_F32BE_PLANAR,
+    CODEC_ID_PCM_F64LE,
+    CODEC_ID_PCM_F64LE_PLANAR,
+    CODEC_ID_PCM_F64BE,
+    CODEC_ID_PCM_F64BE_PLANAR,
+];
+
+/// Codec **family** name for `AudioTrack.codec` — a grouping token, not a full format description.
+///
+/// The distinction matters for PCM. Symphonia has 36 linear PCM ids because the id encodes depth,
+/// signedness, endianness and planarity all at once; `AudioTrack` already carries depth in
+/// `bit_depth`, so per-id tokens would restate it while scattering one logical population across
+/// dozens of buckets. Hence one `"pcm"`. The unmapped fallback is `format!("{codec}")`, which renders
+/// a bare hex id (`0x108`) — fine as a "keep it distinct rather than call it unknown" backstop, but
+/// not something a reader can interpret, which is why anything expected in a corpus gets an arm.
 fn codec_name(codec: AudioCodecId) -> String {
     match codec {
         CODEC_ID_AAC => "aac".into(),
@@ -259,6 +326,9 @@ fn codec_name(codec: AudioCodecId) -> String {
         CODEC_ID_FLAC => "flac".into(),
         CODEC_ID_VORBIS => "vorbis".into(),
         CODEC_ID_ALAC => "alac".into(),
+        CODEC_ID_PCM_ALAW => "alaw".into(),
+        CODEC_ID_PCM_MULAW => "mulaw".into(),
+        c if LINEAR_PCM_CODECS.contains(&c) => "pcm".into(),
         _ => format!("{codec}"),
     }
 }
@@ -269,6 +339,44 @@ mod tests {
     use symphonia::core::codecs::audio::well_known::CODEC_ID_AC3;
     #[cfg(feature = "ac3")]
     use symphonia::core::codecs::audio::well_known::CODEC_ID_EAC3;
+
+    #[test]
+    fn linear_pcm_collapses_to_one_family_token() {
+        // Depth, signedness, endianness and planarity all live on other axes (`bit_depth`, and the
+        // decoded samples themselves). If any of these started reporting separately, a census would
+        // split one logical population across buckets.
+        for codec in [
+            CODEC_ID_PCM_S16LE,
+            CODEC_ID_PCM_S24BE,
+            CODEC_ID_PCM_S32LE_PLANAR,
+            CODEC_ID_PCM_U8,
+            CODEC_ID_PCM_F32LE,
+            CODEC_ID_PCM_F64BE_PLANAR,
+        ] {
+            assert_eq!(codec_name(codec), "pcm", "{codec} should report the family");
+        }
+        assert_eq!(LINEAR_PCM_CODECS.len(), 36);
+    }
+
+    #[test]
+    fn g711_companding_is_not_reported_as_pcm() {
+        // Symphonia names these `CODEC_ID_PCM_*` and numbers them adjacent to the linear block, but
+        // they are lossy. Reporting them as "pcm" would let a census conclude a population could
+        // reach the −120 digital-silence floor when it cannot.
+        assert_eq!(codec_name(CODEC_ID_PCM_ALAW), "alaw");
+        assert_eq!(codec_name(CODEC_ID_PCM_MULAW), "mulaw");
+        assert!(!LINEAR_PCM_CODECS.contains(&CODEC_ID_PCM_ALAW));
+        assert!(!LINEAR_PCM_CODECS.contains(&CODEC_ID_PCM_MULAW));
+    }
+
+    #[test]
+    fn unmapped_codecs_keep_a_distinct_fallback_string() {
+        // The backstop must stay *distinct per codec* rather than collapsing to one "unknown"
+        // bucket — an unrecognized codec should be visible as its own population, however ugly.
+        let adpcm = symphonia::core::codecs::audio::well_known::CODEC_ID_ADPCM_MS;
+        assert_ne!(codec_name(adpcm), codec_name(CODEC_ID_PCM_S16LE));
+        assert!(!codec_name(adpcm).is_empty());
+    }
 
     fn ac3_params(codec: AudioCodecId) -> AudioCodecParameters {
         AudioCodecParameters {

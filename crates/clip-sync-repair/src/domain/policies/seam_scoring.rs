@@ -337,10 +337,7 @@ fn repeat_side_band(
     Some(
         (0..width)
             .map(|i| {
-                let v = bands
-                    .iter()
-                    .map(|b| b[i])
-                    .fold(f64::NEG_INFINITY, f64::max);
+                let v = bands.iter().map(|b| b[i]).fold(f64::NEG_INFINITY, f64::max);
                 if v.is_finite() {
                     v
                 } else {
