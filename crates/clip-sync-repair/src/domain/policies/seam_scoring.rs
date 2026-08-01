@@ -97,6 +97,10 @@ fn effective_repeat_window_frames(
 }
 
 /// Pearson correlation of A border templates with B fill interior (repeat-at-seam detector).
+///
+/// Mono / 1-channel media scores the downmix. Multichannel uses the same ~20 dB energy selection as
+/// seam Pearson / residual ([`seam_score_channel_indices`]) and **does not** fold in the mono term —
+/// empty selection or no scoreable window is `0.0` ("no repeat"), not a mono fallback.
 pub fn fill_repeat_correlations(
     templates: &SeamTemplates<'_>,
     placement: SeamPlacement,
@@ -122,7 +126,7 @@ pub fn fill_repeat_correlations(
     let post_repeat_window =
         effective_repeat_window_frames(repeat_window_frames, gap_frames, a_post.len(), post_window);
 
-    let repeat_pre = if !a_pre.is_empty()
+    let repeat_pre_mono = if !a_pre.is_empty()
         && start + pre_repeat_window <= b_mono.len()
         && pre_repeat_window <= a_pre.len()
     {
@@ -135,7 +139,7 @@ pub fn fill_repeat_correlations(
     };
 
     let tail_start = start + gap_frames.saturating_sub(post_repeat_window);
-    let repeat_post = if !a_post.is_empty()
+    let repeat_post_mono = if !a_post.is_empty()
         && tail_start + post_repeat_window <= b_mono.len()
         && post_repeat_window <= a_post.len()
     {
@@ -148,63 +152,76 @@ pub fn fill_repeat_correlations(
     };
 
     if b_ch.len() <= 1 {
-        return (repeat_pre, repeat_post);
+        return (repeat_pre_mono, repeat_post_mono);
     }
 
+    let score_channels = seam_score_channel_indices(a_pre_ch, a_post_ch);
+    if score_channels.is_empty() {
+        return (0.0, 0.0);
+    }
+
+    // Outer gate is phrased against the mono window / `b_mono` (band twin must match).
     let ch_pre = if start + pre_repeat_window <= b_mono.len() {
-        a_pre_ch
-            .iter()
-            .zip(b_ch.iter())
-            .filter_map(|(a_ch, b_ch)| {
-                let border_len = a_ch.len();
-                let w = effective_repeat_window_frames(
-                    repeat_window_frames,
-                    gap_frames,
-                    border_len,
-                    pre_window,
-                );
-                if w <= border_len && start + w <= b_ch.len() {
-                    Some(seam_pearson(
-                        &a_ch[border_len.saturating_sub(w)..],
-                        &b_ch[start..start + w],
-                    ))
-                } else {
-                    None
-                }
-            })
-            .fold(f64::NEG_INFINITY, f64::max)
+        let mut best = f64::NEG_INFINITY;
+        for &ch in &score_channels {
+            if ch >= a_pre_ch.len() || ch >= b_ch.len() {
+                continue;
+            }
+            let a_ch = &a_pre_ch[ch];
+            let b_side = &b_ch[ch];
+            let border_len = a_ch.len();
+            let w = effective_repeat_window_frames(
+                repeat_window_frames,
+                gap_frames,
+                border_len,
+                pre_window,
+            );
+            if w <= border_len && start + w <= b_side.len() {
+                best = best.max(seam_pearson(
+                    &a_ch[border_len.saturating_sub(w)..],
+                    &b_side[start..start + w],
+                ));
+            }
+        }
+        if best.is_finite() {
+            best
+        } else {
+            0.0
+        }
     } else {
-        f64::NEG_INFINITY
+        0.0
     };
 
     let ch_post = if tail_start + post_repeat_window <= b_mono.len() {
-        a_post_ch
-            .iter()
-            .zip(b_ch.iter())
-            .filter_map(|(a_ch, b_ch)| {
-                let border_len = a_ch.len();
-                let w = effective_repeat_window_frames(
-                    repeat_window_frames,
-                    gap_frames,
-                    border_len,
-                    post_window,
-                );
-                let tail = start + gap_frames.saturating_sub(w);
-                if w <= border_len && tail + w <= b_ch.len() {
-                    Some(seam_pearson(&a_ch[..w], &b_ch[tail..tail + w]))
-                } else {
-                    None
-                }
-            })
-            .fold(f64::NEG_INFINITY, f64::max)
+        let mut best = f64::NEG_INFINITY;
+        for &ch in &score_channels {
+            if ch >= a_post_ch.len() || ch >= b_ch.len() {
+                continue;
+            }
+            let a_ch = &a_post_ch[ch];
+            let b_side = &b_ch[ch];
+            let border_len = a_ch.len();
+            let w = effective_repeat_window_frames(
+                repeat_window_frames,
+                gap_frames,
+                border_len,
+                post_window,
+            );
+            let tail = start + gap_frames.saturating_sub(w);
+            if w <= border_len && tail + w <= b_side.len() {
+                best = best.max(seam_pearson(&a_ch[..w], &b_side[tail..tail + w]));
+            }
+        }
+        if best.is_finite() {
+            best
+        } else {
+            0.0
+        }
     } else {
-        f64::NEG_INFINITY
+        0.0
     };
 
-    (
-        best_channel_correlation(&[repeat_pre, ch_pre]),
-        best_channel_correlation(&[repeat_post, ch_post]),
-    )
+    (ch_pre, ch_post)
 }
 
 /// One side (pre or post) of [`fill_repeat_correlations_band`], mirroring the corresponding half of
@@ -225,6 +242,7 @@ fn repeat_side_band(
     repeat_window_frames: usize,
     gap_frames: usize,
     seam_window: usize,
+    score_channels: &[usize],
     tail: bool,
     start_lo: usize,
     start_hi: usize,
@@ -241,9 +259,8 @@ fn repeat_side_band(
     };
     let mono_offset = base_offset(mono_window);
 
-    // The one start-dependent term shared by the mono scoring gate (`:127` / `:139`) and the OUTER channel gate
-    // (`:155` / `:181`) — both phrased against the MONO window and `b_mono`, even though the outer one gates
-    // per-channel work. Monotonic in `start`, so uniform across the band iff it agrees at both ends.
+    // Outer / mono gate: phrased against the MONO window and `b_mono`. Monotonic in `start`, so uniform
+    // across the band iff it agrees at both ends.
     let fit_lo = start_lo + mono_offset + mono_window <= b_mono.len();
     let fit_hi = start_hi + mono_offset + mono_window <= b_mono.len();
     if fit_lo != fit_hi {
@@ -251,10 +268,12 @@ fn repeat_side_band(
     }
     let fit = fit_lo;
 
-    // Mono band. The remaining conjuncts (`!a.is_empty()`, `w <= a.len()`) are start-independent; when they
-    // fail the naive path yields a literal `0.0` (NOT `NEG_INFINITY` — that value is the channel set's).
-    let score_mono = !a_mono.is_empty() && fit && mono_window <= a_mono.len();
-    let mono_band = if score_mono {
+    // Mono / 1-channel: return the mono pair outright (naive early-return).
+    if b_ch.len() <= 1 {
+        let score_mono = !a_mono.is_empty() && fit && mono_window <= a_mono.len();
+        if !score_mono {
+            return Some(vec![0.0; width]);
+        }
         let template: &[f64] = if tail {
             &a_mono[a_mono.len() - mono_window..]
         } else {
@@ -269,64 +288,65 @@ fn repeat_side_band(
         if band.len() != width {
             return None;
         }
-        band
-    } else {
-        vec![0.0; width]
-    };
-
-    // `fill_repeat_correlations` returns the mono pair outright for mono/1-channel media (`:151-153`), never
-    // reaching the channel fold — so the band must not synthesize a `NEG_INFINITY` channel term here either.
-    if b_ch.len() <= 1 {
-        return Some(mono_band);
+        return Some(band);
     }
 
-    // Outer gate failed ⇒ the whole channel set is `NEG_INFINITY` for every start, regardless of whether an
-    // individual channel's (possibly SHORTER) window would have fit. Reproducing that is the point.
-    let ch_band_max: Vec<f64> = if !fit {
-        vec![f64::NEG_INFINITY; width]
-    } else {
-        let mut bands: Vec<Vec<f64>> = Vec::new();
-        for (a_c, b_c) in a_ch.iter().zip(b_ch.iter()) {
-            let border_len = a_c.len();
-            let w = effective_repeat_window_frames(
-                repeat_window_frames,
-                gap_frames,
-                border_len,
-                seam_window,
-            );
-            if w > border_len {
-                continue; // start-independent exclusion — matches the naive `filter_map`
-            }
-            let off = base_offset(w);
-            let lo_ok = start_lo + off + w <= b_c.len();
-            let hi_ok = start_hi + off + w <= b_c.len();
-            if lo_ok != hi_ok {
-                return None; // channel would be scored for some starts, skipped for others
-            }
-            if !hi_ok {
-                continue;
-            }
-            let template: &[f64] = if tail {
-                &a_c[border_len - w..]
-            } else {
-                &a_c[..w]
-            };
-            let band = seam_correlation_over_bases(template, b_c, start_lo + off, start_hi + off);
-            if band.len() != width {
-                return None;
-            }
-            bands.push(band);
-        }
-        (0..width)
-            .map(|i| bands.iter().map(|b| b[i]).fold(f64::NEG_INFINITY, f64::max))
-            .collect()
-    };
+    // Multichannel: energy-selected channels only; mono is not a participant. Empty selection or a
+    // failed outer gate → `0.0` ("no repeat"), matching the naive path.
+    if score_channels.is_empty() || !fit {
+        return Some(vec![0.0; width]);
+    }
 
-    // Mono is a PARTICIPANT in the max here, not a fallback used only when no channel scored — that is the
-    // seam band's `combine_seam_band` rule, and it is the wrong one for repeat.
+    let mut bands: Vec<Vec<f64>> = Vec::new();
+    for &ch in score_channels {
+        if ch >= a_ch.len() || ch >= b_ch.len() {
+            continue;
+        }
+        let a_c = &a_ch[ch];
+        let b_c = &b_ch[ch];
+        let border_len = a_c.len();
+        let w = effective_repeat_window_frames(
+            repeat_window_frames,
+            gap_frames,
+            border_len,
+            seam_window,
+        );
+        if w > border_len {
+            continue; // start-independent exclusion — matches the naive path
+        }
+        let off = base_offset(w);
+        let lo_ok = start_lo + off + w <= b_c.len();
+        let hi_ok = start_hi + off + w <= b_c.len();
+        if lo_ok != hi_ok {
+            return None; // channel would be scored for some starts, skipped for others
+        }
+        if !hi_ok {
+            continue;
+        }
+        let template: &[f64] = if tail {
+            &a_c[border_len - w..]
+        } else {
+            &a_c[..w]
+        };
+        let band = seam_correlation_over_bases(template, b_c, start_lo + off, start_hi + off);
+        if band.len() != width {
+            return None;
+        }
+        bands.push(band);
+    }
     Some(
         (0..width)
-            .map(|i| best_channel_correlation(&[mono_band[i], ch_band_max[i]]))
+            .map(|i| {
+                let v = bands
+                    .iter()
+                    .map(|b| b[i])
+                    .fold(f64::NEG_INFINITY, f64::max);
+                if v.is_finite() {
+                    v
+                } else {
+                    0.0
+                }
+            })
             .collect(),
     )
 }
@@ -338,9 +358,9 @@ fn repeat_side_band(
 ///
 /// This is the repeat-window twin of [`fill_seam_correlations_band`], which banded the *seam* window only. It
 /// is a separate window, so it needs its own pass — and it differs from the seam band in ways a copy-paste
-/// would get wrong (see `TEMP-repeat-band-plan.md` §2.1): no `score_channels` filter (repeat scores **all**
-/// channels), per-channel window lengths that differ within one call, an outer channel gate phrased against
-/// the mono window, and `0.0`-vs-`NEG_INFINITY` failure values that are not interchangeable.
+/// would get wrong (see `TEMP-repeat-band-plan.md` §2.1): multichannel uses [`seam_score_channel_indices`]
+/// (not all channels, and not mono-in-the-max), per-channel window lengths that differ within one call, an
+/// outer channel gate phrased against the mono window, and `0.0` for unscoreable cases.
 ///
 /// Returns `None` on the same contract as the seam band: any start-dependent bound that is not uniform across
 /// the band, or a band that does not fit. Correctness is further guaranteed downstream by the exact re-score
@@ -374,6 +394,7 @@ pub(crate) fn fill_repeat_correlations_band(
         effective_repeat_window_frames(repeat_window_frames, gap_frames, a_pre.len(), pre_window);
     let post_repeat_window =
         effective_repeat_window_frames(repeat_window_frames, gap_frames, a_post.len(), post_window);
+    let score_channels = seam_score_channel_indices(a_pre_ch, a_post_ch);
 
     let pre = repeat_side_band(
         a_pre,
@@ -384,6 +405,7 @@ pub(crate) fn fill_repeat_correlations_band(
         repeat_window_frames,
         gap_frames,
         pre_window,
+        &score_channels,
         true,
         start_lo,
         start_hi,
@@ -398,6 +420,7 @@ pub(crate) fn fill_repeat_correlations_band(
         repeat_window_frames,
         gap_frames,
         post_window,
+        &score_channels,
         false,
         start_lo,
         start_hi,
@@ -1336,10 +1359,10 @@ mod tests {
             "naive",
         );
 
-        // --- C. §2.1 #3: the OUTER channel gate is phrased against the MONO window and `b_mono`. With a short
-        // mono buffer it fails for the whole band, so every channel scores `NEG_INFINITY` **even though each
-        // channel's own (shorter) window fits comfortably inside its own full-length `b_ch`**. A band that
-        // only ported the per-channel `start + w <= b_ch.len()` checks returns real correlations here. ---
+        // --- C. Outer channel gate is phrased against the MONO window and `b_mono`. With a short mono
+        // buffer it fails for the whole band, so every start scores `0.0` **even though each channel's own
+        // (shorter) window fits inside its full-length `b_ch`**. A band that only ported the per-channel
+        // `start + w <= b_ch.len()` checks would return real correlations here. ---
         let b_mono_short = det_noise(4, 6100);
         let short_mono = SeamTemplates {
             b_mono: &b_mono_short,
@@ -1364,8 +1387,8 @@ mod tests {
             "outer-gate-fails",
         );
 
-        // --- D. §2.1 #5: mono's start-independent conjunct fails (empty `a_pre`) ⇒ mono contributes a literal
-        // `0.0`, NOT `NEG_INFINITY`, while the channel set still scores normally. ---
+        // --- D. Empty `a_pre` only affects the mono early-return path; multichannel scores selected
+        // channels and ignores mono, so the band must still match the naive channel fold. ---
         let no_pre = SeamTemplates {
             a_pre: &[],
             ..copy_templates(&templates)
@@ -1381,8 +1404,7 @@ mod tests {
             "empty-a-pre",
         );
 
-        // --- E. §2.1 #1/#6: mono/1-channel media returns the mono pair outright, never reaching the channel
-        // fold — so no `NEG_INFINITY` channel term is synthesized. ---
+        // --- E. Mono/1-channel media returns the mono pair outright, never reaching the channel fold. ---
         let one_ch: Vec<Vec<f64>> = vec![b_ch[0].clone()];
         let a_pre_one: Vec<Vec<f64>> = vec![a_pre_ch[0].clone()];
         let a_post_one: Vec<Vec<f64>> = vec![a_post_ch[0].clone()];
@@ -1500,6 +1522,116 @@ mod tests {
             repeat_speech > repeat_music + 0.4,
             "music-only fill should score lower repeat_post (speech={repeat_speech}, music={repeat_music})"
         );
+    }
+
+    #[test]
+    fn fill_repeat_empty_channel_selection_is_zero_not_mono() {
+        // All-silent multichannel borders → empty energy selection → (0, 0), even if mono would correlate.
+        let w = 32usize;
+        let gap = 16usize;
+        let signal: Vec<f64> = (0..w).map(|i| (i as f64 * 0.3).sin()).collect();
+        let mut b_mono = vec![0.0f64; 64];
+        b_mono[8..8 + w.min(gap)].copy_from_slice(&signal[..w.min(gap)]);
+        // Put the same signal in mono-only haystack; per-channel B is silent.
+        let silent = vec![0.0f64; 64];
+        let a_silent = vec![0.0f64; w];
+        let a_pre_ch = vec![a_silent.clone(), a_silent.clone()];
+        let a_post_ch = vec![a_silent.clone(), a_silent.clone()];
+        let b_ch = vec![silent.clone(), silent];
+        let templates = SeamTemplates {
+            a_pre: &signal,
+            a_post: &signal,
+            a_pre_ch: &a_pre_ch,
+            a_post_ch: &a_post_ch,
+            b_mono: &b_mono,
+            b_ch: &b_ch,
+        };
+        let placement = SeamPlacement {
+            start: 8,
+            gap_frames: gap,
+            pre_window: w,
+            post_window: w,
+        };
+        assert!(seam_score_channel_indices(&a_pre_ch, &a_post_ch).is_empty());
+        let (pre, post) = fill_repeat_correlations(&templates, placement, w);
+        assert_eq!((pre, post), (0.0, 0.0));
+        assert_repeat_band_matches(&templates, gap, w, w, w, 8, 8, "empty-selection");
+    }
+
+    /// Center-dominant repeat: silent fronts must not participate; selected center still flags repeat.
+    #[test]
+    fn fill_repeat_follows_energy_selected_channels() {
+        let w = 64usize;
+        let gap = 64usize;
+        let start = 64usize;
+        let quiet = vec![0.01f64; w];
+        let loud: Vec<f64> = (0..w).map(|i| (i as f64 * 0.17).sin() * 10.0).collect();
+        // 3ch: FL/FR quiet, FC loud — same layout as seam center-dominant test.
+        let a_pre_ch = vec![quiet.clone(), quiet.clone(), loud.clone()];
+        let a_post_ch = vec![quiet.clone(), quiet.clone(), loud.clone()];
+        let mut b_center = vec![0.0f64; start + gap + w];
+        // Pre-repeat reads B at `start..start+w` against A's pre tail.
+        b_center[start..start + w].copy_from_slice(&loud);
+        // Post-repeat reads fill tail.
+        b_center[start + gap - w..start + gap].copy_from_slice(&loud);
+        let front_b = vec![0.01f64; b_center.len()];
+        let b_ch = vec![front_b.clone(), front_b, b_center.clone()];
+        let templates = SeamTemplates {
+            a_pre: &loud,
+            a_post: &loud,
+            a_pre_ch: &a_pre_ch,
+            a_post_ch: &a_post_ch,
+            b_mono: &b_center,
+            b_ch: &b_ch,
+        };
+        assert_eq!(seam_score_channel_indices(&a_pre_ch, &a_post_ch), vec![2]);
+        let placement = SeamPlacement {
+            start,
+            gap_frames: gap,
+            pre_window: w,
+            post_window: w,
+        };
+        let (pre, post) = fill_repeat_correlations(&templates, placement, w);
+        assert!(pre > 0.9, "pre repeat should follow center, got {pre}");
+        assert!(post > 0.9, "post repeat should follow center, got {post}");
+        assert_repeat_band_matches(&templates, gap, w, w, w, start, start, "center-repeat");
+    }
+
+    /// Smeared multichannel repeat: same template on several equal-energy channels (no mono term).
+    /// Confirms dropping mono does not blind the detector when the repeat is per-channel-visible.
+    #[test]
+    fn fill_repeat_smeared_multichannel_still_detects_without_mono() {
+        let w = 48usize;
+        let gap = 48usize;
+        let start = 48usize;
+        let tmpl: Vec<f64> = (0..w).map(|i| (i as f64 * 0.21).sin()).collect();
+        let a_pre_ch = vec![tmpl.clone(), tmpl.clone(), tmpl.clone()];
+        let a_post_ch = vec![tmpl.clone(), tmpl.clone(), tmpl.clone()];
+        let mut b_side = vec![0.0f64; start + gap + w];
+        b_side[start..start + w].copy_from_slice(&tmpl);
+        b_side[start + gap - w..start + gap].copy_from_slice(&tmpl);
+        let b_ch = vec![b_side.clone(), b_side.clone(), b_side.clone()];
+        // Mono downmix ≈ one channel here; we assert the selected per-channel path alone is enough.
+        let templates = SeamTemplates {
+            a_pre: &tmpl,
+            a_post: &tmpl,
+            a_pre_ch: &a_pre_ch,
+            a_post_ch: &a_post_ch,
+            b_mono: &b_side,
+            b_ch: &b_ch,
+        };
+        let selected = seam_score_channel_indices(&a_pre_ch, &a_post_ch);
+        assert_eq!(selected, vec![0, 1, 2]);
+        let placement = SeamPlacement {
+            start,
+            gap_frames: gap,
+            pre_window: w,
+            post_window: w,
+        };
+        let (pre, post) = fill_repeat_correlations(&templates, placement, w);
+        assert!(pre > 0.9, "smeared pre repeat got {pre}");
+        assert!(post > 0.9, "smeared post repeat got {post}");
+        assert_repeat_band_matches(&templates, gap, w, w, w, start, start, "smeared-repeat");
     }
 
     #[test]

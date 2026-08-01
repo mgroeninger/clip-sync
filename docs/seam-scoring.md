@@ -55,6 +55,10 @@ Residual/floor cancellation (fit mode) follows the **same** selection. `selected
 
 Aggregation: the **veto** (`worst_headroom_db`) follows the worst-headroom channel, while `informative` follows the **best-cancelling** channel so a noisy surround can't flip the same-master regime off. Empty selection falls back to the mono downmix path unchanged. Full design: [archive/residual-channel-alignment-plan.md](dev/archive/residual-channel-alignment-plan.md).
 
+### Repeat channel policy
+
+`fill_repeat_correlations` (and its FFT band twin) uses the **same** energy selection on multichannel media. Selected channels are max-folded; the mono downmix is **not** a participant in that max. Empty selection or no scoreable window yields `0.0` ("no repeat") — unlike residual, there is no mono fallback (digital silence on every channel means no repeat signal). Mono / 1-channel media still scores the downmix only.
+
 ## 3. Seam correlation (peak-normalized Pearson)
 
 `seam_pearson` correlates two equal-length windows via `normalized_correlation` (z-score Pearson). **Pearson correlation is scale-invariant**, so encode-to-encode *level* differences don't matter; *shape* does. It returns **0.0** when the windows are empty or unequal length. Because correlation keys on shape, not level, **near-silent or broadband noise-like audio correlates to ~0** — its waveform is dominated by noise, which differs sample-to-sample between two sources even when they are the same master. This is exactly why broadband seams land in the Pearson dead zone and need the residual gate (see [archive/residual-gate-wiring-plan.md](dev/archive/residual-gate-wiring-plan.md) §2).
