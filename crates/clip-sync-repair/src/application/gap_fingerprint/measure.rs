@@ -2543,10 +2543,31 @@ pub fn characterize_gaps_from_decode(
             equiv_bin_ms,
             ChannelReduction::Interleaved,
         );
-        let donor_span = b_span_secs.map(|(s, e)| crate::application::gap_equivalence::DonorSpan {
-            samples: b_samples_full,
-            frames: (s * rate).round().max(0.0) as usize..(e * rate).round().max(0.0) as usize,
-        });
+        // Refuse a donor window B does not contain, rather than measuring whatever part of it exists.
+        //
+        // `measure_gap_equivalence` clamps its frame range to the samples available, so a window running
+        // past B's end silently becomes a *shorter* window — and the truncated remainder of a tail gap is
+        // digital silence, which scored 99.3–100 % silent on all 20 such gaps of the 39-pair corpus and
+        // produced `shared_silence`/drop from audio that does not exist. Scan already fails closed here
+        // (`b_range_fully_scanned`), which is why those gaps showed up as scan-vs-diagnostic divergences:
+        // the disagreement was never about silence, only about whether to answer.
+        //
+        // `None` ⇒ no donor fraction ⇒ `NotEvaluated` ⇒ keep, the same stated refusal scan makes. The
+        // `--check` warning stays: it reports the geometry, which is still worth seeing, and now nothing
+        // downstream acts on it.
+        let donor_span = b_span_secs
+            .filter(|&(s, e)| {
+                let lo = (s * rate).round().max(0.0) as usize;
+                let hi = (e * rate).round().max(0.0) as usize;
+                hi <= b_total && lo < hi
+            })
+            .map(|(s, e)| crate::application::gap_equivalence::DonorSpan {
+                samples: b_samples_full,
+                frames: (s * rate).round().max(0.0) as usize..(e * rate).round().max(0.0) as usize,
+            });
+        // Captured before `donor_span` is moved into the call below — the provenance token has to
+        // report what was measured, and after the move there is nothing left to ask.
+        let donor_measured = donor_span.is_some();
         let equiv = crate::application::gap_equivalence::measure_gap_equivalence(
             &a_pcm.samples,
             ch,
@@ -2577,7 +2598,10 @@ pub fn characterize_gaps_from_decode(
             bin_ms: equiv_bin_ms,
             reduction: ChannelReduction::Interleaved,
             a_span: span_kind,
-            donor_span: span_kind,
+            // Taken from the donor that was actually built, not from `b_span_secs`: the EOF filter
+            // above can reject a mapped window, and the token has to report the measurement, not the
+            // intent. `None` when nothing was measured.
+            donor_span: donor_measured.then_some(span_kind),
         };
 
         // Candidate noise floors (F15, second axis) over the {context window} × {bin size} × {channel
@@ -2593,7 +2617,21 @@ pub fn characterize_gaps_from_decode(
         let nf_probes = noise_floor_probe_grid(
             &a_pcm.samples,
             ch,
-            refined.start_frame..refined.end_frame,
+            // **`gap_frames`, the span the live measurement used** — not `refined`, which is this
+            // path's own edge-refined interval and a *third* window distinct from both the scan core
+            // and the nominal span. The grid varies three axes so the rows differ by those axes and
+            // nothing else; holding a different interval than the measurement it characterizes makes
+            // every row carry an unlabelled fourth term. Measured cost of the mismatch on the
+            // 2026-08-01 4-pair run: the anchor row (which matches scan's recipe on all three axes
+            // and should therefore reproduce `scan_equivalence.noise_floor_db`) missed it on 33/33
+            // gaps, median 0.24 dB and max 7.49 dB, and the `gap_signature_context_secs` row missed
+            // this path's own live floor by up to 1.63 dB. Both are the interval, not the axes.
+            //
+            // Was `refined` until 2026-08-01 and correct while it lasted: the live measurement used
+            // the raw span too, and the A-span convergence moved the measurement onto the scan core
+            // without bringing the probes along. I2 cannot be attributed from a grid that measures a
+            // window nothing else does.
+            gap_frames.clone(),
             sample_rate,
             &[
                 crate::domain::gap_equivalence::EQUIVALENCE_CONTEXT_SECS,
@@ -2636,6 +2674,23 @@ pub fn characterize_gaps_from_decode(
     // the fingerprint wholesale mid-body and would clobber an early assignment.
     for fp in corpus.gaps.iter_mut() {
         fp.scan_equivalence = report.gap_equivalence.get(fp.index).cloned();
+    }
+
+    // Declare the fields this path does not answer — stamped **here**, not in `characterize_gaps`,
+    // because it is this function that strips them: the `*fp = spec_to_fingerprint_summary(..)` rebuild
+    // above discards the real levels/silence/contour/anchors `characterize_gaps` measured and writes
+    // structural defaults in their place. The types cannot say so (`bin_ms` is a `u32`, not an
+    // `Option<u32>`), so a `0` reads as a measured zero unless the corpus says otherwise.
+    //
+    // Scoped to `DetailTier::Full` — see `NOT_MEASURED_BY_PROJECTION`. Gaps that never reached the
+    // rebuild keep `characterize_gaps`'s real values and stay `Summary`, which is why the declaration
+    // names a tier instead of claiming the whole corpus. Only claim it if the rebuild actually ran:
+    // a corpus with nothing at full tier stripped nothing and has nothing to disown.
+    if corpus.gaps.iter().any(|g| g.tier == DetailTier::Full) {
+        corpus.source.not_measured = NOT_MEASURED_BY_PROJECTION
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
     }
     corpus
 }
@@ -2749,12 +2804,15 @@ pub fn characterize_gaps(
             scan_recipe: CorpusScanRecipe::from_report(report),
             gap_count: report.gaps.len(),
             incomparable: None,
-            // Every full-tier gap below is rebuilt by `spec_to_fingerprint_summary`, which leaves these
-            // at structural defaults. Declared rather than left for the reader to infer from a `0.0`.
-            not_measured: NOT_MEASURED_BY_PROJECTION
-                .iter()
-                .map(|s| (*s).to_string())
-                .collect(),
+            // **No `not_measured` here.** This path measures every one of those fields —
+            // `build_gap_fingerprint` below fills levels/silence/contour/anchors for real. The
+            // declaration belongs to `characterize_gaps_from_decode`, which *replaces* these gaps with
+            // `spec_to_fingerprint_summary` output and strips them. Stamping it here (as this function
+            // did briefly on 2026-08-01) makes a standalone `characterize_gaps` corpus disown data it
+            // actually holds — the same unreadable-field defect the declaration exists to fix, pointed
+            // the other way, and worse: an absent declaration invites a misread, a false one licenses
+            // discarding real measurements.
+            not_measured: Vec::new(),
         },
         gaps,
     }
@@ -3757,21 +3815,16 @@ mod tests {
         assert!(fp.lag.is_some(), "lag computed at the best speech bracket");
     }
 
-    /// The production dump declares the fields it does not measure, and the declaration is **true** —
-    /// every listed full-tier field really is at its structural default.
-    ///
-    /// Pins both halves, because either alone rots: a list that drifts from the emitter is worse than no
-    /// list (it would license trusting the fields it stopped covering), and a list nobody checks is a
-    /// comment. The 2026-07-31 corpus recorded 12 such fields on 802/802 full-tier gaps with nothing
-    /// saying so; `--check` now fails on the same condition.
-    #[test]
-    fn production_dump_declares_and_honours_its_unmeasured_fields() {
-        use crate::application::PatchAudioRequest;
+    /// One 2.5 s gap with speech shoulders on both sides and low-level noise filling B's donor window:
+    /// enough for the full projection path to produce a `DetailTier::Full` gap with a real donor.
+    fn equivalence_overlay_fixture() -> (
+        crate::domain::GapReport,
+        clip_sync::MultiChannelPcm,
+        Vec<f32>,
+    ) {
         use crate::domain::gap::Gap;
         use crate::domain::{GapReport, ScanAlignment};
-        use crate::infrastructure::config::RepairConfig;
         use clip_sync::MultiChannelPcm;
-        use clip_sync_repair_fixtures::NoOpProgressReporter;
 
         let rate = 48_000u32;
         let secs = |s: f64| (s * f64::from(rate)) as usize;
@@ -3821,6 +3874,152 @@ mod tests {
             b_scan_truncated: false,
             audio_timeline_skew: None,
         };
+        (report, a_pcm, b)
+    }
+
+    /// `characterize_gaps` alone measures those fields, so it must **not** declare them unmeasured.
+    ///
+    /// The declaration is owned by the projection rebuild in `characterize_gaps_from_decode`, not by
+    /// the summary builder that feeds it. Stamped one function too early it would make this corpus
+    /// disown levels/silence/contour/anchors it genuinely holds — and `--check` treats a false
+    /// declaration as an error precisely because it licenses discarding real data.
+    #[test]
+    fn summary_characterize_does_not_declare_fields_it_measured() {
+        let (report, a_pcm, b) = equivalence_overlay_fixture();
+        let corpus = characterize_gaps(
+            &report,
+            &CharacterizeAbPcm {
+                a_pcm: &a_pcm,
+                b_samples: &b,
+                sources: None,
+            },
+            &FingerprintConfig::default(),
+            &[],
+        );
+        assert!(
+            corpus.source.not_measured.is_empty(),
+            "summary path measures these fields; declaring them unmeasured is a false claim: {:?}",
+            corpus.source.not_measured
+        );
+        // Not vacuous: prove the path really does fill something on the list.
+        assert!(
+            corpus
+                .gaps
+                .iter()
+                .any(|g| g.levels.bin_ms != 0 || !g.levels.profile_db.is_empty()),
+            "fixture must exercise a field on NOT_MEASURED_BY_PROJECTION"
+        );
+    }
+
+    /// The probe row matching the live recipe **reproduces the live floor exactly**.
+    ///
+    /// That identity is what makes the grid an attribution instrument: rows differ by the three axes
+    /// they vary and by nothing else, so a row-to-row delta *is* that axis's term. It held until the
+    /// A-span convergence moved the live measurement onto the scan core and left the grid on this
+    /// path's `refined` span — an unlabelled fourth term worth up to 1.63 dB against the live floor
+    /// and 7.49 dB against scan's, which is the size of the I2 effect the grid exists to measure.
+    #[test]
+    fn noise_floor_probes_measure_the_span_the_equivalence_measurement_used() {
+        let (report, a_pcm, b) = equivalence_overlay_fixture();
+        let corpus = characterize_gaps_from_decode(
+            &report,
+            &CharacterizeAbPcm {
+                a_pcm: &a_pcm,
+                b_samples: &b,
+                sources: None,
+            },
+            &crate::infrastructure::config::RepairConfig::default()
+                .patch_settings()
+                .into_request(report.clone())
+                .expect("default All gap selection"),
+            &[],
+            false,
+            &clip_sync_repair_fixtures::NoOpProgressReporter,
+        );
+        let eq = corpus.gaps[0].equivalence.as_ref().expect("overlay ran");
+        let m = eq
+            .measurement
+            .as_ref()
+            .expect("measurement recipe recorded");
+        let live = eq.noise_floor_db.expect("a floor was measured");
+        let row = eq
+            .noise_floor_probes
+            .iter()
+            .find(|p| {
+                p.context_secs == m.context_secs
+                    && p.bin_ms == m.bin_ms
+                    && p.reduction == m.reduction
+            })
+            .expect("the grid must contain the live recipe's own row");
+        assert!(
+            (row.floor_db.expect("row measured") - live).abs() < 1e-9,
+            "probe row {:?} reads {:?} but the live measurement reads {live} — the grid is measuring \
+             a different span, so every row carries an unlabelled term",
+            (row.context_secs, row.bin_ms, row.reduction),
+            row.floor_db,
+        );
+    }
+
+    /// A donor window running past B's end is **refused**, not measured against a clamped remainder.
+    ///
+    /// `measure_gap_equivalence` clamps its frame range to what exists, so without the guard a tail
+    /// gap measures a *shorter* window whose missing part reads as digital silence — 20 gaps of the
+    /// 39-pair corpus scored 99.3–100 % silent that way and drew `shared_silence`/drop from audio
+    /// B does not contain. Scan already fails closed here, so the divergence was never about silence,
+    /// only about whether to answer. Absent donor ⇒ no fraction ⇒ keep.
+    #[test]
+    fn diagnostic_equivalence_refuses_a_donor_window_past_b_end() {
+        let (report, a_pcm, b) = equivalence_overlay_fixture();
+        // B stops at 3.0 s; the gap's donor window is 1.5–4.0 s, so 1 s of it does not exist.
+        let truncated: Vec<f32> = b[..(3.0 * 48_000.0) as usize].to_vec();
+        let corpus = characterize_gaps_from_decode(
+            &report,
+            &CharacterizeAbPcm {
+                a_pcm: &a_pcm,
+                b_samples: &truncated,
+                sources: None,
+            },
+            &crate::infrastructure::config::RepairConfig::default()
+                .patch_settings()
+                .into_request(report.clone())
+                .expect("default All gap selection"),
+            &[],
+            false,
+            &clip_sync_repair_fixtures::NoOpProgressReporter,
+        );
+        let eq = corpus.gaps[0]
+            .equivalence
+            .as_ref()
+            .expect("diagnostic overlay still runs — the refusal is about the donor, not the gap");
+        assert_eq!(
+            eq.measurement.as_ref().and_then(|m| m.donor_span),
+            None,
+            "the provenance token must report the refusal, not the intent"
+        );
+        assert_eq!(
+            eq.donor_silence_fraction, None,
+            "nothing may be measured against samples B does not have"
+        );
+        assert!(
+            !eq.class.drops(),
+            "a refusal keeps the gap; dropping on absent audio is the defect this guards"
+        );
+    }
+
+    /// The production dump declares the fields it does not measure, and the declaration is **true** —
+    /// every listed full-tier field really is at its structural default.
+    ///
+    /// Pins both halves, because either alone rots: a list that drifts from the emitter is worse than no
+    /// list (it would license trusting the fields it stopped covering), and a list nobody checks is a
+    /// comment. The 2026-07-31 corpus recorded 12 such fields on 802/802 full-tier gaps with nothing
+    /// saying so; `--check` now fails on the same condition.
+    #[test]
+    fn production_dump_declares_and_honours_its_unmeasured_fields() {
+        use crate::application::PatchAudioRequest;
+        use crate::infrastructure::config::RepairConfig;
+        use clip_sync_repair_fixtures::NoOpProgressReporter;
+
+        let (report, a_pcm, b) = equivalence_overlay_fixture();
         let repair = RepairConfig {
             fill_border_search_secs: 0.05,
             fill_align_margin_secs: 0.02,
@@ -4110,7 +4309,7 @@ mod tests {
         let m = converged.measurement.as_ref().expect("measurement");
         assert_eq!(
             (m.a_span, m.donor_span),
-            (SpanKind::Core, SpanKind::Core),
+            (SpanKind::Core, Some(SpanKind::Core)),
             "adopting scan's span must be reported, not silently assumed"
         );
         assert!(
@@ -4326,7 +4525,7 @@ mod tests {
             assert_eq!(m.reduction, ChannelReduction::Interleaved);
             assert_eq!(
                 (m.a_span, m.donor_span),
-                (SpanKind::Nominal, SpanKind::Nominal),
+                (SpanKind::Nominal, Some(SpanKind::Nominal)),
                 "no scan verdict ⇒ no core to adopt ⇒ both ends stay on the raw span"
             );
         }

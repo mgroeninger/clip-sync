@@ -271,6 +271,14 @@ fn span_token(s: clip_sync_repair::domain::gap_equivalence::SpanKind) -> &'stati
     }
 }
 
+/// `donor_span` is `Option`: `none` means no donor window was measured (B unmapped, before zero, or
+/// past B's end), which is a different statement from either window kind and must print as one.
+fn donor_span_token(
+    s: Option<clip_sync_repair::domain::gap_equivalence::SpanKind>,
+) -> &'static str {
+    s.map_or("none", span_token)
+}
+
 fn reduction_token(r: clip_sync_repair::domain::gap_equivalence::ChannelReduction) -> &'static str {
     use clip_sync_repair::domain::gap_equivalence::ChannelReduction;
     match r {
@@ -310,8 +318,8 @@ fn recipe_deltas(scan: &GapEquivalenceVerdict, refv: &GapEquivalenceVerdict) -> 
     if s.donor_span != r.donor_span {
         parts.push(format!(
             "donor {}→{}",
-            span_token(s.donor_span),
-            span_token(r.donor_span)
+            donor_span_token(s.donor_span),
+            donor_span_token(r.donor_span)
         ));
     }
     parts.join("  ")
@@ -703,14 +711,14 @@ mod tests {
             bin_ms: 100,
             reduction: ChannelReduction::Interleaved,
             a_span: SpanKind::Core,
-            donor_span: SpanKind::Core,
+            donor_span: Some(SpanKind::Core),
         });
         diag.measurement = Some(EquivalenceMeasurement {
             context_secs: 3.0,
             bin_ms: 100,
             reduction: ChannelReduction::Interleaved,
             a_span: SpanKind::Core,
-            donor_span: SpanKind::Nominal,
+            donor_span: Some(SpanKind::Nominal),
         });
         assert_eq!(recipe_deltas(&scan, &diag), "ctx +1.0  donor core→nominal");
         // Agreeing recipes → empty (no five-field wall).
@@ -732,12 +740,12 @@ mod tests {
             bin_ms: 100,
             reduction: ChannelReduction::Interleaved,
             a_span: SpanKind::Core,
-            donor_span: SpanKind::Core,
+            donor_span: Some(SpanKind::Core),
         };
         scan.measurement = Some(structural.clone());
         diag.measurement = Some(EquivalenceMeasurement {
             context_secs: 3.0,
-            donor_span: SpanKind::Nominal,
+            donor_span: Some(SpanKind::Nominal),
             ..structural.clone()
         });
         let baseline = recipe_deltas(&scan, &diag);

@@ -685,11 +685,11 @@ mod tests {
             bin_ms: 100,
             reduction: ChannelReduction::Interleaved,
             a_span: SpanKind::Core,
-            donor_span: SpanKind::Nominal,
+            donor_span: Some(SpanKind::Nominal),
         });
         assert_eq!((with.class, with.drop), (v.class, v.drop));
         let m = with.measurement.expect("attached");
-        assert_eq!(m.donor_span, SpanKind::Nominal);
+        assert_eq!(m.donor_span, Some(SpanKind::Nominal));
         assert!((m.context_secs - 3.0).abs() < f64::EPSILON);
     }
 

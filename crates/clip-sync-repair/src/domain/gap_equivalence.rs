@@ -183,8 +183,19 @@ pub struct EquivalenceMeasurement {
     /// Bin width in milliseconds actually measured (from the level stream / configured overlay).
     pub bin_ms: u64,
     pub reduction: ChannelReduction,
+    /// Which A-side window was measured. Always present: A is the gap itself, so there is always one.
     pub a_span: SpanKind,
-    pub donor_span: SpanKind,
+    /// Which donor window was measured, or `None` when **no donor window was measured at all** —
+    /// B unmapped, mapped before zero, or past B's end.
+    ///
+    /// `Option` since 2026-08-01. It was a bare `SpanKind` and therefore said `core` on every gap that
+    /// had no donor, describing a window that did not exist; the reader could not distinguish "measured
+    /// the donor core" from "there was no donor". That is the same unreadable-default defect as the
+    /// projection fields — a type with no way to express "not asked" — and it sat in the one field
+    /// whose entire job is to let you check which window produced a verdict. `donor_silence_fraction`
+    /// is `None` on exactly these gaps; the two now agree.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub donor_span: Option<SpanKind>,
 }
 
 /// How a bin's multiple channels are collapsed to one level before it is expressed in dB — the
@@ -506,7 +517,10 @@ pub fn derive_gap_equivalence(
             bin_ms,
             reduction: ChannelReduction::Interleaved,
             a_span: SpanKind::Core,
-            donor_span: SpanKind::Core,
+            // Only claim a donor window when one was mapped — `b_mapped` is `None` for a head gap
+            // whose window starts before zero and for a tail gap past B's end, and this said `core`
+            // on both until 2026-08-01.
+            donor_span: b_mapped.map(|_| SpanKind::Core),
         });
     }
     verdict
@@ -770,7 +784,7 @@ mod tests {
         assert!((m.context_secs - EQUIVALENCE_CONTEXT_SECS).abs() < f64::EPSILON);
         assert_eq!(m.reduction, ChannelReduction::Interleaved);
         assert_eq!(m.a_span, SpanKind::Core);
-        assert_eq!(m.donor_span, SpanKind::Core);
+        assert_eq!(m.donor_span, Some(SpanKind::Core));
         assert_eq!(v.a_gap_silent_blocks, Some(2));
         assert_eq!(v.a_gap_total_blocks, Some(2));
         assert_eq!(v.donor_silent_blocks, Some(0));
