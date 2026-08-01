@@ -1,15 +1,16 @@
 # Gap selection — deferred and refused sketches
 
-Status: **nothing here is planned.** Recorded so it is not rediscovered, proposed again from scratch,
-or mistaken for scope.
+Status: **archived 2026-07-31.** Durable refusal of `--scan-window` lives in
+[../gap-vocabulary.md](../gap-vocabulary.md) § Gap numbering. This file keeps the composition notes
+and the unbuilt `--gaps-from` sketch (see [BACKLOG.md](../../../BACKLOG.md)).
 
 Split out of `TEMP-gap-selection-plan.md` on 2026-07-29 (its §7.2 and §9). Both items kept turning up
 as "obvious next features" during selection design; both have a reason not to be built yet, and the
 reasons are the content.
 
-**Siblings:** [archive/TEMP-gap-selection-plan.md](archive/TEMP-gap-selection-plan.md) (v1 — **archived**),
-[archive/TEMP-gap-selection-ranges-plan.md](archive/TEMP-gap-selection-ranges-plan.md) (v1.5 — **archived**),
-[archive/TEMP-scan-recipe-plan.md](archive/TEMP-scan-recipe-plan.md) (prerequisite for the manifest below; **archived 2026-07-31** — type shipped).
+**Siblings:** [TEMP-gap-selection-plan.md](TEMP-gap-selection-plan.md) (v1 — **archived**),
+[TEMP-gap-selection-ranges-plan.md](TEMP-gap-selection-ranges-plan.md) (v1.5 — **archived**),
+[TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md) (prerequisite for the manifest below; **archived 2026-07-31** — type shipped).
 
 ---
 
@@ -23,7 +24,7 @@ Shape, if it were ever built:
 
 - A **scan** knob, not a repair knob: lives on `ScanGapsRequest` next to `min_gap_secs` /
   `silence_hold_blocks`, set from `RepairConfig` in `composition.rs::repair_run_input`.
-- Must join `ScanRecipe` ([archive/TEMP-scan-recipe-plan.md](archive/TEMP-scan-recipe-plan.md)) and the manifest
+- Must join `ScanRecipe` ([TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md)) and the manifest
   `scan` block below — otherwise a saved gap list cannot be checked against its recipe.
 - Named `--scan-window`, **never** as a mode of `--only-gaps`. Sharing a flag between "which gaps
   exist" and "which gaps to patch" is exactly the conflation that makes two-lists confusion real.
@@ -32,7 +33,7 @@ Shape, if it were ever built:
 
 ### Why it is deferred: the perf argument is weaker than it looks
 
-From [repair-perf.md](repair-perf.md) §1c (17-pair, post-lever-1b(b), root span `patch_audio`):
+From [../repair-perf.md](../repair-perf.md) §1c (17-pair, post-lever-1b(b), root span `patch_audio`):
 
 | Cost | Share of `patch_audio` | Sensitive to gap selection? |
 |------|------------------------|------------------------------|
@@ -53,7 +54,7 @@ So there are two different features hiding here:
    closed before anyone commits to the work.
 
 **If this is ever revisited, measure first:** instrument `ScanGaps` as a sibling root to `patch_audio`
-and record scan-vs-patch share in [repair-perf.md](repair-perf.md). Without that number the payoff is
+and record scan-vs-patch share in [../repair-perf.md](../repair-perf.md). Without that number the payoff is
 unknown — and the standing rule in that doc is that the *numbers* decide, not projections.
 
 **Note for the iterative workflow that motivates selection:** every invocation re-runs the full scan,
@@ -85,7 +86,7 @@ documentation problem, not a semantic conflict.
 ## 2. `--gaps-from` manifest (would be v2)
 
 Blocked on selection v1.5 (range tokens) and on
-[archive/TEMP-scan-recipe-plan.md](archive/TEMP-scan-recipe-plan.md) (the recipe type it embeds).
+[TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md) (the recipe type it embeds). Both shipped.
 
 Minimal manifest:
 

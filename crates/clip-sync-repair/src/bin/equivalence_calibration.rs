@@ -225,6 +225,71 @@ fn signal_deltas(scan: &GapEquivalenceVerdict, refv: &GapEquivalenceVerdict) -> 
     parts.join("  ")
 }
 
+fn span_token(s: clip_sync_repair::domain::gap_equivalence::SpanKind) -> &'static str {
+    use clip_sync_repair::domain::gap_equivalence::SpanKind;
+    match s {
+        SpanKind::Core => "core",
+        SpanKind::Nominal => "nominal",
+    }
+}
+
+fn reduction_token(r: clip_sync_repair::domain::gap_equivalence::ChannelReduction) -> &'static str {
+    use clip_sync_repair::domain::gap_equivalence::ChannelReduction;
+    match r {
+        ChannelReduction::Interleaved => "interleaved",
+        ChannelReduction::Downmix => "downmix",
+    }
+}
+
+/// Recipe Δ (diag − scan): **diffs only**, when both sides carry `measurement`. Mirror of
+/// [`signal_deltas`] for the permanent instrument provenance (Track B §3d).
+fn recipe_deltas(scan: &GapEquivalenceVerdict, refv: &GapEquivalenceVerdict) -> String {
+    let (Some(s), Some(r)) = (&scan.measurement, &refv.measurement) else {
+        return String::new();
+    };
+    let mut parts = Vec::new();
+    if (s.context_secs - r.context_secs).abs() > f64::EPSILON {
+        parts.push(format!("ctx {:+.1}", r.context_secs - s.context_secs));
+    }
+    if s.bin_ms != r.bin_ms {
+        parts.push(format!("bin {}→{}", s.bin_ms, r.bin_ms));
+    }
+    if s.reduction != r.reduction {
+        parts.push(format!(
+            "red {}→{}",
+            reduction_token(s.reduction),
+            reduction_token(r.reduction)
+        ));
+    }
+    if s.a_span != r.a_span {
+        parts.push(format!(
+            "a_span {}→{}",
+            span_token(s.a_span),
+            span_token(r.a_span)
+        ));
+    }
+    if s.donor_span != r.donor_span {
+        parts.push(format!(
+            "donor {}→{}",
+            span_token(s.donor_span),
+            span_token(r.donor_span)
+        ));
+    }
+    parts.join("  ")
+}
+
+/// Signal Δ then recipe Δ, space-joined; empty parts omitted.
+fn delta_line(scan: &GapEquivalenceVerdict, refv: &GapEquivalenceVerdict) -> String {
+    let sig = signal_deltas(scan, refv);
+    let recipe = recipe_deltas(scan, refv);
+    match (sig.is_empty(), recipe.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => sig,
+        (true, false) => recipe,
+        (false, false) => format!("{sig}  {recipe}"),
+    }
+}
+
 /// Print the per-gap table for one corpus and return its tally.
 fn print_detail(corpus: &GapCorpus) -> Summary {
     let block_ms = corpus.source.scan_recipe.scan_block_ms.unwrap_or(250);
@@ -252,7 +317,7 @@ fn print_detail(corpus: &GapCorpus) -> Summary {
             hms(fp.geometry.a_start_secs),
             class_label(scanv.class),
             class_label(refv.class),
-            signal_deltas(scanv, refv),
+            delta_line(scanv, refv),
         );
     }
     let s = summarize(corpus_pairs(corpus));
@@ -546,5 +611,34 @@ mod tests {
                 unpaired: 1
             }
         );
+    }
+
+    /// Track B §3d: recipe Δ prints only fields that differ (the live residuals).
+    #[test]
+    fn recipe_deltas_print_diffs_only() {
+        use clip_sync_repair::domain::gap_equivalence::{
+            ChannelReduction, EquivalenceMeasurement, SpanKind,
+        };
+        let mut scan = dropout();
+        let mut diag = dropout();
+        scan.measurement = Some(EquivalenceMeasurement {
+            context_secs: 2.0,
+            bin_ms: 100,
+            reduction: ChannelReduction::Interleaved,
+            a_span: SpanKind::Core,
+            donor_span: SpanKind::Core,
+        });
+        diag.measurement = Some(EquivalenceMeasurement {
+            context_secs: 3.0,
+            bin_ms: 100,
+            reduction: ChannelReduction::Interleaved,
+            a_span: SpanKind::Core,
+            donor_span: SpanKind::Nominal,
+        });
+        assert_eq!(recipe_deltas(&scan, &diag), "ctx +1.0  donor core→nominal");
+        // Agreeing recipes → empty (no five-field wall).
+        assert_eq!(recipe_deltas(&scan, &scan), "");
+        // Missing measurement → empty.
+        assert_eq!(recipe_deltas(&dropout(), &diag), "");
     }
 }

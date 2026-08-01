@@ -20,7 +20,7 @@ when a real same-recipe consumer exists — not by restoring a parallel “path�
 [TEMP-gap-selection-plan.md](TEMP-gap-selection-plan.md) (v1 — **archived**),
 [TEMP-gap-selection-ranges-plan.md](TEMP-gap-selection-ranges-plan.md) (v1.5 — **archived**),
 [TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md) (recipe type — **parked**),
-[TEMP-gap-selection-deferred.md](../TEMP-gap-selection-deferred.md) (`--scan-window`, `--gaps-from`).
+[TEMP-gap-selection-deferred.md](TEMP-gap-selection-deferred.md) (`--scan-window`, `--gaps-from`).
 
 ---
 
@@ -63,7 +63,7 @@ time-to-operator-value, and the next PR must not absorb adjacent scan/provenance
 | [TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md) | **Parked until a consumer**; not a gate on selection |
 | [TEMP-gap-selection-plan.md](TEMP-gap-selection-plan.md) | **v1 archived** (shipped + promoted) |
 | [TEMP-gap-selection-ranges-plan.md](TEMP-gap-selection-ranges-plan.md) | **v1.5 archived** (shipped) |
-| [TEMP-gap-selection-deferred.md](../TEMP-gap-selection-deferred.md) | Unchanged; `--gaps-from` remains the recipe’s main consumer |
+| [TEMP-gap-selection-deferred.md](TEMP-gap-selection-deferred.md) | Unchanged; `--gaps-from` remains the recipe’s main consumer |
 
 ---
 

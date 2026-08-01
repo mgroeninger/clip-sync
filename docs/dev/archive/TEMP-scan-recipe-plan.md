@@ -16,7 +16,7 @@ only; that gate was dropped — selection has no code dependency on this type.
 [TEMP-gap-selection-sequencing-plan.md](TEMP-gap-selection-sequencing-plan.md) (unpark rule),
 [TEMP-gap-selection-plan.md](TEMP-gap-selection-plan.md) (v1 — **archived**),
 [TEMP-gap-selection-ranges-plan.md](TEMP-gap-selection-ranges-plan.md) (v1.5 — **archived**),
-[TEMP-gap-selection-deferred.md](../TEMP-gap-selection-deferred.md) (the `--gaps-from` manifest, a
+[TEMP-gap-selection-deferred.md](TEMP-gap-selection-deferred.md) (the `--gaps-from` manifest, a
 future in-tree consumer of the `PartialEq`),
 [TEMP-gap-index-convention-plan.md](TEMP-gap-index-convention-plan.md) (shipped),
 [TEMP-silence-floor-findings.md](TEMP-silence-floor-findings.md) (**archived
@@ -284,7 +284,7 @@ literal / named-read counts).
 - **`--gaps-from` (v2, deferred)** remains a future in-tree consumer: its staleness check becomes
   `manifest.scan != report.recipe` — one bitwise `PartialEq`, not a hand-rolled five-field
   comparison that drifts the first time a knob is added. See
-  [TEMP-gap-selection-deferred.md](../TEMP-gap-selection-deferred.md) § `--gaps-from`.
+  [TEMP-gap-selection-deferred.md](TEMP-gap-selection-deferred.md) § `--gaps-from`.
 - **If a `--scan-window` is ever added** (also deferred), it joins the recipe — it is a knob that
   changes which gaps are detected, which is exactly the membership test.
 

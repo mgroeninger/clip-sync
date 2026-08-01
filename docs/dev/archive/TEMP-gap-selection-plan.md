@@ -20,7 +20,7 @@ before the recipe provenance PR.
 | [TEMP-gap-selection-sequencing-plan.md](TEMP-gap-selection-sequencing-plan.md) | Meta: thin v1 before recipe — **archived** after promote |
 | [TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md) | `ScanRecipe` on `GapReport` + the JSON scan-params echo. **Not a selection feature**; **parked** (no code dependency from v1) |
 | [TEMP-gap-selection-ranges-plan.md](TEMP-gap-selection-ranges-plan.md) | v1.5 range tokens: `START-END` identity, `START..END` containment, dual ε, straddler diagnostics — **done** |
-| [TEMP-gap-selection-deferred.md](../TEMP-gap-selection-deferred.md) | `--scan-window` (refused in its cheap form) and the `--gaps-from` manifest (v2) |
+| [TEMP-gap-selection-deferred.md](TEMP-gap-selection-deferred.md) | `--scan-window` (refused in its cheap form) and the `--gaps-from` manifest (v2) |
 
 **What still binds this document to its siblings** (do not re-litigate these in isolation):
 
@@ -470,7 +470,7 @@ Selection is independent of `repair_profile`, `fill_mode`, dual-fit, anchor/resi
 - **Replacing** `limit_fill_to_mapped_region`, track-compatibility, or equivalence gates.
 - **Reintroducing float `gap_key` joins** — use `gap_index` on plan structs.
 - **`--gaps-from` manifest** —
-  [TEMP-gap-selection-deferred.md](../TEMP-gap-selection-deferred.md).
+  [TEMP-gap-selection-deferred.md](TEMP-gap-selection-deferred.md).
 
 ### 7.1 Selection vs. identification — two axes, one of them out of scope
 
@@ -485,7 +485,7 @@ refer to the post-window report**.
 
 The window is **not in this plan**, and its cheap form is refused outright on measured grounds. Full
 reasoning, shape, and the measurement anyone revisiting it must take first:
-[TEMP-gap-selection-deferred.md](../TEMP-gap-selection-deferred.md) § `--scan-window`.
+[TEMP-gap-selection-deferred.md](TEMP-gap-selection-deferred.md) § `--scan-window`.
 
 ---
 

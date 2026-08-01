@@ -20,7 +20,7 @@ Split out of `TEMP-gap-selection-plan.md` on 2026-07-29.
 >    contract asks for — that is the whole point of the feature.
 > 3. **Neither token restricts the scan.** They select from gaps already detected across the whole
 >    file. Limiting *detection* to a window is a different axis, deliberately out of scope —
->    [TEMP-gap-selection-deferred.md](../TEMP-gap-selection-deferred.md) § `--scan-window`.
+>    [TEMP-gap-selection-deferred.md](TEMP-gap-selection-deferred.md) § `--scan-window`.
 
 > **Verification rule.** `file:line` references and claims about current behavior belong in the
 > checklist (§5), where they are about to be executed. Elsewhere, state the decision and its reason.

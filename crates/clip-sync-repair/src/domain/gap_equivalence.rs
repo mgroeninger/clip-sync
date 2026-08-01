@@ -114,6 +114,11 @@ pub struct GapEquivalenceVerdict {
     /// `a_gap_rms_db` (energy mean) and `gap_floor_db` (max). Provenance only.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub a_gap_silent_blocks: Option<usize>,
+    /// Blocks whose centre falls inside the gap (silent or not) — the denominator behind
+    /// [`Self::a_gap_silent_blocks`]. With [`EquivalenceMeasurement::bin_ms`],
+    /// `total × bin_ms ≈ span` is the corpus-wide bin-width check (I1 class). Provenance only.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub a_gap_total_blocks: Option<usize>,
     /// Silent / total donor blocks behind `donor_silence_fraction`. Provenance only — a fraction
     /// alone cannot distinguish `1/10` from `1.1/11`, which matters when comparing paths that bin
     /// the same span differently.
@@ -121,45 +126,47 @@ pub struct GapEquivalenceVerdict {
     pub donor_silent_blocks: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub donor_total_blocks: Option<usize>,
-    /// Candidate **silent-core** floors at one or more bin sizes — see [`SilentCoreProbe`].
-    /// Provenance only; empty (and omitted) unless a front-end computes them.
-    ///
-    /// **Vestigial — remove on next touch** of this field / its emit path. Live `gap_floor_db` /
-    /// `a_gap_rms_db` already *are* the silent-core measurement. Do **not** delete
-    /// [`noise_floor_probes`] with it (kept for I2 attribution).
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub silent_core_probes: Vec<SilentCoreProbe>,
+    /// The one measurement recipe that produced this verdict — see [`EquivalenceMeasurement`].
+    /// Absent on pre-Track-B corpora and when the scan path has no level stream to derive `bin_ms`
+    /// from. Provenance only; never classified on.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub measurement: Option<EquivalenceMeasurement>,
     /// Candidate **noise floors** over a grid of context windows × bin sizes — see [`NoiseFloorProbe`].
     /// Provenance only; empty (and omitted) unless a front-end computes them. **Retained** for I2
-    /// residual attribution — not scheduled for deletion with [`silent_core_probes`].
+    /// residual attribution.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub noise_floor_probes: Vec<NoiseFloorProbe>,
 }
 
-/// A candidate `gap_floor_db` measured with a silence filter at a caller-chosen bin size — F15
-/// scaffolding so the silent-core floor could be evaluated before it was adopted
-/// (`docs/dev/archive/TEMP-equivalence-divergence-findings.md` § F15).
+/// Which span a front-end measured on — A-side window or donor window.
 ///
-/// **Provenance only.** Nothing classifies on these. The live diagnostic path now *is* the silent-core
-/// measurement at `scan_block_ms`, so this type is **vestigial** — remove the emit, the field, and
-/// this struct when next touching that path. Keep [`NoiseFloorProbe`] (I2 attribution). See
-/// `docs/dev/archive/TEMP-equivalence-instrument-convergence.md` § *Also carried over*.
+/// One enum for both [`EquivalenceMeasurement::a_span`] and
+/// [`EquivalenceMeasurement::donor_span`]: today A always emits [`Core`](SpanKind::Core), and the
+/// live residual is donor **core vs nominal**. A single-variant A-side enum would have to widen the
+/// first time A splits — exactly the event the field exists to make visible.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpanKind {
+    /// Block-confirmed / offset-mapped **core** (scan's A window and donor window; diagnostic A).
+    Core,
+    /// Nominal `b_mapped` span (diagnostic donor).
+    Nominal,
+}
+
+/// The recipe that classified one [`GapEquivalenceVerdict`] — permanent replacement for the deleted
+/// `silent_core_probes` grid. Nested so it stays visually distinct from the retained
+/// [`NoiseFloorProbe`] **candidate** grid (I2).
+///
+/// See `docs/dev/TEMP-fingerprint-provenance-plan.md` §3a. Provenance only.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SilentCoreProbe {
-    /// Bin width in milliseconds this probe binned the gap at.
+pub struct EquivalenceMeasurement {
+    /// Context half-width in seconds each side of the gap used for `noise_floor_db`.
+    pub context_secs: f64,
+    /// Bin width in milliseconds actually measured (from the level stream / configured overlay).
     pub bin_ms: u64,
-    /// Max RMS (dB) over the **silent** bins — the candidate floor. `None` when no bin was silent,
-    /// mirroring the scan path's `NEG_INFINITY` fold → `None`.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub floor_db: Option<f64>,
-    /// Energy-mean RMS (dB) over the same silent bins — the candidate A-side signal, which is the
-    /// *other* open F15 axis. Free to measure in the same pass. `None` on an empty silent set.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub a_rms_db: Option<f64>,
-    /// Bins that passed the silence predicate — the population behind both statistics above.
-    pub silent_bins: usize,
-    /// Bins in the gap span at this bin size.
-    pub total_bins: usize,
+    pub reduction: ChannelReduction,
+    pub a_span: SpanKind,
+    pub donor_span: SpanKind,
 }
 
 /// How a bin's multiple channels are collapsed to one level before it is expressed in dB — the
@@ -233,23 +240,28 @@ impl GapEquivalenceVerdict {
             donor_silence_fraction: ds,
             gap_floor_db: None,
             a_gap_silent_blocks: None,
+            a_gap_total_blocks: None,
             donor_silent_blocks: None,
             donor_total_blocks: None,
-            silent_core_probes: Vec::new(),
+            measurement: None,
             noise_floor_probes: Vec::new(),
         }
     }
 
-    /// Attach the scan-path measurement provenance. Never changes `class` or `drop`.
+    /// Attach population provenance (A silent/total + donor silent/total). Never changes `class` or
+    /// `drop`. A is a tuple matching the donor shape — see
+    /// `docs/dev/TEMP-fingerprint-provenance-plan.md` §3b.
     #[must_use]
     pub fn with_scan_provenance(
         mut self,
         gap_floor_db: Option<f64>,
-        a_gap_silent_blocks: usize,
+        a_gap_blocks: (usize, usize),
         donor_blocks: Option<(usize, usize)>,
     ) -> Self {
         self.gap_floor_db = gap_floor_db;
-        self.a_gap_silent_blocks = Some(a_gap_silent_blocks);
+        let (silent, total) = a_gap_blocks;
+        self.a_gap_silent_blocks = Some(silent);
+        self.a_gap_total_blocks = Some(total);
         (self.donor_silent_blocks, self.donor_total_blocks) = match donor_blocks {
             Some((silent, total)) => (Some(silent), Some(total)),
             None => (None, None),
@@ -262,17 +274,15 @@ impl GapEquivalenceVerdict {
     // `with_scan_provenance`; re-attaching the levels number would overwrite the fix with the statistic it
     // exists to replace. `levels.gap_floor_db` is still dumped in its own block.
 
-    /// Attach candidate silent-core floors. Never changes `class` or `drop`.
-    ///
-    /// **Vestigial** — remove with [`SilentCoreProbe`] on next touch; see that type's docs.
+    /// Attach the live measurement recipe. Never changes `class` or `drop`.
     #[must_use]
-    pub fn with_silent_core_probes(mut self, probes: Vec<SilentCoreProbe>) -> Self {
-        self.silent_core_probes = probes;
+    pub fn with_measurement(mut self, measurement: EquivalenceMeasurement) -> Self {
+        self.measurement = Some(measurement);
         self
     }
 
     /// Attach candidate noise floors. Never changes `class` or `drop`. **Retained** for I2
-    /// attribution — not paired for deletion with [`Self::with_silent_core_probes`].
+    /// attribution.
     #[must_use]
     pub fn with_noise_floor_probes(mut self, probes: Vec<NoiseFloorProbe>) -> Self {
         self.noise_floor_probes = probes;
@@ -387,8 +397,8 @@ fn median_db(mut vals: Vec<f64>) -> Option<f64> {
 /// `b_levels`/`b_mapped` are `None` when B was not scanned (missing/unaligned) ⇒ donor signal absent ⇒
 /// `NotEvaluated`. Pure — no I/O.
 ///
-/// Also records measurement **provenance** on the verdict (`gap_floor_db`, `a_gap_silent_blocks`,
-/// `donor_silent_blocks`/`donor_total_blocks`) — recorded, never classified on.
+/// Also records measurement **provenance** on the verdict (`gap_floor_db`, A/donor block populations,
+/// [`EquivalenceMeasurement`]) — recorded, never classified on.
 pub fn derive_gap_equivalence(
     a_levels: &[BlockLevel],
     a_start_secs: f64,
@@ -397,13 +407,15 @@ pub fn derive_gap_equivalence(
     b_mapped: Option<(f64, f64)>,
     params: &GapEquivalenceParams,
 ) -> GapEquivalenceVerdict {
-    // Silent A gap blocks only — hold can place non-silent levels inside the core interval.
-    let gap_silent_blocks = || {
-        a_levels.iter().filter(|b| {
-            let c = block_center(b);
-            b.silent && c >= a_start_secs && c < a_end_secs
-        })
+    let centre_in_gap = |b: &BlockLevel| {
+        let c = block_center(b);
+        c >= a_start_secs && c < a_end_secs
     };
+    // Silent A gap blocks only — hold can place non-silent levels inside the core interval.
+    let gap_silent_blocks = || a_levels.iter().filter(|b| b.silent && centre_in_gap(b));
+    // All A gap blocks (silent or not) — denominator for `a_gap_total_blocks` / the I1 bin check.
+    let a_gap_total_blocks = a_levels.iter().filter(|b| centre_in_gap(b)).count();
+    let a_gap_silent_blocks = gap_silent_blocks().count();
     let a_gap_rms_db = aggregate_rms_db(gap_silent_blocks().map(|b| b.rms_db));
     let gap_floor_db = gap_silent_blocks()
         .map(|b| b.rms_db)
@@ -447,8 +459,30 @@ pub fn derive_gap_equivalence(
     let donor_silence_fraction =
         donor_blocks.and_then(|(silent, total)| (total > 0).then(|| silent as f64 / total as f64));
 
-    classify_gap_equivalence(a_gap_rms_db, noise_floor_db, donor_silence_fraction, params)
-        .with_scan_provenance(gap_floor, gap_silent_blocks().count(), donor_blocks)
+    let mut verdict = classify_gap_equivalence(
+        a_gap_rms_db,
+        noise_floor_db,
+        donor_silence_fraction,
+        params,
+    )
+    .with_scan_provenance(
+        gap_floor,
+        (a_gap_silent_blocks, a_gap_total_blocks),
+        donor_blocks,
+    );
+    // `bin_ms` is a property of the level stream, not the gap population — any block's width works.
+    // Empty `a_levels` ⇒ no measurement (do not invent a bin).
+    if let Some(b) = a_levels.first() {
+        let bin_ms = ((b.end_secs - b.start_secs) * 1000.0).round().max(0.0) as u64;
+        verdict = verdict.with_measurement(EquivalenceMeasurement {
+            context_secs: EQUIVALENCE_CONTEXT_SECS,
+            bin_ms,
+            reduction: ChannelReduction::Interleaved,
+            a_span: SpanKind::Core,
+            donor_span: SpanKind::Core,
+        });
+    }
+    verdict
 }
 
 #[cfg(test)]
@@ -688,6 +722,41 @@ mod tests {
         let a = vec![blk(9.75, -48.0), blk(10.0, -119.0), blk(10.5, -48.0)];
         let v = derive_gap_equivalence(&a, 10.0, 10.5, None, None, &on());
         assert_eq!(v.class, NotEvaluated);
+    }
+
+    /// Track B: `bin_ms` from any block width; A total = centres in gap; measurement present.
+    #[test]
+    fn derive_attaches_measurement_and_a_gap_total_from_levels() {
+        let a = vec![
+            blk(9.75, -48.0),
+            blk(10.0, -119.0),
+            blk(10.25, -119.0),
+            blk(10.5, -48.0),
+        ];
+        let b = vec![
+            blk_silent(10.0, -20.0, false),
+            blk_silent(10.25, -20.0, false),
+        ];
+        let v = derive_gap_equivalence(&a, 10.0, 10.5, Some(&b), Some((10.0, 10.5)), &on());
+        let m = v.measurement.expect("levels present ⇒ measurement");
+        assert_eq!(m.bin_ms, 250);
+        assert!((m.context_secs - EQUIVALENCE_CONTEXT_SECS).abs() < f64::EPSILON);
+        assert_eq!(m.reduction, ChannelReduction::Interleaved);
+        assert_eq!(m.a_span, SpanKind::Core);
+        assert_eq!(m.donor_span, SpanKind::Core);
+        assert_eq!(v.a_gap_silent_blocks, Some(2));
+        assert_eq!(v.a_gap_total_blocks, Some(2));
+        assert_eq!(v.donor_silent_blocks, Some(0));
+        assert_eq!(v.donor_total_blocks, Some(2));
+    }
+
+    /// Track B: empty level stream ⇒ no invented `bin_ms` / no measurement object.
+    #[test]
+    fn derive_with_empty_levels_omits_measurement() {
+        let v = derive_gap_equivalence(&[], 10.0, 10.5, None, None, &on());
+        assert!(v.measurement.is_none(), "{v:?}");
+        assert_eq!(v.a_gap_total_blocks, Some(0));
+        assert_eq!(v.a_gap_silent_blocks, Some(0));
     }
 
     /// The gate is off by default: even a clean dropout classifies NotEvaluated (advisory computes with

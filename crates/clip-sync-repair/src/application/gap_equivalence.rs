@@ -32,7 +32,7 @@
 
 use crate::domain::gap_equivalence::{
     aggregate_rms_db, classify_gap_equivalence, ChannelReduction, GapEquivalenceParams,
-    GapEquivalenceVerdict, SilentCoreProbe,
+    GapEquivalenceVerdict,
 };
 use crate::domain::pcm::interleaved_to_mono;
 use crate::domain::policies::{is_silent_interleaved, rms_interleaved};
@@ -103,10 +103,6 @@ fn bin_level_db(
 /// Levels over the *silent* subset of a supplied bin sequence: the max (a `gap_floor_db`) and the energy
 /// mean (an `a_gap_rms_db`), plus the silent/total bin populations behind them.
 ///
-/// Factored out because the fixed measurement and the [`silent_core_probe`] scaffolding differ **only** in
-/// which bins they are handed and which reduction they read them with — keeping the shared arithmetic in
-/// one place is what makes that difference legible rather than a diff between two similar loops.
-///
 /// The empty-silent-set case yields `None` for both statistics rather than a floored value, mirroring the
 /// scan path's `NEG_INFINITY` fold.
 fn silent_core_levels(
@@ -176,60 +172,6 @@ fn block_grid_bins(
     })
 }
 
-/// Measure a candidate **silent-core** floor over A's gap interior at `bin_ms`: bin the span, keep only
-/// bins the *scanner's own predicate* ([`is_silent_interleaved`]) calls silent, and report the max
-/// (candidate `gap_floor_db`) and energy mean (candidate `a_gap_rms_db`) over them.
-///
-/// **This is the pre-fix recipe, deliberately frozen.** It applies the silence filter (F15 fix 1) but keeps
-/// the *downmix* reduction and gap-anchored tiling that fixes 2 and 3 replaced, so a re-dump can put the old
-/// and new numbers side by side. It is no longer "the scan path's way" and no longer previews what
-/// [`measure_gap_equivalence`] computes — comparing the two is its whole remaining purpose.
-///
-/// **Vestigial — remove on next touch** (emit in `measure.rs`, this fn, [`SilentCoreProbe`], and the
-/// probe-only unit tests below). Do **not** delete `noise_floor_probes` with it; those stay for I2
-/// attribution. See `docs/dev/archive/TEMP-equivalence-instrument-convergence.md` § *Also carried over*.
-///
-/// **Provenance only** — see [`SilentCoreProbe`]. The empty-silent-set case returns `None` for both
-/// statistics rather than a floored value, mirroring the scan path's `NEG_INFINITY` fold.
-///
-/// A trailing partial bin is included (it is a real part of the gap); a zero-length span yields a probe
-/// with `total_bins == 0`.
-pub fn silent_core_probe(
-    samples: &[f32],
-    channels: usize,
-    gap_frames: std::ops::Range<usize>,
-    sample_rate: u32,
-    bin_ms: u64,
-    silence_peak_fraction: f32,
-    absolute_silence_rms: f32,
-) -> SilentCoreProbe {
-    let ch = channels.max(1);
-    let bin_frames = ((f64::from(sample_rate) * bin_ms as f64) / 1000.0).round() as usize;
-    let bin_frames = bin_frames.max(1);
-    let end = gap_frames.end.min(samples.len() / ch);
-    let span_tiling = std::iter::successors(Some(gap_frames.start), move |&f| {
-        let next = (f + bin_frames).min(end);
-        (next < end).then_some(next)
-    })
-    .map(move |f| f..(f + bin_frames).min(end))
-    .take_while(|b| b.start < b.end);
-    let (floor_db, a_rms_db, silent_bins, total_bins) = silent_core_levels(
-        samples,
-        ch,
-        span_tiling,
-        ChannelReduction::Downmix,
-        silence_peak_fraction,
-        absolute_silence_rms,
-    );
-    SilentCoreProbe {
-        bin_ms,
-        floor_db,
-        a_rms_db,
-        silent_bins,
-        total_bins,
-    }
-}
-
 /// How the diagnostic path bins and thresholds A's gap interior — the scan path's block size and silence
 /// predicate, supplied by the caller because they are *scan recipe* knobs (`scan_block_ms`,
 /// `silence_peak_fraction`, `absolute_silence_rms`), not equivalence parameters.
@@ -297,12 +239,16 @@ pub struct DonorSpan<'a> {
 ///
 /// Consequently `floor_db: None` is **not** an early return: scan still evaluates the donor from the
 /// silence bit alone when A's gap has no silent block to set a floor, and so does this.
-fn donor_silence_fraction_at_floor(
+/// Silent / total donor bins under the I3 disjunction — the population behind
+/// [`donor_silence_fraction_at_floor`]. Kept as a counts helper so the fraction's return type (and its
+/// four test call sites) stay unchanged; see
+/// `docs/dev/TEMP-fingerprint-provenance-plan.md` §3b.
+fn donor_silence_counts_at_floor(
     donor: &DonorSpan<'_>,
     channels: usize,
     core: &SilentCoreConfig,
     floor_db: Option<f64>,
-) -> Option<f64> {
+) -> Option<(usize, usize)> {
     let ch = channels.max(1);
     let total_frames = donor.samples.len() / ch;
     let end = donor.frames.end.min(total_frames);
@@ -337,7 +283,20 @@ fn donor_silence_fraction_at_floor(
         }
         frame = bin_end;
     }
-    (total > 0).then(|| silent as f64 / total as f64)
+    (total > 0).then_some((silent, total))
+}
+
+/// Thin wrapper over [`donor_silence_counts_at_floor`] — kept so existing unit tests assert on the
+/// fraction without churn. Production uses the counts helper directly.
+#[cfg_attr(not(test), allow(dead_code))]
+fn donor_silence_fraction_at_floor(
+    donor: &DonorSpan<'_>,
+    channels: usize,
+    core: &SilentCoreConfig,
+    floor_db: Option<f64>,
+) -> Option<f64> {
+    donor_silence_counts_at_floor(donor, channels, core, floor_db)
+        .map(|(silent, total)| silent as f64 / total as f64)
 }
 
 /// Compute the equivalence verdict for one gap: A's gap-interior RMS (from decoded A) + the recording's noise
@@ -385,7 +344,7 @@ pub fn measure_gap_equivalence(
 ) -> GapEquivalenceVerdict {
     let ch = channels.max(1);
     let total_frames = a_samples.len() / ch;
-    let (floor_db, a_rms, silent_bins, _total) = silent_core_levels(
+    let (floor_db, a_rms, silent_bins, total_bins) = silent_core_levels(
         a_samples,
         ch,
         block_grid_bins(gap_frames, core.bin_frames, total_frames),
@@ -393,13 +352,15 @@ pub fn measure_gap_equivalence(
         core.silence_peak_fraction,
         core.absolute_silence_rms,
     );
-    let donor_fraction = donor
+    let donor_counts = donor
         .as_ref()
-        .and_then(|d| donor_silence_fraction_at_floor(d, ch, core, floor_db));
+        .and_then(|d| donor_silence_counts_at_floor(d, ch, core, floor_db));
+    let donor_fraction =
+        donor_counts.map(|(silent, total)| silent as f64 / total as f64);
     classify_gap_equivalence(a_rms, noise_floor_db, donor_fraction, params).with_scan_provenance(
         floor_db,
-        silent_bins,
-        None,
+        (silent_bins, total_bins),
+        donor_counts,
     )
 }
 
@@ -662,6 +623,11 @@ mod tests {
             Some(19),
             "19 of 20 bins are silent: {v:?}"
         );
+        assert_eq!(
+            v.a_gap_total_blocks,
+            Some(20),
+            "total includes the loud bin: {v:?}"
+        );
     }
 
     /// **Fix 2.** The reduction reaches the verdict's own numbers, not just the probes. Six decorrelated
@@ -693,6 +659,37 @@ mod tests {
         let a = vec![0.0f32; 96_000];
         let v = measure_gap_equivalence(&a, 1, 1_200..49_200, Some(-50.0), None, &core(), &on());
         assert_eq!(v.a_gap_silent_blocks, Some(20), "{v:?}");
+        assert_eq!(v.a_gap_total_blocks, Some(20), "{v:?}");
+    }
+
+    /// Track B: donor population counts ride with the fraction on the diagnostic verdict.
+    #[test]
+    fn measured_donor_population_counts_are_recorded() {
+        let a = vec![0.0f32; 48_000];
+        let b = vec![2e-3f32; 48_000];
+        let v = measure_gap_equivalence(&a, 1, 0..48_000, Some(-50.0), donor(&b), &core(), &on());
+        assert_eq!(v.donor_silent_blocks, Some(0), "{v:?}");
+        assert_eq!(v.donor_total_blocks, Some(20), "{v:?}");
+        assert_eq!(v.donor_silence_fraction, Some(0.0), "{v:?}");
+    }
+
+    /// Track B: `with_measurement` is provenance-only — class/drop unchanged (attached at the caller).
+    #[test]
+    fn attaching_measurement_leaves_the_class_untouched() {
+        use crate::domain::gap_equivalence::{EquivalenceMeasurement, SpanKind};
+        let a = vec![0.0f32; 48_000];
+        let v = measure_gap_equivalence(&a, 1, 0..48_000, Some(-50.0), None, &core(), &on());
+        let with = v.clone().with_measurement(EquivalenceMeasurement {
+            context_secs: 3.0,
+            bin_ms: 100,
+            reduction: ChannelReduction::Interleaved,
+            a_span: SpanKind::Core,
+            donor_span: SpanKind::Nominal,
+        });
+        assert_eq!((with.class, with.drop), (v.class, v.drop));
+        let m = with.measurement.expect("attached");
+        assert_eq!(m.donor_span, SpanKind::Nominal);
+        assert!((m.context_secs - 3.0).abs() < f64::EPSILON);
     }
 
     /// The grid is phase-locked to the media, not the gap: shifting a gap by less than a bin changes
@@ -717,8 +714,7 @@ mod tests {
         assert_eq!(bins, vec![100..200, 200..300], "{bins:?}");
     }
 
-    /// No trailing partial bin — centre-containment discards it by construction. Contrast
-    /// `silent_core_probe_includes_a_trailing_partial_bin`, which keeps the pre-fix behaviour.
+    /// No trailing partial bin — centre-containment discards it by construction.
     #[test]
     fn block_grid_has_no_trailing_partial_bin() {
         // [0, 250) with bin 100: centres 50 and 150 are in, 250 is not. The 50-frame remainder is dropped.
@@ -738,197 +734,12 @@ mod tests {
         assert!(block_grid_bins(500..500, 100, 10_000).next().is_none());
     }
 
-    // --- silent-core probe (F15 measurement scaffolding; provenance only) --------------------------
-
-    /// Digital silence: every bin passes the predicate, so the candidate floor is the −120 floor and
-    /// the silent-bin population is the whole span.
-    #[test]
-    fn silent_core_probe_counts_every_bin_of_a_silent_gap() {
-        let a = vec![0.0f32; 48_000]; // 1 s @ 48 kHz
-        let p = silent_core_probe(&a, 1, 0..48_000, 48_000, 50, 0.01, 0.001);
-        assert_eq!((p.bin_ms, p.silent_bins, p.total_bins), (50, 20, 20));
-        assert_eq!(p.floor_db, Some(-120.0));
-        assert_eq!(p.a_rms_db, Some(-120.0));
-    }
-
-    /// The point of the probe: a loud bin inside the span is **excluded** from the floor, so the
-    /// candidate floor tracks the quiet core rather than the span's content peak (which is exactly the
-    /// difference that flips a class — F15's band mechanism).
-    #[test]
-    fn silent_core_probe_excludes_loud_bins_from_the_floor() {
-        let mut a = vec![0.0f32; 48_000];
-        // Bin 10 ([0.5 s, 0.55 s)) is loud: full-scale, so neither predicate branch calls it silent.
-        for v in &mut a[24_000..26_400] {
-            *v = 0.5;
-        }
-        let p = silent_core_probe(&a, 1, 0..48_000, 48_000, 50, 0.01, 0.001);
-        assert_eq!((p.silent_bins, p.total_bins), (19, 20));
-        assert_eq!(
-            p.floor_db,
-            Some(-120.0),
-            "the −6 dBFS bin must not become the floor: {p:?}"
-        );
-    }
-
-    /// No silent bin ⇒ both statistics absent, mirroring the scan path's `NEG_INFINITY` fold → `None`
-    /// (which classifies `NotEvaluated` ⇒ keep). Whether this case occurs in the corpus is one of the
-    /// things the probe is being dumped to find out.
-    #[test]
-    fn silent_core_probe_with_no_silent_bins_reports_none() {
-        let a: Vec<f32> = (0..48_000).map(|i| (i as f32 * 0.3).sin() * 0.5).collect();
-        let p = silent_core_probe(&a, 1, 0..48_000, 48_000, 50, 0.01, 0.001);
-        assert_eq!(p.silent_bins, 0);
-        assert_eq!(p.total_bins, 20);
-        assert_eq!(p.floor_db, None);
-        assert_eq!(p.a_rms_db, None);
-    }
-
-    /// A zero-length span bins to nothing rather than panicking or fabricating a floor.
-    #[test]
-    fn silent_core_probe_on_empty_span_is_empty() {
-        let a = vec![0.0f32; 100];
-        let p = silent_core_probe(&a, 1, 50..50, 48_000, 50, 0.01, 0.001);
-        assert_eq!((p.silent_bins, p.total_bins), (0, 0));
-        assert_eq!(p.floor_db, None);
-    }
-
-    /// A trailing partial bin is still a real part of the gap and is measured, not dropped.
-    #[test]
-    fn silent_core_probe_includes_a_trailing_partial_bin() {
-        let a = vec![0.0f32; 3_600]; // 75 ms @ 48 kHz = one full 50 ms bin + a 25 ms remainder
-        let p = silent_core_probe(&a, 1, 0..3_600, 48_000, 50, 0.01, 0.001);
-        assert_eq!((p.silent_bins, p.total_bins), (2, 2));
-    }
-
-    /// The probe never touches the verdict's disposition — it is provenance, attached after the fact.
-    #[test]
-    fn attaching_probes_leaves_the_class_untouched() {
-        let a = vec![0.0f32; 48_000];
-        let v = measure_gap_equivalence(&a, 1, 0..48_000, Some(-50.0), None, &core(), &on());
-        let p = silent_core_probe(&a, 1, 0..48_000, 48_000, 50, 0.01, 0.001);
-        let with = v.clone().with_silent_core_probes(vec![p]);
-        assert_eq!((with.class, with.drop), (v.class, v.drop));
-        assert_eq!(with.silent_core_probes.len(), 1);
-    }
-
     #[test]
     fn empty_span_yields_none_rms_and_not_evaluated() {
         let a = vec![0.0f32; 100];
         let v = measure_gap_equivalence(&a, 1, 50..50, Some(-50.0), None, &core(), &on());
         assert_eq!(v.class, GapEquivalenceClass::NotEvaluated);
         assert_eq!(v.gap_floor_db, None, "no bins ⇒ no floor: {v:?}");
-    }
-
-    // --- span sensitivity of the silent-core floor (F15, fully-silent residual) --------------------
-    //
-    // The corpus's fully-silent gaps showed silent-core (a downmix max) reading *above* scan (an
-    // interleaved max) at the same bin size — which Cauchy–Schwarz forbids on the same samples. The
-    // sample sets therefore differed, and the donor block counts pinned it to a 100–200 ms span delta:
-    // scan measures over the block-confirmed core, the diagnostic path over the wider refined span, and the extra
-    // edge frames carry the ramp. These tests plant that geometry synthetically so the mechanism is
-    // pinned without media.
-
-    /// Deterministic low-level bed for `ch` channels, with an optional louder region planted in
-    /// `[edge_start, edge_end)`. Channels use distinct 20 Hz-multiple frequencies, so they are exactly
-    /// orthogonal over a 50 ms bin (`ρ̄ = 0`) and the downmix penalty sits at its `10·log10(N)` maximum.
-    fn bed(ch: usize, frames: usize, quiet: f64, edge: Option<(usize, usize, f64)>) -> Vec<f32> {
-        let mut out = Vec::with_capacity(frames * ch);
-        for f in 0..frames {
-            let amp = match edge {
-                Some((s, e, a)) if f >= s && f < e => a,
-                _ => quiet,
-            };
-            for c in 0..ch {
-                let hz = 200.0 * (c as f64 + 1.0);
-                let t = f as f64 / 48_000.0;
-                out.push((amp * (std::f64::consts::TAU * hz * t).sin()) as f32);
-            }
-        }
-        out
-    }
-
-    fn probe_floor(a: &[f32], ch: usize, span: std::ops::Range<usize>) -> f64 {
-        silent_core_probe(a, ch, span, 48_000, 100, 0.01, 1.0)
-            .floor_db
-            .expect("bins present")
-    }
-
-    /// **The floor is a property of the span, not only of the content.** Widening the measured span by
-    /// two 100 ms blocks to take in a planted 20 dB edge moves the floor by ~20 dB, while the interior
-    /// is unchanged. This is the fully-silent residual's mechanism: 2.78–13.20 dB on the corpus came
-    /// from a 100–200 ms span delta at the gap edges, not from the reduction or the bin size.
-    #[test]
-    fn silent_core_floor_is_set_by_the_span_not_only_the_content() {
-        // 1.0 s bed at ~−80 dBFS, with the last 200 ms 20 dB louder.
-        let frames = 48_000;
-        let quiet = 1e-4;
-        let a = bed(
-            6,
-            frames,
-            quiet,
-            Some((frames - 9_600, frames, quiet * 10.0)),
-        );
-        let core = probe_floor(&a, 6, 0..frames - 9_600);
-        let refined = probe_floor(&a, 6, 0..frames);
-        assert!(
-            refined - core > 15.0,
-            "the wider span must catch the planted edge: core {core:.2}, refined {refined:.2}"
-        );
-        assert!(
-            (refined - core - 20.0).abs() < 3.0,
-            "and by about the planted 20 dB, got {:.2}",
-            refined - core
-        );
-    }
-
-    /// **The invariant whose violation exposed the span delta.** On the *same* span the downmix floor
-    /// can never exceed the interleaved one — so a corpus gap where the diagnostic reads above scan at the same
-    /// bin size is proof the spans differ, not evidence about correlation. Pinned here so the
-    /// diagnostic stays available.
-    #[test]
-    fn silent_core_downmix_floor_never_exceeds_interleaved_on_the_same_span() {
-        let frames = 48_000;
-        for edge in [None, Some((38_400usize, 48_000usize, 1e-3f64))] {
-            for ch in [1usize, 2, 6] {
-                let a = bed(ch, frames, 1e-4, edge);
-                let downmix = probe_floor(&a, ch, 0..frames);
-                // Interleaved max over the same bins, built the scan path's way.
-                let bin = 4_800usize;
-                let mut interleaved = f64::NEG_INFINITY;
-                let mut f = 0usize;
-                while f < frames {
-                    let end = (f + bin).min(frames);
-                    let r = f64::from(crate::domain::policies::rms_interleaved(
-                        &a[f * ch..end * ch],
-                    ));
-                    interleaved = interleaved.max(20.0 * r.log10());
-                    f = end;
-                }
-                assert!(
-                    downmix <= interleaved + 0.01,
-                    "ch={ch} edge={edge:?}: downmix {downmix:.2} exceeded interleaved {interleaved:.2}"
-                );
-            }
-        }
-    }
-
-    /// The gap between the two reductions on the same span is the `10·log10(N)` penalty when the
-    /// channels are decorrelated — the same quantity the noise-floor probe measures, confirmed here on
-    /// the *floor* statistic (a max) rather than on a median.
-    #[test]
-    fn silent_core_floor_carries_the_full_downmix_penalty_when_decorrelated() {
-        let frames = 48_000;
-        let ch = 6;
-        let a = bed(ch, frames, 1e-4, None);
-        let downmix = probe_floor(&a, ch, 0..frames);
-        let bin = 4_800usize;
-        let r = f64::from(crate::domain::policies::rms_interleaved(&a[0..bin * ch]));
-        let interleaved = 20.0 * r.log10();
-        let expect = 10.0 * (ch as f64).log10();
-        assert!(
-            (interleaved - downmix - expect).abs() < 0.2,
-            "expected a {expect:.2} dB penalty, got {:.2}",
-            interleaved - downmix
-        );
+        assert_eq!(v.a_gap_total_blocks, Some(0), "{v:?}");
     }
 }

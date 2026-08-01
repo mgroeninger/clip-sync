@@ -17,11 +17,10 @@ Last updated: 2026-07-31.
 
 | Plan | Covers |
 |------|--------|
-| [TEMP-gap-selection-deferred.md](docs/dev/TEMP-gap-selection-deferred.md) | Deferred/refused: `--scan-window`, `--gaps-from` manifest — recorded so they are not rediscovered |
 | [TEMP-nway-donor-alignment-plan.md](docs/dev/TEMP-nway-donor-alignment-plan.md) | N-way donor alignment: repair one damaged copy from multiple donors — draft, not started |
-| [TEMP-fingerprint-provenance-plan.md](docs/dev/TEMP-fingerprint-provenance-plan.md) | Fingerprint-dump provenance (`FileSource` / measurement recipe) — §2 blocks the next large corpus run |
+| [TEMP-fingerprint-provenance-plan.md](docs/dev/TEMP-fingerprint-provenance-plan.md) | Fingerprint-dump provenance — Track A + Track B shipped 2026-07-31; next large run unblocked on code |
 
-> **Recently archived:** [TEMP-scan-recipe-plan.md](docs/dev/archive/TEMP-scan-recipe-plan.md) — `ScanRecipe` + JSON scan-params echo, **archived 2026-07-31**.
+> **Recently archived:** [TEMP-gap-selection-deferred.md](docs/dev/archive/TEMP-gap-selection-deferred.md) — `--scan-window` refusal → [gap-vocabulary.md](docs/dev/gap-vocabulary.md); `--gaps-from` sketch kept in archive, **archived 2026-07-31**. · [TEMP-scan-recipe-plan.md](docs/dev/archive/TEMP-scan-recipe-plan.md) — `ScanRecipe` + JSON scan-params echo, **archived 2026-07-31**.
 
 > Gap-selection docs were split out of one ~1200-line plan on 2026-07-29; order settled the same day
 > ([archive/TEMP-gap-selection-sequencing-plan.md](docs/dev/archive/TEMP-gap-selection-sequencing-plan.md)):
@@ -42,6 +41,7 @@ Survive archival of that meta doc. Not required for `--only-gaps` / `--skip-gaps
 
 | Item | Direction |
 |------|-----------|
+| `--gaps-from` manifest (v2) | Reuse a prior gap list + embedded `ScanRecipe`; mismatch → error on index entries. Prerequisites (ranges, recipe) shipped. Sketch: [archive/TEMP-gap-selection-deferred.md](docs/dev/archive/TEMP-gap-selection-deferred.md) §2. `--scan-window` is **refused** (identity): [gap-vocabulary.md](docs/dev/gap-vocabulary.md) § Gap numbering. |
 | `limit_fill_to_mapped_region` on scan report | Wrong home; recipe plan explicitly out of scope — separate cleanup if ever moved |
 | Absolute B occupancy via `BlockLevel.silent` (not aggregate RMS) | Optional; `silent` is now retained for equivalence (F2). Fillability still uses aggregate `rms_db` vs abs floor — switch if multichannel false-unfillable shows up. |
 

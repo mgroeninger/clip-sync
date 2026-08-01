@@ -1,13 +1,15 @@
 # Fingerprint-dump provenance — let a corpus state what it measured, and on what (DRAFT)
 
-Status: **Track A implemented 2026-07-31 (emit + consume, code-complete, smoke-covered); Track B open.**
+Status: **Track A implemented 2026-07-31 (emit + consume, code-complete, smoke-covered); Track B
+implemented 2026-07-31 (emit + consume, unit-covered).**
 §2 no longer blocks the next large fingerprint run on *code*, and the media half of the definition of
 done is now covered against real containers by a synthetic lossless pair (§5, *Smoke coverage*); a dump
 over licensed media remains desirable but is no longer the gate. Both tracks were reviewed and
 specified before implementation (readiness review 2026-07-31; the open design decisions it surfaced are
-settled inline), and Track A was re-reviewed after landing (§5, *Post-implementation review*). Consumer: any corpus-level
-analysis pass (`equivalence-calibration` and successors) that must qualify a result rather than just
-report it.
+settled inline), and Track A was re-reviewed after landing (§5, *Post-implementation review*). Track B's
+readiness pass the same day settled the five open points inline (§3a empty-`a_levels`, §3b A-side
+tuple, §3c hard-delete, §3d recipe Δ, §5 DoD). Consumer: any corpus-level analysis pass
+(`equivalence-calibration` and successors) that must qualify a result rather than just report it.
 
 Split out of [archive/TEMP-scan-recipe-plan.md](archive/TEMP-scan-recipe-plan.md) on 2026-07-31, where it had
 accumulated as §7e plus three rows of the §7c register. It is not a recipe feature: `ScanRecipe`
@@ -50,11 +52,10 @@ The fingerprint dump records *verdicts and signals*. It does not record **what i
    −120 clamp the defect requires. A null measurement is evidence only if the corpus could have
    produced the condition — and the dump cannot say which pairs could. **This is realized, not
    hypothetical**, and it is why §2 blocks the next run.
-2. **The probes that currently supply measurement provenance are scaffolding with a deletion clock.**
-   `silent_core_probes` is marked *"Vestigial — remove on next touch"*
-   (`domain/gap_equivalence.rs:124-131`); `noise_floor_probes` is explicitly **retained** for I2
-   residual attribution (`:132-136`). When the first goes, the ability to attribute a scan↔fine delta
-   goes with it unless §3 lands something permanent first.
+2. **The probes that formerly supplied measurement provenance were scaffolding with a deletion clock.**
+   `silent_core_probes` was marked *"Vestigial — remove on next touch"* and **hard-deleted with Track B**
+   (replaced by the nested `measurement` recipe). `noise_floor_probes` is explicitly **retained** for I2
+   residual attribution.
 3. **Bin-width divergence is detectable only by hand.** I1 (the 50 ms vs 100 ms overlay mismatch) was
    found by reading source, not by querying a corpus — even though the donor-side block counts exist
    for exactly that purpose. §3 closes the asymmetry.
@@ -143,10 +144,9 @@ the third decisive:
    table shadowing `codec_name` (`probe.rs:253-264`) — guaranteed to drift.
 3. **It was already wrong for the population that matters, before being written.** `codec_name` has
    arms for `aac` / `ac3` / `eac3` / `mp3` / `flac` / `vorbis` / `alac` and falls through to
-   `format!("{codec}")` for everything else — there is **no `pcm` arm**. (The `codec: "pcm"` strings
-   in the tree are test fixtures — `align_videos.rs:2457`, `media_scan.rs:173` — not probe output.)
-   So a real PCM/WAV source, the archetype of "could reach the −120 clamp", would land in `None`, not
-   `Some(false)`. Opus and DTS fall through the same way. Fixing that means either adding arms to an
+   `format!("{codec}")` for everything else — and at the time it had **no `pcm` arm**, so a real
+   PCM/WAV source, the archetype of "could reach the −120 clamp", would land in `None`, not
+   `Some(false)`. (PCM has since been mapped — see §5 — but Opus and DTS still fall through.) Fixing that means either adding arms to an
    upstream `clip-sync` file or matching symphonia's `Display` impl, which is not a stable contract.
 4. **Evidence class.** `codec` in the dump is **Derived** — I3 forced it. A predicate *over* `codec`
    is **Speculative**: no incident has needed one. §3c's "revisit only if" pattern applies.
@@ -280,29 +280,33 @@ already the audit pattern; the bin check is `a_gap_total_blocks × measurement.b
 
 - **Class:** **Speculative** as a permanent shape; **Derived** that *some* provenance was required —
   F15 could not attribute its floor deltas until the probes existed.
-- **Sequencing:** must land before `silent_core_probes` is deleted, or the attribution capability is
-  lost in the gap between.
+- **Sequencing:** landed together with the hard-delete of `silent_core_probes` (same change).
 
 **Where each front-end attaches it — neither one can build it where the verdict is built.** Two of
 the five fields are out of scope at the construction sites, and the plan must say so or the
 implementer discovers it mid-edit:
 
 - **Fine path — attach at the caller, change no signature.** `measure_gap_equivalence`
-  (`application/gap_equivalence.rs:377-404`) never sees `3.0`: `noise_floor_db` arrives already
-  computed from the caller's own context window, and `SilentCoreConfig` carries `bin_frames`
-  (`:249`) with no sample rate, so `bin_ms` is not derivable inside either. Both values *are* in
-  scope at the call site (`measure.rs:2495-2514`), which already holds `equiv_bin_ms`,
-  `cfg.gap_signature_context_secs`, and `ChannelReduction::Interleaved` at the exact point it chains
-  `.with_silent_core_probes(…)`. So add a `with_measurement(…)` builder mirroring the existing two
-  and populate it there. Threading `context_secs` into `measure_gap_equivalence` would put a value
-  the function never uses into its signature purely to echo it back out.
+  never sees `3.0`: `noise_floor_db` arrives already computed from the caller's own context window,
+  and `SilentCoreConfig` carries `bin_frames` with no sample rate, so `bin_ms` is not derivable
+  inside either. Both values *are* in scope at the call site in `measure.rs` (locals
+  `equiv_bin_ms` / `cfg.gap_signature_context_secs` / `ChannelReduction::Interleaved`). So
+  `with_measurement(…)` is populated there. Threading `context_secs` into
+  `measure_gap_equivalence` would put a value the function never uses into its signature purely to
+  echo it back out.
 - **Scan path — derive `bin_ms` from the blocks, do not plumb the recipe.** The scan front-end
-  (`domain/gap_equivalence.rs:380-452`) has `EQUIVALENCE_CONTEXT_SECS` in scope (`:413`) but no
+  (`domain/gap_equivalence.rs:392-452`) has `EQUIVALENCE_CONTEXT_SECS` in scope (`:413`) but no
   block-ms parameter and no `ScanRecipe`. `BlockLevel` carries `start_secs` / `end_secs`
-  (`policies/silence.rs:25-31`), so `(end − start) × 1000` off a gap block gives the bin **actually
-  measured**. That is the better number for a provenance field regardless of plumbing cost: echoing
-  the configured `scan_block_ms` knob would report the intent, and I1 was a case of intent and
-  measurement disagreeing. Build the measurement at `:450-451`, beside `with_scan_provenance`.
+  (`domain/policies/silence.rs:25-27`), so `(end − start) × 1000` off a block gives the bin
+  **actually measured**. That is the better number for a provenance field regardless of plumbing
+  cost: echoing the configured `scan_block_ms` knob would report the intent, and I1 was a case of
+  intent and measurement disagreeing. Build the measurement at `:450-451`, beside
+  `with_scan_provenance`.
+
+**`bin_ms` is a property of the level stream, not of the gap population.** Derive it from **any**
+block in `a_levels` (`a_levels.first()` is enough) — the width does not depend on whether the gap
+contains centres. When `a_levels` is **empty**, leave `measurement: None` entirely; do not invent a
+bin and do not widen `bin_ms` to `Option`. Once the object exists, every field is required.
 
 ### 3b. `a_gap_total_blocks` — close the A/donor asymmetry
 
@@ -322,8 +326,22 @@ reading code, which is what makes this Derived rather than Speculative.
 It also completes the obvious symmetry: A gets a silent fraction that mirrors the donor's, so the two
 sides of the classifier's inputs become comparable populations rather than one fraction and one count.
 
-`with_scan_provenance` (`domain/gap_equivalence.rs:245-253`) already takes the donor pair as a tuple
-and `a_gap_silent_blocks` as a bare `usize`; the total joins there.
+**`with_scan_provenance` takes A as a tuple, matching the donor.** Widen the bare
+`a_gap_silent_blocks: usize` to `a_gap_blocks: (usize, usize)` — `(silent, total)` — so the
+population pair is obvious in the signature and the A/donor asymmetry is not re-encoded as "one
+side bare, one side paired":
+
+```rust
+pub fn with_scan_provenance(
+    mut self,
+    gap_floor_db: Option<f64>,
+    a_gap_blocks: (usize, usize),              // (silent, total)
+    donor_blocks: Option<(usize, usize)>,
+) -> Self
+```
+
+Two production call sites (`derive_gap_equivalence`, `measure_gap_equivalence`); a bare extra
+`usize` is how the asymmetry got here.
 
 **Define the population once, or the check is worthless.** `a_gap_total_blocks` = *blocks whose
 centre falls inside the gap, silent or not*. The two front-ends must not pick different denominators,
@@ -356,6 +374,14 @@ Recorded so they are not re-proposed as gaps in this plan.
 |--------|--------|--------|
 | Span-provenance arg-max (which edge block set the max floor) | **declined** | Same axis, but F15 downgraded it — the mechanism was closed offline. Would only confirm where a fully-silent residual sits |
 | Full `levels.profile_db` RMS envelope in dumps | **declined** as permanent emit (`project.rs` drops it; `bin_ms: 0`) | **Derived** need — every NF cross is recomputable offline from one 50 ms envelope, and its absence forced full-pair re-dumps (a fresh decode + characterize at ~15 GB peak RSS each; the artifacts themselves are tiny — the whole 331-gap corpus is 6.2 MB). Declined anyway: thousands of floats per gap, forever, for a scaffold scheduled for deletion. Revisit only if the envelope outlives the probes |
+| Soft-retire `silent_core_probes` (empty `Vec` forever) | **declined** — **hard-delete** | This track *is* the vestigial note's "next touch". Delete the field, `SilentCoreProbe`, builder, emit, and probe-only unit tests once `measurement` lands. **Do not rewrite committed fixtures** (`band_donor.json` etc.): serde ignores unknown keys by default, and the divergence tests never read the probes. Dead JSON keys may linger until the next harvest; that is fine. Update [gap-fingerprint.md](gap-fingerprint.md) to say so so soft-retire is not re-proposed |
+
+### 3d. Settled — consume shape (2026-07-31 readiness)
+
+| Item | Disposition |
+|------|-------------|
+| Recipe Δ print format | **Only diffs, mirror `signal_deltas`.** When both sides carry `measurement`, print fields that differ — in practice `context_secs` and `donor_span` (the live residuals); `bin_ms` / `reduction` / `a_span` only if they actually diverge. Shape like `ctx +1.0  donor core→nominal` beside the existing `nf` / `aRMS` / `ds` line. Never a five-field wall on every agree row |
+| Optional I1 bin-check flag | **Optional, out of DoD.** `total_blocks × bin_ms ≈ span` stays a documented check; automating it as a calibration warn is elective |
 
 ## 4. What this is not
 
@@ -408,12 +434,28 @@ AAC/MP3/Vorbis reconstruct silence through quantization and the IMDCT and bottom
 
 *Two limits, both deliberate.* (a) It is not a substitute for a licensed-media dump — it proves the
 probe→`FileSource` wiring against a genuine container, not that the reading is sensible across the codec
-variety real media carries. (b) PCM has no arm in `codec_name` (`probe.rs:253-263`), so both sides fall
-through to `format!("{codec}")`, which as of 2026-07-31 renders a bare **hex id** (`0x108` for s16,
-`0x104` for s24). That satisfies the specified behavior — an unmapped codec keeps its own distinct string
-rather than collapsing into an "unknown" bucket — but a census over PCM reads `0x108→0x104`, which no
-reader can interpret. **Open, unscheduled:** add `pcm_*` arms to `codec_name`. Not done here; it changes
-a `clip-sync` mapping that other consumers read, and the fingerprint census is not the only caller.
+variety real media carries. (b) Both sides report the same codec, so the fixture cannot
+exercise a mixed-codec pair; codec-name mappings are pinned by `codec_name`'s own unit tests instead.
+
+*Resolved while writing the fixture (2026-07-31): PCM now has arms.* Writing (b) surfaced that PCM fell
+through `codec_name` to `format!("{codec}")` and rendered as a bare **hex id** (`0x108` for s16, `0x104`
+for s24) — specified behavior for an unmapped codec, but a census over PCM read `0x108→0x104`, which no
+reader can interpret. `probe.rs` now maps them, as **family** arms rather than per-id tokens:
+
+- All **36 linear PCM ids** (signed/unsigned int and IEEE float, both endiannesses, interleaved and
+  planar) collapse to one `"pcm"`. The id encodes depth, signedness, endianness and planarity together;
+  depth is already `bit_depth`'s axis, so per-id tokens would restate it while splitting one logical
+  population across dozens of census buckets. They are listed as 36 named constants, not matched as the
+  `0x100..=0x123` numeric range — a renumbering would silently mis-bucket, whereas a removed or renamed
+  constant is a compile error.
+- **`alaw` and `mulaw` are separate arms, deliberately not folded into `pcm`.** Symphonia names them
+  `CODEC_ID_PCM_*` and numbers them immediately after the linear block (0x124, 0x125), but G.711
+  companding is *lossy* — folding them in would let a census assert losslessness about lossy material,
+  which is the one question the census exists to answer.
+
+Blast radius checked before the change: `"pcm"` was *already* the token three call sites expect
+(`align_videos.rs:2457,2466`, `locate_query_spike.rs:76`, `media_scan.rs:173`), and all behavioral
+branching goes through the typed `AudioCodecId`, never the string.
 
 *Post-implementation review corrections (same day), all applied:* `DecodedAb.sources` is
 `#[cfg_attr(not(feature = "calibration"), allow(dead_code))]` — `calibration` is off by default and
@@ -510,43 +552,43 @@ column** — deserializing it is not the deliverable.
 - [x] [gap-fingerprint.md](gap-fingerprint.md): document the new `FileSource` fields, and state
       explicitly that a corpus without them cannot qualify a null result
 
-**Track B — measurement provenance (§3)**
+**Definition of done (Track B).** Emit: a dump shows `measurement` (all five fields) and
+`a_gap_total_blocks` on **both** `scan_equivalence` and `equivalence`, donor population counts on
+both, and **no** `silent_core_probes` on new dumps. Prove the attach points with unit tests — scan:
+`bin_ms` from any `BlockLevel` width, `measurement: None` when `a_levels` is empty; fine:
+`with_measurement` at the caller with no `measure_gap_equivalence` signature change; counts: fine
+path keeps `_total`, scan path adds the centre-in-gap counter, donor helper feeds
+`with_scan_provenance`. Consume: diverge rows print recipe Δ (§3d — diffs only);
+[gap-fingerprint.md](gap-fingerprint.md) replaces the `silent_core_probes` section with the permanent
+`measurement` fields and notes `total_blocks × bin_ms ≈ span` as the bin-divergence check. The
+optional I1 calibration flag is **out of DoD**.
+
+**Track B — measurement provenance (§3)** — *implemented 2026-07-31.*
+
+*Settled 2026-07-31 (readiness), recorded in §3a/§3b/§3c/§3d so they are not re-opened:* A-side
+`with_scan_provenance` is a `(silent, total)` tuple; empty `a_levels` ⇒ no `measurement`; hard-delete
+`silent_core_probes` (fixtures may keep dead keys); recipe Δ prints diffs only; optional I1 flag out
+of DoD.
 
 *Emit:*
 
-- [ ] Add `a_gap_total_blocks: Option<usize>` beside `a_gap_silent_blocks`
-      (`domain/gap_equivalence.rs:113-116`); populate via `with_scan_provenance` (`:245-253`), which
-      already carries the donor counts as a tuple. Population = **blocks whose centre falls in the
-      gap, silent or not**, identical on both sides (§3b). Fine path is free (`_total` already
-      computed and discarded at `application/gap_equivalence.rs:388`); the **scan path needs a new
-      counter** — `gap_silent_blocks()` (`domain/gap_equivalence.rs:401-407`) without its `silent`
-      term
-- [ ] Fine path: add `donor_silence_counts_at_floor -> Option<(usize, usize)>` and derive the
-      fraction from it, rather than widening `donor_silence_fraction_at_floor`'s return type (that
-      would churn four test call sites: `application/gap_equivalence.rs:548`, `:554`, `:577`, `:586`).
-      Pass the counts through `with_scan_provenance` instead of `None` (`:399-403`) so both verdicts
-      carry population counts
-- [ ] Add `measurement: Option<EquivalenceMeasurement>` on `GapEquivalenceVerdict` with the §3a
-      fields (`context_secs`, `bin_ms`, `reduction`, `a_span`, `donor_span`). Reuse
-      `ChannelReduction`; add **one** `SpanKind { Core, Nominal }` shared by both span fields. Attach
-      it per §3a's *Where each front-end attaches it*: a `with_measurement(…)` builder called at
-      `measure.rs:2495-2514` for the fine path (no signature change to `measure_gap_equivalence` —
-      neither `context_secs` nor `bin_ms` is in scope inside it), and at
-      `domain/gap_equivalence.rs:450-451` for the scan path, with `bin_ms` derived from
-      `BlockLevel::{start_secs, end_secs}` rather than plumbed from the recipe
-- [ ] Only then remove `silent_core_probes` + `SilentCoreProbe` + `with_silent_core_probes`
-      (`domain/gap_equivalence.rs:124-131`, `:265-272`) per its vestigial note. **Keep**
-      `noise_floor_probes` (`:132-136`, `:274-278`) — retained for I2 attribution
+- [x] Add `a_gap_total_blocks: Option<usize>` beside `a_gap_silent_blocks`; widen
+      `with_scan_provenance` so A is `a_gap_blocks: (usize, usize)` matching the donor pair (§3b).
+      Fine path keeps `_total`; scan path adds the centre-in-gap counter
+- [x] Fine path: `donor_silence_counts_at_floor` + pass counts through `with_scan_provenance`
+- [x] `measurement: Option<EquivalenceMeasurement>` + `SpanKind { Core, Nominal }`; attach at
+      `measure.rs` caller (fine) and `derive_gap_equivalence` (scan; `bin_ms` from any
+      `BlockLevel`; omit when `a_levels` empty)
+- [x] Hard-delete `silent_core_probes` / `SilentCoreProbe` / emit / probe-only tests. **Keep**
+      `noise_floor_probes`. Fixtures not rewritten
 
 *Consume* (calibration owns this; harness GapRow projection of equivalence is out of scope):
 
-- [ ] `equivalence_calibration` diverge rows: print recipe Δ (`context_secs`, `donor_span`, …)
-      beside the existing signal Δ
-- [ ] Optional: flag gaps where `a_gap_total_blocks × measurement.bin_ms` disagrees with geometry
-      span (the I1-class check)
-- [ ] [gap-fingerprint.md](gap-fingerprint.md) § *`equivalence` vs `scan_equivalence`*: replace the
-      probe description with the permanent `measurement` fields; note
-      `total_blocks × bin_ms ≈ span` as the bin-divergence check
+- [x] `equivalence_calibration` diverge rows: recipe Δ beside signal Δ — **diffs only** (§3d)
+- [ ] Optional (out of DoD): flag gaps where `a_gap_total_blocks × measurement.bin_ms` disagrees
+      with geometry span (the I1-class check)
+- [x] [gap-fingerprint.md](gap-fingerprint.md): `measurement` section replaces `silent_core_probes`;
+      hard-delete + lingering fixture keys noted; `total × bin_ms ≈ span` documented
 
 ## 6. Downstream
 
@@ -563,14 +605,12 @@ column** — deserializing it is not the deliverable.
 - **`equivalence-calibration`** now qualifies its `0 dangerous / N gaps` verdict by naming the
   population it was measured over (`codecs (a→b): flac→aac 12`), instead of reporting a bare count over
   a corpus whose composition the reader has to already know.
-- **Any corpus-level analysis pass** gains one cheap check it did not have, with a second still to come:
-  the per-codec census (§2, a GROUP BY on a row column — **shipped**) and bin-width agreement (§3b, one
-  multiplication — Track B).
+- **Any corpus-level analysis pass** gains two cheap checks: the per-codec census (§2 — **shipped**) and
+  bin-width agreement via `a_gap_total_blocks × measurement.bin_ms ≈ span` (§3b — **shipped** on emit;
+  optional calibration warn still elective).
+- **`equivalence-calibration`** diverge rows now print recipe Δ (`ctx +1.0  donor core→nominal`) beside
+  signal Δ, so the two accepted residuals are attributable without reading probe grids or source.
 
-**Emit ≠ delivered — resolved for Track A.** This paragraph previously recorded that neither consumer
-read `FileSource`: `equivalence_calibration.rs` deserialized it and ignored it, and the harness roll-up
-parsed only `.id` through its own structural copy. Both are now closed — the harness deserializes the
-emit-side `FileSource` itself and projects `codec` / `native_*` / `was_resampled()` onto `GapRow`, and
-both front-ends print a census. **The principle stands for Track B**: emitting a field is not
-delivering it, the corpus is the perishable artifact and the queries are not, so if a deadline forces a
-split, ship emit first and record consume as outstanding rather than closing the track.
+**Emit ≠ delivered — resolved for Track A and Track B.** Track A: harness + calibration census.
+Track B: calibration recipe Δ. The principle stands for any future axis: emitting a field is not
+delivering it; if a deadline forces a split, ship emit first and record consume as outstanding.

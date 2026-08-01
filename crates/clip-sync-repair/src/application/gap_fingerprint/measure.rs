@@ -2525,34 +2525,22 @@ pub fn characterize_gaps_from_decode(
                 ..Default::default()
             },
         );
-        // Record the floor the diagnostic donor fraction was measured against. It is a *different
-        // statistic* from the scan path's (max over all gap bins vs max over silent A blocks only),
-        // and the two differ by enough to flip a class — so both are now recorded per gap rather
-        // than left to be inferred.
-        // Candidate silent-core floors (F15 scaffolding) — recorded, never classified on.
-        // **Vestigial: remove on next touch** of this emit (live `equiv` already *is* silent-core at
-        // `equiv_bin_ms`). Keep the `noise_floor_probes` grid below (I2 attribution). Two bin sizes
-        // remain only as a side-by-side with `gap_signature_bin_ms` vs `scan_block_ms`.
-        let probe = |bin_ms: u64| {
-            crate::application::gap_equivalence::silent_core_probe(
-                &a_pcm.samples,
-                ch,
-                refined.start_frame..refined.end_frame,
-                sample_rate,
-                bin_ms,
-                cfg.silence_peak_fraction,
-                cfg.absolute_silence_rms,
-            )
+        // Measurement recipe — attached here, not inside `measure_gap_equivalence`: that function never
+        // sees `context_secs` / `bin_ms` (noise floor arrives precomputed; `SilentCoreConfig` has frames
+        // only). See `docs/dev/TEMP-fingerprint-provenance-plan.md` §3a.
+        use crate::domain::gap_equivalence::{EquivalenceMeasurement, SpanKind};
+        let measurement = EquivalenceMeasurement {
+            context_secs: cfg.gap_signature_context_secs,
+            bin_ms: equiv_bin_ms,
+            reduction: ChannelReduction::Interleaved,
+            a_span: SpanKind::Core,
+            donor_span: SpanKind::Nominal,
         };
-        let probes = vec![
-            probe(cfg.gap_signature_bin_ms),
-            probe(report.recipe.scan_block_ms()),
-        ];
 
         // Candidate noise floors (F15, second axis) over the {context window} × {bin size} × {channel
         // reduction} grid the two front-ends straddle — also provenance, also classified on by nothing.
         // Built by calling `level_profile` itself rather than re-deriving the bin walk, so a probe
-        // cannot drift from the measurement it characterizes.
+        // cannot drift from the measurement it characterizes. **Retained** for I2 attribution.
         //
         // The `(EQUIVALENCE_CONTEXT_SECS, scan_block_ms, Interleaved)` row is the anchor: it matches
         // scan's recipe on all three variables and so should reproduce `scan_equivalence.noise_floor_db`.
@@ -2579,7 +2567,7 @@ pub fn characterize_gaps_from_decode(
         // anyone who wants the old number.
         fp.equivalence = Some(
             equiv
-                .with_silent_core_probes(probes)
+                .with_measurement(measurement)
                 .with_noise_floor_probes(nf_probes),
         );
         // Copy in the coarse scan-block verdict (block size = the `scan_block_ms` recipe knob, not a

@@ -20,8 +20,9 @@ work only.
 
 Shipped thin selection v1 + v1.5 ranges first; recipe stayed parked until a same-recipe consumer
 (unparked 2026-07-30, **implemented and archived 2026-07-31** — see
-[TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md)). Deferred manifest / `--gaps-from` remains
-active: [../TEMP-gap-selection-deferred.md](../TEMP-gap-selection-deferred.md).
+[TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md)). `--scan-window` refusal folded into
+[../gap-vocabulary.md](../gap-vocabulary.md); deferred sketches archived 2026-07-31
+([TEMP-gap-selection-deferred.md](TEMP-gap-selection-deferred.md)).
 
 | Doc | Role |
 |-----|------|
@@ -30,6 +31,7 @@ active: [../TEMP-gap-selection-deferred.md](../TEMP-gap-selection-deferred.md).
 | [TEMP-gap-selection-ranges-plan.md](TEMP-gap-selection-ranges-plan.md) | Selection v1.5 ranges (shipped) |
 | [TEMP-gap-index-convention-plan.md](TEMP-gap-index-convention-plan.md) | Gap index convention (shipped) |
 | [TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md) | `ScanRecipe` + JSON scan-params echo (shipped 2026-07-31) |
+| [TEMP-gap-selection-deferred.md](TEMP-gap-selection-deferred.md) | Refused `--scan-window` + unbuilt `--gaps-from` sketch (archived 2026-07-31) |
 
 ## Module splits & large refactors (shipped)
 

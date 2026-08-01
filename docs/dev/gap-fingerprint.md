@@ -262,33 +262,28 @@ sat *between* the two floors — silent to the diagnostic read, occupied to scan
 pinning agreement on that gap. Full analysis in
 [archive/TEMP-equivalence-divergence-findings.md](archive/TEMP-equivalence-divergence-findings.md) § F15.
 
-#### `equivalence.silent_core_probes` — vestigial F15 scaffolding
+#### `measurement` — the live recipe on each verdict (Track B)
 
-F15's silent-core fix is **landed**: live `gap_floor_db` / `a_gap_rms_db` *are* the silent-core
-measurement (max / energy mean over A's silent bins at `scan_block_ms`, matching scan). These probe
-rows were the pre-adoption measurement that justified that change — they remain in the dump as
-provenance only; **nothing classifies on them**. Their permanent replacement (a nested
-`measurement` recipe on each verdict: context / bin / reduction / `a_span` / `donor_span`) is
-specified in [TEMP-fingerprint-provenance-plan.md](TEMP-fingerprint-provenance-plan.md) §3a; do not
-delete these rows until that lands.
+Permanent replacement for the deleted `silent_core_probes` grid. Nested on both `scan_equivalence`
+and `equivalence` so a calibration diff can attribute a residual to an instrument difference without
+reading source. Provenance only — nothing classifies on it. Spec:
+[TEMP-fingerprint-provenance-plan.md](TEMP-fingerprint-provenance-plan.md) §3a.
 
 | field | meaning |
 |---|---|
-| `bin_ms` | bin width this row was measured at |
-| `floor_db` | max RMS over the **silent** bins. Absent when no bin was silent |
-| `a_rms_db` | energy mean over the same bins |
-| `silent_bins` / `total_bins` | the population behind both, so a max can be read against how many bins it summarizes |
+| `context_secs` | noise-floor context half-width (scan 2.0 / diagnostic 3.0 — the I2 residual) |
+| `bin_ms` | bin width **actually measured** (from the level stream on scan; `scan_block_ms` on diagnostic) |
+| `reduction` | `interleaved` on both paths today |
+| `a_span` | `core` on both today (block-confirmed / raw gap) |
+| `donor_span` | `core` (scan, offset-mapped) vs `nominal` (diagnostic `b_mapped`) — the remaining donor-window residual |
 
-Two rows are emitted per gap: one at `gap_signature_bin_ms` and one at `scan_block_ms`. The emit path
-is deliberately frozen at the *pre-fix* recipe (silence filter on, but downmix reduction and
-gap-anchored tiling) so a dump can still put old and new numbers side by side — comparing the two is
-its whole remaining purpose. An absent `floor_db` means the empty-silent-bin fallback applied on that
-gap (defensive; mirrors scan's empty-set → `None`).
+Also flat beside the signals: `a_gap_silent_blocks` / `a_gap_total_blocks` and the donor pair. The
+bin-divergence check is `a_gap_total_blocks × measurement.bin_ms ≈ span_secs` (I1 class). Absent
+`measurement` means a pre-Track-B corpus, or a scan with an empty level stream (no invented `bin_ms`).
 
-**Vestigial** — drop first if dumps ever feel fat; leave `noise_floor_probes` (I2 attribution). Soft-retire
-via empty `skip_serializing_if` if needed; do not strip committed fixtures. See
-[archive/TEMP-equivalence-instrument-convergence.md](archive/TEMP-equivalence-instrument-convergence.md)
-§ *Also carried over*.
+`silent_core_probes` was **hard-deleted** from the emit/type once this landed. Committed fixtures may
+still carry the old JSON key — serde ignores it; do not rewrite fixtures just to strip it.
+`noise_floor_probes` stays (I2 attribution).
 
 #### `equivalence.noise_floor_probes` — separating the second axis's three variables
 

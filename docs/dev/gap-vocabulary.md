@@ -70,6 +70,12 @@ checked it survives quantization. The type that owns that rule is domain `ScanRe
 [json-output.md](../json-output.md)). Rationale:
 [archive/TEMP-scan-recipe-plan.md](archive/TEMP-scan-recipe-plan.md) §2/§3.
 
+**`--scan-window` is refused.** Restricting detection to an A-timeline interval would be a scan knob
+(same family as `min_gap_ms`): gaps outside the window never enter the report, so every `#` shifts.
+Selection (`--only-gaps` / `--skip-gaps`) filters an existing report and must never share that flag.
+The cheap form (narrow detection, still full-file decode) does not earn the identity cost. Sketch and
+composition notes: [archive/TEMP-gap-selection-deferred.md](archive/TEMP-gap-selection-deferred.md).
+
 ## Axes (read before the cells)
 
 Each measurement is tagged with the **placement** it's taken at — the same field at a different
