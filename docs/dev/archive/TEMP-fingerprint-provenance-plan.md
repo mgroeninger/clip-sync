@@ -1,30 +1,48 @@
-# Fingerprint-dump provenance — let a corpus state what it measured, and on what (DRAFT)
+# Fingerprint-dump provenance — let a corpus state what it measured, and on what (ARCHIVED)
 
-Status: **Track A implemented 2026-07-31 (emit + consume, code-complete, smoke-covered); Track B
-implemented 2026-07-31 (emit + consume, unit-covered).**
-§2 no longer blocks the next large fingerprint run on *code*, and the media half of the definition of
-done is now covered against real containers by a synthetic lossless pair (§5, *Smoke coverage*); a dump
-over licensed media remains desirable but is no longer the gate. Both tracks were reviewed and
-specified before implementation (readiness review 2026-07-31; the open design decisions it surfaced are
-settled inline), and Track A was re-reviewed after landing (§5, *Post-implementation review*). Track B's
-readiness pass the same day settled the five open points inline (§3a empty-`a_levels`, §3b A-side
-tuple, §3c hard-delete, §3d recipe Δ, §5 DoD). Consumer: any corpus-level analysis pass
-(`equivalence-calibration` and successors) that must qualify a result rather than just report it.
+Status: **Shipped and closed 2026-07-31.** Track A (emit + consume, smoke-covered) and Track B
+(emit + consume, unit-covered) both landed; both were reviewed after landing and the review findings
+applied (§5, *Post-implementation review*, and §5's Track B review). §2 no longer blocks the next large
+fingerprint run on *code*, and the media half of the definition of done is covered against real
+containers by a synthetic lossless pair (§5, *Smoke coverage*).
 
-Split out of [archive/TEMP-scan-recipe-plan.md](archive/TEMP-scan-recipe-plan.md) on 2026-07-31, where it had
+**Closing finding — there is no lossless pair, and there will not be one (2026-07-31).** §1.1 wanted a
+corpus that could reach the −120 clamp so its null result would be informative. No such media is
+available, so an all-lossy corpus is now a **permanent** property, not a pending acquisition. This does
+not leave the question open — it moves the evidence: the −120 condition is reproduced by construction
+in `digitally_silent_donor_reads_silent_against_a_digitally_silent_floor`
+(`application/gap_equivalence.rs`), which pins the I3 mechanism inline including the negative control,
+and carried through a real container end-to-end by `lossless_silence_pair`. A synthetic pair that
+reaches the clamp on every CI run is a better instrument than a corpus that might have contained one.
+What Track A's census delivers is therefore the whole deliverable and not a down payment: it keeps the
+null **honestly qualified** (`0 dangerous · codecs (a→b): aac→aac N` = "this number could not have been
+nonzero"). Two consequences are recorded where they bind: *Declined: `is_lossy()`* below is now
+**permanently** closed rather than "revisit if", and §6's next-run bullet loses §1.1 as a justification.
+
+Both tracks were reviewed and specified before implementation (readiness review 2026-07-31; the open
+design decisions it surfaced are settled inline). Track B's readiness pass the same day settled the
+five open points inline (§3a empty-`a_levels`, §3b A-side tuple, §3c hard-delete, §3d recipe Δ, §5
+DoD). Consumer: any corpus-level analysis pass (`equivalence-calibration` and successors) that must
+qualify a result rather than just report it.
+
+Durable behaviour lives in [../gap-fingerprint.md](../gap-fingerprint.md) (§ *Source identity & the
+corpus library* and § *`measurement`*); the remaining deferred items are in
+[BACKLOG.md](../../../BACKLOG.md). This file is kept for **rationale** — what was declined and why.
+
+Split out of [TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md) on 2026-07-31, where it had
 accumulated as §7e plus three rows of the §7c register. It is not a recipe feature: `ScanRecipe`
 answers *"what knobs produced this gap list?"* and its `PartialEq` must stay exactly as fine as "same
 gap list" (that plan's §2/§7d). Everything here answers a different question on a different artifact —
 the fingerprint **corpus dump** — and none of it may join recipe equality.
 
 **Siblings:**
-[archive/TEMP-scan-recipe-plan.md](archive/TEMP-scan-recipe-plan.md) (scan-output provenance — **archived**;
+[TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md) (scan-output provenance — **archived**;
 the sibling axis, and the only overlap is that both touch `gap_fingerprint/schema.rs`),
-[archive/TEMP-equivalence-instrument-convergence.md](archive/TEMP-equivalence-instrument-convergence.md)
+[TEMP-equivalence-instrument-convergence.md](TEMP-equivalence-instrument-convergence.md)
 (**archived 2026-07-31**; I1/I2/I3 — the ledger that produced §2 and §3),
-[archive/TEMP-equivalence-divergence-findings.md](archive/TEMP-equivalence-divergence-findings.md)
+[TEMP-equivalence-divergence-findings.md](TEMP-equivalence-divergence-findings.md)
 (F14/F15 — where the probe scaffolding came from),
-[gap-fingerprint.md](gap-fingerprint.md) (durable home for current equivalence behaviour; the dump
+[../gap-fingerprint.md](../gap-fingerprint.md) (durable home for current equivalence behaviour; the dump
 schema this plan changes).
 
 > **Verification rule for this document.** Same rule as the recipe plan, adapted: a `file:line`
@@ -51,7 +69,10 @@ The fingerprint dump records *verdicts and signals*. It does not record **what i
    written**: every corpus pair is lossy AAC bottoming out near −101 dB, so none of them can reach the
    −120 clamp the defect requires. A null measurement is evidence only if the corpus could have
    produced the condition — and the dump cannot say which pairs could. **This is realized, not
-   hypothetical**, and it is why §2 blocks the next run.
+   hypothetical**, and it is why §2 blocked the next run. **Closed 2026-07-31 (see the closing finding
+   at the top):** no lossless media is available, so the corpus can *never* produce the condition. The
+   fix is not a future pair — it is the census, which keeps the null honestly labelled, plus a
+   synthetic fixture and unit test that reach the −120 condition by construction on every CI run.
 2. **The probes that formerly supplied measurement provenance were scaffolding with a deletion clock.**
    `silent_core_probes` was marked *"Vestigial — remove on next touch"* and **hard-deleted with Track B**
    (replaced by the nested `measurement` recipe). `noise_floor_probes` is explicitly **retained** for I2
@@ -156,8 +177,11 @@ the third decisive:
 either way. The qualification is one line of prose for a human, and
 `0 dangerous / N gaps · codecs: aac×N` is that line.
 
-Revisit only if a corpus actually contains a lossless pair *and* a consumer needs the judgment
-automated — at which point the predicate can be written against real material instead of a guess.
+**Permanently closed, not deferred (2026-07-31).** The earlier wording was "revisit only if a corpus
+actually contains a lossless pair *and* a consumer needs the judgment automated." The first conjunct is
+unreachable — no lossless media is available (see the closing finding at the top) — so the predicate
+can never be written against real material, which was the whole condition for writing it. Group on
+`codec`; do not re-open this on the "revisit if" clause.
 
 **Constraint: `id` and `duration_secs` are not repointable — add, never redirect.** `file_source`
 derives *three* things from the one `sample_rate` argument: the `id` digest (rate is fed into the FNV
@@ -372,7 +396,7 @@ Recorded so they are not re-proposed as gaps in this plan.
 |--------|--------|--------|
 | Span-provenance arg-max (which edge block set the max floor) | **declined** | Same axis, but F15 downgraded it — the mechanism was closed offline. Would only confirm where a fully-silent residual sits |
 | Full `levels.profile_db` RMS envelope in dumps | **declined** as permanent emit (`project.rs` drops it; `bin_ms: 0`) | **Derived** need — every NF cross is recomputable offline from one 50 ms envelope, and its absence forced full-pair re-dumps (a fresh decode + characterize at ~15 GB peak RSS each; the artifacts themselves are tiny — the whole 331-gap corpus is 6.2 MB). Declined anyway: thousands of floats per gap, forever, for a scaffold scheduled for deletion. Revisit only if the envelope outlives the probes |
-| Soft-retire `silent_core_probes` (empty `Vec` forever) | **declined** — **hard-delete** | This track *is* the vestigial note's "next touch". Delete the field, `SilentCoreProbe`, builder, emit, and probe-only unit tests once `measurement` lands. **Do not rewrite committed fixtures** (`band_donor.json` etc.): serde ignores unknown keys by default, and the divergence tests never read the probes. Dead JSON keys may linger until the next harvest; that is fine. Update [gap-fingerprint.md](gap-fingerprint.md) to say so so soft-retire is not re-proposed |
+| Soft-retire `silent_core_probes` (empty `Vec` forever) | **declined** — **hard-delete** | This track *is* the vestigial note's "next touch". Delete the field, `SilentCoreProbe`, builder, emit, and probe-only unit tests once `measurement` lands. **Do not rewrite committed fixtures** (`band_donor.json` etc.): serde ignores unknown keys by default, and the divergence tests never read the probes. Dead JSON keys may linger until the next harvest; that is fine. Update [../gap-fingerprint.md](../gap-fingerprint.md) to say so so soft-retire is not re-proposed |
 
 ### 3d. Settled — consume shape (2026-07-31 readiness)
 
@@ -384,7 +408,7 @@ Recorded so they are not re-proposed as gaps in this plan.
 ## 4. What this is not
 
 - **Not `ScanRecipe` members.** None of these change which gaps are detected, so none may enter recipe
-  equality — see [archive/TEMP-scan-recipe-plan.md](archive/TEMP-scan-recipe-plan.md) §7d. `FileSource` describes the
+  equality — see [TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md) §7d. `FileSource` describes the
   media; §3 describes the instrument; the recipe describes the knobs.
 - **Not a corpus-run operating procedure.** What to *check* after a large run is a separate artifact;
   this plan only makes the checks answerable.
@@ -547,7 +571,7 @@ column** — deserializing it is not the deliverable.
 - [x] **Resolved — leave `manifest.json` alone.** Both current consumers open `corpus.json` anyway
       (`equivalence_calibration` roll-up; harness `analyze_dirs`). Codec-on-manifest is a future
       convenience, not a Track A deliverable
-- [x] [gap-fingerprint.md](gap-fingerprint.md): document the new `FileSource` fields, and state
+- [x] [../gap-fingerprint.md](../gap-fingerprint.md): document the new `FileSource` fields, and state
       explicitly that a corpus without them cannot qualify a null result
 
 **Definition of done (Track B).** Emit: a dump shows `measurement` (all five fields) and
@@ -559,7 +583,7 @@ fine: from-decode test asserts dumped `equivalence.measurement` (`donor_span: No
 keeps `_total`, scan path adds the centre-in-gap counter, donor helper feeds
 `with_scan_provenance`. Consume: corpus `instruments:` line for structural recipe Δ; per-row recipe
 Δ on diverge / anomaly only (§3d);
-[gap-fingerprint.md](gap-fingerprint.md) replaces the `silent_core_probes` section with the permanent
+[../gap-fingerprint.md](../gap-fingerprint.md) replaces the `silent_core_probes` section with the permanent
 `measurement` fields and notes `total_blocks × bin_ms ≈ span` as the bin-divergence check. The
 optional I1 calibration flag is **out of DoD**.
 
@@ -587,8 +611,9 @@ of DoD.
 - [x] `equivalence_calibration`: corpus `instruments:` line for structural recipe Δ; per-row
       recipe Δ on diverge / anomaly only (§3d); Δ column widened to 56
 - [ ] Optional (out of DoD): flag gaps where `a_gap_total_blocks × measurement.bin_ms` disagrees
-      with geometry span (the I1-class check)
-- [x] [gap-fingerprint.md](gap-fingerprint.md): `measurement` section replaces `silent_core_probes`;
+      with geometry span (the I1-class check). **Not done — carried to
+      [BACKLOG.md](../../../BACKLOG.md)** on archiving, with the two Track A deferrals
+- [x] [../gap-fingerprint.md](../gap-fingerprint.md): `measurement` section replaces `silent_core_probes`;
       hard-delete + lingering fixture keys noted; `total × bin_ms ≈ span` documented
 
 ## 6. Downstream
@@ -597,12 +622,16 @@ of DoD.
   §5's DoD is covered by `cli_gap_fingerprint_provenance`). A run dumped from a build without Track A
   produces another corpus that cannot answer the question motivating the run (§1.1) — confirm the build
   carries it before committing a multi-hour run.
-- **Scope of that run is a separate decision, and Track A does not settle it.** Track A changes what the
-  run can *report*, not what it can *find*. Re-fingerprinting the existing pairs yields a census reading
-  one codec pair and a `0 dangerous` correctly labelled as a null the population could not have broken —
-  real progress over a bare count, but still not evidence. Making the null *informative* needs at least
-  one pair whose source can reach the −120 clamp, i.e. lossless. That is media acquisition, not code, and
-  it is worth establishing whether such a pair exists **before** committing to the run rather than after.
+- **Scope of that run is a separate decision, and Track A does not settle it. §1.1 is no longer a
+  justification for it (settled 2026-07-31).** Track A changes what the run can *report*, not what it
+  can *find*. Re-fingerprinting the existing pairs yields a census reading one codec pair and a
+  `0 dangerous` correctly labelled as a null the population could not have broken — real progress over
+  a bare count, but still not evidence. Making the null *informative* would need at least one pair whose
+  source can reach the −120 clamp, i.e. lossless; **there is none, and none is obtainable.** So a run
+  cannot be justified by "then we can read the null" — that will never be true of this corpus. It must
+  stand on other grounds (getting Track A/B provenance onto the corpus, or a different axis entirely)
+  or not be committed. The −120 condition itself is covered by fixture and unit test instead, which is
+  the stronger instrument anyway: it fires every CI run rather than once per multi-hour dump.
 - **`equivalence-calibration`** now qualifies its `0 dangerous / N gaps` verdict by naming the
   population it was measured over (`codecs (a→b): flac→aac 12`), instead of reporting a bare count over
   a corpus whose composition the reader has to already know.

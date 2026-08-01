@@ -242,7 +242,7 @@ pub struct DonorSpan<'a> {
 /// Silent / total donor bins under the I3 disjunction — the population behind
 /// [`donor_silence_fraction_at_floor`]. Kept as a counts helper so the fraction's return type (and its
 /// four test call sites) stay unchanged; see
-/// `docs/dev/TEMP-fingerprint-provenance-plan.md` §3b.
+/// `docs/dev/archive/TEMP-fingerprint-provenance-plan.md` §3b.
 fn donor_silence_counts_at_floor(
     donor: &DonorSpan<'_>,
     channels: usize,

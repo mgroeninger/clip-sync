@@ -31,7 +31,7 @@ pub(crate) const SILENCE_FLOOR_DB: f32 = -120.0;
 ///
 /// Provenance fields are raw container/track observations, never verdicts: what could be concluded
 /// from them (lossless? clamp-reachable?) is a question for the reader, answered by grouping on
-/// `codec`. See `docs/dev/TEMP-fingerprint-provenance-plan.md` § 2.
+/// `codec`. See `docs/dev/archive/TEMP-fingerprint-provenance-plan.md` § 2.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FileSource {
     pub id: String,

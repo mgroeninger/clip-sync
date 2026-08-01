@@ -2527,7 +2527,7 @@ pub fn characterize_gaps_from_decode(
         );
         // Measurement recipe — attached here, not inside `measure_gap_equivalence`: that function never
         // sees `context_secs` / `bin_ms` (noise floor arrives precomputed; `SilentCoreConfig` has frames
-        // only). See `docs/dev/TEMP-fingerprint-provenance-plan.md` §3a.
+        // only). See `docs/dev/archive/TEMP-fingerprint-provenance-plan.md` §3a.
         use crate::domain::gap_equivalence::{EquivalenceMeasurement, SpanKind};
         let measurement = EquivalenceMeasurement {
             context_secs: cfg.gap_signature_context_secs,

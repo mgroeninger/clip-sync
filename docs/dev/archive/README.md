@@ -11,6 +11,7 @@ work only.
 
 | Doc | Closed | What it recorded |
 |-----|--------|------------------|
+| [TEMP-fingerprint-provenance-plan.md](TEMP-fingerprint-provenance-plan.md) | 2026-07-31 | Fingerprint-dump provenance: Track A (`FileSource` codec / `bit_depth` / native rate + channels / bitrate, `was_resampled()`, codec census) and Track B (`measurement` recipe, `a_gap_total_blocks`, `silent_core_probes` hard-delete) — **both shipped**. Kept for the declines: `is_lossy()`, `container`, the `profile_db` envelope, span arg-max, probe soft-retire. Closing finding: **no lossless pair exists or is obtainable**, so §1.1's corpus null is retired as evidence and the −120 condition is covered by fixture + unit test. Current behaviour: [../gap-fingerprint.md](../gap-fingerprint.md) § *Source identity & the corpus library* and § *`measurement`*. |
 | [TEMP-equivalence-instrument-convergence.md](TEMP-equivalence-instrument-convergence.md) | 2026-07-31 | I1–I3: scan vs fine equivalence **instruments** after F14/F15. Current table lives in [../gap-fingerprint.md](../gap-fingerprint.md) § *`equivalence` vs `scan_equivalence`*. |
 | [TEMP-equivalence-divergence-findings.md](TEMP-equivalence-divergence-findings.md) | 2026-07-30 | F14/F15 scan-vs-fill divergence; probe-then-fix method; reduction/window/span decomposition |
 | [TEMP-silence-floor-findings.md](TEMP-silence-floor-findings.md) | 2026-07-30 | F1–F12 silence-floor / fillability; F11 closed by [TEMP-scan-recipe-plan.md](TEMP-scan-recipe-plan.md) |

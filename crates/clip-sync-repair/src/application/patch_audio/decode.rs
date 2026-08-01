@@ -12,7 +12,7 @@ use crate::domain::GapReport;
 /// One side's **source** (pre-decode) container/track reading, for fingerprint-dump provenance.
 ///
 /// Every field is a raw probe observation, never a verdict — see
-/// `docs/dev/TEMP-fingerprint-provenance-plan.md` § *Observations, not verdicts*. `native_*` are the
+/// `docs/dev/archive/TEMP-fingerprint-provenance-plan.md` § *Observations, not verdicts*. `native_*` are the
 /// track's own rate/layout, which differ from the analysis values once B is resampled to A.
 #[derive(Debug, Clone)]
 pub struct SourceDescriptor {

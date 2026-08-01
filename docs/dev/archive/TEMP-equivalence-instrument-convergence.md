@@ -15,7 +15,7 @@
 > **One thing this ledger delegated forward:** I3's null result (`0 dangerous / 297 gaps`) is
 > uninterpretable while the dump records no codec or losslessness, and the probe scaffolding named
 > above cannot be deleted until something permanent replaces it. Both are specified in
-> [../TEMP-fingerprint-provenance-plan.md](../TEMP-fingerprint-provenance-plan.md) (**opened
+> [TEMP-fingerprint-provenance-plan.md](TEMP-fingerprint-provenance-plan.md) (**opened
 > 2026-07-31**), whose §2 blocks the next large fingerprint run.
 
 **Opened:** 2026-07-30. **Status:** **all three closed.** **I1** done + media-validated; **I2** decided

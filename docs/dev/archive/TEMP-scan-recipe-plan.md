@@ -22,7 +22,7 @@ future in-tree consumer of the `PartialEq`),
 [TEMP-silence-floor-findings.md](TEMP-silence-floor-findings.md) (**archived
 2026-07-30**; F11 — JSON provenance — is the one item it delegated here, closed by this plan's
 `GapScanJson` checklist item),
-[TEMP-fingerprint-provenance-plan.md](../TEMP-fingerprint-provenance-plan.md) (**split out of this doc
+[TEMP-fingerprint-provenance-plan.md](TEMP-fingerprint-provenance-plan.md) (**split out of this doc
 2026-07-31** — the fingerprint-dump provenance axis: what media was measured, and how. Formerly §7e
 plus three rows of §7c; its §2 blocks the next large corpus run),
 [TEMP-equivalence-instrument-convergence.md](TEMP-equivalence-instrument-convergence.md)
@@ -258,7 +258,7 @@ literal / named-read counts).
   Flat-echo interim (sequencing §3) is also obsolete now that this plan is unparked. **Also not in
   scope: fingerprint-dump provenance** (`FileSource.codec` / `bit_depth` / B's native rate; the
   permanent equivalence measurement recipe; `a_gap_total_blocks`) — a separate deliverable with its
-  own plan, [TEMP-fingerprint-provenance-plan.md](../TEMP-fingerprint-provenance-plan.md). Its §2 is
+  own plan, [TEMP-fingerprint-provenance-plan.md](TEMP-fingerprint-provenance-plan.md). Its §2 is
   **blocking the next large fingerprint run**, which this plan is not; do not fold any of it into
   `ScanRecipe`, whose equality must stay exactly "same gap list"
 
@@ -297,7 +297,7 @@ Harvested from [TEMP-silence-floor-findings.md](TEMP-silence-floor-findings.md)
 [TEMP-equivalence-divergence-findings.md](TEMP-equivalence-divergence-findings.md) (F14/F15).
 Scoped to **scan-output** provenance since 2026-07-31: the fingerprint-dump axis harvested from the
 I1–I3 ledger now lives in
-[TEMP-fingerprint-provenance-plan.md](../TEMP-fingerprint-provenance-plan.md).
+[TEMP-fingerprint-provenance-plan.md](TEMP-fingerprint-provenance-plan.md).
 **Not a second checklist** — §5 remains the work this plan implements. This section records *why*
 specific JSON fields belong in (or next to) the recipe contract, and which diagnostic fields the
 ledgers proved useful so they are not rediscovered as "missing recipe knobs."
@@ -326,7 +326,7 @@ problems of the same kind §1 names for the recipe:
    the condition; all corpus pairs being lossy makes it an artifact. This is the same "echo what
    produced you" principle on a **third** axis — not the knobs, not the sensors, but the media and the
    instrument. It is out of this plan's deliverable and owned by
-   [TEMP-fingerprint-provenance-plan.md](../TEMP-fingerprint-provenance-plan.md); recorded here because
+   [TEMP-fingerprint-provenance-plan.md](TEMP-fingerprint-provenance-plan.md); recorded here because
    it is why that plan exists and why it is not a sixth recipe knob.
 
 ### 7a. `ScanRecipe` / `GapScanJson` knobs — include in this plan
@@ -403,7 +403,7 @@ for scripts, none of them load-bearing for recipe equality.
 | i16-scale / dBFS echo of `absolute_silence_rms` beside normalized | `GapScanJson` | human header only | F3/F4 unit confusion for script consumers | **Speculative** (normalized + docs should suffice once F11 lands) |
 | Machine-readable unfillable cause (`both_sides_silent` \| `unmapped`) | `Gap` or plan tags | human label only; JSON still has `b_has_energy` + null B mapping | F6 — scripts repeating the operator confusion | **Speculative** (reconstructible from existing fields) |
 
-**Moved out 2026-07-31** to [TEMP-fingerprint-provenance-plan.md](../TEMP-fingerprint-provenance-plan.md),
+**Moved out 2026-07-31** to [TEMP-fingerprint-provenance-plan.md](TEMP-fingerprint-provenance-plan.md),
 which owns the fingerprint-dump axis: the permanent nested `measurement` recipe on each verdict
 (`a_span` / `donor_span`, §3a); `a_gap_total_blocks`, re-classed **Derived** (§3b); the
 span-provenance arg-max and the declined `levels.profile_db` envelope (§3c). They were never recipe
@@ -421,5 +421,5 @@ coarser reuses lists after edits that move boundaries.
 | `limit_fill_to_mapped_region` | fill policy parked on the scan report (wrong home; §5 out of scope) |
 | Equivalence floors, probes, `dual_fit_rescue`, truncation flags | classify / diagnose / patch — they do not redefine the detected gap set |
 | Fingerprint envelope / Tier-3 seams | calibration path only |
-| `FileSource.codec` / `bit_depth` / native rate | *source* provenance — describes the media, not the knobs. Own plan: [TEMP-fingerprint-provenance-plan.md](../TEMP-fingerprint-provenance-plan.md) §2 |
+| `FileSource.codec` / `bit_depth` / native rate | *source* provenance — describes the media, not the knobs. Own plan: [TEMP-fingerprint-provenance-plan.md](TEMP-fingerprint-provenance-plan.md) §2 |
 | Equivalence measurement recipe; `a_gap_total_blocks` | *measurement* provenance — describes the instrument. Same plan, §3 |

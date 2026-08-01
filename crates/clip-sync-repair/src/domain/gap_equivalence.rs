@@ -157,7 +157,7 @@ pub enum SpanKind {
 /// `silent_core_probes` grid. Nested so it stays visually distinct from the retained
 /// [`NoiseFloorProbe`] **candidate** grid (I2).
 ///
-/// See `docs/dev/TEMP-fingerprint-provenance-plan.md` §3a. Provenance only.
+/// See `docs/dev/archive/TEMP-fingerprint-provenance-plan.md` §3a. Provenance only.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EquivalenceMeasurement {
     /// Context half-width in seconds each side of the gap used for `noise_floor_db`.
@@ -250,7 +250,7 @@ impl GapEquivalenceVerdict {
 
     /// Attach population provenance (A silent/total + donor silent/total). Never changes `class` or
     /// `drop`. Both sides are `Option<(silent, total)>` — `None` means unanswerable (no level stream),
-    /// not "zero blocks measured". See `docs/dev/TEMP-fingerprint-provenance-plan.md` §3b.
+    /// not "zero blocks measured". See `docs/dev/archive/TEMP-fingerprint-provenance-plan.md` §3b.
     #[must_use]
     pub fn with_scan_provenance(
         mut self,

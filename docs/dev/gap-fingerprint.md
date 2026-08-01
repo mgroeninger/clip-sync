@@ -255,7 +255,13 @@ the corpus.
 dangerous direction**. Still exactly correct *as a historical measurement*, but do not quote it as a
 current rate: it was taken before I1/I3, so a fresh run should read lower. Read the `0 dangerous` with one
 caveat: every pair in that corpus is lossy and bottoms out near −101 dB, so it structurally could not
-reach the −120 digital-silence condition that I3 fixed. The original mechanism was a donor whose level
+reach the −120 digital-silence condition that I3 fixed. **That caveat is permanent** — no lossless
+media is available, so no corpus will ever produce the condition, and the corpus statistic is
+retired as evidence for I3 rather than pending a future pair. The evidence lives in tests instead:
+`digitally_silent_donor_reads_silent_against_a_digitally_silent_floor`
+(`application/gap_equivalence.rs`) reproduces the −120 condition and pins the mechanism inline
+*including* the negative control (it asserts a floor-only predicate would read digital silence as
+occupied), and `lossless_silence_pair` carries the same condition through a real container end to end. The original mechanism was a donor whose level
 sat *between* the two floors — silent to the diagnostic read, occupied to scan. That band is closed
 (F15 + I1); the committed
 `tests/gap_corpus/fingerprints/equivalence_divergence/band_donor.json` is now a regression fixture
@@ -267,7 +273,7 @@ pinning agreement on that gap. Full analysis in
 Permanent replacement for the deleted `silent_core_probes` grid. Nested on both `scan_equivalence`
 and `equivalence` so a calibration diff can attribute a residual to an instrument difference without
 reading source. Provenance only — nothing classifies on it. Spec:
-[TEMP-fingerprint-provenance-plan.md](TEMP-fingerprint-provenance-plan.md) §3a.
+[TEMP-fingerprint-provenance-plan.md](archive/TEMP-fingerprint-provenance-plan.md) §3a.
 
 | field | meaning |
 |---|---|
@@ -454,7 +460,7 @@ different result). So identity is **per file**, not per logical source:
   **decoded** PCM (`source_id`). A remux / lossless re-container → *same* id; a different
   codec/bitrate/partial clip → *different* id. The entry's identity is the **pair** `(a_id, b_id)`.
 - **Source provenance** (Track A of
-  [TEMP-fingerprint-provenance-plan.md](TEMP-fingerprint-provenance-plan.md) §2): each `FileSource` also
+  [TEMP-fingerprint-provenance-plan.md](archive/TEMP-fingerprint-provenance-plan.md) §2): each `FileSource` also
   records what the probe read off that side's container, so a corpus can state what media it measured:
   - `codec` — the codec **family** the probe read (`aac`, `ac3`, `eac3`, `mp3`, `flac`, `vorbis`,
     `alac`, `pcm`, `alaw`, `mulaw`, else the raw Symphonia name, which renders as a bare hex id like
@@ -492,6 +498,14 @@ different result). So identity is **per file**, not per logical source:
   about the population it was measured over, and a corpus that cannot name its codecs cannot state that
   population — the null may hold for `flac→flac` and say nothing about `flac→aac`. Read the health
   Warn, or the roll-up's codec census, before generalizing from a zero.
+
+  **The census reads reachability off the codec, so a lossy→PCM intermediate breaks it.** Grouping on
+  `codec` answers "could this pair have reached the −120 clamp?" only because codec implies floor.
+  Decoding or remuxing lossy sources to WAV keeps the ~−101 dB floor while making the census read
+  `pcm`, and a reader would infer reachability that isn't there. Since no genuinely lossless material
+  is available, a future `pcm` in a census is *more likely* to be such an intermediate than a real
+  lossless source — fingerprint the original containers, and treat a surprise `pcm` as a question
+  about provenance rather than as evidence.
 - `source.scan_recipe` echoes the scan params (`min_gap_ms`, `silence_*`, `scan_block_ms`) so two
   entries are known-comparable.
 - **No paths or titles** appear anywhere in the committed output.
