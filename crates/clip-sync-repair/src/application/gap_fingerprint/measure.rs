@@ -2251,6 +2251,20 @@ fn channel_layout_mismatch(sources: &crate::application::patch_audio::AbSources)
     sources.a.native_channels != sources.b.native_channels
 }
 
+/// Full-timeline A/B PCM for corpus characterization, plus optional source provenance.
+///
+/// Groups the media trio that already travels together from `decode_ab` (`a_pcm`, resampled B,
+/// `sources`) so [`characterize_gaps`] / [`characterize_gaps_from_decode`] take one argument instead of
+/// three. `sources` is `None` for media-free callers (synthetic fixtures), which leaves provenance fields
+/// absent rather than guessed.
+#[derive(Clone, Copy)]
+pub struct CharacterizeAbPcm<'a> {
+    pub a_pcm: &'a clip_sync::MultiChannelPcm,
+    /// B interleaved samples at A's sample rate (same layout contract as decode's `b_samples_full`).
+    pub b_samples: &'a [f32],
+    pub sources: Option<&'a crate::application::patch_audio::AbSources>,
+}
+
 /// Fingerprint dump computed **from decode via the shared projection** (Fingerprint-unification 8g.4a/8g.4b) —
 /// the `--gap-fingerprints` dump path (the old per-bracket-oracle inline build was removed at 8g.6). Per
 /// gap: the summary (geometry/levels, already in `corpus`) + [`compute_region_measurements`] (8g.3a) → `m`,
@@ -2259,7 +2273,7 @@ fn channel_layout_mismatch(sources: &crate::application::patch_audio::AbSources)
 /// run the production patch gate (pre-flip review Finding 1). Gaps whose overlay setup is skipped (no B start /
 /// zero-length / empty window) keep their summary fingerprint, exactly as the oracle leaves them.
 ///
-/// When `sources` reports disagreeing `native_channels`, returns an empty-gap corpus with
+/// When `pcm.sources` reports disagreeing `native_channels`, returns an empty-gap corpus with
 /// [`IncomparableReason::ChannelLayoutMismatch`] and does not index B at A's channel count.
 ///
 /// **SHADOW at 8g.4a** — validated by the old-vs-new decode differential (`decode_path_projection`), lean +
@@ -2267,21 +2281,22 @@ fn channel_layout_mismatch(sources: &crate::application::patch_audio::AbSources)
 /// read by `golden_baseline`) — a fidelity item for the diagnostics path (8g.5), not a decision change.
 pub fn characterize_gaps_from_decode(
     report: &crate::domain::GapReport,
-    a_pcm: &clip_sync::MultiChannelPcm,
-    b_samples_full: &[f32],
+    pcm: &CharacterizeAbPcm<'_>,
     request: &crate::application::PatchAudioRequest,
     select: &[usize],
     include_diagnostics: bool,
     progress: &dyn clip_sync::ProgressReporter,
-    // Per-side source provenance for `source.{a,b}_source`. `None` for media-free callers
-    // (synthetic fixtures), which leaves the provenance fields absent rather than guessed.
-    sources: Option<&crate::application::patch_audio::AbSources>,
 ) -> GapCorpus {
     use crate::domain::gap_repair_spec::{
         BExtractWindow, GapRepairCell, GapRepairSpec, GapRepairStrategy, GapRepairVerdict,
         LevelTags,
     };
 
+    let CharacterizeAbPcm {
+        a_pcm,
+        b_samples: b_samples_full,
+        sources,
+    } = *pcm;
     let sample_rate = a_pcm.sample_rate;
     let channels = a_pcm.channels as usize;
     if let Some(src) = sources {
@@ -2297,16 +2312,7 @@ pub fn characterize_gaps_from_decode(
         }
     }
     let cfg = FingerprintConfig::from_request(request, report.recipe.silence_peak_fraction());
-    let mut corpus = characterize_gaps(
-        report,
-        &a_pcm.samples,
-        b_samples_full,
-        sample_rate,
-        channels,
-        &cfg,
-        select,
-        sources,
-    );
+    let mut corpus = characterize_gaps(report, pcm, &cfg, select);
 
     let mut gate_derived = crate::application::patch_region::SeamGateDerived::from_repair(
         request,
@@ -2592,20 +2598,23 @@ pub fn characterize_gaps_from_decode(
 /// authoritative gate detail (brackets / `failure_stage` / lag / outcome) is layered on by
 /// [`characterize_gaps_from_decode`]. A gap with no B mapping is characterized A-only.
 ///
-/// When `sources` reports disagreeing `native_channels`, returns
+/// When `pcm.sources` reports disagreeing `native_channels`, returns
 /// [`IncomparableReason::ChannelLayoutMismatch`] with no gaps — B must not be sliced at A's channel
 /// count.
 pub fn characterize_gaps(
     report: &crate::domain::GapReport,
-    a_samples: &[f32],
-    b_samples: &[f32],
-    sample_rate: u32,
-    channels: usize,
+    pcm: &CharacterizeAbPcm<'_>,
     cfg: &FingerprintConfig,
     select: &[usize],
-    // See [`characterize_gaps_from_decode`]; `None` when no media was probed.
-    sources: Option<&crate::application::patch_audio::AbSources>,
 ) -> GapCorpus {
+    let CharacterizeAbPcm {
+        a_pcm,
+        b_samples,
+        sources,
+    } = *pcm;
+    let a_samples = a_pcm.samples.as_slice();
+    let sample_rate = a_pcm.sample_rate;
+    let channels = a_pcm.channels as usize;
     if let Some(src) = sources {
         if channel_layout_mismatch(src) {
             return refused_channel_mismatch_corpus(
@@ -2613,7 +2622,7 @@ pub fn characterize_gaps(
                 a_samples,
                 b_samples,
                 sample_rate,
-                channels as u16,
+                a_pcm.channels,
                 src,
             );
         }
@@ -3823,13 +3832,15 @@ mod tests {
         };
         let with_sources = characterize_gaps_from_decode(
             &report,
-            &a_pcm,
-            &b,
+            &CharacterizeAbPcm {
+                a_pcm: &a_pcm,
+                b_samples: &b,
+                sources: Some(&sources),
+            },
             &request,
             &[],
             false,
             &progress,
-            Some(&sources),
         );
         assert_eq!(with_sources.source.a_source.codec.as_deref(), Some("flac"));
         assert_eq!(with_sources.source.b_source.codec.as_deref(), Some("aac"));
@@ -3874,26 +3885,30 @@ mod tests {
 
         let off = characterize_gaps_from_decode(
             &report,
-            &a_pcm,
-            &b,
+            &CharacterizeAbPcm {
+                a_pcm: &a_pcm,
+                b_samples: &b,
+                sources: None,
+            },
             &request,
             &[],
             false,
             &progress,
-            None,
         );
         // The descriptor-less call must leave provenance absent, not defaulted.
         assert_eq!(off.source.a_source.codec, None);
         assert_eq!(off.source.b_source.was_resampled(), None);
         let on = characterize_gaps_from_decode(
             &report,
-            &a_pcm,
-            &b,
+            &CharacterizeAbPcm {
+                a_pcm: &a_pcm,
+                b_samples: &b,
+                sources: None,
+            },
             &request,
             &[],
             true,
             &progress,
-            None,
         );
 
         let fp_off = off.gaps.first().expect("one gap (off)");
@@ -4006,15 +4021,18 @@ mod tests {
             },
         };
 
+        let pcm = CharacterizeAbPcm {
+            a_pcm: &a_pcm,
+            b_samples: &b,
+            sources: Some(&sources),
+        };
         let corpus = characterize_gaps_from_decode(
             &report,
-            &a_pcm,
-            &b,
+            &pcm,
             &request,
             &[],
             false,
             &NoOpProgressReporter,
-            Some(&sources),
         );
         assert_eq!(
             corpus.source.incomparable,
@@ -4042,16 +4060,7 @@ mod tests {
         );
 
         // Direct characterize path must refuse the same way (defense in depth).
-        let summary = characterize_gaps(
-            &report,
-            &a_pcm.samples,
-            &b,
-            rate,
-            a_ch as usize,
-            &FingerprintConfig::default(),
-            &[],
-            Some(&sources),
-        );
+        let summary = characterize_gaps(&report, &pcm, &FingerprintConfig::default(), &[]);
         assert_eq!(
             summary.source.incomparable,
             Some(IncomparableReason::ChannelLayoutMismatch)

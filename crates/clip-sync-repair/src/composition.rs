@@ -154,13 +154,15 @@ fn dump_gap_fingerprints(
     // oracle path was removed at 8g.6.
     let corpus = crate::application::gap_fingerprint::characterize_gaps_from_decode(
         report,
-        &decoded.a_pcm,
-        &decoded.b_samples_full,
+        &crate::application::gap_fingerprint::CharacterizeAbPcm {
+            a_pcm: &decoded.a_pcm,
+            b_samples: &decoded.b_samples_full,
+            sources: Some(&decoded.sources),
+        },
         &request,
         &select,
         config.repair.fingerprint_diagnostics,
         progress,
-        Some(&decoded.sources),
     );
     if let Some(reason) = corpus.source.incomparable {
         use crate::application::gap_fingerprint::IncomparableReason;

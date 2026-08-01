@@ -5,7 +5,9 @@
 //! decorrelated collars, B carrying fill across the gap.
 
 use clip_sync::MultiChannelPcm;
-use clip_sync_repair::application::gap_fingerprint::{characterize_gaps_from_decode, GapCorpus};
+use clip_sync_repair::application::gap_fingerprint::{
+    characterize_gaps_from_decode, CharacterizeAbPcm, GapCorpus,
+};
 use clip_sync_repair::application::PatchAudioRequest;
 use clip_sync_repair::domain::gap::Gap;
 use clip_sync_repair::domain::{GapReport, GapSignatureMode, ScanAlignment};
@@ -45,14 +47,16 @@ pub fn synth_ab_from_decode_corpus(diagnostics: bool) -> GapCorpus {
     let (a_pcm, b, report, request) = synth_ab_inputs();
     characterize_gaps_from_decode(
         &report,
-        &a_pcm,
-        &b,
+        &CharacterizeAbPcm {
+            a_pcm: &a_pcm,
+            b_samples: &b,
+            // Synthetic PCM — no container was probed, so there is no source provenance to record.
+            sources: None,
+        },
         &request,
         &[],
         diagnostics,
         &NoOpProgressReporter,
-        // Synthetic PCM — no container was probed, so there is no source provenance to record.
-        None,
     )
 }
 
