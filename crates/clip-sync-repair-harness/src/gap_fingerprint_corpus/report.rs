@@ -419,7 +419,7 @@ impl CorpusReport {
         if absent > 0 {
             let _ = writeln!(
                 s,
-                "  ⚠ {absent}/{n} row(s) carry no source provenance — a null result over this corpus                  cannot be qualified by codec. Re-dump those pairs."
+                "  ⚠ {absent}/{n} row(s) carry no source provenance — a null result over this corpus cannot be qualified by codec. Re-dump those pairs."
             );
         }
         // Resampling is a separate axis: it changes the measured waveform independently of the codec.
