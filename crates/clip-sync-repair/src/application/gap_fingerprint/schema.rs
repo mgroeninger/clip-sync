@@ -898,7 +898,8 @@ mod tests {
             incomparable: Some(IncomparableReason::ChannelLayoutMismatch),
             ..meta
         };
-        let round: SourceMeta = serde_json::from_str(&serde_json::to_string(&refused).unwrap()).unwrap();
+        let round: SourceMeta =
+            serde_json::from_str(&serde_json::to_string(&refused).unwrap()).unwrap();
         assert_eq!(
             round.incomparable,
             Some(IncomparableReason::ChannelLayoutMismatch)

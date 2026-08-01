@@ -1,8 +1,10 @@
 # Fingerprint-dump provenance — let a corpus state what it measured, and on what (DRAFT)
 
-Status: **open, 2026-07-31 — §2 blocks the next large fingerprint run. Both tracks reviewed and
-specified to implement** (readiness review 2026-07-31; the open design decisions it surfaced are
-settled inline). Consumer: any corpus-level
+Status: **Track A implemented 2026-07-31 (emit + consume, code-complete); Track B open.** §2 no longer
+blocks the next large fingerprint run on *code* — the one remaining Track A item is a real single-pair
+smoke dump to prove the media half of its definition of done (§5). Both tracks were reviewed and
+specified before implementation (readiness review 2026-07-31; the open design decisions it surfaced are
+settled inline), and Track A was re-reviewed after landing (§5, *Post-implementation review*). Consumer: any corpus-level
 analysis pass (`equivalence-calibration` and successors) that must qualify a result rather than just
 report it.
 
@@ -169,12 +171,17 @@ keep describing the decoded PCM exactly as they do today.
 **Shape — two named structs, one new parameter.**
 
 ```rust
-pub(crate) struct SourceDescriptor {              // per side
+pub struct SourceDescriptor {                     // per side
     codec: String, bit_depth: Option<BitDepth>,
     native_sample_rate: u32, native_channels: u16, bitrate_bps: Option<u32>,
 }
-pub(crate) struct AbSources { a: SourceDescriptor, b: SourceDescriptor }   // one field on DecodedAb
+pub struct AbSources { a: SourceDescriptor, b: SourceDescriptor }          // one field on DecodedAb
 ```
+
+**`pub`, not `pub(crate)`** (corrected at implementation — the draft said `pub(crate)`). Both types
+appear in the signature of `pub fn characterize_gaps_from_decode`, and `clip-sync-repair-fixtures`
+passes the `None` from another crate, so the type has to be nameable outside. `pub(crate)` does not
+compile; re-exported from `application::patch_audio` and `application`.
 
 `file_source` takes one descriptor; `characterize_gaps_from_decode` / `characterize_gaps` take
 `sources: Option<&AbSources>`. **One parameter, not four** — `characterize_gaps_from_decode` is
@@ -193,9 +200,10 @@ worth a comment, because it keeps Track A's blast radius inside the fingerprint 
 **No path, title, or filename enters `FileSource`** — `id` stays the content hash, and the
 licensing-safe property of the corpus is unchanged.
 
-**Out of scope, noted here so it is not lost.** When A and B channel counts differ, everything
-downstream also reads `b_samples_full` at *A's* count, not just the dump. That is a question about the
-measurement, not about provenance; this plan records the true counts and changes no measurement.
+**Measurement refuse (shipped 2026-07-31, not part of Track A).** When A and B `native_channels`
+disagree, `characterize_gaps*` sets `SourceMeta.incomparable = channel_layout_mismatch` and emits no
+gaps — it does not index `b_samples_full` at A's count. Track A only **records** the counts; the
+refuse gate is the separate correctness fix.
 
 ## 3. Measurement provenance (`GapEquivalenceVerdict`) — how it was measured
 
@@ -377,7 +385,7 @@ pre-Track-A rows counted explicitly as *absent* rather than silently zero.
 **Track A — source provenance (§2)** — *implemented 2026-07-31.* Every box below is code-complete and
 covered by unit tests; the one item the tree cannot prove is the **media** half of the DoD ("a fresh
 single-pair dump shows `codec` / `bit_depth` / `native_sample_rate` / `native_channels` on both sides"),
-which needs a real `--gap-fingerprints` run — see [corpus-fingerprint-run-protocol]. The wiring itself is
+which needs a real `--gap-fingerprints` run (`--features calibration,he-aac`, one pair at a time). The wiring itself is
 proven media-free by `schema.rs`'s `descriptor_populates_provenance` / `was_resampled_*` /
 `bit_depth_tokens_are_pinned` tests, and the *threading* by `measure.rs`'s from-decode test (asserts the
 two sides stay distinguishable and that a descriptor-less call leaves provenance absent, not defaulted).
@@ -393,7 +401,17 @@ the harness report, which is the one that runs over the curated fixtures the DoD
 
 *Rejected from that review:* tightening `SourceDescriptor` / `AbSources` to `pub(crate)`. Not reachable —
 `characterize_gaps_from_decode` is `pub` and `clip-sync-repair-fixtures` passes the `None` cross-crate,
-so the type must be nameable outside the crate.
+so the type must be nameable outside the crate. See §2 *Shape*, which the draft got wrong.
+
+*Settled by that review, recorded so they are not re-proposed:*
+
+| Item | Disposition |
+|------|-------------|
+| Census shape | **`a→b` pairs are primary**, per-side counts on a second line. A fingerprint is a *pair* measurement, so `flac→aac` and `aac→aac` are different questions and a single-codec count cannot express the distinction. `(absent)` is its own bucket in both, never folded into a zero |
+| Resampling in the census | **Its own line**, not folded into the codec line. A rate conversion changes the measured waveform independently of the codec; combining them would hide one axis behind the other |
+| Row-level "no provenance" flag on `GapRow`, mirroring `registration_from_legacy_lag` | **Deferred.** The `check.rs` health Warn plus the census's `(absent)` bucket already make an unanswerable corpus say so. A row-level bool earns its place only once a report *filters* on it, which nothing does |
+| `bit_depth` round-trip **parser** (string → `BitDepth`) | **Deferred.** The forward pin (`bit_depth_tokens_are_pinned`) is what protects corpora already on disk; a parser is dead code until a consumer reads the token, and none does (§2, *stored-for-later*) |
+| Channel-mismatch **measurement** correctness | **Out of scope for provenance, and separately shipped** — Track A records `native_channels`; the refuse gate is §2's *Measurement refuse* |
 
 *Emit* — makes the data exist:
 
@@ -507,17 +525,21 @@ column** — deserializing it is not the deliverable.
 
 ## 6. Downstream
 
-- **The next large fingerprint run** should not start until Track A lands — a run dumped without it
-  produces another corpus that cannot answer the question motivating the run (§1.1).
-- **`equivalence-calibration`** can then qualify its `0 dangerous / N gaps` verdict by naming the
-  population it was measured over (`codecs: aac×N`), instead of reporting a bare count over a corpus
-  whose composition the reader has to already know.
-- **Any corpus-level analysis pass** gains two cheap checks it does not have today: the per-codec
-  census (§2, a GROUP BY on a row column) and bin-width agreement (§3b, one multiplication).
+- **The next large fingerprint run** is unblocked on code (Track A emit landed 2026-07-31), but should
+  be preceded by a **single-pair smoke dump** — the media half of §5's definition of done is the one
+  Track A item the tree cannot prove by itself. A run dumped from a build without Track A produces
+  another corpus that cannot answer the question motivating the run (§1.1).
+- **`equivalence-calibration`** now qualifies its `0 dangerous / N gaps` verdict by naming the
+  population it was measured over (`codecs (a→b): flac→aac 12`), instead of reporting a bare count over
+  a corpus whose composition the reader has to already know.
+- **Any corpus-level analysis pass** gains one cheap check it did not have, with a second still to come:
+  the per-codec census (§2, a GROUP BY on a row column — **shipped**) and bin-width agreement (§3b, one
+  multiplication — Track B).
 
-**Emit ≠ delivered.** Both bullets above need the *consume* half of §5's Track A. Neither consumer
-reads `FileSource` today — `equivalence_calibration.rs` has it deserialized and unused,
-and the harness roll-up parses only `.id` through its own structural copy. Landing the emit half makes
-the next run's corpus answerable; it does not by itself answer anything. If the run deadline forces a
-split, ship the emit half first — the corpus is the perishable artifact, the queries are not — but
-record the consume half as outstanding rather than closing Track A.
+**Emit ≠ delivered — resolved for Track A.** This paragraph previously recorded that neither consumer
+read `FileSource`: `equivalence_calibration.rs` deserialized it and ignored it, and the harness roll-up
+parsed only `.id` through its own structural copy. Both are now closed — the harness deserializes the
+emit-side `FileSource` itself and projects `codec` / `native_*` / `was_resampled()` onto `GapRow`, and
+both front-ends print a census. **The principle stands for Track B**: emitting a field is not
+delivering it, the corpus is the perishable artifact and the queries are not, so if a deadline forces a
+split, ship emit first and record consume as outstanding rather than closing the track.

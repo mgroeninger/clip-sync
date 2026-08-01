@@ -469,7 +469,10 @@ different result). So identity is **per file**, not per logical source:
     predates these fields — **not** `false`; "unanswerable" and "no" are different readings.
   - When `native_channels` disagree, characterize **refuses** pairwise measurement:
     `source.incomparable = "channel_layout_mismatch"`, `gaps` is empty, and `b_source.channels` /
-    `duration_secs` use **B's** layout (not A's). Same condition production fill already skips as
+    `duration_secs` / `id` use **B's** layout (not A's) — the opposite of the normal path, where both
+    sides are described at the layout everything was measured at. Consequence: a refused corpus and a
+    normal one over the same media carry different `b_source.id`s, so do not join the two on `id`.
+    Same condition production fill already skips as
     `TrackLayoutMismatch`. The dump prints a progress line naming the refuse; `gap-fingerprint-stats
     --check` **Warn**s on `incomparable`, and also Warns on legacy dumps where `native_channels`
     disagree but `gaps` is still non-empty (pre-refuse silent wrong indexing — re-dump).

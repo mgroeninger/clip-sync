@@ -3837,7 +3837,10 @@ mod tests {
             with_sources.source.a_source.bit_depth.as_deref(),
             Some("s24")
         );
-        assert_eq!(with_sources.source.b_source.native_channels, Some(ch as u16));
+        assert_eq!(
+            with_sources.source.b_source.native_channels,
+            Some(ch as u16)
+        );
         // The gate's precondition, asserted so the reason the counts match is explicit rather than
         // incidental — see the comment above before changing either side.
         assert_eq!(
@@ -3860,8 +3863,7 @@ mod tests {
         assert_eq!(with_sources.source.a_source.channels, ch as u16);
         assert_eq!(with_sources.source.b_source.channels, ch as u16);
         assert_eq!(
-            with_sources.source.a_source.sample_rate,
-            with_sources.source.b_source.sample_rate,
+            with_sources.source.a_source.sample_rate, with_sources.source.b_source.sample_rate,
             "both sides are described at the measurement rate (A's), not their native rates"
         );
         assert_eq!(with_sources.source.incomparable, None);
