@@ -61,6 +61,16 @@ Phase B residue (the `gate_pass` / end-search correlation). Axis semantics:
 |------|-----------|
 | **Dual-fit `gate_pass` is a production mirror, not a discriminator — add a fingerprint confidence axis** | `gate_pass = min(pre_seam_r, post_seam_r) ≥ max(0.35, 0.12)` passes **263/263** on the 17-pair corpus. That is faithful, not broken: it reproduces the production gate exactly, and production's threshold sits far below the observed distribution (p05 of `smin` = 0.892) because `smin` is a ±600 ms argmax with no uniqueness term. Its value is provenance — "what did production decide" — so it should **not** be tightened. What's missing is a *separate fingerprint read* on whether the seam lag was unambiguous (analyzer / corpus roll-up strata — not a repair gate). The validators that discriminate are already emitted but ungated: `pre/post_seam_z` (p05 3.14, p25 4.91, median 7.86) and `pre/post_seam_prom` (p25 0.123). **Direction:** leave `gate_pass` alone (the goldens and corpus history read it); add derived fingerprint field `dualfit_confident` from min-z + min-prominence. **Do not** consolidate end-search length into dual-fit: on the throat cohort (n=65, where `span == gap`) the two disagree genuinely, not by dilution — `corr(fill−span, bridge−gap)` = +0.06, and tightening the amplitude floor drives it to −0.10; stratifying by min z reaches r = +0.68 only at n=8 / p=0.053, one of ~25 strata swept. In the z ≥ 6 cohort, 8 of 19 gaps show an end excursion of exactly 0 ms while dual-fit trims 4–28 ms. |
 
+### A/B channel-count mismatch on shared decode
+
+Carved out of [TEMP-fingerprint-provenance-plan.md](docs/dev/TEMP-fingerprint-provenance-plan.md) §2
+(*Out of scope, noted here so it is not lost*). Track A only **records** the true counts via
+`native_channels`; it does not fix the measurement.
+
+| Item | Direction |
+|------|-----------|
+| **Fingerprint / characterize reads B PCM at A's channel count** | `decode_ab` resamples B to A's **rate** only (`resample_interleaved`); when channel counts differ, `b_samples_full` still carries B's layout. `select_track_for_reference` prefers a channel-matched B track but falls back to any decodable one (`track_selection.rs`), so the mismatch is reachable. Downstream (`characterize_gaps` and anything else that slices that buffer with `a_pcm.channels`) then computes `b_total = len / a.channels` and indexes haystacks as if B were A-layout — wrong frame count, wrong windows, wrong B `duration_secs` in the dump. Production **fill** already skips on track-layout mismatch (`TrackLayoutMismatch`); the fingerprint path still shares `decode_ab` and measures anyway. **Direction when picked up:** either refuse/characterize-as-uncomparable when `native_channels` disagree, or convert/downmix B to A's layout before any A-channel indexing — and add a synthetic mismatched-channel fixture so the path cannot regress silently. Not blocking the next provenance-qualified corpus run (Track A makes the condition detectable). |
+
 ### Repair R6 follow-ups
 
 From [archive/repair-write-path-plan.md](docs/dev/archive/repair-write-path-plan.md) post-ship gaps.

@@ -18,7 +18,8 @@ pub mod test_support;
 
 pub use error::RepairError;
 pub use patch_audio::{
-    FillWindowFrames, PatchAudio, PatchAudioRequest, PatchAudioResult, PatchRequestSettings,
+    AbSources, FillWindowFrames, PatchAudio, PatchAudioRequest, PatchAudioResult,
+    PatchRequestSettings, SourceDescriptor,
 };
 pub use repair_videos::{RepairVideos, RepairWriteRequest};
 pub use scan_gaps::{ScanGaps, ScanGapsRequest};

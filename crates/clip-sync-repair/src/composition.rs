@@ -160,6 +160,7 @@ fn dump_gap_fingerprints(
         &select,
         config.repair.fingerprint_diagnostics,
         progress,
+        Some(&decoded.sources),
     );
     dump("", corpus)?;
     Ok(())

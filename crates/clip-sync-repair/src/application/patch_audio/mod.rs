@@ -28,6 +28,7 @@ use anchor_retry::{
     build_patch_anchor_candidates, patch_anchor_policy, run_anchored_retry_pass, AnchoredRetryState,
 };
 pub(crate) use decode::{decode_ab, DecodedAb};
+pub use decode::{AbSources, SourceDescriptor};
 pub(crate) use geometry::border_frames_from_secs;
 use geometry::repair_patch_config_view;
 use log::{format_patch_characterize_verbose_line, log_gap_tags_verbose, new_patch_gap_span};
@@ -151,6 +152,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             source_audio_bitrate_a_bps,
             source_audio_bitrate_b_bps,
             container_duration_a_secs,
+            sources: _, // fingerprint-dump provenance only; the repair path reads the bitrates above
         } = decode_ab(self.media_reader, &request.report, self.progress)?;
 
         // Step 7: Compute global A RMS as normalization fallback.

@@ -139,6 +139,8 @@ impl CorpusReport {
             );
         }
 
+        let _ = write!(s, "{}", self.codec_census_text());
+
         // Plan kind (vocabulary validation — today the fingerprint only emits `fillable`).
         let mut plan: BTreeMap<String, usize> = BTreeMap::new();
         for r in &self.rows {
@@ -381,6 +383,57 @@ impl CorpusReport {
     /// **Mechanism checks** — is the pre↔post step *clip drift* or a *local discontinuity* (dropped
     /// buffer / frame)? Two tests: (1) is the offset clip drift (a consistent slope vs gap time per
     /// file)? (2) does the step cluster near a sample-block / video-frame size (the buffer-drop tell)?
+    /// Per-codec census over the rows: the population a null result would be a claim about (§1.1).
+    /// Grouped by the `a→b` **pair**, because a fingerprint is a pair measurement — `flac→aac` and
+    /// `aac→aac` are different questions. Codecs outside `codec_name`'s known set appear under their own
+    /// probe string; rows from a corpus predating source provenance are counted explicitly as `(absent)`
+    /// rather than folded into a zero. Per-side counts follow, for the single-codec GROUP BY.
+    pub fn codec_census_text(&self) -> String {
+        use std::fmt::Write;
+        let mut s = String::new();
+        let n = self.total_gaps();
+        if n == 0 {
+            return s;
+        }
+        let name = |c: &Option<String>| c.clone().unwrap_or_else(|| "(absent)".into());
+
+        let mut pairs: BTreeMap<String, usize> = BTreeMap::new();
+        let mut sides: BTreeMap<String, usize> = BTreeMap::new();
+        for r in &self.rows {
+            *pairs
+                .entry(format!("{}→{}", name(&r.a_codec), name(&r.b_codec)))
+                .or_default() += 1;
+            *sides.entry(name(&r.a_codec)).or_default() += 1;
+            *sides.entry(name(&r.b_codec)).or_default() += 1;
+        }
+        let fmt = |m: &BTreeMap<String, usize>| {
+            m.iter()
+                .map(|(k, c)| format!("{k} {c}"))
+                .collect::<Vec<_>>()
+                .join(" · ")
+        };
+        let _ = writeln!(s, "codec (a→b): {}", fmt(&pairs));
+        let _ = writeln!(s, "codec (per side, 2 per gap): {}", fmt(&sides));
+
+        let absent = self.count(|r| r.a_codec.is_none() || r.b_codec.is_none());
+        if absent > 0 {
+            let _ = writeln!(
+                s,
+                "  ⚠ {absent}/{n} row(s) carry no source provenance — a null result over this corpus                  cannot be qualified by codec. Re-dump those pairs."
+            );
+        }
+        // Resampling is a separate axis: it changes the measured waveform independently of the codec.
+        let resampled =
+            self.count(|r| r.a_was_resampled == Some(true) || r.b_was_resampled == Some(true));
+        if resampled > 0 {
+            let _ = writeln!(
+                s,
+                "  note: {resampled}/{n} row(s) had a side rate-converted before measurement."
+            );
+        }
+        s
+    }
+
     pub fn mechanism_text(&self) -> String {
         use std::fmt::Write;
         let mut s = String::new();

@@ -263,6 +263,28 @@ fn check_corpus(
         });
     }
 
+    // Source provenance (Track A): a corpus that cannot say what media it measured is still readable,
+    // so this is a Warn, not an Error — the same class as "manifest.json missing" above. Every corpus
+    // dumped before Track A trips it; re-dumping the pair is the fix.
+    let missing_provenance = match corpus.source.as_ref() {
+        None => true,
+        Some(src) => !matches!(
+            (src.a_source.as_ref(), src.b_source.as_ref()),
+            (Some(a), Some(b)) if a.has_provenance() && b.has_provenance()
+        ),
+    };
+    if missing_provenance {
+        report.issues.push(HealthIssue {
+            severity: IssueSeverity::Warn,
+            pair: label.to_string(),
+            message: concat!(
+                "source.{a,b}_source carry no codec / native_sample_rate: ",
+                "corpus predates source provenance, so codec-conditioned reads cannot be stratified"
+            )
+            .into(),
+        });
+    }
+
     for gap in &corpus.gaps {
         check_gap(label, gap, opts, report);
     }
@@ -432,14 +454,19 @@ fn list_library_files(dir: &Path) -> Vec<PathBuf> {
 
 fn read_merged_library(dir: &Path) -> Option<CorpusFile> {
     let mut gaps = Vec::new();
+    let mut source: Option<SourceMeta> = None;
     for path in list_library_files(dir) {
         let file: CorpusFile = read_json(&path)?;
+        // Every per-gap file repeats the same `source`; keep the first and ignore the rest.
+        if source.is_none() {
+            source = file.source;
+        }
         gaps.extend(file.gaps);
     }
     if gaps.is_empty() {
         return None;
     }
-    Some(CorpusFile { gaps })
+    Some(CorpusFile { source, gaps })
 }
 
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Option<T> {
@@ -452,7 +479,32 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Option<T> {
 #[derive(Deserialize)]
 struct CorpusFile {
     #[serde(default)]
+    source: Option<SourceMeta>,
+    #[serde(default)]
     gaps: Vec<GapEntry>,
+}
+
+#[derive(Deserialize)]
+struct SourceMeta {
+    #[serde(default)]
+    a_source: Option<FileSourceProj>,
+    #[serde(default)]
+    b_source: Option<FileSourceProj>,
+}
+
+/// Just enough of `FileSource` to tell "this corpus records what it measured" from "it does not".
+#[derive(Deserialize)]
+struct FileSourceProj {
+    #[serde(default)]
+    codec: Option<String>,
+    #[serde(default)]
+    native_sample_rate: Option<u32>,
+}
+
+impl FileSourceProj {
+    fn has_provenance(&self) -> bool {
+        self.codec.is_some() || self.native_sample_rate.is_some()
+    }
 }
 
 #[derive(Deserialize)]
@@ -515,8 +567,10 @@ mod tests {
 
     fn healthy_corpus() -> String {
         r#"{
-          "source":{"a_source":{"id":"aaaaaaaa","sample_rate":48000,"channels":2,"duration_secs":60},
-                    "b_source":{"id":"bbbbbbbb","sample_rate":48000,"channels":2,"duration_secs":60},
+          "source":{"a_source":{"id":"aaaaaaaa","codec":"flac","bit_depth":"s24","native_sample_rate":48000,
+                                "native_channels":2,"sample_rate":48000,"channels":2,"duration_secs":60},
+                    "b_source":{"id":"bbbbbbbb","codec":"aac","native_sample_rate":44100,"native_channels":2,
+                                "source_audio_bitrate_bps":192000,"sample_rate":48000,"channels":2,"duration_secs":60},
                     "scan_recipe":{"min_gap_ms":500,"silence_peak_fraction":0.01,"absolute_silence_rms":0.0,"scan_block_ms":100},
                     "gap_count":2},
           "gaps":[
@@ -646,6 +700,39 @@ mod tests {
             .issues
             .iter()
             .any(|i| i.message.contains("outcome.tier=skip but")));
+    }
+
+    #[test]
+    fn corpus_without_source_provenance_warns_only() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("1");
+        write_healthy_pair(&dir);
+        // Strip the Track-A provenance fields: the shape every pre-Track-A corpus has.
+        let mut corpus: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(dir.join("corpus.json")).unwrap()).unwrap();
+        for side in ["a_source", "b_source"] {
+            let obj = corpus["source"][side].as_object_mut().unwrap();
+            for field in [
+                "codec",
+                "bit_depth",
+                "native_sample_rate",
+                "native_channels",
+            ] {
+                obj.remove(field);
+            }
+        }
+        fs::write(dir.join("corpus.json"), corpus.to_string()).unwrap();
+
+        let report = check_dirs(&[root.path().to_path_buf()], &HealthCheckOptions::default());
+        assert!(report.ok(), "{}", report.summary_text());
+        assert_eq!(report.warn_count(), 1);
+        // Assert the whole sentence, not a fragment: a `\`-continuation in the source once left a run of
+        // indentation inside this message, and a fragment match sailed straight past it.
+        let expected = concat!(
+            "source.{a,b}_source carry no codec / native_sample_rate: ",
+            "corpus predates source provenance, so codec-conditioned reads cannot be stratified"
+        );
+        assert!(report.issues.iter().any(|i| i.message == expected));
     }
 
     #[test]

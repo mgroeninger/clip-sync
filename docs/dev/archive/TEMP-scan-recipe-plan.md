@@ -398,16 +398,16 @@ for scripts, none of them load-bearing for recipe equality.
 
 | Field / signal | Surface | Status | Would have helped | Class |
 |----------------|---------|--------|-------------------|-------|
-| `core_start_secs` / `core_end_secs` on each `Gap` in scan JSON | `Gap` / `GapScanJson` | silent-run has them; not echoed on the gap DTO | F2/F15 — hold-bridged refined span vs silent core; without this, core-vs-refined had to be inferred from code + fingerprint spans | **Speculative** for scan JSON (available in-process; fingerprint already carries refined bounds). The *verdict*-side half of this question is the `span` axis of the provenance plan's §3a — this row is the scan-JSON half only |
+| `core_start_secs` / `core_end_secs` on each `Gap` in scan JSON | `Gap` / `GapScanJson` | silent-run has them; not echoed on the gap DTO | F2/F15 — hold-bridged refined span vs silent core; without this, core-vs-refined had to be inferred from code + fingerprint spans | **Speculative** for scan JSON (available in-process; fingerprint already carries refined bounds). The *verdict*-side half lives in the provenance plan's §3a as `measurement.a_span` / `donor_span` (`core` \| `nominal`, not a single `refined` token) — this row is the scan-JSON half only |
 | Configured `silence_hold_ms` *and* effective hold | recipe / JSON | this plan stores **effective only** (§3) | Scripts comparing JSON to TOML without reading docs | **Speculative** second field; docs note is **Derived** |
 | i16-scale / dBFS echo of `absolute_silence_rms` beside normalized | `GapScanJson` | human header only | F3/F4 unit confusion for script consumers | **Speculative** (normalized + docs should suffice once F11 lands) |
 | Machine-readable unfillable cause (`both_sides_silent` \| `unmapped`) | `Gap` or plan tags | human label only; JSON still has `b_has_energy` + null B mapping | F6 — scripts repeating the operator confusion | **Speculative** (reconstructible from existing fields) |
 
 **Moved out 2026-07-31** to [TEMP-fingerprint-provenance-plan.md](../TEMP-fingerprint-provenance-plan.md),
-which owns the fingerprint-dump axis: the permanent equivalence measurement recipe and the donor/A
-window identity that merges into its `span` axis (§3a); `a_gap_total_blocks`, re-classed **Derived**
-(§3b); the span-provenance arg-max and the declined `levels.profile_db` envelope (§3c). They were
-never recipe members — they are a second deliverable, and the register above kept reading as one list.
+which owns the fingerprint-dump axis: the permanent nested `measurement` recipe on each verdict
+(`a_span` / `donor_span`, §3a); `a_gap_total_blocks`, re-classed **Derived** (§3b); the
+span-provenance arg-max and the declined `levels.profile_db` envelope (§3c). They were never recipe
+members — they are a second deliverable, and the register above kept reading as one list.
 
 ### 7d. What stays out of recipe equality
 

@@ -1,11 +1,13 @@
 //! Corpus discovery + JSON projection: walk pair dirs, parse the minimal `corpus.json` projection, and
 //! flatten each gap into a [`GapRow`] ([`analyze_dirs`]). Owns the private `Deserialize` types (their only
-//! consumer is `gap_row` here) and the curated-fixture / env-knob entrypoints. Builds the report shell
+//! consumer is `gap_row` here — `FileSource` is the documented exception) and the curated-fixture /
+//! env-knob entrypoints. Builds the report shell
 //! ([`super::CorpusReport`]); the formatters that render it live in [`super::report`].
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use clip_sync_repair::application::gap_fingerprint::FileSource;
 use serde::Deserialize;
 
 use super::schema::{
@@ -22,15 +24,15 @@ struct CorpusFile {
     gaps: Vec<GapEntry>,
 }
 
+/// `FileSource` here is the **emit-side type verbatim**, the one exception to this module's private-types
+/// rule. `was_resampled()`'s `None`-vs-`false` distinction (a corpus predating source provenance is
+/// *unanswerable*, not *unresampled*) is exactly the semantics Track A exists to protect, and a forked
+/// copy could drift from it silently. Unknown JSON keys are ignored, so this stays as tolerant of schema
+/// growth as a hand-rolled struct would be.
 #[derive(Deserialize)]
 struct SourceMeta {
-    a_source: FileId,
-    b_source: FileId,
-}
-
-#[derive(Deserialize)]
-struct FileId {
-    id: String,
+    a_source: FileSource,
+    b_source: FileSource,
 }
 
 #[derive(Deserialize)]
@@ -502,6 +504,14 @@ fn gap_row(pair: &str, source: &SourceMeta, gap: &GapEntry, eps: f64, tail_secs:
         pair: pair.to_string(),
         a_id: source.a_source.id.clone(),
         b_id: source.b_source.id.clone(),
+        a_codec: source.a_source.codec.clone(),
+        b_codec: source.b_source.codec.clone(),
+        a_native_sample_rate: source.a_source.native_sample_rate,
+        b_native_sample_rate: source.b_source.native_sample_rate,
+        a_native_channels: source.a_source.native_channels,
+        b_native_channels: source.b_source.native_channels,
+        a_was_resampled: source.a_source.was_resampled(),
+        b_was_resampled: source.b_source.was_resampled(),
         index: gap.index,
         duration_secs,
         a_start_secs: gap.geometry.as_ref().and_then(|g| g.a_refined_start_secs),

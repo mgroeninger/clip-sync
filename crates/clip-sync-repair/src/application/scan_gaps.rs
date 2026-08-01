@@ -1258,13 +1258,7 @@ mod tests {
             video_b: PathBuf::from("b.wav"),
             align: AlignConfig::default(),
             decode_chunk_secs: 10,
-            recipe: crate::domain::ScanRecipe::with_hold_blocks(
-                1000,
-                2,
-                250,
-                0.01,
-                33.0 / 32767.0,
-            ),
+            recipe: crate::domain::ScanRecipe::with_hold_blocks(1000, 2, 250, 0.01, 33.0 / 32767.0),
             scan_both: true,
             gap_offset_tolerance_secs: 0.5,
             limit_fill_to_mapped_region: false,
@@ -1292,13 +1286,8 @@ mod tests {
         let progress = FakeProgressReporter;
         let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
 
-        let recipe = crate::domain::ScanRecipe::with_hold_blocks(
-            1000,
-            2,
-            250,
-            0.01,
-            production_abs_floor(),
-        );
+        let recipe =
+            crate::domain::ScanRecipe::with_hold_blocks(1000, 2, 250, 0.01, production_abs_floor());
         let request = ScanGapsRequest {
             video_a: PathBuf::from("a.wav"),
             video_b: PathBuf::from("b.wav"),
@@ -1358,7 +1347,9 @@ mod tests {
         let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
 
         let mut request = scan_request("a.wav", "b.wav", 60);
-        request.recipe = request.recipe.with_absolute_silence_rms(production_abs_floor());
+        request.recipe = request
+            .recipe
+            .with_absolute_silence_rms(production_abs_floor());
         request.scan_both = true;
 
         let report = scan
@@ -1384,7 +1375,9 @@ mod tests {
         let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
 
         let mut request = scan_request("a.wav", "b.wav", 60);
-        request.recipe = request.recipe.with_absolute_silence_rms(production_abs_floor());
+        request.recipe = request
+            .recipe
+            .with_absolute_silence_rms(production_abs_floor());
         request.scan_both = true;
 
         let report = scan

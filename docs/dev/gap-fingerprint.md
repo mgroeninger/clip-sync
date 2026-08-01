@@ -267,7 +267,10 @@ pinning agreement on that gap. Full analysis in
 F15's silent-core fix is **landed**: live `gap_floor_db` / `a_gap_rms_db` *are* the silent-core
 measurement (max / energy mean over A's silent bins at `scan_block_ms`, matching scan). These probe
 rows were the pre-adoption measurement that justified that change — they remain in the dump as
-provenance only; **nothing classifies on them**.
+provenance only; **nothing classifies on them**. Their permanent replacement (a nested
+`measurement` recipe on each verdict: context / bin / reduction / `a_span` / `donor_span`) is
+specified in [TEMP-fingerprint-provenance-plan.md](TEMP-fingerprint-provenance-plan.md) §3a; do not
+delete these rows until that lands.
 
 | field | meaning |
 |---|---|
@@ -454,6 +457,29 @@ different result). So identity is **per file**, not per logical source:
 - `source.a_source` / `source.b_source` each carry an opaque **`id`** = a stable strided digest of the
   **decoded** PCM (`source_id`). A remux / lossless re-container → *same* id; a different
   codec/bitrate/partial clip → *different* id. The entry's identity is the **pair** `(a_id, b_id)`.
+- **Source provenance** (Track A of
+  [TEMP-fingerprint-provenance-plan.md](TEMP-fingerprint-provenance-plan.md) §2): each `FileSource` also
+  records what the probe read off that side's container, so a corpus can state what media it measured:
+  - `codec` — the probe's codec name (`aac`, `ac3`, `eac3`, `mp3`, `flac`, `vorbis`, `alac`, else the raw
+    Symphonia name). Note there is **no `pcm` arm**, so absent ≠ lossless.
+  - `bit_depth` — one of the pinned tokens `s16` / `s24` / `s32` / `f32` / `other:<bits>`.
+  - `native_sample_rate` / `native_channels` — that side's **own** rate/layout, which differ from the
+    sibling `sample_rate` / `channels` (the rate everything was *measured* at: A's, with B resampled to
+    it). `FileSource::was_resampled()` is `native_sample_rate != sample_rate`, or `None` when the corpus
+    predates these fields — **not** `false`; "unanswerable" and "no" are different readings.
+  - `source_audio_bitrate_bps` — the measured source bitrate for that side. Do not fold the two sides'
+    bitrates into one figure.
+
+  All are raw observations, never verdicts: predicates (lossy? resampled? mixed-codec pair?) are derived
+  in code, because a frozen bool in JSON can only be corrected by a full re-decode. All are optional and
+  omitted when absent, so pre-Track-A corpora still parse; `check --gap-fingerprints` emits a per-pair
+  **Warn** for a corpus carrying none of them. Media-free callers (synthetic fixtures) pass no descriptor
+  and so record nothing rather than guessing. `container` remains declared but **never populated**.
+
+  **A corpus without these fields cannot qualify a null result.** "Zero divergent gaps" is only a claim
+  about the population it was measured over, and a corpus that cannot name its codecs cannot state that
+  population — the null may hold for `flac→flac` and say nothing about `flac→aac`. Read the health
+  Warn, or the roll-up's codec census, before generalizing from a zero.
 - `source.scan_recipe` echoes the scan params (`min_gap_ms`, `silence_*`, `scan_block_ms`) so two
   entries are known-comparable.
 - **No paths or titles** appear anywhere in the committed output.

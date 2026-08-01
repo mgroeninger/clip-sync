@@ -1,12 +1,46 @@
 use std::time::Duration;
 
 use clip_sync::{
-    resample_interleaved, select_best_track, select_track_for_reference, ClipLabel, ClipWindow,
-    DomainError, MediaReader, MediaSession, MediaSource, MultiChannelPcm, ProgressReporter,
+    resample_interleaved, select_best_track, select_track_for_reference, AudioTrack, BitDepth,
+    ClipLabel, ClipWindow, DomainError, MediaReader, MediaSession, MediaSource, MultiChannelPcm,
+    ProgressReporter,
 };
 
 use crate::application::error::RepairError;
 use crate::domain::GapReport;
+
+/// One side's **source** (pre-decode) container/track reading, for fingerprint-dump provenance.
+///
+/// Every field is a raw probe observation, never a verdict — see
+/// `docs/dev/TEMP-fingerprint-provenance-plan.md` § *Observations, not verdicts*. `native_*` are the
+/// track's own rate/layout, which differ from the analysis values once B is resampled to A.
+#[derive(Debug, Clone)]
+pub struct SourceDescriptor {
+    pub codec: String,
+    pub bit_depth: Option<BitDepth>,
+    pub native_sample_rate: u32,
+    pub native_channels: u16,
+    pub bitrate_bps: Option<u32>,
+}
+
+impl SourceDescriptor {
+    fn of(track: &AudioTrack, bitrate_bps: Option<u32>) -> Self {
+        Self {
+            codec: track.codec.clone(),
+            bit_depth: track.bit_depth,
+            native_sample_rate: track.sample_rate,
+            native_channels: track.channels,
+            bitrate_bps,
+        }
+    }
+}
+
+/// Both sides' source descriptors. Threaded as one unit so callers pass a single argument.
+#[derive(Debug, Clone)]
+pub struct AbSources {
+    pub a: SourceDescriptor,
+    pub b: SourceDescriptor,
+}
 
 /// Full-track decoded A/B for the repair fill path (and the gap-fingerprint diagnostic).
 pub(crate) struct DecodedAb {
@@ -17,6 +51,16 @@ pub(crate) struct DecodedAb {
     pub source_audio_bitrate_b_bps: Option<u32>,
     /// A track's container-reported duration (for PCM-vs-container skew).
     pub container_duration_a_secs: f64,
+    /// Per-side source provenance for the fingerprint dump. Deliberately duplicates the two
+    /// `source_audio_bitrate_*` fields above rather than replacing them: those feed
+    /// [`crate::application::PatchAudioRequest`] and the encode summary, so folding them in here
+    /// would ripple a production output for a diagnostic artifact.
+    ///
+    /// Read only by the `calibration`-gated fingerprint dump (`composition::dump_gap_fingerprints`), so
+    /// it is genuinely dead in a default build. Gated rather than blanket-`allow`ed so that a field that
+    /// goes dead *within* a calibration build still warns.
+    #[cfg_attr(not(feature = "calibration"), allow(dead_code))]
+    pub sources: AbSources,
 }
 
 /// Open A and B, select tracks, decode both full timelines, and resample B to A's rate. Extracted
@@ -79,6 +123,11 @@ pub(crate) fn decode_ab<MR: MediaReader>(
             .map_err(RepairError::Media)?
     };
     let source_audio_bitrate_b_bps = b_pcm_full.measured_bitrate_bps();
+    // Capture both descriptors before the resample branch below moves `b_pcm_full.samples`.
+    let sources = AbSources {
+        a: SourceDescriptor::of(&track_a, source_audio_bitrate_a_bps),
+        b: SourceDescriptor::of(&track_b, source_audio_bitrate_b_bps),
+    };
     let b_samples_full = if b_pcm_full.sample_rate != a_pcm.sample_rate {
         let _resample = tracing::debug_span!(
             "patch_resample_b",
@@ -102,5 +151,6 @@ pub(crate) fn decode_ab<MR: MediaReader>(
         source_audio_bitrate_a_bps,
         source_audio_bitrate_b_bps,
         container_duration_a_secs: duration_a.as_secs_f64(),
+        sources,
     })
 }

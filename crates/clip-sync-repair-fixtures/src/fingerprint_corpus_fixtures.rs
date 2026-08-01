@@ -51,6 +51,8 @@ pub fn synth_ab_from_decode_corpus(diagnostics: bool) -> GapCorpus {
         &[],
         diagnostics,
         &NoOpProgressReporter,
+        // Synthetic PCM — no container was probed, so there is no source provenance to record.
+        None,
     )
 }
 

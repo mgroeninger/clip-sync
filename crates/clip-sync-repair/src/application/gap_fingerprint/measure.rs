@@ -2229,6 +2229,9 @@ pub fn characterize_gaps_from_decode(
     select: &[usize],
     include_diagnostics: bool,
     progress: &dyn clip_sync::ProgressReporter,
+    // Per-side source provenance for `source.{a,b}_source`. `None` for media-free callers
+    // (synthetic fixtures), which leaves the provenance fields absent rather than guessed.
+    sources: Option<&crate::application::patch_audio::AbSources>,
 ) -> GapCorpus {
     use crate::domain::gap_repair_spec::{
         BExtractWindow, GapRepairCell, GapRepairSpec, GapRepairStrategy, GapRepairVerdict,
@@ -2246,6 +2249,7 @@ pub fn characterize_gaps_from_decode(
         channels,
         &cfg,
         select,
+        sources,
     );
 
     let mut gate_derived = crate::application::patch_region::SeamGateDerived::from_repair(
@@ -2478,7 +2482,10 @@ pub fn characterize_gaps_from_decode(
                 cfg.absolute_silence_rms,
             )
         };
-        let probes = vec![probe(cfg.gap_signature_bin_ms), probe(report.recipe.scan_block_ms())];
+        let probes = vec![
+            probe(cfg.gap_signature_bin_ms),
+            probe(report.recipe.scan_block_ms()),
+        ];
 
         // Candidate noise floors (F15, second axis) over the {context window} × {bin size} × {channel
         // reduction} grid the two front-ends straddle — also provenance, also classified on by nothing.
@@ -2536,6 +2543,8 @@ pub fn characterize_gaps(
     channels: usize,
     cfg: &FingerprintConfig,
     select: &[usize],
+    // See [`characterize_gaps_from_decode`]; `None` when no media was probed.
+    sources: Option<&crate::application::patch_audio::AbSources>,
 ) -> GapCorpus {
     let rate = f64::from(sample_rate).max(1.0);
     let ch = channels.max(1);
@@ -2597,8 +2606,18 @@ pub fn characterize_gaps(
 
     GapCorpus {
         source: SourceMeta {
-            a_source: file_source(a_samples, sample_rate, channels as u16),
-            b_source: file_source(b_samples, sample_rate, channels as u16),
+            a_source: file_source(
+                a_samples,
+                sample_rate,
+                channels as u16,
+                sources.map(|s| &s.a),
+            ),
+            b_source: file_source(
+                b_samples,
+                sample_rate,
+                channels as u16,
+                sources.map(|s| &s.b),
+            ),
             scan_recipe: CorpusScanRecipe::from_report(report),
             gap_count: report.gaps.len(),
         },
@@ -3704,9 +3723,67 @@ mod tests {
             .expect("default All gap selection");
         let progress = NoOpProgressReporter;
 
-        let off =
-            characterize_gaps_from_decode(&report, &a_pcm, &b, &request, &[], false, &progress);
-        let on = characterize_gaps_from_decode(&report, &a_pcm, &b, &request, &[], true, &progress);
+        // Threading check: the descriptors must land on the matching side of `source`, and the two sides
+        // must stay distinguishable — a swap or a copy would pass every `file_source` unit test.
+        let sources = crate::application::AbSources {
+            a: crate::application::SourceDescriptor {
+                codec: "flac".into(),
+                bit_depth: Some(clip_sync::BitDepth::Int24),
+                native_sample_rate: rate,
+                native_channels: 2,
+                bitrate_bps: None,
+            },
+            b: crate::application::SourceDescriptor {
+                codec: "aac".into(),
+                bit_depth: None,
+                native_sample_rate: 44_100,
+                native_channels: 1,
+                bitrate_bps: Some(192_000),
+            },
+        };
+        let with_sources = characterize_gaps_from_decode(
+            &report,
+            &a_pcm,
+            &b,
+            &request,
+            &[],
+            false,
+            &progress,
+            Some(&sources),
+        );
+        assert_eq!(with_sources.source.a_source.codec.as_deref(), Some("flac"));
+        assert_eq!(with_sources.source.b_source.codec.as_deref(), Some("aac"));
+        assert_eq!(
+            with_sources.source.a_source.bit_depth.as_deref(),
+            Some("s24")
+        );
+        assert_eq!(with_sources.source.b_source.native_channels, Some(1));
+        assert_eq!(with_sources.source.a_source.was_resampled(), Some(false));
+        assert_eq!(with_sources.source.b_source.was_resampled(), Some(true));
+
+        let off = characterize_gaps_from_decode(
+            &report,
+            &a_pcm,
+            &b,
+            &request,
+            &[],
+            false,
+            &progress,
+            None,
+        );
+        // The descriptor-less call must leave provenance absent, not defaulted.
+        assert_eq!(off.source.a_source.codec, None);
+        assert_eq!(off.source.b_source.was_resampled(), None);
+        let on = characterize_gaps_from_decode(
+            &report,
+            &a_pcm,
+            &b,
+            &request,
+            &[],
+            true,
+            &progress,
+            None,
+        );
 
         let fp_off = off.gaps.first().expect("one gap (off)");
         assert!(
@@ -3821,6 +3898,10 @@ mod tests {
                     id: "aaaaaaaaaaaaaaaa".into(),
                     container: None,
                     codec: None,
+                    bit_depth: None,
+                    native_sample_rate: None,
+                    native_channels: None,
+                    source_audio_bitrate_bps: None,
                     sample_rate: 48_000,
                     channels: 2,
                     duration_secs: 1000.0,
@@ -3829,6 +3910,10 @@ mod tests {
                     id: "bbbbbbbbbbbbbbbb".into(),
                     container: None,
                     codec: None,
+                    bit_depth: None,
+                    native_sample_rate: None,
+                    native_channels: None,
+                    source_audio_bitrate_bps: None,
                     sample_rate: 48_000,
                     channels: 2,
                     duration_secs: 1000.0,

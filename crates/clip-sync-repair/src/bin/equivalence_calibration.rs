@@ -263,7 +263,40 @@ fn print_detail(corpus: &GapCorpus) -> Summary {
     if s.unpaired > 0 {
         println!("note: {} gap(s) lacked both verdicts (characterize a full corpus — no --fingerprint-gap subset)", s.unpaired);
     }
+    println!("sources: {}", source_line(corpus));
     s
+}
+
+/// One line of source provenance for a corpus: what codecs it measured and whether either side was
+/// rate-converted first. `?` where the corpus predates source provenance — informational only, so a
+/// pre-Track-A corpus reads honestly instead of failing.
+fn source_line(corpus: &GapCorpus) -> String {
+    let a = &corpus.source.a_source;
+    let b = &corpus.source.b_source;
+    format!(
+        "codecs {} · resampled a={} b={}",
+        codec_pair_label(corpus),
+        opt_bool(a.was_resampled()),
+        opt_bool(b.was_resampled()),
+    )
+}
+
+fn opt_bool(v: Option<bool>) -> &'static str {
+    match v {
+        Some(true) => "yes",
+        Some(false) => "no",
+        None => "?",
+    }
+}
+
+/// `a_codec→b_codec`, with `?` for a side whose codec the corpus does not record.
+fn codec_pair_label(corpus: &GapCorpus) -> String {
+    let name = |c: &Option<String>| c.clone().unwrap_or_else(|| "?".into());
+    format!(
+        "{}→{}",
+        name(&corpus.source.a_source.codec),
+        name(&corpus.source.b_source.codec)
+    )
 }
 
 /// Roll up every numbered corpus under `parent` (immediate subdirs containing `corpus.json`).
@@ -301,6 +334,8 @@ fn print_rollup(parent: &Path) -> ExitCode {
     );
     let mut total = Summary::default();
     let mut read_errors = 0usize;
+    let mut codec_census: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::new();
     for d in &dirs {
         let name = d
             .file_name()
@@ -317,6 +352,7 @@ fn print_rollup(parent: &Path) -> ExitCode {
         };
         let s = summarize(corpus_pairs(&corpus));
         total.add(s);
+        *codec_census.entry(codec_pair_label(&corpus)).or_default() += 1;
         let verdict = if s.dangerous > 0 {
             "⚠ DANGEROUS"
         } else if s.divergent > 0 {
@@ -351,6 +387,20 @@ fn print_rollup(parent: &Path) -> ExitCode {
         total.compared,
         total.divergent,
         total.dangerous,
+    );
+    // Census only — a corpus mixing codecs is a stratification fact, never an exit-code condition.
+    let census = codec_census
+        .iter()
+        .map(|(label, n)| format!("{label}×{n}"))
+        .collect::<Vec<_>>()
+        .join(" · ");
+    println!(
+        "codecs (a→b, pairs): {}",
+        if census.is_empty() {
+            "none".into()
+        } else {
+            census
+        }
     );
 
     if total.dangerous > 0 {

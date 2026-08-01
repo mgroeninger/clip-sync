@@ -16,16 +16,56 @@ pub(crate) const SILENCE_FLOOR_DB: f32 = -120.0;
 /// One decoded source file's identity + non-identifying metadata. `id` is a stable strided digest of
 /// the **decoded** audio: a remux / lossless re-container yields the same `id`, a different encoding
 /// (codec / bitrate / partial clip) a different one. Contains no path or title.
+///
+/// **Two coordinate systems live here, and the distinction is load-bearing.** `sample_rate`,
+/// `channels`, and `duration_secs` describe the **decoded/analysis** PCM the corpus was measured on —
+/// which is *A's* rate and layout **for both sides**, since B is resampled to A before measurement.
+/// The `native_*` fields are the per-side **source** readings taken at probe time, before any
+/// conversion. When they disagree for B, the dump was measured on a rate-converted signal; see
+/// [`FileSource::was_resampled`]. `id` and `duration_secs` are derived from the decoded PCM and must
+/// stay that way — `entry_filename` builds every per-gap filename from `id`.
+///
+/// Provenance fields are raw container/track observations, never verdicts: what could be concluded
+/// from them (lossless? clamp-reachable?) is a question for the reader, answered by grouping on
+/// `codec`. See `docs/dev/TEMP-fingerprint-provenance-plan.md` § 2.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FileSource {
     pub id: String,
+    /// **Reserved and never populated.** `AudioTrack` carries no container field, so filling this
+    /// would need a second probe. Kept for wire compatibility with dumps that declared it.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub container: Option<String>,
+    /// Probe codec name (`aac` / `ac3` / `eac3` / `mp3` / `flac` / `vorbis` / `alac`, else
+    /// Symphonia's `Display`). Absent on pre-provenance corpora.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub codec: Option<String>,
+    /// Source sample format: `s16` | `s24` | `s32` | `f32` | `other:<bits>`. Absent when the
+    /// container reported neither `bits_per_sample` nor `sample_format` (typical — not guaranteed —
+    /// for lossy codecs). Stored for later: nothing in-tree interprets it today.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub bit_depth: Option<String>,
+    /// This side's own sample rate at probe time, before B was resampled to A. See the type docs.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub native_sample_rate: Option<u32>,
+    /// This side's own channel count at probe time. `select_track_for_reference` prefers a
+    /// channel-matched B track but falls back to any decodable one, so a mismatch is reachable.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub native_channels: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub source_audio_bitrate_bps: Option<u32>,
     pub sample_rate: u32,
     pub channels: u16,
     pub duration_secs: f64,
+}
+
+impl FileSource {
+    /// Was this side rate-converted before measurement? `None` when the corpus predates
+    /// `native_sample_rate` — **not** `false`: "unanswerable" and "no" are different readings, and
+    /// collapsing them is the defect this provenance exists to fix.
+    pub fn was_resampled(&self) -> Option<bool> {
+        self.native_sample_rate
+            .map(|native| native != self.sample_rate)
+    }
 }
 
 /// The scan recipe a corpus entry was produced under, so two entries are known-comparable.
@@ -83,12 +123,40 @@ pub fn source_id(samples: &[f32], sample_rate: u32, channels: u16) -> String {
     format!("{h:016x}")
 }
 
-pub(crate) fn file_source(samples: &[f32], sample_rate: u32, channels: u16) -> FileSource {
+/// Wire form of [`BitDepth`]. **The token set is a contract** — `is_lossy()`-style readers and any
+/// future census parse these strings, and a rename would silently reinterpret every corpus already on
+/// disk. `other:<bits>` keeps the width `BitDepth::Other` carries rather than collapsing it.
+/// (`BitDepth` derives no serde, and adding it to an upstream `clip-sync` domain type for a
+/// diagnostic artifact is not worth it — hence a local `match`.)
+pub(crate) fn bit_depth_str(depth: clip_sync::BitDepth) -> String {
+    use clip_sync::BitDepth;
+    match depth {
+        BitDepth::Int16 => "s16".into(),
+        BitDepth::Int24 => "s24".into(),
+        BitDepth::Int32 => "s32".into(),
+        BitDepth::Float32 => "f32".into(),
+        BitDepth::Other(bits) => format!("other:{bits}"),
+    }
+}
+
+/// Build one side's [`FileSource`]. `sample_rate` / `channels` are the **decoded/analysis** values
+/// (A's, for both sides); `descriptor` carries this side's own source readings and is `None` for the
+/// media-free callers that have no `AudioTrack` to describe.
+pub(crate) fn file_source(
+    samples: &[f32],
+    sample_rate: u32,
+    channels: u16,
+    descriptor: Option<&crate::application::patch_audio::SourceDescriptor>,
+) -> FileSource {
     let ch = u32::from(channels.max(1));
     FileSource {
         id: source_id(samples, sample_rate, channels),
         container: None,
-        codec: None,
+        codec: descriptor.map(|d| d.codec.clone()),
+        bit_depth: descriptor.and_then(|d| d.bit_depth).map(bit_depth_str),
+        native_sample_rate: descriptor.map(|d| d.native_sample_rate),
+        native_channels: descriptor.map(|d| d.native_channels),
+        source_audio_bitrate_bps: descriptor.and_then(|d| d.bitrate_bps),
         sample_rate,
         channels,
         duration_secs: samples.len() as f64 / f64::from(ch) / f64::from(sample_rate.max(1)),
@@ -725,6 +793,74 @@ pub struct GateOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The `bit_depth` token set is pinned: consumers stratify on these strings, so a rename is a
+    /// schema break. `Other(bits)` must stay parseable back to its bit count.
+    #[test]
+    fn bit_depth_tokens_are_pinned() {
+        use clip_sync::BitDepth;
+        assert_eq!(bit_depth_str(BitDepth::Int16), "s16");
+        assert_eq!(bit_depth_str(BitDepth::Int24), "s24");
+        assert_eq!(bit_depth_str(BitDepth::Int32), "s32");
+        assert_eq!(bit_depth_str(BitDepth::Float32), "f32");
+        assert_eq!(bit_depth_str(BitDepth::Other(20)), "other:20");
+    }
+
+    #[test]
+    fn was_resampled_distinguishes_no_from_unanswerable() {
+        let src = |native: Option<u32>| FileSource {
+            id: "0000000000000000".into(),
+            container: None,
+            codec: None,
+            bit_depth: None,
+            native_sample_rate: native,
+            native_channels: None,
+            source_audio_bitrate_bps: None,
+            sample_rate: 48_000,
+            channels: 2,
+            duration_secs: 1.0,
+        };
+        assert_eq!(src(Some(44_100)).was_resampled(), Some(true));
+        assert_eq!(src(Some(48_000)).was_resampled(), Some(false));
+        // Pre-provenance corpus: unanswerable, and must not read as "not resampled".
+        assert_eq!(src(None).was_resampled(), None);
+    }
+
+    /// Provenance fields are omitted, not null, when absent — pre-Track-A corpora must round-trip
+    /// byte-identically through the current schema.
+    #[test]
+    fn absent_provenance_is_omitted_from_json() {
+        let json = serde_json::to_string(&file_source(&[0.0; 4], 48_000, 2, None)).unwrap();
+        for field in [
+            "codec",
+            "bit_depth",
+            "native_sample_rate",
+            "native_channels",
+            "source_audio_bitrate_bps",
+        ] {
+            assert!(!json.contains(field), "{field} must be absent: {json}");
+        }
+    }
+
+    #[test]
+    fn descriptor_populates_provenance() {
+        use crate::application::SourceDescriptor;
+        let d = SourceDescriptor {
+            codec: "aac".into(),
+            bit_depth: Some(clip_sync::BitDepth::Int16),
+            native_sample_rate: 44_100,
+            native_channels: 2,
+            bitrate_bps: Some(192_000),
+        };
+        let fs = file_source(&[0.0; 4], 48_000, 2, Some(&d));
+        assert_eq!(fs.codec.as_deref(), Some("aac"));
+        assert_eq!(fs.bit_depth.as_deref(), Some("s16"));
+        assert_eq!(fs.native_sample_rate, Some(44_100));
+        assert_eq!(fs.native_channels, Some(2));
+        assert_eq!(fs.source_audio_bitrate_bps, Some(192_000));
+        // Measured at A's rate, so this side was rate-converted.
+        assert_eq!(fs.was_resampled(), Some(true));
+    }
 
     fn bracket(failure_stage: Option<FailureStage>) -> BracketInfo {
         BracketInfo {

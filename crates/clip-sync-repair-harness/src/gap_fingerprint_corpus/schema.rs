@@ -125,6 +125,22 @@ pub struct GapRow {
     pub pair: String,
     pub a_id: String,
     pub b_id: String,
+    /// Source codec of each side (`aac`, `ac3`, `flac`, …) as the probe named it. `None` for corpora
+    /// dumped before source provenance existed — absent, not "unknown lossless".
+    pub a_codec: Option<String>,
+    pub b_codec: Option<String>,
+    /// Each side's **native** (pre-decode) sample rate. The measurement rate is A's; B is resampled to it.
+    pub a_native_sample_rate: Option<u32>,
+    pub b_native_sample_rate: Option<u32>,
+    /// Each side's **native** (pre-decode) channel count, which can differ from the measured `channels`.
+    /// Recorded, not acted on: a channel mismatch is a known measurement hazard the fingerprint does not
+    /// currently correct for, and the column exists so such pairs can be found rather than fixed here.
+    pub a_native_channels: Option<u16>,
+    pub b_native_channels: Option<u16>,
+    /// Was this side rate-converted before measurement (`native != measured`)? `None` when the corpus
+    /// carries no native rate — "unanswerable" and "no" are different readings.
+    pub a_was_resampled: Option<bool>,
+    pub b_was_resampled: Option<bool>,
     pub index: usize,
     pub duration_secs: Option<f64>,
     /// A-timeline position of the gap (refined start, s) — for the per-file offset-trend (drift) test.
