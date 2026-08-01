@@ -19,11 +19,15 @@ pub(crate) const SILENCE_FLOOR_DB: f32 = -120.0;
 ///
 /// **Two coordinate systems live here, and the distinction is load-bearing.** `sample_rate`,
 /// `channels`, and `duration_secs` describe the **decoded/analysis** PCM the corpus was measured on —
-/// which is *A's* rate and layout **for both sides**, since B is resampled to A before measurement.
-/// The `native_*` fields are the per-side **source** readings taken at probe time, before any
-/// conversion. When they disagree for B, the dump was measured on a rate-converted signal; see
-/// [`FileSource::was_resampled`]. `id` and `duration_secs` are derived from the decoded PCM and must
-/// stay that way — `entry_filename` builds every per-gap filename from `id`.
+/// which is *A's* rate and layout **for both sides** when the pair is comparable (B is rate-resampled
+/// to A before measurement). When [`SourceMeta::incomparable`] is
+/// [`IncomparableReason::ChannelLayoutMismatch`], pairwise measurement was refused: `b_source.channels`
+/// / `duration_secs` / `id` use **B's** native layout (rate may still be A's after resample), so the
+/// dump does not pretend B was A-layout. The `native_*` fields are the per-side **source** readings
+/// taken at probe time, before any conversion. When `native_sample_rate` disagrees with `sample_rate`
+/// for B, the dump was measured on a rate-converted signal; see [`FileSource::was_resampled`]. `id`
+/// and `duration_secs` are derived from the decoded PCM and must stay that way — `entry_filename`
+/// builds every per-gap filename from `id`.
 ///
 /// Provenance fields are raw container/track observations, never verdicts: what could be concluded
 /// from them (lossless? clamp-reachable?) is a question for the reader, answered by grouping on
@@ -88,6 +92,16 @@ pub struct CorpusScanRecipe {
     pub silence_hold_ms: Option<u64>,
 }
 
+/// Why a fingerprint corpus refused pairwise A↔B measurement. Absent ⇒ comparable (or pre-gate
+/// corpus). Present ⇒ `gaps` is empty and B must not be read at A's channel count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IncomparableReason {
+    /// `native_channels` disagree after track selection. Production fill already skips
+    /// (`TrackLayoutMismatch`); the fingerprint path refuses rather than indexing B as A-layout.
+    ChannelLayoutMismatch,
+}
+
 /// Non-identifying provenance for a corpus: the A/B file identities (pair = entry identity), the scan
 /// recipe, and the gap count. No titles, no paths.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -96,6 +110,9 @@ pub struct SourceMeta {
     pub b_source: FileSource,
     pub scan_recipe: CorpusScanRecipe,
     pub gap_count: usize,
+    /// Set when pairwise characterization was refused. Optional so pre-gate corpora still parse.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub incomparable: Option<IncomparableReason>,
 }
 
 fn fnv_feed(h: &mut u64, bytes: &[u8]) {
@@ -860,6 +877,32 @@ mod tests {
         assert_eq!(fs.source_audio_bitrate_bps, Some(192_000));
         // Measured at A's rate, so this side was rate-converted.
         assert_eq!(fs.was_resampled(), Some(true));
+    }
+
+    #[test]
+    fn incomparable_reason_omitted_when_absent_and_round_trips() {
+        let meta = SourceMeta {
+            a_source: file_source(&[0.0; 4], 48_000, 2, None),
+            b_source: file_source(&[0.0; 2], 48_000, 1, None),
+            scan_recipe: CorpusScanRecipe::default(),
+            gap_count: 0,
+            incomparable: None,
+        };
+        let json = serde_json::to_string(&meta).unwrap();
+        assert!(
+            !json.contains("incomparable"),
+            "absent incomparable must omit key: {json}"
+        );
+
+        let refused = SourceMeta {
+            incomparable: Some(IncomparableReason::ChannelLayoutMismatch),
+            ..meta
+        };
+        let round: SourceMeta = serde_json::from_str(&serde_json::to_string(&refused).unwrap()).unwrap();
+        assert_eq!(
+            round.incomparable,
+            Some(IncomparableReason::ChannelLayoutMismatch)
+        );
     }
 
     fn bracket(failure_stage: Option<FailureStage>) -> BracketInfo {

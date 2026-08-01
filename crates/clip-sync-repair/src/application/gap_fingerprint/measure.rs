@@ -2210,6 +2210,39 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
     }
 }
 
+/// Corpus envelope when A/B `native_channels` disagree: provenance filled, pairwise gaps refused.
+///
+/// B's `channels` / `duration_secs` / `id` use **B's** layout (not A's). Rate may still be A's after
+/// `decode_ab` resample. Callers must not index `b_samples` with `a_channels`.
+fn refused_channel_mismatch_corpus(
+    report: &crate::domain::GapReport,
+    a_samples: &[f32],
+    b_samples: &[f32],
+    sample_rate: u32,
+    a_channels: u16,
+    sources: &crate::application::patch_audio::AbSources,
+) -> GapCorpus {
+    GapCorpus {
+        source: SourceMeta {
+            a_source: file_source(a_samples, sample_rate, a_channels, Some(&sources.a)),
+            b_source: file_source(
+                b_samples,
+                sample_rate,
+                sources.b.native_channels,
+                Some(&sources.b),
+            ),
+            scan_recipe: CorpusScanRecipe::from_report(report),
+            gap_count: report.gaps.len(),
+            incomparable: Some(IncomparableReason::ChannelLayoutMismatch),
+        },
+        gaps: vec![],
+    }
+}
+
+fn channel_layout_mismatch(sources: &crate::application::patch_audio::AbSources) -> bool {
+    sources.a.native_channels != sources.b.native_channels
+}
+
 /// Fingerprint dump computed **from decode via the shared projection** (Fingerprint-unification 8g.4a/8g.4b) —
 /// the `--gap-fingerprints` dump path (the old per-bracket-oracle inline build was removed at 8g.6). Per
 /// gap: the summary (geometry/levels, already in `corpus`) + [`compute_region_measurements`] (8g.3a) → `m`,
@@ -2217,6 +2250,9 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
 /// [`tags_from_measurements`], 8g.3b) → [`spec_to_fingerprint_summary`]. Keeps fingerprint semantics — does NOT
 /// run the production patch gate (pre-flip review Finding 1). Gaps whose overlay setup is skipped (no B start /
 /// zero-length / empty window) keep their summary fingerprint, exactly as the oracle leaves them.
+///
+/// When `sources` reports disagreeing `native_channels`, returns an empty-gap corpus with
+/// [`IncomparableReason::ChannelLayoutMismatch`] and does not index B at A's channel count.
 ///
 /// **SHADOW at 8g.4a** — validated by the old-vs-new decode differential (`decode_path_projection`), lean +
 /// diagnostics; the dump flips to it at 8g.4b. Lossy-by-projection on `silence`/`contour`/`anchors` (X, not
@@ -2240,6 +2276,18 @@ pub fn characterize_gaps_from_decode(
 
     let sample_rate = a_pcm.sample_rate;
     let channels = a_pcm.channels as usize;
+    if let Some(src) = sources {
+        if channel_layout_mismatch(src) {
+            return refused_channel_mismatch_corpus(
+                report,
+                &a_pcm.samples,
+                b_samples_full,
+                sample_rate,
+                a_pcm.channels,
+                src,
+            );
+        }
+    }
     let cfg = FingerprintConfig::from_request(request, report.recipe.silence_peak_fraction());
     let mut corpus = characterize_gaps(
         report,
@@ -2535,6 +2583,10 @@ pub fn characterize_gaps_from_decode(
 /// full A/B PCM: geometry + levels + contour + anchors + a baseline structure/seam per gap. The
 /// authoritative gate detail (brackets / `failure_stage` / lag / outcome) is layered on by
 /// [`characterize_gaps_from_decode`]. A gap with no B mapping is characterized A-only.
+///
+/// When `sources` reports disagreeing `native_channels`, returns
+/// [`IncomparableReason::ChannelLayoutMismatch`] with no gaps — B must not be sliced at A's channel
+/// count.
 pub fn characterize_gaps(
     report: &crate::domain::GapReport,
     a_samples: &[f32],
@@ -2546,6 +2598,18 @@ pub fn characterize_gaps(
     // See [`characterize_gaps_from_decode`]; `None` when no media was probed.
     sources: Option<&crate::application::patch_audio::AbSources>,
 ) -> GapCorpus {
+    if let Some(src) = sources {
+        if channel_layout_mismatch(src) {
+            return refused_channel_mismatch_corpus(
+                report,
+                a_samples,
+                b_samples,
+                sample_rate,
+                channels as u16,
+                src,
+            );
+        }
+    }
     let rate = f64::from(sample_rate).max(1.0);
     let ch = channels.max(1);
     let b_total = b_samples.len() / ch;
@@ -2620,6 +2684,7 @@ pub fn characterize_gaps(
             ),
             scan_recipe: CorpusScanRecipe::from_report(report),
             gap_count: report.gaps.len(),
+            incomparable: None,
         },
         gaps,
     }
@@ -3725,19 +3790,21 @@ mod tests {
 
         // Threading check: the descriptors must land on the matching side of `source`, and the two sides
         // must stay distinguishable — a swap or a copy would pass every `file_source` unit test.
+        // `native_channels` must match the mono PCM fixture (`ch = 1`); rate may still differ so
+        // `was_resampled` stays exercisable. Sides are distinguished by codec / bit_depth / bitrate.
         let sources = crate::application::AbSources {
             a: crate::application::SourceDescriptor {
                 codec: "flac".into(),
                 bit_depth: Some(clip_sync::BitDepth::Int24),
                 native_sample_rate: rate,
-                native_channels: 2,
+                native_channels: ch as u16,
                 bitrate_bps: None,
             },
             b: crate::application::SourceDescriptor {
                 codec: "aac".into(),
                 bit_depth: None,
                 native_sample_rate: 44_100,
-                native_channels: 1,
+                native_channels: ch as u16,
                 bitrate_bps: Some(192_000),
             },
         };
@@ -3757,9 +3824,14 @@ mod tests {
             with_sources.source.a_source.bit_depth.as_deref(),
             Some("s24")
         );
-        assert_eq!(with_sources.source.b_source.native_channels, Some(1));
+        assert_eq!(with_sources.source.b_source.native_channels, Some(ch as u16));
         assert_eq!(with_sources.source.a_source.was_resampled(), Some(false));
         assert_eq!(with_sources.source.b_source.was_resampled(), Some(true));
+        assert_eq!(with_sources.source.incomparable, None);
+        assert!(
+            !with_sources.gaps.is_empty(),
+            "matched channel layout must still characterize"
+        );
 
         let off = characterize_gaps_from_decode(
             &report,
@@ -3812,6 +3884,140 @@ mod tests {
             fp_on.b_levels.is_some(),
             "diagnostics on: b_levels must be populated"
         );
+    }
+
+    /// Stereo A + mono B: refuse pairwise characterize rather than indexing B at A's channel count.
+    #[test]
+    fn characterize_gaps_refuses_channel_layout_mismatch() {
+        use crate::application::PatchAudioRequest;
+        use crate::domain::gap::Gap;
+        use crate::domain::{GapReport, GapSignatureMode, ScanAlignment};
+        use crate::infrastructure::config::RepairConfig;
+        use clip_sync::MultiChannelPcm;
+        use clip_sync_repair_fixtures::NoOpProgressReporter;
+
+        let rate = 48_000u32;
+        let a_ch = 2u16;
+        let b_ch = 1u16;
+        // 1.0 s of frames on each side — duration must use each side's own layout.
+        let a_frames = rate as usize;
+        let b_frames = rate as usize;
+        let a_pcm = MultiChannelPcm {
+            sample_rate: rate,
+            channels: a_ch,
+            samples: vec![0.01f32; a_frames * a_ch as usize],
+            decode_error_skips: 0,
+            decoded_frame_count: None,
+            compressed_bytes: None,
+            source_bit_depth: None,
+        };
+        let b = vec![0.01f32; b_frames * b_ch as usize];
+        let report = GapReport {
+            video_a: Default::default(),
+            video_b: Default::default(),
+            track_compatibility: None,
+            alignment: ScanAlignment {
+                clips: vec![],
+                start_aligned: true,
+                end_aligned: None,
+                recommended_offset_secs: None,
+                offsets_consistent: true,
+                offset_drift_secs: None,
+                start_overlap: None,
+                query_reference_mode: false,
+            },
+            gaps: vec![Gap {
+                video_a_start_secs: 0.25,
+                video_a_end_secs: 0.50,
+                video_b_start_secs: Some(0.25),
+                video_b_end_secs: Some(0.50),
+                b_has_energy: true,
+            }],
+            gap_equivalence: Vec::new(),
+            gap_offset_agreement: None,
+            decode_chunk_secs: 30,
+            recipe: crate::domain::ScanRecipe::with_hold_blocks(1000, 0, 20, 0.05, 0.0),
+            limit_fill_to_mapped_region: false,
+            b_scanned_end_secs: None,
+            b_scan_truncated: false,
+            audio_timeline_skew: None,
+        };
+        let request: PatchAudioRequest = RepairConfig {
+            gap_signature_mode: GapSignatureMode::Energy,
+            ..RepairConfig::default()
+        }
+        .patch_settings()
+        .into_request(report.clone())
+        .expect("default All gap selection");
+
+        let sources = crate::application::AbSources {
+            a: crate::application::SourceDescriptor {
+                codec: "flac".into(),
+                bit_depth: Some(clip_sync::BitDepth::Int16),
+                native_sample_rate: rate,
+                native_channels: a_ch,
+                bitrate_bps: None,
+            },
+            b: crate::application::SourceDescriptor {
+                codec: "aac".into(),
+                bit_depth: None,
+                native_sample_rate: rate,
+                native_channels: b_ch,
+                bitrate_bps: Some(128_000),
+            },
+        };
+
+        let corpus = characterize_gaps_from_decode(
+            &report,
+            &a_pcm,
+            &b,
+            &request,
+            &[],
+            false,
+            &NoOpProgressReporter,
+            Some(&sources),
+        );
+        assert_eq!(
+            corpus.source.incomparable,
+            Some(IncomparableReason::ChannelLayoutMismatch)
+        );
+        assert!(
+            corpus.gaps.is_empty(),
+            "mismatch must not emit pairwise gap fingerprints"
+        );
+        assert_eq!(corpus.source.gap_count, 1);
+        assert_eq!(corpus.source.a_source.native_channels, Some(a_ch));
+        assert_eq!(corpus.source.b_source.native_channels, Some(b_ch));
+        // Honest B layout: 1.0 s mono, not the false 0.5 s that A's channel count would invent.
+        assert_eq!(corpus.source.b_source.channels, b_ch);
+        assert!(
+            (corpus.source.b_source.duration_secs - 1.0).abs() < 1e-9,
+            "B duration must use B channels, got {}",
+            corpus.source.b_source.duration_secs
+        );
+        assert_eq!(corpus.source.a_source.channels, a_ch);
+        assert!(
+            (corpus.source.a_source.duration_secs - 1.0).abs() < 1e-9,
+            "A duration {}",
+            corpus.source.a_source.duration_secs
+        );
+
+        // Direct characterize path must refuse the same way (defense in depth).
+        let summary = characterize_gaps(
+            &report,
+            &a_pcm.samples,
+            &b,
+            rate,
+            a_ch as usize,
+            &FingerprintConfig::default(),
+            &[],
+            Some(&sources),
+        );
+        assert_eq!(
+            summary.source.incomparable,
+            Some(IncomparableReason::ChannelLayoutMismatch)
+        );
+        assert!(summary.gaps.is_empty());
     }
 
     fn mk_fp(index: usize, full: bool) -> GapFingerprint {
@@ -3920,6 +4126,7 @@ mod tests {
                 },
                 scan_recipe: CorpusScanRecipe::default(),
                 gap_count: 2,
+                incomparable: None,
             },
             gaps: vec![mk_fp(0, false), mk_fp(3, true)],
         };

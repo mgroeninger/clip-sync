@@ -467,6 +467,12 @@ different result). So identity is **per file**, not per logical source:
     sibling `sample_rate` / `channels` (the rate everything was *measured* at: A's, with B resampled to
     it). `FileSource::was_resampled()` is `native_sample_rate != sample_rate`, or `None` when the corpus
     predates these fields — **not** `false`; "unanswerable" and "no" are different readings.
+  - When `native_channels` disagree, characterize **refuses** pairwise measurement:
+    `source.incomparable = "channel_layout_mismatch"`, `gaps` is empty, and `b_source.channels` /
+    `duration_secs` use **B's** layout (not A's). Same condition production fill already skips as
+    `TrackLayoutMismatch`. The dump prints a progress line naming the refuse; `gap-fingerprint-stats
+    --check` **Warn**s on `incomparable`, and also Warns on legacy dumps where `native_channels`
+    disagree but `gaps` is still non-empty (pre-refuse silent wrong indexing — re-dump).
   - `source_audio_bitrate_bps` — the measured source bitrate for that side. Do not fold the two sides'
     bitrates into one figure.
 

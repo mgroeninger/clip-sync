@@ -162,6 +162,18 @@ fn dump_gap_fingerprints(
         progress,
         Some(&decoded.sources),
     );
+    if let Some(reason) = corpus.source.incomparable {
+        use crate::application::gap_fingerprint::IncomparableReason;
+        match reason {
+            IncomparableReason::ChannelLayoutMismatch => {
+                progress.phase(&format!(
+                    "channel layout mismatch (A {}ch / B {}ch): refused pairwise fingerprint \
+                     characterize; writing provenance-only corpus (gaps empty)",
+                    decoded.sources.a.native_channels, decoded.sources.b.native_channels,
+                ));
+            }
+        }
+    }
     dump("", corpus)?;
     Ok(())
 }

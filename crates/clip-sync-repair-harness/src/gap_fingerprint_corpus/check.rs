@@ -285,6 +285,35 @@ fn check_corpus(
         });
     }
 
+    // Channel-layout refuse / legacy mismatch: surface so empty dumps and silently-wrong pre-gate
+    // dumps are not mistaken for "pair had no gaps".
+    if let Some(src) = corpus.source.as_ref() {
+        if let Some(reason) = src.incomparable.as_deref() {
+            report.issues.push(HealthIssue {
+                severity: IssueSeverity::Warn,
+                pair: label.to_string(),
+                message: format!(
+                    "source.incomparable={reason}: pairwise fingerprint characterize was refused \
+                     (gaps empty); do not treat this pair as a measured null"
+                ),
+            });
+        } else if let (Some(a), Some(b)) = (src.a_source.as_ref(), src.b_source.as_ref()) {
+            if let (Some(ac), Some(bc)) = (a.native_channels, b.native_channels) {
+                if ac != bc && !corpus.gaps.is_empty() {
+                    report.issues.push(HealthIssue {
+                        severity: IssueSeverity::Warn,
+                        pair: label.to_string(),
+                        message: format!(
+                            "native_channels disagree (A {ac} / B {bc}) but gaps are present: \
+                             corpus predates the channel-layout refuse gate; B may have been \
+                             indexed at A's channel count — re-dump the pair"
+                        ),
+                    });
+                }
+            }
+        }
+    }
+
     for gap in &corpus.gaps {
         check_gap(label, gap, opts, report);
     }
@@ -490,6 +519,9 @@ struct SourceMeta {
     a_source: Option<FileSourceProj>,
     #[serde(default)]
     b_source: Option<FileSourceProj>,
+    /// Wire token from `IncomparableReason` (e.g. `channel_layout_mismatch`).
+    #[serde(default)]
+    incomparable: Option<String>,
 }
 
 /// Just enough of `FileSource` to tell "this corpus records what it measured" from "it does not".
@@ -499,6 +531,8 @@ struct FileSourceProj {
     codec: Option<String>,
     #[serde(default)]
     native_sample_rate: Option<u32>,
+    #[serde(default)]
+    native_channels: Option<u16>,
 }
 
 impl FileSourceProj {
@@ -733,6 +767,69 @@ mod tests {
             "corpus predates source provenance, so codec-conditioned reads cannot be stratified"
         );
         assert!(report.issues.iter().any(|i| i.message == expected));
+    }
+
+    #[test]
+    fn incomparable_channel_layout_warns_only() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("1");
+        // Provenance-only refuse dump: empty gaps, matching empty manifest, no per-gap library files.
+        write(
+            &dir,
+            "corpus.json",
+            r#"{
+              "source":{"a_source":{"id":"aaaaaaaa","codec":"flac","native_sample_rate":48000,
+                                    "native_channels":2,"sample_rate":48000,"channels":2,"duration_secs":60},
+                        "b_source":{"id":"bbbbbbbb","codec":"aac","native_sample_rate":48000,
+                                    "native_channels":1,"sample_rate":48000,"channels":1,"duration_secs":60},
+                        "scan_recipe":{"silence_peak_fraction":0.01},"gap_count":1,
+                        "incomparable":"channel_layout_mismatch"},
+              "gaps":[]
+            }"#,
+        );
+        write(
+            &dir,
+            "manifest.json",
+            r#"{"a_id":"aaaaaaaa","b_id":"bbbbbbbb","gap_count":0,"entries":[]}"#,
+        );
+
+        let report = check_dirs(&[root.path().to_path_buf()], &HealthCheckOptions::default());
+        assert!(report.ok(), "{}", report.summary_text());
+        assert_eq!(report.warn_count(), 1);
+        let expected = concat!(
+            "source.incomparable=channel_layout_mismatch: pairwise fingerprint characterize was refused ",
+            "(gaps empty); do not treat this pair as a measured null"
+        );
+        assert!(
+            report.issues.iter().any(|i| i.message == expected),
+            "{:?}",
+            report.issues
+        );
+    }
+
+    #[test]
+    fn legacy_native_channels_mismatch_with_gaps_warns_only() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("1");
+        write_healthy_pair(&dir);
+        let mut corpus: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(dir.join("corpus.json")).unwrap()).unwrap();
+        corpus["source"]["b_source"]["native_channels"] = serde_json::json!(1);
+        fs::write(dir.join("corpus.json"), corpus.to_string()).unwrap();
+
+        let report = check_dirs(&[root.path().to_path_buf()], &HealthCheckOptions::default());
+        assert!(report.ok(), "{}", report.summary_text());
+        assert_eq!(report.warn_count(), 1);
+        let expected = concat!(
+            "native_channels disagree (A 2 / B 1) but gaps are present: ",
+            "corpus predates the channel-layout refuse gate; B may have been ",
+            "indexed at A's channel count — re-dump the pair"
+        );
+        assert!(
+            report.issues.iter().any(|i| i.message == expected),
+            "{:?}",
+            report.issues
+        );
     }
 
     #[test]

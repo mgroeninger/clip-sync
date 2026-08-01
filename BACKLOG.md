@@ -63,13 +63,12 @@ Phase B residue (the `gate_pass` / end-search correlation). Axis semantics:
 
 ### A/B channel-count mismatch on shared decode
 
-Carved out of [TEMP-fingerprint-provenance-plan.md](docs/dev/TEMP-fingerprint-provenance-plan.md) §2
-(*Out of scope, noted here so it is not lost*). Track A only **records** the true counts via
-`native_channels`; it does not fix the measurement.
+> **Done 2026-07-31:** fingerprint characterize refuses when `native_channels` disagree —
+> `SourceMeta.incomparable = channel_layout_mismatch`, empty `gaps`, B `duration_secs`/`id` use B's
+> layout. Production fill already skipped via `TrackLayoutMismatch`. Downmix not pursued.
 
-| Item | Direction |
-|------|-----------|
-| **Fingerprint / characterize reads B PCM at A's channel count** | `decode_ab` resamples B to A's **rate** only (`resample_interleaved`); when channel counts differ, `b_samples_full` still carries B's layout. `select_track_for_reference` prefers a channel-matched B track but falls back to any decodable one (`track_selection.rs`), so the mismatch is reachable. Downstream (`characterize_gaps` and anything else that slices that buffer with `a_pcm.channels`) then computes `b_total = len / a.channels` and indexes haystacks as if B were A-layout — wrong frame count, wrong windows, wrong B `duration_secs` in the dump. Production **fill** already skips on track-layout mismatch (`TrackLayoutMismatch`); the fingerprint path still shares `decode_ab` and measures anyway. **Direction when picked up:** either refuse/characterize-as-uncomparable when `native_channels` disagree, or convert/downmix B to A's layout before any A-channel indexing — and add a synthetic mismatched-channel fixture so the path cannot regress silently. Not blocking the next provenance-qualified corpus run (Track A makes the condition detectable). |
+Carved out of [TEMP-fingerprint-provenance-plan.md](docs/dev/TEMP-fingerprint-provenance-plan.md) §2
+(*Out of scope for Track A provenance; measurement refuse shipped separately*).
 
 ### Repair R6 follow-ups
 
