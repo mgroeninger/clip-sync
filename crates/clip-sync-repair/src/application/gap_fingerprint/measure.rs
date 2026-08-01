@@ -3870,6 +3870,21 @@ mod tests {
             !with_sources.gaps.is_empty(),
             "matched channel layout must still characterize"
         );
+        // Track B fine-path attach: `donor_span: Nominal` is the field that differs from scan and
+        // the reason recipe Δ exists — pin it on the dumped verdict, not only on the builder.
+        {
+            use crate::domain::gap_equivalence::SpanKind;
+            let equiv = with_sources.gaps[0]
+                .equivalence
+                .as_ref()
+                .expect("diagnostic equivalence");
+            let m = equiv.measurement.as_ref().expect("measurement attached at caller");
+            assert!((m.context_secs - repair.gap_signature_context_secs).abs() < f64::EPSILON);
+            assert_eq!(m.bin_ms, report.recipe.scan_block_ms());
+            assert_eq!(m.reduction, ChannelReduction::Interleaved);
+            assert_eq!(m.a_span, SpanKind::Core);
+            assert_eq!(m.donor_span, SpanKind::Nominal);
+        }
 
         let off = characterize_gaps_from_decode(
             &report,

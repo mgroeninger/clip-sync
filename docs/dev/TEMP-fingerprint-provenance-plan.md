@@ -326,22 +326,20 @@ reading code, which is what makes this Derived rather than Speculative.
 It also completes the obvious symmetry: A gets a silent fraction that mirrors the donor's, so the two
 sides of the classifier's inputs become comparable populations rather than one fraction and one count.
 
-**`with_scan_provenance` takes A as a tuple, matching the donor.** Widen the bare
-`a_gap_silent_blocks: usize` to `a_gap_blocks: (usize, usize)` — `(silent, total)` — so the
-population pair is obvious in the signature and the A/donor asymmetry is not re-encoded as "one
-side bare, one side paired":
+**`with_scan_provenance` takes both sides as `Option<(silent, total)>`.** A matches the donor
+shape; `None` means unanswerable (empty level stream), not "zero blocks measured" — `Some(0, 0)`
+is reserved for a real walk that found no bins (fine path empty span):
 
 ```rust
 pub fn with_scan_provenance(
     mut self,
     gap_floor_db: Option<f64>,
-    a_gap_blocks: (usize, usize),              // (silent, total)
+    a_gap_blocks: Option<(usize, usize)>,      // (silent, total); None = no level stream
     donor_blocks: Option<(usize, usize)>,
 ) -> Self
 ```
 
-Two production call sites (`derive_gap_equivalence`, `measure_gap_equivalence`); a bare extra
-`usize` is how the asymmetry got here.
+Two production call sites (`derive_gap_equivalence`, `measure_gap_equivalence`).
 
 **Define the population once, or the check is worthless.** `a_gap_total_blocks` = *blocks whose
 centre falls inside the gap, silent or not*. The two front-ends must not pick different denominators,
@@ -380,7 +378,7 @@ Recorded so they are not re-proposed as gaps in this plan.
 
 | Item | Disposition |
 |------|-------------|
-| Recipe Δ print format | **Only diffs, mirror `signal_deltas`.** When both sides carry `measurement`, print fields that differ — in practice `context_secs` and `donor_span` (the live residuals); `bin_ms` / `reduction` / `a_span` only if they actually diverge. Shape like `ctx +1.0  donor core→nominal` beside the existing `nf` / `aRMS` / `ds` line. Never a five-field wall on every agree row |
+| Recipe Δ print format | **Field diffs only; corpus header for the structural pair.** `instruments: ctx +1.0  donor core→nominal` once per corpus (first paired gap). Per-row recipe Δ only on diverge rows, or when a gap's recipe Δ differs from that baseline — never a constant wall on every agree row. Signal Δ still prints every row |
 | Optional I1 bin-check flag | **Optional, out of DoD.** `total_blocks × bin_ms ≈ span` stays a documented check; automating it as a calibration warn is elective |
 
 ## 4. What this is not
@@ -555,10 +553,12 @@ column** — deserializing it is not the deliverable.
 **Definition of done (Track B).** Emit: a dump shows `measurement` (all five fields) and
 `a_gap_total_blocks` on **both** `scan_equivalence` and `equivalence`, donor population counts on
 both, and **no** `silent_core_probes` on new dumps. Prove the attach points with unit tests — scan:
-`bin_ms` from any `BlockLevel` width, `measurement: None` when `a_levels` is empty; fine:
-`with_measurement` at the caller with no `measure_gap_equivalence` signature change; counts: fine
-path keeps `_total`, scan path adds the centre-in-gap counter, donor helper feeds
-`with_scan_provenance`. Consume: diverge rows print recipe Δ (§3d — diffs only);
+`bin_ms` from any `BlockLevel` width, `measurement: None` + A counts `None` when `a_levels` is empty;
+fine: from-decode test asserts dumped `equivalence.measurement` (`donor_span: Nominal`, context /
+`bin_ms` from the caller) with no `measure_gap_equivalence` signature change; counts: fine path
+keeps `_total`, scan path adds the centre-in-gap counter, donor helper feeds
+`with_scan_provenance`. Consume: corpus `instruments:` line for structural recipe Δ; per-row recipe
+Δ on diverge / anomaly only (§3d);
 [gap-fingerprint.md](gap-fingerprint.md) replaces the `silent_core_probes` section with the permanent
 `measurement` fields and notes `total_blocks × bin_ms ≈ span` as the bin-divergence check. The
 optional I1 calibration flag is **out of DoD**.
@@ -584,7 +584,8 @@ of DoD.
 
 *Consume* (calibration owns this; harness GapRow projection of equivalence is out of scope):
 
-- [x] `equivalence_calibration` diverge rows: recipe Δ beside signal Δ — **diffs only** (§3d)
+- [x] `equivalence_calibration`: corpus `instruments:` line for structural recipe Δ; per-row
+      recipe Δ on diverge / anomaly only (§3d); Δ column widened to 56
 - [ ] Optional (out of DoD): flag gaps where `a_gap_total_blocks × measurement.bin_ms` disagrees
       with geometry span (the I1-class check)
 - [x] [gap-fingerprint.md](gap-fingerprint.md): `measurement` section replaces `silent_core_probes`;

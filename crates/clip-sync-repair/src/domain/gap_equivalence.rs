@@ -249,19 +249,20 @@ impl GapEquivalenceVerdict {
     }
 
     /// Attach population provenance (A silent/total + donor silent/total). Never changes `class` or
-    /// `drop`. A is a tuple matching the donor shape — see
-    /// `docs/dev/TEMP-fingerprint-provenance-plan.md` §3b.
+    /// `drop`. Both sides are `Option<(silent, total)>` — `None` means unanswerable (no level stream),
+    /// not "zero blocks measured". See `docs/dev/TEMP-fingerprint-provenance-plan.md` §3b.
     #[must_use]
     pub fn with_scan_provenance(
         mut self,
         gap_floor_db: Option<f64>,
-        a_gap_blocks: (usize, usize),
+        a_gap_blocks: Option<(usize, usize)>,
         donor_blocks: Option<(usize, usize)>,
     ) -> Self {
         self.gap_floor_db = gap_floor_db;
-        let (silent, total) = a_gap_blocks;
-        self.a_gap_silent_blocks = Some(silent);
-        self.a_gap_total_blocks = Some(total);
+        (self.a_gap_silent_blocks, self.a_gap_total_blocks) = match a_gap_blocks {
+            Some((silent, total)) => (Some(silent), Some(total)),
+            None => (None, None),
+        };
         (self.donor_silent_blocks, self.donor_total_blocks) = match donor_blocks {
             Some((silent, total)) => (Some(silent), Some(total)),
             None => (None, None),
@@ -459,19 +460,18 @@ pub fn derive_gap_equivalence(
     let donor_silence_fraction =
         donor_blocks.and_then(|(silent, total)| (total > 0).then(|| silent as f64 / total as f64));
 
+    // Empty `a_levels` ⇒ no A population and no measurement (do not invent `Some(0)` / a bin — that
+    // would claim "zero blocks measured" about a gap where nothing was measured).
+    let a_gap_blocks =
+        (!a_levels.is_empty()).then_some((a_gap_silent_blocks, a_gap_total_blocks));
     let mut verdict = classify_gap_equivalence(
         a_gap_rms_db,
         noise_floor_db,
         donor_silence_fraction,
         params,
     )
-    .with_scan_provenance(
-        gap_floor,
-        (a_gap_silent_blocks, a_gap_total_blocks),
-        donor_blocks,
-    );
+    .with_scan_provenance(gap_floor, a_gap_blocks, donor_blocks);
     // `bin_ms` is a property of the level stream, not the gap population — any block's width works.
-    // Empty `a_levels` ⇒ no measurement (do not invent a bin).
     if let Some(b) = a_levels.first() {
         let bin_ms = ((b.end_secs - b.start_secs) * 1000.0).round().max(0.0) as u64;
         verdict = verdict.with_measurement(EquivalenceMeasurement {
@@ -750,13 +750,13 @@ mod tests {
         assert_eq!(v.donor_total_blocks, Some(2));
     }
 
-    /// Track B: empty level stream ⇒ no invented `bin_ms` / no measurement object.
+    /// Track B: empty level stream ⇒ unanswerable, not "zero blocks measured".
     #[test]
     fn derive_with_empty_levels_omits_measurement() {
         let v = derive_gap_equivalence(&[], 10.0, 10.5, None, None, &on());
         assert!(v.measurement.is_none(), "{v:?}");
-        assert_eq!(v.a_gap_total_blocks, Some(0));
-        assert_eq!(v.a_gap_silent_blocks, Some(0));
+        assert_eq!(v.a_gap_total_blocks, None, "{v:?}");
+        assert_eq!(v.a_gap_silent_blocks, None, "{v:?}");
     }
 
     /// The gate is off by default: even a clean dropout classifies NotEvaluated (advisory computes with

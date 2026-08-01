@@ -279,7 +279,8 @@ reading source. Provenance only — nothing classifies on it. Spec:
 
 Also flat beside the signals: `a_gap_silent_blocks` / `a_gap_total_blocks` and the donor pair. The
 bin-divergence check is `a_gap_total_blocks × measurement.bin_ms ≈ span_secs` (I1 class). Absent
-`measurement` means a pre-Track-B corpus, or a scan with an empty level stream (no invented `bin_ms`).
+`measurement` (and absent A population counts) means a pre-Track-B corpus, or a scan with an empty
+level stream — `None`, not `Some(0)`. Counts are only meaningful alongside a present `measurement`.
 
 `silent_core_probes` was **hard-deleted** from the emit/type once this landed. Committed fixtures may
 still carry the old JSON key — serde ignores it; do not rewrite fixtures just to strip it.

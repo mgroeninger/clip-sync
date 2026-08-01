@@ -241,8 +241,9 @@ fn reduction_token(r: clip_sync_repair::domain::gap_equivalence::ChannelReductio
     }
 }
 
-/// Recipe Δ (diag − scan): **diffs only**, when both sides carry `measurement`. Mirror of
-/// [`signal_deltas`] for the permanent instrument provenance (Track B §3d).
+/// Recipe Δ (diag − scan): **field diffs only**, when both sides carry `measurement`. The I2 /
+/// donor-window residuals are structural and constant per corpus — surface those once via
+/// [`instrument_line`]; per-row recipe Δ is for diverge rows or anomalies (§3d / §5).
 fn recipe_deltas(scan: &GapEquivalenceVerdict, refv: &GapEquivalenceVerdict) -> String {
     let (Some(s), Some(r)) = (&scan.measurement, &refv.measurement) else {
         return String::new();
@@ -278,10 +279,35 @@ fn recipe_deltas(scan: &GapEquivalenceVerdict, refv: &GapEquivalenceVerdict) -> 
     parts.join("  ")
 }
 
-/// Signal Δ then recipe Δ, space-joined; empty parts omitted.
-fn delta_line(scan: &GapEquivalenceVerdict, refv: &GapEquivalenceVerdict) -> String {
+/// Corpus-level instrument Δ from the first gap that carries both `measurement`s — the structural
+/// residuals (typically `ctx +1.0  donor core→nominal`) belong here, not on every agree row.
+fn instrument_line(corpus: &GapCorpus) -> Option<String> {
+    for fp in &corpus.gaps {
+        let (Some(scan), Some(diag)) = (fp.scan_equivalence.as_ref(), fp.equivalence.as_ref())
+        else {
+            continue;
+        };
+        let d = recipe_deltas(scan, diag);
+        if !d.is_empty() {
+            return Some(d);
+        }
+    }
+    None
+}
+
+/// Signal Δ always; recipe Δ only when the class diverges or the recipe differs from the corpus
+/// baseline (so agree rows are not a constant two-field wall).
+fn delta_line(
+    scan: &GapEquivalenceVerdict,
+    refv: &GapEquivalenceVerdict,
+    show_recipe: bool,
+) -> String {
     let sig = signal_deltas(scan, refv);
-    let recipe = recipe_deltas(scan, refv);
+    let recipe = if show_recipe {
+        recipe_deltas(scan, refv)
+    } else {
+        String::new()
+    };
     match (sig.is_empty(), recipe.is_empty()) {
         (true, true) => String::new(),
         (false, true) => sig,
@@ -293,8 +319,9 @@ fn delta_line(scan: &GapEquivalenceVerdict, refv: &GapEquivalenceVerdict) -> Str
 /// Print the per-gap table for one corpus and return its tally.
 fn print_detail(corpus: &GapCorpus) -> Summary {
     let block_ms = corpus.source.scan_recipe.scan_block_ms.unwrap_or(250);
+    let baseline = instrument_line(corpus).unwrap_or_default();
     println!(
-        "  {:<4} {:<20} {:<16} {:<16} {:<26} verdict",
+        "  {:<4} {:<20} {:<16} {:<16} {:<56} verdict",
         "gap",
         "range",
         format!("scan({block_ms}ms)"),
@@ -306,18 +333,21 @@ fn print_detail(corpus: &GapCorpus) -> Summary {
         else {
             continue;
         };
-        let verdict = match pair_verdict(scanv, refv) {
+        let pv = pair_verdict(scanv, refv);
+        let verdict = match pv {
             PairVerdict::Agree => "ok",
             PairVerdict::SafeDiverge => "diverge (safe)",
             PairVerdict::Dangerous => "⚠ DANGEROUS (scan drops, diag keeps)",
         };
+        let recipe = recipe_deltas(scanv, refv);
+        let show_recipe = pv != PairVerdict::Agree || (!recipe.is_empty() && recipe != baseline);
         println!(
-            "  {:<4} {:<20} {:<16} {:<16} {:<26} {verdict}",
+            "  {:<4} {:<20} {:<16} {:<16} {:<56} {verdict}",
             fp.index + 1,
             hms(fp.geometry.a_start_secs),
             class_label(scanv.class),
             class_label(refv.class),
-            delta_line(scanv, refv),
+            delta_line(scanv, refv, show_recipe),
         );
     }
     let s = summarize(corpus_pairs(corpus));
@@ -329,6 +359,9 @@ fn print_detail(corpus: &GapCorpus) -> Summary {
         println!("note: {} gap(s) lacked both verdicts (characterize a full corpus — no --fingerprint-gap subset)", s.unpaired);
     }
     println!("sources: {}", source_line(corpus));
+    if !baseline.is_empty() {
+        println!("instruments: {baseline}");
+    }
     s
 }
 
@@ -640,5 +673,49 @@ mod tests {
         assert_eq!(recipe_deltas(&scan, &scan), "");
         // Missing measurement → empty.
         assert_eq!(recipe_deltas(&dropout(), &diag), "");
+    }
+
+    /// Agree rows omit the corpus-baseline recipe Δ; diverge / anomaly rows keep it.
+    #[test]
+    fn delta_line_reserves_recipe_for_diverge_or_anomaly() {
+        use clip_sync_repair::domain::gap_equivalence::{
+            ChannelReduction, EquivalenceMeasurement, SpanKind,
+        };
+        let mut scan = dropout();
+        let mut diag = dropout();
+        let structural = EquivalenceMeasurement {
+            context_secs: 2.0,
+            bin_ms: 100,
+            reduction: ChannelReduction::Interleaved,
+            a_span: SpanKind::Core,
+            donor_span: SpanKind::Core,
+        };
+        scan.measurement = Some(structural.clone());
+        diag.measurement = Some(EquivalenceMeasurement {
+            context_secs: 3.0,
+            donor_span: SpanKind::Nominal,
+            ..structural.clone()
+        });
+        let baseline = recipe_deltas(&scan, &diag);
+        assert_eq!(baseline, "ctx +1.0  donor core→nominal");
+        // Agree + matches baseline ⇒ signal only (no recipe wall).
+        assert_eq!(
+            delta_line(&scan, &diag, /* show_recipe */ false),
+            signal_deltas(&scan, &diag)
+        );
+        // Diverge ⇒ recipe included.
+        let mut diag_drop = shared();
+        diag_drop.measurement = diag.measurement.clone();
+        assert!(
+            delta_line(&scan, &diag_drop, true).contains("donor core→nominal"),
+            "{}",
+            delta_line(&scan, &diag_drop, true)
+        );
+        // Agree but anomalous bin ⇒ recipe shown even when "show" is driven by != baseline.
+        let mut anom = diag.clone();
+        anom.measurement.as_mut().unwrap().bin_ms = 50;
+        let anom_recipe = recipe_deltas(&scan, &anom);
+        assert!(anom_recipe.contains("bin 100→50"), "{anom_recipe}");
+        assert_ne!(anom_recipe, baseline);
     }
 }

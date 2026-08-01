@@ -359,7 +359,9 @@ pub fn measure_gap_equivalence(
         donor_counts.map(|(silent, total)| silent as f64 / total as f64);
     classify_gap_equivalence(a_rms, noise_floor_db, donor_fraction, params).with_scan_provenance(
         floor_db,
-        (silent_bins, total_bins),
+        // Fine path always walks a bin grid (possibly empty) — `Some(0, 0)` is a real measurement
+        // of zero bins, unlike scan's empty level stream (`None`).
+        Some((silent_bins, total_bins)),
         donor_counts,
     )
 }
