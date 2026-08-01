@@ -18,19 +18,6 @@ Last updated: 2026-07-31.
 | Plan | Covers |
 |------|--------|
 | [TEMP-nway-donor-alignment-plan.md](docs/dev/TEMP-nway-donor-alignment-plan.md) | N-way donor alignment: repair one damaged copy from multiple donors — draft, not started |
-| [TEMP-fingerprint-provenance-plan.md](docs/dev/TEMP-fingerprint-provenance-plan.md) | Fingerprint-dump provenance — Track A + Track B shipped 2026-07-31; next large run unblocked on code |
-
-> **Recently archived:** [TEMP-gap-selection-deferred.md](docs/dev/archive/TEMP-gap-selection-deferred.md) — `--scan-window` refusal → [gap-vocabulary.md](docs/dev/gap-vocabulary.md); `--gaps-from` sketch kept in archive, **archived 2026-07-31**. · [TEMP-scan-recipe-plan.md](docs/dev/archive/TEMP-scan-recipe-plan.md) — `ScanRecipe` + JSON scan-params echo, **archived 2026-07-31**.
-
-> Gap-selection docs were split out of one ~1200-line plan on 2026-07-29; order settled the same day
-> ([archive/TEMP-gap-selection-sequencing-plan.md](docs/dev/archive/TEMP-gap-selection-sequencing-plan.md)):
-> thin v1 first, recipe later (recipe-first rejected); recipe unparked 2026-07-30 for script
-> same-recipe equality; sequencing archived after promote. Index-convention
-> prep shipped 2026-07-28
-> ([archive/TEMP-gap-index-convention-plan.md](docs/dev/archive/TEMP-gap-index-convention-plan.md));
-> durable rule in [gap-vocabulary.md](docs/dev/gap-vocabulary.md) § Gap numbering.
-
-**Recently archived:** [TEMP-gap-selection-plan.md](docs/dev/archive/TEMP-gap-selection-plan.md) / [TEMP-gap-selection-ranges-plan.md](docs/dev/archive/TEMP-gap-selection-ranges-plan.md) — gap selection v1 + v1.5 range tokens, **archived 2026-07-29**. · [TEMP-gap-selection-sequencing-plan.md](docs/dev/archive/TEMP-gap-selection-sequencing-plan.md) — gap-selection sequencing (thin v1 before recipe), **archived 2026-07-29**. · [TEMP-gap-index-convention-plan.md](docs/dev/archive/TEMP-gap-index-convention-plan.md) — gap-index convention (0-based data / 1-based display), **shipped 2026-07-28**: `source_gap_index` axis fix, `region_*` renames, `--fingerprint-gap` → 1-based, identity-vs-count display split. · [TEMP-rust-review-findings.md](docs/dev/archive/TEMP-rust-review-findings.md) — workspace Rust review ledger (P0–P3), **closed and archived 2026-07-27**: every finding fixed, withdrawn, or closed will-not-fix. Elective residue that outlived it: optional M-SILENT machine-readable report flags, the deferred `align_videos` module split, and the prepare-clone perf stretch. · [TEMP-fill-placement-axis-plan.md](docs/dev/archive/TEMP-fill-placement-axis-plan.md) — Phase A armed, Phase B slack exit → Phase C NO-GO (2026-07-26). Search slack narrowed to 1.0 s (extract-tail still 5.0); see [repair-perf.md](docs/dev/repair-perf.md) §5 #3.
 
 ## Open work
 
@@ -45,9 +32,19 @@ Survive archival of that meta doc. Not required for `--only-gaps` / `--skip-gaps
 | `limit_fill_to_mapped_region` on scan report | Wrong home; recipe plan explicitly out of scope — separate cleanup if ever moved |
 | Absolute B occupancy via `BlockLevel.silent` (not aggregate RMS) | Optional; `silent` is now retained for equivalence (F2). Fillability still uses aggregate `rms_db` vs abs floor — switch if multichannel false-unfillable shows up. |
 
-> **Done 2026-07-31** (recipe plan): JSON echoes `min_gap_ms` / effective `silence_hold_ms` /
-> normalized `absolute_silence_rms`; corpus `from_report` fills all five knobs — `complete_recipe`
-> deleted.
+### Fingerprint provenance follow-ups
+
+Leftovers from [archive/TEMP-fingerprint-provenance-plan.md](docs/dev/archive/TEMP-fingerprint-provenance-plan.md)
+(Tracks A + B shipped 2026-07-31). All three were **deliberately deferred**, each with a stated
+trigger — none is a known defect. Shipped behaviour: [gap-fingerprint.md](docs/dev/gap-fingerprint.md)
+§ *Source identity & the corpus library* and § *`measurement`*.
+
+| Item | Direction |
+|------|-----------|
+| I1-class bin-divergence warn in `equivalence-calibration` (optional; was out of that plan's DoD) | Emit lives: flag gaps where `a_gap_total_blocks × measurement.bin_ms` disagrees with the geometry span. The check is documented and the fields are on both verdicts, so this is only automating a query a human can already run. Trigger: a second bin-width divergence (I1 was found by reading source, which is what made the fields Derived) |
+| Row-level "no provenance" flag on `GapRow` | Deferred: `check.rs`'s health Warn plus the census's `(absent)` bucket already make an unanswerable corpus say so, and the pattern to mirror is `registration_from_legacy_lag`. Trigger: a report that needs to **filter** rows on it — nothing does today |
+| `bit_depth` string → `BitDepth` parser | Deferred: the forward pin (`bit_depth_tokens_are_pinned`) is what protects corpora already on disk; a parser is dead code until a consumer reads the token, and none does. `bit_depth` is stored-for-later by design |
+
 
 ### Dual-fit confidence axis
 
@@ -61,14 +58,6 @@ Phase B residue (the `gate_pass` / end-search correlation). Axis semantics:
 |------|-----------|
 | **Dual-fit `gate_pass` is a production mirror, not a discriminator — add a fingerprint confidence axis** | `gate_pass = min(pre_seam_r, post_seam_r) ≥ max(0.35, 0.12)` passes **263/263** on the 17-pair corpus. That is faithful, not broken: it reproduces the production gate exactly, and production's threshold sits far below the observed distribution (p05 of `smin` = 0.892) because `smin` is a ±600 ms argmax with no uniqueness term. Its value is provenance — "what did production decide" — so it should **not** be tightened. What's missing is a *separate fingerprint read* on whether the seam lag was unambiguous (analyzer / corpus roll-up strata — not a repair gate). The validators that discriminate are already emitted but ungated: `pre/post_seam_z` (p05 3.14, p25 4.91, median 7.86) and `pre/post_seam_prom` (p25 0.123). **Direction:** leave `gate_pass` alone (the goldens and corpus history read it); add derived fingerprint field `dualfit_confident` from min-z + min-prominence. **Do not** consolidate end-search length into dual-fit: on the throat cohort (n=65, where `span == gap`) the two disagree genuinely, not by dilution — `corr(fill−span, bridge−gap)` = +0.06, and tightening the amplitude floor drives it to −0.10; stratifying by min z reaches r = +0.68 only at n=8 / p=0.053, one of ~25 strata swept. In the z ≥ 6 cohort, 8 of 19 gaps show an end excursion of exactly 0 ms while dual-fit trims 4–28 ms. |
 
-### A/B channel-count mismatch on shared decode
-
-> **Done 2026-07-31:** fingerprint characterize refuses when `native_channels` disagree —
-> `SourceMeta.incomparable = channel_layout_mismatch`, empty `gaps`, B `duration_secs`/`id` use B's
-> layout. Production fill already skipped via `TrackLayoutMismatch`. Downmix not pursued.
-
-Carved out of [TEMP-fingerprint-provenance-plan.md](docs/dev/TEMP-fingerprint-provenance-plan.md) §2
-(*Out of scope for Track A provenance; measurement refuse shipped separately*).
 
 ### Repair R6 follow-ups
 
