@@ -246,7 +246,8 @@ the dump itself never drops gaps. Production plan-time drop is separate and **on
 
 They feed the **same classifier**. They once did so from **differently defined** inputs; through
 2026-07-30/31 those definitions were converged one at a time (F15, then I1, then I3), each validated on
-media. **One difference remains, deliberately.** Read them accordingly.
+media. Noise-floor context followed (both ±`EQUIVALENCE_CONTEXT_SECS`). What remains is not a
+tunable parameter split — see the open rows at the bottom of the table. Read them accordingly.
 
 - **`scan_equivalence` is authoritative.** It is the verdict production acts on (`skip_equivalent_gaps`),
   measured on scan blocks (size = the `scan_block_ms` recipe knob — not a constant, and not 250 ms).
@@ -274,7 +275,8 @@ Do not cite the old table either — it described defects that no longer exist:
 | channel reduction | **converged** (F15) | both interleaved power mean. This was the *dominant* noise-floor term (Cauchy–Schwarz bounds downmix ≤ interleaved, gap up to `10·log10(N)` = 7.78 dB at 6ch) |
 | bin width | **converged** (I1) | the overlay had inherited `gap_signature_bin_ms` = 50 ms; now `scan_block_ms`. This is the row that retired the word "fine" |
 | donor predicate | **converged** (I3) | the diagnostic path now applies scan's `b.silent ‖ rms < floor` disjunction |
-| **noise-floor context** | **open by choice** (I2) | ±2.0 s (scan) vs ±3.0 s (diagnostic). Median **0.606 dB**, the diagnostic side still reads **lower** ⇒ smaller `a_below_noise` ⇒ away from `repairable_dropout`. One gap of ten flips, safe direction |
+| noise-floor context | **converged** | both ±2.0 s (`EQUIVALENCE_CONTEXT_SECS`). The diagnostic path had briefly used `gap_signature_context_secs` = 3.0 by inheritance from the signature job, never by choice for this one |
+| **bin lattice phase** | **open, not convergeable by parameter** | scan bins on its media-absolute timeline; the overlay bins from `gap_start − context_frames` (A) and the donor window start (B), with a ragged final bin at full weight. Equal spans, counts and floors still disagree by a block |
 | **donor window** | **open, small** | scan maps the **core**, the diagnostic path the **nominal** `b_mapped` span. Median `donor_silence_fraction` delta 0.008 (max 0.067), every gap within ±1 block, mixed signs |
 
 So the diagnostic path is still the **more aggressive** side, but only by the last two rows, and only
@@ -309,7 +311,7 @@ reading source. Provenance only — nothing classifies on it. Spec:
 
 | field | meaning |
 |---|---|
-| `context_secs` | noise-floor context half-width (scan 2.0 / diagnostic 3.0 — the I2 residual) |
+| `context_secs` | noise-floor context half-width (`EQUIVALENCE_CONTEXT_SECS` = 2.0 on both sides) |
 | `bin_ms` | bin width **actually measured** (from the level stream on scan; `scan_block_ms` on diagnostic) |
 | `reduction` | `interleaved` on both paths today |
 | `a_span` | `core` on both today (block-confirmed / raw gap) |
@@ -322,16 +324,17 @@ level stream — `None`, not `Some(0)`. Counts are only meaningful alongside a p
 
 `silent_core_probes` was **hard-deleted** from the emit/type once this landed. Committed fixtures may
 still carry the old JSON key — serde ignores it; do not rewrite fixtures just to strip it.
-`noise_floor_probes` stays (I2 attribution).
+`noise_floor_probes` still ships on the diagnostic `equivalence` verdict (see below); `scan_equivalence`
+never fills it, so the key is omitted there.
 
-#### `equivalence.noise_floor_probes` — separating the second axis's three variables
+#### `equivalence.noise_floor_probes` — context × bin × reduction counterfactuals
 
-**The one surviving axis** (I2). Both paths estimate the noise floor the *same way* (median of context
-bins outside the gap), both now at `scan_block_ms` bins under the interleaved reduction, but over
-**±2.0 s** (scan) vs **±3.0 s** (diagnostic); the diagnostic side reads systematically lower, by a
-median 0.606 dB. It began
-as several variables against one observed difference, which is why the probe emits a grid — the grid is
-what let bin size and reduction be charged separately and removed, leaving the window alone:
+Both live paths estimate the noise floor the *same way* (median of context bins outside the gap), at
+`scan_block_ms` bins, interleaved reduction, over **±2.0 s**. The grid is not a residual between
+front-ends — it is a labelled counterfactual: it still carries the `gap_signature_context_secs` row, so
+"would a wider window have decided differently?" is answerable from provenance instead of from an
+unlabelled difference inside the verdict being compared. The same grid is what let bin size and
+reduction be charged separately before those axes converged:
 
 | field | meaning |
 |---|---|

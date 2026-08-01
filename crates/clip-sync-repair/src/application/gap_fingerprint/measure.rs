@@ -2501,8 +2501,9 @@ pub fn characterize_gaps_from_decode(
         // for `gap_floor_db` (a **max**) and `donor_silence_fraction` (a **threshold-crossing fraction**)
         // finer bins are upward-biased, measured at max ≥ coarser on 10/10 gaps and the donor fraction
         // biased up on 5/6. `gap_signature_bin_ms` itself is untouched — it has production consumers in
-        // `patch_audio::geometry` / `::region`. The context window (2.0 s vs 3.0 s) stays split; that is
-        // I2 and still open. See `docs/dev/archive/TEMP-equivalence-instrument-convergence.md` § I1.
+        // `patch_audio::geometry` / `::region`. The context window (I2) was split for that same reason
+        // and is **closed 2026-08-01 by removal** — see the `noise_floor_probe` call below.
+        // See `docs/dev/archive/TEMP-equivalence-instrument-convergence.md` § I1.
         let equiv_bin_ms = report.recipe.scan_block_ms();
         //
         // The donor goes in as **PCM at the nominal `b_mapped` span**, not as
@@ -2539,7 +2540,22 @@ pub fn characterize_gaps_from_decode(
             ch,
             gap_frames.clone(),
             sample_rate,
-            cfg.gap_signature_context_secs,
+            // I2 closed 2026-08-01 by **removal, not convergence**: this overlay now estimates the
+            // noise floor over scan's window. Note this is the *argument*, not the field —
+            // `gap_signature_context_secs` keeps its 3.0 s for `build_gap_fingerprint`'s context
+            // frames, the B-extract padding below, and its production consumers in
+            // `patch_audio::geometry` / `::region`. Only the equivalence floor moves.
+            //
+            // Why removal rather than a converged value: 3.0 s was never chosen for *this* job. It is
+            // the sibling field of `gap_signature_bin_ms`, which I1 found had been "inherited by
+            // proximity, never by choice" for the same reason — so the split was one considered value
+            // (scan's, named and documented) against one accident, not two judgements in tension. The
+            // header here claimed "both values encode a real judgement"; that was true of scan's only.
+            //
+            // The 3.0 s reading is **not lost** — `noise_floor_probe_grid` below still carries its row,
+            // which is where a context-sensitivity question belongs: a labelled axis in the provenance,
+            // not an unlabelled difference inside the verdict being compared.
+            crate::domain::gap_equivalence::EQUIVALENCE_CONTEXT_SECS,
             equiv_bin_ms,
             ChannelReduction::Interleaved,
         );
@@ -2594,7 +2610,11 @@ pub fn characterize_gaps_from_decode(
         // calibration diff printed `core` on both sides of every one of the 10 dangerous divergences the
         // span mismatch caused. A hardcoded token cannot report a fallback, so it does not get to be one.
         let measurement = EquivalenceMeasurement {
-            context_secs: cfg.gap_signature_context_secs,
+            // Must track the `noise_floor_probe` argument above, not `cfg` — a token reporting the
+            // config field after the call site stopped reading it would be the third instance this
+            // month of provenance describing an intent instead of a measurement (`a_span: core` on a
+            // raw-span read; `donor_span: core` with no donor). Both sides now read 2.0.
+            context_secs: crate::domain::gap_equivalence::EQUIVALENCE_CONTEXT_SECS,
             bin_ms: equiv_bin_ms,
             reduction: ChannelReduction::Interleaved,
             a_span: span_kind,
@@ -4520,7 +4540,21 @@ mod tests {
                 .measurement
                 .as_ref()
                 .expect("measurement attached at caller");
-            assert!((m.context_secs - repair.gap_signature_context_secs).abs() < f64::EPSILON);
+            // Scan's window, not `repair.gap_signature_context_secs` — I2 closed by removal
+            // 2026-08-01. Asserted against the constant so this fails if the call site drifts back
+            // onto the config field while the token keeps saying otherwise.
+            assert!(
+                (m.context_secs - crate::domain::gap_equivalence::EQUIVALENCE_CONTEXT_SECS).abs()
+                    < f64::EPSILON,
+                "the equivalence floor must be measured over scan's context window"
+            );
+            assert!(
+                (repair.gap_signature_context_secs
+                    - crate::domain::gap_equivalence::EQUIVALENCE_CONTEXT_SECS)
+                    .abs()
+                    > f64::EPSILON,
+                "fixture must keep the two values distinct or the assertion above is vacuous"
+            );
             assert_eq!(m.bin_ms, report.recipe.scan_block_ms());
             assert_eq!(m.reduction, ChannelReduction::Interleaved);
             assert_eq!(

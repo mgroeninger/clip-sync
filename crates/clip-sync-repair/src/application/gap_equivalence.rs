@@ -24,11 +24,24 @@
 //! I1 the two front-ends compute `gap_floor_db` and `a_gap_rms_db` **identically** — 0.00 dB apart on all
 //! ten gaps of the characterized pair.
 //!
-//! **One difference remains open by choice:** the noise-floor context window, ±2.0 s (scan) vs ±3.0 s
-//! (here). Measured residual **0.606 dB** median, flipping one gap of ten in the safe direction; not
-//! converged because both values encode a real judgement and `gap_signature_context_secs` has unrelated
-//! consumers. A surviving divergence is therefore informative, but still not proof the scan gate is wrong.
+//! **I2 (the noise-floor context window) is closed 2026-08-01 — by removal, not convergence.** Both
+//! front-ends now estimate the floor over ±[`EQUIVALENCE_CONTEXT_SECS`]. This paragraph used to argue the
+//! ±3.0 s split stayed open because "both values encode a real judgement"; that was true of scan's value
+//! only. The 3.0 s came from `gap_signature_context_secs`, sibling of the `gap_signature_bin_ms` that I1
+//! had already found was inherited by proximity for this job — one considered value against one accident,
+//! not two judgements in tension. Only the *argument* moved: the field keeps 3.0 s for its unrelated
+//! consumers, and `noise_floor_probe_grid` still carries the 3.0 s row, so context sensitivity remains
+//! measurable as a labelled axis rather than as an unlabelled difference inside the compared verdict.
+//!
+//! Do not read the old residual figures (0.606 dB median, "one gap of ten") — they were measured on one
+//! pair, and re-measurement on 33 gaps after the A-span fix gave median 1.41 dB / max 11.96 dB. The floor
+//! reaches exactly one class boundary (`RepairableDropout` ↔ `AmbientQuiet`; `SharedSilence` is decided by
+//! the donor alone), so its blast radius is gaps with an occupied donor near the −`dropout_margin_db` line.
 //! `docs/dev/gap-fingerprint.md` § *`equivalence` vs `scan_equivalence`*.
+//!
+//! **Still open, and not convergeable by parameter:** the two paths bin on differently-*phased* lattices
+//! (scan on its media-absolute scan-time timeline; this path from `gap_start − context_frames` on A and
+//! from the donor window start on B), which is what flips single blocks at equal counts and equal floors.
 
 use crate::domain::gap_equivalence::{
     aggregate_rms_db, classify_gap_equivalence, ChannelReduction, GapEquivalenceParams,

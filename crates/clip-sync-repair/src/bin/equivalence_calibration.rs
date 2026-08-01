@@ -22,7 +22,7 @@
 //! | A span | scan blocks by centre-containment in the silent **core** | *same* | **converged** (2026-08-01) |
 //! | bin width | `scan_block_ms` | *same* | **converged** (I1, 2026-07-30) |
 //! | donor predicate | `silent` bit **OR** `rms < gap_floor` | *same* | **converged** (I3, 2026-07-31) |
-//! | noise floor | median, ±2.0 s (`EQUIVALENCE_CONTEXT_SECS`) | median, **±3.0 s** (`gap_signature_context_secs`) | **accepted residual** (I2) |
+//! | noise floor | median, ±2.0 s (`EQUIVALENCE_CONTEXT_SECS`) | *same* | **closed** (I2, 2026-08-01) |
 //! | donor window | the **core**, offset-mapped | *same* | **converged** (2026-08-01) |
 //!
 //! **The A-span / donor-window rows converged on 2026-08-01, after the corpus refuted them.** Both had
@@ -43,20 +43,37 @@
 //! divergence in an old corpus to anything else. Do **not** re-quote the 0.008 / 0.067 / 0.606 dB figures
 //! below as corpus-wide bounds.
 //!
-//! **The remaining accepted residual, with measured sizes** (one characterized pair, ten gaps — this
-//! bounds the axis on that pair, not on the corpus):
+//! **I2 closed 2026-08-01 — by removal, not convergence, and the distinction matters.** The overlay now
+//! passes `EQUIVALENCE_CONTEXT_SECS` to its `noise_floor_probe`. Nothing was measured to decide that 2.0 s
+//! beats 3.0 s; what was decided is that the split was never a judgement on both sides. The 3.0 s came
+//! from `gap_signature_context_secs`, sibling of the `gap_signature_bin_ms` that I1 had already found was
+//! inherited by proximity rather than chosen for this job, so "each value encodes a real judgement" (the
+//! claim this paragraph used to make) held for scan's value alone. Only the argument moved — the field
+//! keeps 3.0 s for `build_gap_fingerprint`, the B-extract padding, and `patch_audio::geometry` / `::region`.
 //!
-//! - **Noise-floor context window** (I2): median |diag − scan| **0.606 dB**, flipping **one** gap of ten,
-//!   in the safe direction. Deliberately not converged: 2.0 s and 3.0 s each encode a real judgement
-//!   about how much surrounding material defines "the noise floor here", and `gap_signature_context_secs`
-//!   is a configurable parameter with unrelated consumers. Re-open if a broader corpus flips gaps in the
-//!   **dangerous** direction, or flips more than a small minority — this tool's exit code already
-//!   automates the former trigger.
-//!   The 39-pair corpus measured this axis at median **1.374 dB** / max 26.7 dB — four times the
-//!   documented figure, so treat 0.606 dB as a one-pair observation, not a bound. It has not yet been
-//!   re-measured with the spans converged, which is the read that matters: until 2026-08-01 the
-//!   noise-floor delta and the span delta were confounded (a different A window is also a different
-//!   context window). Re-measure on a fresh dump before deciding whether I2 stays accepted.
+//! Re-measured after the A-span fix and before the removal (4 pairs / 33 gaps, the first un-confounded
+//! read): median **1.41 dB**, max **11.96 dB** — against a documented 0.606 dB that was one pair of ten.
+//! **Do not quote 0.606 or 1.374 dB.** The axis is now unmeasurable from the live verdicts by
+//! construction; take it from the `noise_floor_probes` grid, which still carries the 3.0 s row.
+//!
+//! **What I2's size actually bounds.** The floor reaches exactly one class boundary —
+//! `RepairableDropout` ↔ `AmbientQuiet`. `SharedSilence` (448 of 802 gaps on the 39-pair corpus, most of
+//! all drops) is decided by the donor fraction alone and is floor-independent. So the exposed population
+//! is gaps with an occupied donor sitting near the −`dropout_margin_db` line: on the 39-pair corpus,
+//! **23 gaps within 1 dB** and 78 within 3 dB of it; on the 4-pair re-dump, zero within 2 dB, and
+//! swapping the two floors flipped `is_dropout` on **0/33**. For gaps that close to the boundary no
+//! achievable convergence decides them — that tail wants a fail-safe margin band (refuse `AmbientQuiet`
+//! inside it; a false keep costs a declined patch attempt, a false drop costs an unrepaired hole), which
+//! is the open question this one replaces.
+//!
+//! **The axis that is NOT convergeable by parameter**, and now the largest known one: the two paths bin on
+//! differently-*phased* lattices — scan on its media-absolute scan-time block timeline, the overlay from
+//! `gap_start − context_frames` on A and from the donor window start on B, with a ragged final bin
+//! entering the median at full weight. Equal spans, equal counts and equal floors still disagree by a
+//! block (observed: `donor_silent_blocks` 3 vs 2, straddling the 0.5 donor threshold). Note this was
+//! **confounded with I2** until the removal, since the A lattice origin moves with the context width —
+//! which is why the probe grid's own 2.0-vs-3.0 delta swung up to 10.4 dB and changed sign on a third of
+//! gaps, far more than a 1 s widening of a median-over-40-bins estimate can explain.
 //!
 //! **The diagnostic side is a second opinion, not an oracle** — but the reason has changed, so do not
 //! reach for the old one. Until 2026-07-30 this header argued that every known difference biased the
