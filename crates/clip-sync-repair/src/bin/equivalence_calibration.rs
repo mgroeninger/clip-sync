@@ -19,14 +19,32 @@
 //! | A RMS | silent blocks only, over the silent **core** | *same* | **converged** (F15) — 0.00 dB apart on 10/10 |
 //! | `gap_floor` | max of **silent** A blocks (F2/R1-filtered) | *same* | **converged** (F15) — 0.00 dB apart on 10/10 |
 //! | reduction | interleaved | *same* | **converged** (F15) |
-//! | A span | scan blocks by centre-containment in the raw gap | *same* | **converged** (F15) |
+//! | A span | scan blocks by centre-containment in the silent **core** | *same* | **converged** (2026-08-01) |
 //! | bin width | `scan_block_ms` | *same* | **converged** (I1, 2026-07-30) |
 //! | donor predicate | `silent` bit **OR** `rms < gap_floor` | *same* | **converged** (I3, 2026-07-31) |
 //! | noise floor | median, ±2.0 s (`EQUIVALENCE_CONTEXT_SECS`) | median, **±3.0 s** (`gap_signature_context_secs`) | **accepted residual** (I2) |
-//! | donor window | the **core**, offset-mapped | the **nominal** `b_mapped` span | **accepted residual** — ~1 block |
+//! | donor window | the **core**, offset-mapped | *same* | **converged** (2026-08-01) |
 //!
-//! **The two accepted residuals, with measured sizes** (one characterized pair, ten gaps — this bounds
-//! the axes on that pair, not on the corpus):
+//! **The A-span / donor-window rows converged on 2026-08-01, after the corpus refuted them.** Both had
+//! been recorded as accepted residuals of "~1 block", measured on one pair / ten gaps. The 39-pair v0.5.0
+//! corpus (802 comparable gaps) put them at: donor window differing on **100 %** of gaps, 42 % by more
+//! than one block; `donor_silence_fraction` Δ median **0.025**, max **0.333**; and **10 dangerous**
+//! divergences where the 17-pair predecessor over the same media had **0**. The cause was one defect, not
+//! two: scan windows on `SilentRun::core_*` while the fingerprint's overlay windowed on
+//! `geometry.a_*`/`b_mapped_*`, the raw hold-bridged run — the core is narrower by 1–2 blocks on 66.9 % of
+//! gaps and the difference is fade shoulder, non-silent, which drags the donor fraction under 0.5. The
+//! overlay now takes both spans off the index-parallel scan verdict
+//! (`GapEquivalenceVerdict::a_span_secs` / `donor_span_secs`), so they agree by construction.
+//!
+//! **This is a property of the dumping binary, not of this tool.** A corpus dumped before 2026-08-01
+//! still carries the divergence; `measurement.a_span` / `donor_span` now distinguish the cases
+//! truthfully (they read `core` on both sides throughout the era when one side measured the raw span —
+//! the provenance field concealed exactly what it was added to expose). Re-dump before attributing a
+//! divergence in an old corpus to anything else. Do **not** re-quote the 0.008 / 0.067 / 0.606 dB figures
+//! below as corpus-wide bounds.
+//!
+//! **The remaining accepted residual, with measured sizes** (one characterized pair, ten gaps — this
+//! bounds the axis on that pair, not on the corpus):
 //!
 //! - **Noise-floor context window** (I2): median |diag − scan| **0.606 dB**, flipping **one** gap of ten,
 //!   in the safe direction. Deliberately not converged: 2.0 s and 3.0 s each encode a real judgement
@@ -34,26 +52,31 @@
 //!   is a configurable parameter with unrelated consumers. Re-open if a broader corpus flips gaps in the
 //!   **dangerous** direction, or flips more than a small minority — this tool's exit code already
 //!   automates the former trigger.
-//! - **Donor window**: median `donor_silence_fraction` delta **0.008** (max 0.067), every gap within
-//!   ±1 `scan_block_ms` of alignment, mixed signs.
+//!   The 39-pair corpus measured this axis at median **1.374 dB** / max 26.7 dB — four times the
+//!   documented figure, so treat 0.606 dB as a one-pair observation, not a bound. It has not yet been
+//!   re-measured with the spans converged, which is the read that matters: until 2026-08-01 the
+//!   noise-floor delta and the span delta were confounded (a different A window is also a different
+//!   context window). Re-measure on a fresh dump before deciding whether I2 stays accepted.
 //!
 //! **The diagnostic side is a second opinion, not an oracle** — but the reason has changed, so do not
 //! reach for the old one. Until 2026-07-30 this header argued that every known difference biased the
 //! fingerprint side toward `drop`, principally because its floor was unfiltered (inflated ⇒ more of B
 //! counts silent) and its noise floor read lower on 10/10 gaps by ~3–19 dB. **Both of those terms are
 //! gone**: the floor is silence-filtered and the reduction is fixed, so the two floors agree exactly and
-//! the noise-floor delta is mixed-sign at 0.606 dB. Bin-size granularity carried the drop-bias
-//! afterwards; I1 removed that too. What remains is small, and only the noise-floor window is still
-//! one-sided in the safe direction — the donor window is **mixed-sign**, so do not say *both* residuals
-//! bias toward `drop`. Both
+//! the noise-floor delta is mixed-sign. Bin-size granularity carried the drop-bias afterwards; I1
+//! removed that too. The span mismatch that replaced them was *not* mixed-sign — it was one-sided in the
+//! **dangerous** direction, which is how it was caught — and it is now converged. Both
 //! floors are recorded per gap (`GapEquivalenceVerdict::gap_floor_db`) so a divergence can be attributed
 //! rather than assumed.
 //!
-//! **Measured population (2026-07-30):** 5 divergent / 297 gaps (1.7 %) over a 17-pair corpus,
-//! recipe-invariant, with **0 dangerous**. The mechanism is a donor sitting *between* the two floors —
-//! silent to the diagnostic read, occupied to scan — pinned media-free by
-//! `tests/gap_corpus/fingerprints/equivalence_divergence/`. Note the population was measured **before**
-//! I1/I3 landed and against the pre-I1 instrument; the divergence count should now be lower.
+//! **Measured populations.** 2026-07-30: 5 divergent / 297 gaps (1.7 %) over a 17-pair corpus, **0
+//! dangerous** — measured before I1/I3 and against the pre-I1 instrument. 2026-08-01, over the *same
+//! media* (the first 17 pairs of the 39-pair corpus, byte-identical by `a_source.id`/`b_source.id`):
+//! **286 compared / 24 divergent / 4 dangerous**, and 802 / 67 / 10 across all 39. The convergence work
+//! predicted divergence would fall; it rose ~5×, and the delta was instrument, not media — the span
+//! mismatch above. Any population quoted here is a property of the binary that produced the dump. The
+//! divergence *mechanism* — a donor sitting between the two floors, silent to one read and occupied to
+//! the other — is pinned media-free by `tests/gap_corpus/fingerprints/equivalence_divergence/`.
 //!
 //! Read `0 dangerous` with one caveat: every pair in that corpus is lossy and never reaches exact digital
 //! silence. Until I3 (2026-07-31) the fingerprint donor predicate lacked scan's `silent`-bit disjunct, and
@@ -125,6 +148,21 @@ fn pair_verdict(scan: &GapEquivalenceVerdict, refv: &GapEquivalenceVerdict) -> P
     } else {
         PairVerdict::SafeDiverge
     }
+}
+
+/// Why a gap can carry neither verdict, phrased so the reader is not sent after the wrong remedy.
+///
+/// The old wording blamed `--fingerprint-gap` subsetting. The dominant real cause is a **head gap**
+/// (A starts in silence at t=0) in a pair whose alignment offset is **negative**: B's mapped window
+/// would start before zero, `Gap::mapped_b_span` fails closed, and the fingerprint's per-gap loop
+/// `continue`s before it can attach either verdict. Measured on the 39-pair v0.5.0 corpus: 27/27
+/// unpaired gaps were exactly that shape. Subsetting is still listed — it is a real, if rarer, cause.
+fn unpaired_note(unpaired: usize) -> String {
+    format!(
+        "{unpaired} gap(s) lacked both verdicts — typically a head gap (A silent from t=0) in a pair \
+         with a negative offset, so B's window maps before zero and no donor exists; also produced by \
+         a --fingerprint-gap subset"
+    )
 }
 
 /// Tallies across a corpus (or a roll-up total).
@@ -356,7 +394,7 @@ fn print_detail(corpus: &GapCorpus) -> Summary {
         s.compared, s.divergent, s.dangerous
     );
     if s.unpaired > 0 {
-        println!("note: {} gap(s) lacked both verdicts (characterize a full corpus — no --fingerprint-gap subset)", s.unpaired);
+        println!("note: {}", unpaired_note(s.unpaired));
     }
     println!("sources: {}", source_line(corpus));
     if !baseline.is_empty() {
@@ -486,6 +524,12 @@ fn print_rollup(parent: &Path) -> ExitCode {
         total.divergent,
         total.dangerous,
     );
+    // Roll-up mode tallied `unpaired` but never printed it, so gaps excluded from the comparison
+    // were visible only by spotting `gaps` != `cmp` on an individual row. A headline count over a
+    // population that silently shed members is the §1.1 defect in miniature — say what was skipped.
+    if total.unpaired > 0 {
+        println!("note: {}", unpaired_note(total.unpaired));
+    }
     // Census only — a corpus mixing codecs is a stratification fact, never an exit-code condition.
     let census = codec_census
         .iter()

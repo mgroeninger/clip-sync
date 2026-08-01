@@ -126,6 +126,24 @@ pub struct GapEquivalenceVerdict {
     pub donor_silent_blocks: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub donor_total_blocks: Option<usize>,
+    /// The A-side window actually measured, `(start, end)` in seconds on **A's** timeline.
+    ///
+    /// [`EquivalenceMeasurement::a_span`] records the window's *kind*; this records its *extent*.
+    /// The token alone proved insufficient: through 2026-08-01 both front-ends emitted `core` while
+    /// measuring different intervals — scan the block-confirmed silent core, the diagnostic path the
+    /// raw hold-bridged run — and `a_gap_total_blocks` disagreed on 66.9 % of a 39-pair corpus with
+    /// nothing in the dump able to say why. A span the reader can subtract makes that arithmetic,
+    /// not archaeology.
+    ///
+    /// It is also the **transport** for the convergence fix: the diagnostic overlay reads this off
+    /// the index-parallel scan verdict so both paths bin one interval by construction rather than by
+    /// agreement. Provenance plus plumbing; never classified on.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub a_span_secs: Option<(f64, f64)>,
+    /// The donor window actually measured, `(start, end)` in seconds on **B's** timeline. `None`
+    /// when no donor was mapped. Same rationale as [`Self::a_span_secs`].
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub donor_span_secs: Option<(f64, f64)>,
     /// The one measurement recipe that produced this verdict — see [`EquivalenceMeasurement`].
     /// Absent on pre-Track-B corpora and when the scan path has no level stream to derive `bin_ms`
     /// from. Provenance only; never classified on.
@@ -243,6 +261,8 @@ impl GapEquivalenceVerdict {
             a_gap_total_blocks: None,
             donor_silent_blocks: None,
             donor_total_blocks: None,
+            a_span_secs: None,
+            donor_span_secs: None,
             measurement: None,
             noise_floor_probes: Vec::new(),
         }
@@ -400,17 +420,23 @@ fn median_db(mut vals: Vec<f64>) -> Option<f64> {
 ///
 /// Also records measurement **provenance** on the verdict (`gap_floor_db`, A/donor block populations,
 /// [`EquivalenceMeasurement`]) — recorded, never classified on.
+/// `core_start_secs`/`core_end_secs` are the **block-confirmed silent core** (`SilentRun::core_*`),
+/// not the raw hold-bridged run — every caller passes the core and the classification is calibrated
+/// on it. They were named `a_start_secs`/`a_end_secs` until 2026-08-01, which read as the nominal gap
+/// span; the fingerprint's diagnostic path trusted the signature over the call site and bound the raw
+/// span, diverging on 66.9 % of a 39-pair corpus while both sides printed `a_span: core`. The names
+/// now say which interval this is.
 pub fn derive_gap_equivalence(
     a_levels: &[BlockLevel],
-    a_start_secs: f64,
-    a_end_secs: f64,
+    core_start_secs: f64,
+    core_end_secs: f64,
     b_levels: Option<&[BlockLevel]>,
     b_mapped: Option<(f64, f64)>,
     params: &GapEquivalenceParams,
 ) -> GapEquivalenceVerdict {
     let centre_in_gap = |b: &BlockLevel| {
         let c = block_center(b);
-        c >= a_start_secs && c < a_end_secs
+        c >= core_start_secs && c < core_end_secs
     };
     // Silent A gap blocks only — hold can place non-silent levels inside the core interval.
     let gap_silent_blocks = || a_levels.iter().filter(|b| b.silent && centre_in_gap(b));
@@ -423,14 +449,14 @@ pub fn derive_gap_equivalence(
         .fold(f64::NEG_INFINITY, f64::max);
 
     // A context blocks: within the context window but outside the gap → median = local noise floor.
-    let ctx_lo = a_start_secs - EQUIVALENCE_CONTEXT_SECS;
-    let ctx_hi = a_end_secs + EQUIVALENCE_CONTEXT_SECS;
+    let ctx_lo = core_start_secs - EQUIVALENCE_CONTEXT_SECS;
+    let ctx_hi = core_end_secs + EQUIVALENCE_CONTEXT_SECS;
     let noise_floor_db = median_db(
         a_levels
             .iter()
             .filter(|b| {
                 let c = block_center(b);
-                c >= ctx_lo && c < ctx_hi && !(c >= a_start_secs && c < a_end_secs)
+                c >= ctx_lo && c < ctx_hi && !(c >= core_start_secs && c < core_end_secs)
             })
             .map(|b| b.rms_db)
             .collect(),
@@ -466,6 +492,12 @@ pub fn derive_gap_equivalence(
     let mut verdict =
         classify_gap_equivalence(a_gap_rms_db, noise_floor_db, donor_silence_fraction, params)
             .with_scan_provenance(gap_floor, a_gap_blocks, donor_blocks);
+    // Record the intervals themselves, not just their kind — and hand the core to the fingerprint's
+    // diagnostic path, which has no other way to see it (`GapFingerprint::geometry` carries the raw
+    // span). Unconditional on `a_levels`: the window is a property of the caller's gap, known even
+    // when no block fell in it.
+    verdict.a_span_secs = Some((core_start_secs, core_end_secs));
+    verdict.donor_span_secs = b_mapped;
     // `bin_ms` is a property of the level stream, not the gap population — any block's width works.
     if let Some(b) = a_levels.first() {
         let bin_ms = ((b.end_secs - b.start_secs) * 1000.0).round().max(0.0) as u64;

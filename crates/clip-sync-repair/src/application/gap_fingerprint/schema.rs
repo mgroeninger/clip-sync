@@ -113,7 +113,63 @@ pub struct SourceMeta {
     /// Set when pairwise characterization was refused. Optional so pre-gate corpora still parse.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub incomparable: Option<IncomparableReason>,
+    /// Dotted paths of per-gap fields the emitting path **never populated**, so their serialized values
+    /// are structural defaults rather than measurements — see [`NOT_MEASURED_BY_PROJECTION`].
+    ///
+    /// Every field named here is a non-`Option` in [`GapFingerprint`], so it cannot express "not asked":
+    /// it serializes as `0.0` / `false` / `[]` / `-120.0`, which is exactly what a real measurement of a
+    /// silent, flat, anchorless gap looks like. Fields that *can* go absent (`structure`, `seams`,
+    /// `lag`, `second_peak_r`) need no entry — absence already says it.
+    ///
+    /// This exists because the 2026-07-31 39-pair corpus recorded `collar_rms_peak_ratio: 0.0` and
+    /// `anchors: {pre: [], post: []}` on **802 of 802** full-tier gaps while the committed golden
+    /// (`curated/01`, also full tier) carries `0.066` and five anchors per side. Nothing in the corpus
+    /// distinguished the two, so a reader diffing them sees a measurement change where the truth is a
+    /// path change. The provenance plan's §1.1 principle: an unanswerable corpus must **say so**.
+    ///
+    /// Empty on a corpus whose emitting path measures everything, and absent on any corpus written
+    /// before this field existed — which is itself unambiguous, since those predate the guarantee.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub not_measured: Vec<String>,
 }
+
+/// The per-gap fields the **production projection path** (`project.rs`) leaves at their structural
+/// defaults. Recorded in [`SourceMeta::not_measured`]; asserted against the emitted corpus by the
+/// harness `--check`.
+///
+/// Grouped by why, since the groups have different futures:
+/// - `levels.*` — `projected_level_profile` keeps only the two floor summaries it can recover from
+///   `LevelTags`; the envelope itself is not carried. `floor_db` / `speech_peak_db` sit at
+///   `SILENCE_FLOOR_DB`, which reads as a real −120 dB measurement.
+/// - `silence.*` / `contour.*` / `anchors.*` — never computed on this path (`project.rs` builds them
+///   from literals / `AnchorSet::default()`).
+/// - `outcome.seam_shape` — a plain `String` hardcoded `String::new()` at **both** emit sites, unlike
+///   its `Option` siblings `fit_path` / `signature_mode`, which correctly vanish.
+///
+/// `structure` / `seams` are deliberately **not** listed: they are `Option` and omitted outright
+/// (Finding F1, deferred — see `docs/dev/archive/TEMP-pipeline-perf-redesign-plan.md` §8g.4a), so the
+/// corpus already states their absence in the only way that matters.
+///
+/// **Scope: [`DetailTier::Full`] gaps only** — and note the inversion. A gap the path *measured* is
+/// rebuilt wholesale by `spec_to_fingerprint_summary`, which drops these fields; a gap it *could not*
+/// measure keeps its initial `build_gap_fingerprint` values and still carries them for real. So the
+/// unmeasured fields survive exactly on the gaps that failed. On the 39-pair corpus that is 802 gaps
+/// stripped and 27 (all head gaps) intact.
+pub const NOT_MEASURED_BY_PROJECTION: &[&str] = &[
+    "levels.bin_ms",
+    "levels.profile_db",
+    "levels.floor_db",
+    "levels.speech_peak_db",
+    "silence.collar_rms_peak_ratio",
+    "silence.collar_above_relative_floor",
+    "silence.silence_peak_fraction",
+    "contour.has_anchor_seam_contour",
+    "contour.pre_flatness",
+    "contour.post_flatness",
+    "anchors.pre",
+    "anchors.post",
+    "outcome.seam_shape",
+];
 
 fn fnv_feed(h: &mut u64, bytes: &[u8]) {
     for &b in bytes {
@@ -887,11 +943,18 @@ mod tests {
             scan_recipe: CorpusScanRecipe::default(),
             gap_count: 0,
             incomparable: None,
+            not_measured: Vec::new(),
         };
         let json = serde_json::to_string(&meta).unwrap();
         assert!(
             !json.contains("incomparable"),
             "absent incomparable must omit key: {json}"
+        );
+        // Same rule for `not_measured`: an empty list is a claim ("this path measured everything"), and
+        // a corpus written before the field existed cannot make it. Omit rather than emit `[]`.
+        assert!(
+            !json.contains("not_measured"),
+            "empty not_measured must omit key: {json}"
         );
 
         let refused = SourceMeta {

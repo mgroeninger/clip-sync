@@ -317,6 +317,9 @@ fn check_corpus(
     for gap in &corpus.gaps {
         check_gap(label, gap, opts, report);
     }
+    check_not_measured(label, corpus, report);
+    check_scan_equivalence_coverage(label, corpus, report);
+    check_donor_within_b(label, corpus, report);
 
     // Filename ↔ outcome when the library used patch/skip as the verdict suffix.
     for path in &lib_files {
@@ -464,6 +467,274 @@ fn check_gap(
     }
 }
 
+/// The fields a production `--gap-fingerprints` dump leaves at structural defaults, as dotted paths.
+///
+/// Mirrors `clip_sync_repair::application::gap_fingerprint::NOT_MEASURED_BY_PROJECTION`. Deliberately
+/// **re-stated** rather than imported: that const lives behind the `calibration` feature on another
+/// crate, and this module is a from-JSON reader that must keep working on corpora written by any
+/// binary. The two lists are kept honest from both ends — the emitter has a unit test asserting it
+/// declares this set, and [`check_not_measured`] below fails a corpus whose declaration disagrees with
+/// what the file actually contains.
+const KNOWN_UNMEASURED: &[&str] = &[
+    "levels.bin_ms",
+    "levels.profile_db",
+    "levels.floor_db",
+    "levels.speech_peak_db",
+    "silence.collar_rms_peak_ratio",
+    "silence.collar_above_relative_floor",
+    "silence.silence_peak_fraction",
+    "contour.has_anchor_seam_contour",
+    "contour.pre_flatness",
+    "contour.post_flatness",
+    "anchors.pre",
+    "anchors.post",
+    "outcome.seam_shape",
+];
+
+/// The `floor_db` / `speech_peak_db` constant `projected_level_profile` writes (`SILENCE_FLOOR_DB`).
+const PROJECTED_FLOOR_DB: f64 = -120.0;
+
+/// Which of [`KNOWN_UNMEASURED`] this gap carries a **real** value for.
+///
+/// "Real" is the negation of the exact constant the projection path writes, so a measured value that
+/// happens to equal the default reads as unmeasured. That direction is the safe one: it under-reports
+/// measurement, so it can only suppress a warning, never invent one.
+fn measured_paths(gap: &GapEntry) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    if let Some(l) = gap.levels.as_ref() {
+        if l.bin_ms.unwrap_or(0) != 0 {
+            out.push("levels.bin_ms");
+        }
+        if !l.profile_db.is_empty() {
+            out.push("levels.profile_db");
+        }
+        if l.floor_db.is_some_and(|v| v != PROJECTED_FLOOR_DB) {
+            out.push("levels.floor_db");
+        }
+        if l.speech_peak_db.is_some_and(|v| v != PROJECTED_FLOOR_DB) {
+            out.push("levels.speech_peak_db");
+        }
+    }
+    if let Some(s) = gap.silence.as_ref() {
+        if s.collar_rms_peak_ratio.unwrap_or(0.0) != 0.0 {
+            out.push("silence.collar_rms_peak_ratio");
+        }
+        if s.collar_above_relative_floor.unwrap_or(false) {
+            out.push("silence.collar_above_relative_floor");
+        }
+        if s.silence_peak_fraction.unwrap_or(0.0) != 0.0 {
+            out.push("silence.silence_peak_fraction");
+        }
+    }
+    if let Some(c) = gap.contour.as_ref() {
+        if c.has_anchor_seam_contour.unwrap_or(false) {
+            out.push("contour.has_anchor_seam_contour");
+        }
+        if c.pre_flatness.unwrap_or(0.0) != 0.0 {
+            out.push("contour.pre_flatness");
+        }
+        if c.post_flatness.unwrap_or(0.0) != 0.0 {
+            out.push("contour.post_flatness");
+        }
+    }
+    if let Some(a) = gap.anchors.as_ref() {
+        if !a.pre.is_empty() {
+            out.push("anchors.pre");
+        }
+        if !a.post.is_empty() {
+            out.push("anchors.post");
+        }
+    }
+    if gap
+        .outcome
+        .as_ref()
+        .and_then(|o| o.seam_shape.as_deref())
+        .is_some_and(|s| !s.is_empty())
+    {
+        out.push("outcome.seam_shape");
+    }
+    out
+}
+
+/// `source.not_measured` must be present when it is true, and true when it is present.
+///
+/// The 2026-07-31 corpus carried twelve of these fields at a constant on 802/802 full-tier gaps with
+/// nothing in the file saying so; a reader had no way to tell a hardcoded `0.0` from a measured one,
+/// and at least one downstream read took the constants at face value. Both directions matter: an
+/// absent declaration invites that misread, and a **wrong** declaration is worse, because it licenses
+/// discarding a field that was in fact measured.
+fn check_not_measured(label: &str, corpus: &CorpusFile, report: &mut HealthCheckReport) {
+    let full: Vec<&GapEntry> = corpus
+        .gaps
+        .iter()
+        .filter(|g| g.tier.as_deref() == Some("full"))
+        .collect();
+    if full.is_empty() {
+        return;
+    }
+    let declared: &[String] = corpus
+        .source
+        .as_ref()
+        .map(|s| s.not_measured.as_slice())
+        .unwrap_or(&[]);
+
+    // Any listed field that some gap actually measured: the declaration is false.
+    let mut falsely_declared: Vec<&str> = Vec::new();
+    for gap in &full {
+        for path in measured_paths(gap) {
+            if declared.iter().any(|d| d == path) && !falsely_declared.contains(&path) {
+                falsely_declared.push(path);
+            }
+        }
+    }
+    if !falsely_declared.is_empty() {
+        report.issues.push(HealthIssue {
+            severity: IssueSeverity::Error,
+            pair: label.to_string(),
+            message: format!(
+                "source.not_measured claims {} but full-tier gaps carry real values there: {}",
+                if falsely_declared.len() == 1 {
+                    "a field"
+                } else {
+                    "fields"
+                },
+                falsely_declared.join(", ")
+            ),
+        });
+    }
+
+    if !declared.is_empty() {
+        return;
+    }
+    // No declaration: is this the projection shape? Only claim so if *every* full-tier gap is at the
+    // constant for every known path — one gap with real anchors means the dump is a different animal.
+    let all_defaulted = full.iter().all(|g| measured_paths(g).is_empty());
+    if all_defaulted {
+        report.issues.push(HealthIssue {
+            severity: IssueSeverity::Warn,
+            pair: label.to_string(),
+            message: format!(
+                "{} full-tier gap(s) carry all {} projection-default fields with no source.not_measured \
+                 declaration: corpus predates the declaration, so levels/silence/contour/anchors/seam_shape \
+                 zeros here are structural, not measurements",
+                full.len(),
+                KNOWN_UNMEASURED.len()
+            ),
+        });
+    }
+}
+
+/// `scan_equivalence` is either on every gap or on none — never on some.
+///
+/// The scan pushes one verdict per gap unconditionally, so a corpus missing it on a subset was written
+/// by a binary that dropped the copy on an early `continue` (head gaps, before 2026-08-01). Partial
+/// coverage is the signature; total absence just means scan did not classify. Also flags a verdict with
+/// no `a_span_secs`, which predates span provenance — with it absent the diagnostic path silently binds
+/// the nominal span while still printing `a_span: core`.
+fn check_scan_equivalence_coverage(
+    label: &str,
+    corpus: &CorpusFile,
+    report: &mut HealthCheckReport,
+) {
+    let with: Vec<&GapEntry> = corpus
+        .gaps
+        .iter()
+        .filter(|g| g.scan_equivalence.is_some())
+        .collect();
+    if with.is_empty() {
+        return;
+    }
+    let missing = corpus.gaps.len() - with.len();
+    if missing > 0 {
+        report.issues.push(HealthIssue {
+            severity: IssueSeverity::Warn,
+            pair: label.to_string(),
+            message: format!(
+                "{missing} of {} gap(s) carry no scan_equivalence while {} do: the authoritative verdict \
+                 was dropped for a subset (pre-2026-08-01 dumps lost it on head gaps), so those gaps have \
+                 only the diagnostic reading",
+                corpus.gaps.len(),
+                with.len()
+            ),
+        });
+    }
+    let no_span = with
+        .iter()
+        .filter(|g| {
+            g.scan_equivalence
+                .as_ref()
+                .is_some_and(|v| v.a_span_secs.is_none())
+        })
+        .count();
+    if no_span > 0 {
+        report.issues.push(HealthIssue {
+            severity: IssueSeverity::Warn,
+            pair: label.to_string(),
+            message: format!(
+                "{no_span} scan_equivalence verdict(s) carry no a_span_secs: corpus predates span \
+                 provenance, so the diagnostic `equivalence` block measured the nominal gap span while \
+                 reporting a_span=core — the two readings are not comparable"
+            ),
+        });
+    }
+}
+
+/// A donor window that runs past B's end is not a measurement of quiet.
+///
+/// Scan fails closed here and returns `not_evaluated`; the diagnostic path clamps to the samples that
+/// exist and scores the truncated remainder, which came back 99.3–100 % silent on all 20 such gaps of
+/// the 2026-07-31 corpus — a drop verdict manufactured out of absent audio. Surfacing it keeps the
+/// divergence from being read as a real disagreement about silence.
+fn check_donor_within_b(label: &str, corpus: &CorpusFile, report: &mut HealthCheckReport) {
+    let Some(b_dur) = corpus
+        .source
+        .as_ref()
+        .and_then(|s| s.b_source.as_ref())
+        .and_then(|b| b.duration_secs)
+    else {
+        return;
+    };
+    // One frame of slack at 48 kHz: an end exactly at EOF is fine, and edges are rounded.
+    let slack = 1.0 / 48_000.0;
+    let mut overruns: Vec<(usize, f64)> = Vec::new();
+    for gap in &corpus.gaps {
+        let Some(end) = gap.geometry.as_ref().and_then(|g| g.b_mapped_end_secs) else {
+            continue;
+        };
+        if end > b_dur + slack {
+            overruns.push((gap.index, end - b_dur));
+        }
+    }
+    if overruns.is_empty() {
+        return;
+    }
+    let worst = overruns
+        .iter()
+        .map(|(_, o)| *o)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let sample: Vec<String> = overruns
+        .iter()
+        .take(5)
+        .map(|(i, o)| format!("g{i}(+{o:.2}s)"))
+        .collect();
+    report.issues.push(HealthIssue {
+        severity: IssueSeverity::Warn,
+        pair: label.to_string(),
+        message: format!(
+            "{} gap(s) map a donor window past B's end ({b_dur:.2}s), worst +{worst:.2}s: {}{} — scan \
+             fails closed (not_evaluated) but the diagnostic equivalence clamps and scores the truncated \
+             window, so any drop verdict there rests on audio that does not exist",
+            overruns.len(),
+            sample.join(" "),
+            if overruns.len() > sample.len() {
+                " …"
+            } else {
+                ""
+            }
+        ),
+    });
+}
+
 fn list_library_files(dir: &Path) -> Vec<PathBuf> {
     let Ok(rd) = fs::read_dir(dir) else {
         return Vec::new();
@@ -522,6 +793,9 @@ struct SourceMeta {
     /// Wire token from `IncomparableReason` (e.g. `channel_layout_mismatch`).
     #[serde(default)]
     incomparable: Option<String>,
+    /// Dotted paths the dumping binary declares it did not measure. Absent on pre-2026-08-01 corpora.
+    #[serde(default)]
+    not_measured: Vec<String>,
 }
 
 /// Just enough of `FileSource` to tell "this corpus records what it measured" from "it does not".
@@ -533,6 +807,8 @@ struct FileSourceProj {
     native_sample_rate: Option<u32>,
     #[serde(default)]
     native_channels: Option<u16>,
+    #[serde(default)]
+    duration_secs: Option<f64>,
 }
 
 impl FileSourceProj {
@@ -544,6 +820,9 @@ impl FileSourceProj {
 #[derive(Deserialize)]
 struct GapEntry {
     index: usize,
+    /// `summary` or `full` — the detail tier this gap was dumped at.
+    #[serde(default)]
+    tier: Option<String>,
     #[serde(default)]
     sample_rate: Option<u32>,
     #[serde(default)]
@@ -552,12 +831,74 @@ struct GapEntry {
     brackets: Vec<Bracket>,
     #[serde(default)]
     outcome: Option<Outcome>,
+    #[serde(default)]
+    levels: Option<Levels>,
+    #[serde(default)]
+    silence: Option<Silence>,
+    #[serde(default)]
+    contour: Option<Contour>,
+    #[serde(default)]
+    anchors: Option<Anchors>,
+    #[serde(default)]
+    scan_equivalence: Option<ScanEquivalence>,
 }
 
 #[derive(Deserialize)]
 struct Geometry {
     #[serde(default)]
     duration_secs: Option<f64>,
+    #[serde(default)]
+    b_mapped_end_secs: Option<f64>,
+}
+
+// The five blocks the projection path leaves at defaults. Every field is `Option` here purely so a
+// corpus that omits one is readable — absence and the default are treated alike by `measured_paths`.
+
+#[derive(Deserialize)]
+struct Levels {
+    #[serde(default)]
+    bin_ms: Option<u32>,
+    #[serde(default)]
+    profile_db: Vec<f64>,
+    #[serde(default)]
+    floor_db: Option<f64>,
+    #[serde(default)]
+    speech_peak_db: Option<f64>,
+}
+
+#[derive(Deserialize)]
+struct Silence {
+    #[serde(default)]
+    collar_rms_peak_ratio: Option<f64>,
+    #[serde(default)]
+    collar_above_relative_floor: Option<bool>,
+    #[serde(default)]
+    silence_peak_fraction: Option<f64>,
+}
+
+#[derive(Deserialize)]
+struct Contour {
+    #[serde(default)]
+    has_anchor_seam_contour: Option<bool>,
+    #[serde(default)]
+    pre_flatness: Option<f64>,
+    #[serde(default)]
+    post_flatness: Option<f64>,
+}
+
+#[derive(Deserialize)]
+struct Anchors {
+    #[serde(default)]
+    pre: Vec<serde_json::Value>,
+    #[serde(default)]
+    post: Vec<serde_json::Value>,
+}
+
+#[derive(Deserialize)]
+struct ScanEquivalence {
+    /// The A-side window scan actually measured. Absent on pre-2026-08-01 dumps.
+    #[serde(default)]
+    a_span_secs: Option<(f64, f64)>,
 }
 
 #[derive(Deserialize)]
@@ -573,6 +914,8 @@ struct Bracket {
 #[derive(Deserialize)]
 struct Outcome {
     tier: String,
+    #[serde(default)]
+    seam_shape: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -830,6 +1173,165 @@ mod tests {
             "{:?}",
             report.issues
         );
+    }
+
+    /// Strip every field the projection path defaults, reproducing the 2026-07-31 corpus shape.
+    fn defaults_only(gap: &mut serde_json::Value) {
+        gap["levels"]["speech_peak_db"] = serde_json::json!(-120.0);
+        gap["levels"]["floor_db"] = serde_json::json!(-120.0);
+        gap["levels"]["bin_ms"] = serde_json::json!(0);
+        gap["levels"]["profile_db"] = serde_json::json!([]);
+    }
+
+    #[test]
+    fn projection_defaults_without_declaration_warn() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("1");
+        write_healthy_pair(&dir);
+        let mut corpus: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(dir.join("corpus.json")).unwrap()).unwrap();
+        for g in corpus["gaps"].as_array_mut().unwrap() {
+            defaults_only(g);
+        }
+        fs::write(dir.join("corpus.json"), corpus.to_string()).unwrap();
+
+        let report = check_dirs(&[root.path().to_path_buf()], &HealthCheckOptions::default());
+        assert!(report.ok(), "{}", report.summary_text());
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|i| i.message.contains("no source.not_measured declaration")),
+            "{}",
+            report.summary_text()
+        );
+    }
+
+    #[test]
+    fn declaring_not_measured_silences_the_warning() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("1");
+        write_healthy_pair(&dir);
+        let mut corpus: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(dir.join("corpus.json")).unwrap()).unwrap();
+        for g in corpus["gaps"].as_array_mut().unwrap() {
+            defaults_only(g);
+        }
+        corpus["source"]["not_measured"] = serde_json::json!(KNOWN_UNMEASURED);
+        fs::write(dir.join("corpus.json"), corpus.to_string()).unwrap();
+
+        let report = check_dirs(&[root.path().to_path_buf()], &HealthCheckOptions::default());
+        assert!(report.ok(), "{}", report.summary_text());
+        assert_eq!(report.warn_count(), 0, "{}", report.summary_text());
+    }
+
+    /// A declaration that is wrong is worse than none: it licenses discarding real data.
+    #[test]
+    fn declaring_a_field_that_was_measured_fails() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("1");
+        write_healthy_pair(&dir);
+        let mut corpus: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(dir.join("corpus.json")).unwrap()).unwrap();
+        // The fixture measures speech_peak_db (−40, not the −120 constant); declare it anyway.
+        corpus["source"]["not_measured"] = serde_json::json!(["levels.speech_peak_db"]);
+        fs::write(dir.join("corpus.json"), corpus.to_string()).unwrap();
+
+        let report = check_dirs(&[root.path().to_path_buf()], &HealthCheckOptions::default());
+        assert!(!report.ok());
+        assert!(report
+            .issues
+            .iter()
+            .any(|i| i.message.contains("levels.speech_peak_db")
+                && i.message.contains("carry real values")));
+    }
+
+    #[test]
+    fn partial_scan_equivalence_coverage_warns() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("1");
+        write_healthy_pair(&dir);
+        let mut corpus: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(dir.join("corpus.json")).unwrap()).unwrap();
+        // Gap 0 classified, gap 1 not: the head-gap `continue` signature.
+        corpus["gaps"][0]["scan_equivalence"] =
+            serde_json::json!({"class":"repairable_dropout","a_span_secs":[0.0,1.0]});
+        fs::write(dir.join("corpus.json"), corpus.to_string()).unwrap();
+
+        let report = check_dirs(&[root.path().to_path_buf()], &HealthCheckOptions::default());
+        assert!(report.ok(), "{}", report.summary_text());
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|i| i.message.contains("carry no scan_equivalence while")),
+            "{}",
+            report.summary_text()
+        );
+    }
+
+    #[test]
+    fn scan_equivalence_without_span_provenance_warns() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("1");
+        write_healthy_pair(&dir);
+        let mut corpus: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(dir.join("corpus.json")).unwrap()).unwrap();
+        for g in corpus["gaps"].as_array_mut().unwrap() {
+            g["scan_equivalence"] = serde_json::json!({"class":"repairable_dropout"});
+        }
+        fs::write(dir.join("corpus.json"), corpus.to_string()).unwrap();
+
+        let report = check_dirs(&[root.path().to_path_buf()], &HealthCheckOptions::default());
+        assert!(report.ok(), "{}", report.summary_text());
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|i| i.message.contains("carry no a_span_secs")),
+            "{}",
+            report.summary_text()
+        );
+    }
+
+    #[test]
+    fn donor_window_past_b_end_warns() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("1");
+        write_healthy_pair(&dir);
+        let mut corpus: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(dir.join("corpus.json")).unwrap()).unwrap();
+        // b_source.duration_secs is 60 in the fixture.
+        corpus["gaps"][1]["geometry"]["b_mapped_end_secs"] = serde_json::json!(63.5);
+        fs::write(dir.join("corpus.json"), corpus.to_string()).unwrap();
+
+        let report = check_dirs(&[root.path().to_path_buf()], &HealthCheckOptions::default());
+        assert!(report.ok(), "{}", report.summary_text());
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|i| i.message.contains("map a donor window past B's end")
+                    && i.message.contains("g1(+3.50s)")),
+            "{}",
+            report.summary_text()
+        );
+    }
+
+    /// A donor window that ends exactly at B's last sample is not an overrun.
+    #[test]
+    fn donor_window_at_b_end_is_clean() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("1");
+        write_healthy_pair(&dir);
+        let mut corpus: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(dir.join("corpus.json")).unwrap()).unwrap();
+        corpus["gaps"][1]["geometry"]["b_mapped_end_secs"] = serde_json::json!(60.0);
+        fs::write(dir.join("corpus.json"), corpus.to_string()).unwrap();
+
+        let report = check_dirs(&[root.path().to_path_buf()], &HealthCheckOptions::default());
+        assert!(report.ok(), "{}", report.summary_text());
+        assert_eq!(report.warn_count(), 0, "{}", report.summary_text());
     }
 
     #[test]

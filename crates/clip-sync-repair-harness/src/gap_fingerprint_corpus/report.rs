@@ -181,7 +181,11 @@ impl CorpusReport {
         if margins.is_empty() {
             let _ = writeln!(
                 s,
-                "  uniqueness: (no second_peak_r — re-fingerprint with the current binary to populate)"
+                // Not a stale-corpus symptom: `second_peak_r` is unreachable on the production
+                // projection path, which hardcodes it `None` (`gap_fingerprint/project.rs`,
+                // `projected_lag_entry`). Naming a re-run as the remedy sends the reader on a
+                // multi-hour dump that reproduces this line exactly.
+                "  uniqueness: (no second_peak_r — not measured on the production projection path)"
             );
         } else if let Some((mn, md, _)) = stats(margins.clone()) {
             let suspect = margins
@@ -205,7 +209,9 @@ impl CorpusReport {
         if with_resid.is_empty() {
             let _ = writeln!(
                 s,
-                "  residual: (no residual probe — re-fingerprint with the current binary to populate)"
+                // `residual` rides the production gate tags (`gate.residual`), so its absence means
+                // no gap in this corpus reached residual scoring — not that the binary was stale.
+                "  residual: (no gap in this corpus carries a residual measurement)"
             );
         } else {
             let confirmed = with_resid
@@ -683,7 +689,9 @@ impl CorpusReport {
         if skipped.iter().all(|r| r.seam_diag.is_none()) {
             let _ = writeln!(
                 s,
-                "  (no seam probe — re-fingerprint with the current binary to populate)"
+                // Tier-3: `seam_probe` is emitted only under `--fingerprint-diagnostics` (off by
+                // default), so the remedy is the flag, not a newer binary.
+                "  (no seam probe — re-run --gap-fingerprints with --fingerprint-diagnostics)"
             );
             return s;
         }

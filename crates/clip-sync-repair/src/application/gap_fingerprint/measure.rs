@@ -10,7 +10,9 @@ use super::schema::*;
 
 use clip_sync::normalized_correlation;
 
-use crate::domain::gap_equivalence::{ChannelReduction, NoiseFloorProbe};
+use crate::domain::gap_equivalence::{
+    ChannelReduction, EquivalenceMeasurement, NoiseFloorProbe, SpanKind,
+};
 
 use crate::domain::gap_anchor_seam::{
     list_anchor_candidates_a, list_feasible_anchor_brackets, AnchorSeamParams, AnchorSource,
@@ -2242,6 +2244,8 @@ fn refused_channel_mismatch_corpus(
             scan_recipe: CorpusScanRecipe::from_report(report),
             gap_count: report.gaps.len(),
             incomparable: Some(IncomparableReason::ChannelLayoutMismatch),
+            // Refusal ⇒ `gaps` is empty, so there is nothing to qualify.
+            not_measured: Vec::new(),
         },
         gaps: vec![],
     }
@@ -2465,9 +2469,25 @@ pub fn characterize_gaps_from_decode(
         // (`snr_db`, dual-fit's `a_gap_floor_db`) that must not move. See
         // `docs/dev/archive/TEMP-equivalence-divergence-findings.md` § *The three F15 fixes*.
         //
-        // The span is the **raw** gap, not `refined`: scan's block grid is media-absolute and selects
-        // blocks by centre-containment in `[a_start_secs, a_end_secs)`, which is what fix 3 adopts. The
-        // noise floor is read under the same interleaved reduction as A, since a level-dependent
+        // The span is the **silent core** — `scan_equivalence.a_span_secs`, taken straight off the
+        // index-parallel scan verdict — not `refined` and not the raw gap. Scan's block grid is
+        // media-absolute and selects blocks by centre-containment, which is what fix 3 adopted and which
+        // held (the grid reproduced scan's lattice on 802/802 gaps of the 39-pair corpus). The *interval*
+        // did not: fix 3 read `derive_gap_equivalence`'s then-parameter names `a_start_secs`/`a_end_secs`
+        // and bound `geometry.a_*`, the raw hold-bridged run, while every caller of that function passes
+        // `SilentRun::core_*`. The core is narrower by 1–2 blocks on 66.9 % of gaps, and the extra blocks
+        // are fade shoulders — non-silent, so they drag `donor_silence_fraction` under 0.5 and flip
+        // `shared_silence` to `repairable_dropout`. That is the *dangerous* direction (10 such gaps, where
+        // the 17-pair predecessor had 0), and it is why the fallback below is the raw span rather than a
+        // refusal: raw is what this path measured for months, so absent scan provenance costs no accuracy
+        // it previously had — but `a_span` then says `nominal`, because it is.
+        //
+        // Taking the interval from scan rather than recomputing it is deliberate: a second derivation
+        // would have to re-run silent-run detection at this path's bin width and could disagree again.
+        // Reading the number scan used makes convergence structural. See `docs/gap-scan.md` and
+        // `crate::domain::gap_equivalence::GapEquivalenceVerdict::a_span_secs`.
+        //
+        // The noise floor is read under the same interleaved reduction as A, since a level-dependent
         // reduction error does not cancel between the two sides of `a < nf − margin`. No downmix
         // fallback when the context is empty — that would un-apply fix 2 on exactly the gaps too thin to
         // measure; `None` classifies `NotEvaluated` ⇒ keep.
@@ -2490,8 +2510,30 @@ pub fn characterize_gaps_from_decode(
         // against `levels.gap_floor_db` — the unfiltered whole-span peak — so passing it here would leave
         // fix 1 half-applied: A's floor would move while the predicate that actually reaches the class
         // still tested against the old one. On the band-donor mechanism that predicate *is* the flip.
-        let gap_frames = (fp.geometry.a_start_secs * rate).round().max(0.0) as usize
-            ..(fp.geometry.a_end_secs * rate).round().max(0.0) as usize;
+        //
+        // A/donor move together or not at all. Converging A onto the core while leaving the donor on
+        // `geometry.b_mapped_*` would fix one end of a comparison whose whole content is the two ends
+        // agreeing, so a scan verdict that carries a core but no donor (B unscanned) falls back on both.
+        let scan_verdict = report.gap_equivalence.get(fp.index);
+        let scan_core = scan_verdict
+            .and_then(|v| v.a_span_secs)
+            .filter(|(s, e)| e > s);
+        let (a_span_secs, b_span_secs, span_kind) = match scan_core {
+            Some(core) => (
+                core,
+                scan_verdict.and_then(|v| v.donor_span_secs),
+                SpanKind::Core,
+            ),
+            None => (
+                (fp.geometry.a_start_secs, fp.geometry.a_end_secs),
+                fp.geometry
+                    .b_mapped_start_secs
+                    .zip(fp.geometry.b_mapped_end_secs),
+                SpanKind::Nominal,
+            ),
+        };
+        let gap_frames = (a_span_secs.0 * rate).round().max(0.0) as usize
+            ..(a_span_secs.1 * rate).round().max(0.0) as usize;
         let equiv_nf = noise_floor_probe(
             &a_pcm.samples,
             ch,
@@ -2501,14 +2543,10 @@ pub fn characterize_gaps_from_decode(
             equiv_bin_ms,
             ChannelReduction::Interleaved,
         );
-        let donor_span = fp
-            .geometry
-            .b_mapped_start_secs
-            .zip(fp.geometry.b_mapped_end_secs)
-            .map(|(s, e)| crate::application::gap_equivalence::DonorSpan {
-                samples: b_samples_full,
-                frames: (s * rate).round().max(0.0) as usize..(e * rate).round().max(0.0) as usize,
-            });
+        let donor_span = b_span_secs.map(|(s, e)| crate::application::gap_equivalence::DonorSpan {
+            samples: b_samples_full,
+            frames: (s * rate).round().max(0.0) as usize..(e * rate).round().max(0.0) as usize,
+        });
         let equiv = crate::application::gap_equivalence::measure_gap_equivalence(
             &a_pcm.samples,
             ch,
@@ -2528,13 +2566,18 @@ pub fn characterize_gaps_from_decode(
         // Measurement recipe — attached here, not inside `measure_gap_equivalence`: that function never
         // sees `context_secs` / `bin_ms` (noise floor arrives precomputed; `SilentCoreConfig` has frames
         // only). See `docs/dev/archive/TEMP-fingerprint-provenance-plan.md` §3a.
-        use crate::domain::gap_equivalence::{EquivalenceMeasurement, SpanKind};
+        //
+        // Both tokens are `span_kind`, reported rather than asserted. They read `core`/`nominal` as
+        // literals until 2026-08-01 — `core` was simply wrong (this path measured the raw span), and a
+        // provenance field that states the thing it exists to let you check is worse than no field: the
+        // calibration diff printed `core` on both sides of every one of the 10 dangerous divergences the
+        // span mismatch caused. A hardcoded token cannot report a fallback, so it does not get to be one.
         let measurement = EquivalenceMeasurement {
             context_secs: cfg.gap_signature_context_secs,
             bin_ms: equiv_bin_ms,
             reduction: ChannelReduction::Interleaved,
-            a_span: SpanKind::Core,
-            donor_span: SpanKind::Nominal,
+            a_span: span_kind,
+            donor_span: span_kind,
         };
 
         // Candidate noise floors (F15, second axis) over the {context window} × {bin size} × {channel
@@ -2570,12 +2613,28 @@ pub fn characterize_gaps_from_decode(
                 .with_measurement(measurement)
                 .with_noise_floor_probes(nf_probes),
         );
-        // Copy in the coarse scan-block verdict (block size = the `scan_block_ms` recipe knob, not a
-        // constant — see `default_scan_block_ms`; this comment said "250 ms" until 2026-07-30, long
-        // after the default moved to 100), index-parallel to report gaps, so the corpus holds both
-        // verdicts per gap and the calibration diff reads them from `corpus.json` alone. They are two
-        // differently-*defined* measurements, not two granularities of one — see the table in
-        // `bin/equivalence_calibration.rs` before treating either as the reference.
+    }
+
+    // Copy in the coarse scan-block verdict (block size = the `scan_block_ms` recipe knob, not a
+    // constant — see `default_scan_block_ms`; this comment said "250 ms" until 2026-07-30, long
+    // after the default moved to 100), index-parallel to report gaps, so the corpus holds both
+    // verdicts per gap and the calibration diff reads them from `corpus.json` alone. They are two
+    // differently-*defined* measurements, not two granularities of one — see the table in
+    // `bin/equivalence_calibration.rs` before treating either as the reference.
+    //
+    // **A separate pass, deliberately.** This ran inside the loop above until 2026-08-01, below the
+    // `mapped_b_span` / `gap_frames` / `hi <= lo` guards — so a gap that tripped any of them lost
+    // scan's verdict too, even though `derive_gap_equivalence` had already produced one and
+    // `report.gap_equivalence` is pushed unconditionally (`scan_gaps.rs`, index-parallel). On the
+    // 39-pair v0.5.0 corpus that silently discarded 27 real `NotEvaluated` verdicts — head gaps whose
+    // negative offset maps B before zero. `NotEvaluated` is a *stated* refusal ("no donor, so no
+    // judgement"); dropping it degrades that to an absence, which is precisely the unreadable-null
+    // defect the provenance work exists to prevent. The diagnostic side genuinely cannot measure
+    // those gaps and stays `None`; scan's answer is real and is now always carried.
+    //
+    // It cannot simply move to the top of the loop: `*fp = spec_to_fingerprint_summary(..)` rebuilds
+    // the fingerprint wholesale mid-body and would clobber an early assignment.
+    for fp in corpus.gaps.iter_mut() {
         fp.scan_equivalence = report.gap_equivalence.get(fp.index).cloned();
     }
     corpus
@@ -2690,6 +2749,12 @@ pub fn characterize_gaps(
             scan_recipe: CorpusScanRecipe::from_report(report),
             gap_count: report.gaps.len(),
             incomparable: None,
+            // Every full-tier gap below is rebuilt by `spec_to_fingerprint_summary`, which leaves these
+            // at structural defaults. Declared rather than left for the reader to infer from a `0.0`.
+            not_measured: NOT_MEASURED_BY_PROJECTION
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect(),
         },
         gaps,
     }
@@ -3692,6 +3757,376 @@ mod tests {
         assert!(fp.lag.is_some(), "lag computed at the best speech bracket");
     }
 
+    /// The production dump declares the fields it does not measure, and the declaration is **true** —
+    /// every listed full-tier field really is at its structural default.
+    ///
+    /// Pins both halves, because either alone rots: a list that drifts from the emitter is worse than no
+    /// list (it would license trusting the fields it stopped covering), and a list nobody checks is a
+    /// comment. The 2026-07-31 corpus recorded 12 such fields on 802/802 full-tier gaps with nothing
+    /// saying so; `--check` now fails on the same condition.
+    #[test]
+    fn production_dump_declares_and_honours_its_unmeasured_fields() {
+        use crate::application::PatchAudioRequest;
+        use crate::domain::gap::Gap;
+        use crate::domain::{GapReport, ScanAlignment};
+        use crate::infrastructure::config::RepairConfig;
+        use clip_sync::MultiChannelPcm;
+        use clip_sync_repair_fixtures::NoOpProgressReporter;
+
+        let rate = 48_000u32;
+        let secs = |s: f64| (s * f64::from(rate)) as usize;
+        let mut a = vec![0f32; secs(6.0)];
+        let mut b = vec![0f32; secs(6.0)];
+        write_speech(&mut a, secs(0.5), secs(1.5), 330.0, 0.063);
+        write_speech(&mut b, secs(0.5), secs(1.5), 330.0, 0.063);
+        write_speech(&mut a, secs(4.0), secs(5.0), 440.0, 0.079);
+        write_speech(&mut b, secs(4.0), secs(5.0), 440.0, 0.079);
+        write_noise(&mut b, secs(1.5), secs(4.0), 5, 0.0056);
+        let a_pcm = MultiChannelPcm {
+            sample_rate: rate,
+            channels: 1,
+            samples: a,
+            decode_error_skips: 0,
+            decoded_frame_count: None,
+            compressed_bytes: None,
+            source_bit_depth: None,
+        };
+        let report = GapReport {
+            video_a: Default::default(),
+            video_b: Default::default(),
+            track_compatibility: None,
+            alignment: ScanAlignment {
+                clips: vec![],
+                start_aligned: true,
+                end_aligned: None,
+                recommended_offset_secs: None,
+                offsets_consistent: true,
+                offset_drift_secs: None,
+                start_overlap: None,
+                query_reference_mode: false,
+            },
+            gaps: vec![Gap {
+                video_a_start_secs: 1.5,
+                video_a_end_secs: 4.0,
+                video_b_start_secs: Some(1.5),
+                video_b_end_secs: Some(4.0),
+                b_has_energy: true,
+            }],
+            gap_equivalence: vec![Default::default()],
+            gap_offset_agreement: None,
+            decode_chunk_secs: 30,
+            recipe: crate::domain::ScanRecipe::with_hold_blocks(1000, 0, 20, 0.05, 0.0),
+            limit_fill_to_mapped_region: false,
+            b_scanned_end_secs: None,
+            b_scan_truncated: false,
+            audio_timeline_skew: None,
+        };
+        let repair = RepairConfig {
+            fill_border_search_secs: 0.05,
+            fill_align_margin_secs: 0.02,
+            fill_length_slack_secs: 0.1,
+            fill_extract_tail_slack_secs: 0.1,
+            fill_seam_search_secs: 0.05,
+            border_standoff_secs: 0.0,
+            max_anchor_bracket_secs: 0.2,
+            max_anchors_per_side: 2,
+            ..RepairConfig::default()
+        };
+        let request: PatchAudioRequest = repair
+            .patch_settings()
+            .into_request(report.clone())
+            .expect("default All gap selection");
+        let corpus = characterize_gaps_from_decode(
+            &report,
+            &CharacterizeAbPcm {
+                a_pcm: &a_pcm,
+                b_samples: &b,
+                sources: None,
+            },
+            &request,
+            &[],
+            false,
+            &NoOpProgressReporter,
+        );
+        assert_eq!(
+            corpus.source.not_measured, NOT_MEASURED_BY_PROJECTION,
+            "the production dump must declare its unmeasured fields"
+        );
+        let full: Vec<_> = corpus
+            .gaps
+            .iter()
+            .filter(|g| g.tier == DetailTier::Full)
+            .collect();
+        assert!(!full.is_empty(), "fixture must produce a measured gap");
+        for g in full {
+            assert_eq!(g.levels.bin_ms, 0);
+            assert!(g.levels.profile_db.is_empty());
+            assert_eq!(g.silence.collar_rms_peak_ratio, 0.0);
+            assert!(!g.silence.collar_above_relative_floor);
+            assert_eq!(g.contour.pre_flatness, 0.0);
+            assert!(g.anchors.pre.is_empty() && g.anchors.post.is_empty());
+            assert_eq!(
+                g.outcome.as_ref().map(|o| o.seam_shape.as_str()),
+                Some(""),
+                "seam_shape is hardcoded empty, hence listed"
+            );
+        }
+    }
+
+    /// A gap the fingerprint cannot measure still carries scan's verdict.
+    ///
+    /// The head-gap shape: A silent from t=0 in a pair with a negative offset, so B's window maps before
+    /// zero, `Gap::mapped_b_span` fails closed and the per-gap loop `continue`s. Scan does **not** fail
+    /// here — `scan_gaps.rs` pushes a verdict unconditionally and yields `NotEvaluated`, a *stated*
+    /// refusal to classify (⇒ keep). The copy that carries it into the dump used to sit at the bottom of
+    /// that loop body, below the `continue`, so 27 of 829 gaps on the 39-pair v0.5.0 corpus reached
+    /// `equivalence-calibration` with neither verdict and were dropped from the comparison population
+    /// silently. Degrading a stated refusal into an absent key is the provenance plan's §1.1 defect.
+    #[test]
+    fn scan_verdict_survives_a_gap_the_fingerprint_cannot_map() {
+        use crate::application::PatchAudioRequest;
+        use crate::domain::gap::Gap;
+        use crate::domain::gap_equivalence::{GapEquivalenceClass, GapEquivalenceVerdict};
+        use crate::domain::{GapReport, ScanAlignment};
+        use crate::infrastructure::config::RepairConfig;
+        use clip_sync::MultiChannelPcm;
+        use clip_sync_repair_fixtures::NoOpProgressReporter;
+
+        let rate = 48_000u32;
+        let a_pcm = MultiChannelPcm {
+            sample_rate: rate,
+            channels: 1,
+            samples: vec![0f32; rate as usize * 2],
+            decode_error_skips: 0,
+            decoded_frame_count: None,
+            compressed_bytes: None,
+            source_bit_depth: None,
+        };
+        let report = GapReport {
+            video_a: Default::default(),
+            video_b: Default::default(),
+            track_compatibility: None,
+            alignment: ScanAlignment {
+                clips: vec![],
+                start_aligned: true,
+                end_aligned: None,
+                recommended_offset_secs: None,
+                offsets_consistent: true,
+                offset_drift_secs: None,
+                start_overlap: None,
+                query_reference_mode: false,
+            },
+            // The head gap: A from 0.0, B mapped negative by the pair's offset ⇒ `mapped_b_span` = None.
+            gaps: vec![Gap {
+                video_a_start_secs: 0.0,
+                video_a_end_secs: 0.8,
+                video_b_start_secs: Some(-0.4),
+                video_b_end_secs: Some(0.4),
+                b_has_energy: true,
+            }],
+            gap_equivalence: vec![GapEquivalenceVerdict {
+                class: GapEquivalenceClass::NotEvaluated,
+                ..Default::default()
+            }],
+            gap_offset_agreement: None,
+            decode_chunk_secs: 30,
+            recipe: crate::domain::ScanRecipe::with_hold_blocks(1000, 0, 20, 0.05, 0.0),
+            limit_fill_to_mapped_region: false,
+            b_scanned_end_secs: None,
+            b_scan_truncated: false,
+            audio_timeline_skew: None,
+        };
+        let repair = RepairConfig::default();
+        let request: PatchAudioRequest = repair
+            .patch_settings()
+            .into_request(report.clone())
+            .expect("default All gap selection");
+        let corpus = characterize_gaps_from_decode(
+            &report,
+            &CharacterizeAbPcm {
+                a_pcm: &a_pcm,
+                b_samples: &vec![0f32; rate as usize * 2],
+                sources: None,
+            },
+            &request,
+            &[],
+            false,
+            &NoOpProgressReporter,
+        );
+        let fp = &corpus.gaps[0];
+        assert!(
+            fp.equivalence.is_none(),
+            "unmappable gap: the diagnostic path genuinely cannot measure it"
+        );
+        assert_eq!(
+            fp.scan_equivalence.as_ref().map(|v| v.class),
+            Some(GapEquivalenceClass::NotEvaluated),
+            "scan's stated refusal must reach the dump; an absent key would read as 'never asked'"
+        );
+    }
+
+    /// The diagnostic equivalence overlay measures the **silent core**, taken off the
+    /// index-parallel scan verdict, and says so in `measurement.a_span` / `donor_span`.
+    ///
+    /// This is the convergence half of the 2026-08-01 fix. The overlay used to window on
+    /// `geometry.a_start_secs`/`a_end_secs` — the raw hold-bridged run — while scan windows on
+    /// `SilentRun::core_*`; on the 39-pair v0.5.0 corpus the two disagreed on `a_gap_total_blocks` in
+    /// 66.9 % of gaps, and the extra blocks (fade shoulders, non-silent) dragged `donor_silence_fraction`
+    /// under the 0.5 threshold on 10 gaps, flipping scan's `shared_silence`/drop to the diagnostic's
+    /// `repairable_dropout`/keep. Both verdicts printed `a_span: core` throughout, so the provenance
+    /// field concealed the divergence it existed to expose.
+    ///
+    /// Asserted against the *same* fixture with an empty `gap_equivalence` (the fallback arm, pinned in
+    /// `characterize_gaps_from_decode_include_diagnostics_toggles_x_set`), so the block counts move for
+    /// one reason only: which interval was binned.
+    #[test]
+    fn diagnostic_equivalence_adopts_the_scan_verdicts_core_span() {
+        use crate::application::PatchAudioRequest;
+        use crate::domain::gap::Gap;
+        use crate::domain::gap_equivalence::{GapEquivalenceClass, GapEquivalenceVerdict};
+        use crate::domain::{GapReport, GapSignatureMode, ScanAlignment};
+        use crate::infrastructure::config::RepairConfig;
+        use clip_sync::MultiChannelPcm;
+        use clip_sync_repair_fixtures::NoOpProgressReporter;
+
+        let rate = 48_000u32;
+        let ch = 1usize;
+        let secs = |s: f64| (s * f64::from(rate)) as usize;
+        let total = secs(5.0);
+        let (sp1, n1, gap, n2, sp2) = (
+            (secs(0.50), secs(0.85)),
+            (secs(0.85), secs(1.85)),
+            (secs(1.85), secs(3.35)),
+            (secs(3.35), secs(4.35)),
+            (secs(4.35), secs(4.70)),
+        );
+        let mut a = vec![0f32; total];
+        let mut b = vec![0f32; total];
+        write_speech(&mut a, sp1.0, sp1.1, 330.0, 0.063);
+        write_speech(&mut b, sp1.0, sp1.1, 330.0, 0.063);
+        write_speech(&mut a, sp2.0, sp2.1, 440.0, 0.079);
+        write_speech(&mut b, sp2.0, sp2.1, 440.0, 0.079);
+        write_noise(&mut a, n1.0, n1.1, 1, 0.0056);
+        write_noise(&mut b, n1.0, n1.1, 11, 0.0056);
+        write_noise(&mut a, n2.0, n2.1, 3, 0.0056);
+        write_noise(&mut b, n2.0, n2.1, 13, 0.0056);
+        write_noise(&mut b, gap.0, gap.1, 5, 0.0056);
+
+        let a_pcm = MultiChannelPcm {
+            sample_rate: rate,
+            channels: ch as u16,
+            samples: a,
+            decode_error_skips: 0,
+            decoded_frame_count: None,
+            compressed_bytes: None,
+            source_bit_depth: None,
+        };
+        let f = |x: usize| x as f64 / f64::from(rate);
+        let report = |gap_equivalence: Vec<GapEquivalenceVerdict>| GapReport {
+            video_a: Default::default(),
+            video_b: Default::default(),
+            track_compatibility: None,
+            alignment: ScanAlignment {
+                clips: vec![],
+                start_aligned: true,
+                end_aligned: None,
+                recommended_offset_secs: None,
+                offsets_consistent: true,
+                offset_drift_secs: None,
+                start_overlap: None,
+                query_reference_mode: false,
+            },
+            gaps: vec![Gap {
+                video_a_start_secs: f(gap.0),
+                video_a_end_secs: f(gap.1),
+                video_b_start_secs: Some(f(gap.0)),
+                video_b_end_secs: Some(f(gap.1)),
+                b_has_energy: true,
+            }],
+            gap_equivalence,
+            gap_offset_agreement: None,
+            decode_chunk_secs: 30,
+            recipe: crate::domain::ScanRecipe::with_hold_blocks(1000, 0, 20, 0.05, 0.0),
+            limit_fill_to_mapped_region: false,
+            b_scanned_end_secs: None,
+            b_scan_truncated: false,
+            audio_timeline_skew: None,
+        };
+        // Same search-radius trimming as the C3 test, and for the same reason: the 5 s fixture is far
+        // smaller than the production defaults assume.
+        let repair = RepairConfig {
+            gap_signature_mode: GapSignatureMode::Energy,
+            gap_signature_context_secs: 1.5,
+            fill_border_search_secs: 0.05,
+            fill_align_margin_secs: 0.02,
+            fill_length_slack_secs: 0.1,
+            fill_extract_tail_slack_secs: 0.1,
+            fill_seam_search_secs: 0.05,
+            border_standoff_secs: 0.0,
+            max_anchor_bracket_secs: 0.2,
+            max_anchors_per_side: 2,
+            ..RepairConfig::default()
+        };
+        let run = |rep: &GapReport| {
+            let request: PatchAudioRequest = repair
+                .patch_settings()
+                .into_request(rep.clone())
+                .expect("default All gap selection");
+            characterize_gaps_from_decode(
+                rep,
+                &CharacterizeAbPcm {
+                    a_pcm: &a_pcm,
+                    b_samples: &b,
+                    sources: None,
+                },
+                &request,
+                &[],
+                false,
+                &NoOpProgressReporter,
+            )
+            .gaps
+            .remove(0)
+            .equivalence
+            .expect("diagnostic equivalence")
+        };
+
+        let nominal = run(&report(Vec::new()));
+        assert_eq!(
+            nominal.measurement.as_ref().map(|m| m.a_span),
+            Some(SpanKind::Nominal)
+        );
+
+        // A core inset half a second at each end of the 1.5 s gap — the shape of the real residual
+        // (shoulders trimmed), exaggerated so the block count has to move at 100 ms bins.
+        let core = (f(gap.0) + 0.5, f(gap.1) - 0.5);
+        let mut verdict = GapEquivalenceVerdict {
+            class: GapEquivalenceClass::NotEvaluated,
+            ..Default::default()
+        };
+        verdict.a_span_secs = Some(core);
+        verdict.donor_span_secs = Some(core);
+        let converged = run(&report(vec![verdict]));
+
+        let m = converged.measurement.as_ref().expect("measurement");
+        assert_eq!(
+            (m.a_span, m.donor_span),
+            (SpanKind::Core, SpanKind::Core),
+            "adopting scan's span must be reported, not silently assumed"
+        );
+        assert!(
+            converged.a_gap_total_blocks < nominal.a_gap_total_blocks,
+            "the core is inset, so fewer A blocks fall in it: core {:?} vs nominal {:?}",
+            converged.a_gap_total_blocks,
+            nominal.a_gap_total_blocks
+        );
+        assert!(
+            converged.donor_total_blocks < nominal.donor_total_blocks,
+            "the donor must follow A onto the core, not stay on `b_mapped`: core {:?} vs nominal {:?}",
+            converged.donor_total_blocks,
+            nominal.donor_total_blocks
+        );
+    }
+
     /// **C3 — `fingerprint_diagnostics` gates the X-set:** off, the diagnostic-only fields
     /// (`seam_probe`, `wide_envelope`, `b_levels`) are absent; on, they're populated. Closes
     /// perf-plan `docs/dev/archive/TEMP-pipeline-perf-redesign-plan.md` §4.7 backlog item **C3** — the flag
@@ -3870,10 +4305,14 @@ mod tests {
             !with_sources.gaps.is_empty(),
             "matched channel layout must still characterize"
         );
-        // Track B fine-path attach: `donor_span: Nominal` is the field that differs from scan and
-        // the reason recipe Δ exists — pin it on the dumped verdict, not only on the builder.
+        // Track B fine-path attach: pin the recipe on the dumped verdict, not only on the builder.
+        //
+        // `report.gap_equivalence` is empty here, so this is the **fallback** arm: no scan verdict means
+        // no exported silent core, and the path measures the raw span — `nominal` on both sides. Both
+        // tokens said `core`/`nominal` unconditionally until 2026-08-01; `core` was false and this test
+        // pinned the falsehood. The core arm is covered by
+        // `diagnostic_equivalence_adopts_the_scan_verdicts_core_span`.
         {
-            use crate::domain::gap_equivalence::SpanKind;
             let equiv = with_sources.gaps[0]
                 .equivalence
                 .as_ref()
@@ -3885,8 +4324,11 @@ mod tests {
             assert!((m.context_secs - repair.gap_signature_context_secs).abs() < f64::EPSILON);
             assert_eq!(m.bin_ms, report.recipe.scan_block_ms());
             assert_eq!(m.reduction, ChannelReduction::Interleaved);
-            assert_eq!(m.a_span, SpanKind::Core);
-            assert_eq!(m.donor_span, SpanKind::Nominal);
+            assert_eq!(
+                (m.a_span, m.donor_span),
+                (SpanKind::Nominal, SpanKind::Nominal),
+                "no scan verdict ⇒ no core to adopt ⇒ both ends stay on the raw span"
+            );
         }
 
         let off = characterize_gaps_from_decode(
@@ -4181,6 +4623,7 @@ mod tests {
                 scan_recipe: CorpusScanRecipe::default(),
                 gap_count: 2,
                 incomparable: None,
+                not_measured: Vec::new(),
             },
             gaps: vec![mk_fp(0, false), mk_fp(3, true)],
         };
