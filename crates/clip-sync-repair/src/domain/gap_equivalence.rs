@@ -462,15 +462,10 @@ pub fn derive_gap_equivalence(
 
     // Empty `a_levels` ⇒ no A population and no measurement (do not invent `Some(0)` / a bin — that
     // would claim "zero blocks measured" about a gap where nothing was measured).
-    let a_gap_blocks =
-        (!a_levels.is_empty()).then_some((a_gap_silent_blocks, a_gap_total_blocks));
-    let mut verdict = classify_gap_equivalence(
-        a_gap_rms_db,
-        noise_floor_db,
-        donor_silence_fraction,
-        params,
-    )
-    .with_scan_provenance(gap_floor, a_gap_blocks, donor_blocks);
+    let a_gap_blocks = (!a_levels.is_empty()).then_some((a_gap_silent_blocks, a_gap_total_blocks));
+    let mut verdict =
+        classify_gap_equivalence(a_gap_rms_db, noise_floor_db, donor_silence_fraction, params)
+            .with_scan_provenance(gap_floor, a_gap_blocks, donor_blocks);
     // `bin_ms` is a property of the level stream, not the gap population — any block's width works.
     if let Some(b) = a_levels.first() {
         let bin_ms = ((b.end_secs - b.start_secs) * 1000.0).round().max(0.0) as u64;

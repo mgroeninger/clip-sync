@@ -3878,7 +3878,10 @@ mod tests {
                 .equivalence
                 .as_ref()
                 .expect("diagnostic equivalence");
-            let m = equiv.measurement.as_ref().expect("measurement attached at caller");
+            let m = equiv
+                .measurement
+                .as_ref()
+                .expect("measurement attached at caller");
             assert!((m.context_secs - repair.gap_signature_context_secs).abs() < f64::EPSILON);
             assert_eq!(m.bin_ms, report.recipe.scan_block_ms());
             assert_eq!(m.reduction, ChannelReduction::Interleaved);

@@ -355,8 +355,7 @@ pub fn measure_gap_equivalence(
     let donor_counts = donor
         .as_ref()
         .and_then(|d| donor_silence_counts_at_floor(d, ch, core, floor_db));
-    let donor_fraction =
-        donor_counts.map(|(silent, total)| silent as f64 / total as f64);
+    let donor_fraction = donor_counts.map(|(silent, total)| silent as f64 / total as f64);
     classify_gap_equivalence(a_rms, noise_floor_db, donor_fraction, params).with_scan_provenance(
         floor_db,
         // Fine path always walks a bin grid (possibly empty) — `Some(0, 0)` is a real measurement
