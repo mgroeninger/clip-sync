@@ -15,6 +15,8 @@
 #     label , path/to/A.mkv , path/to/B.m4v [, extra per-pair args]
 # Delimiter is auto-picked from the extension (.tsv => tab, else comma); override with -Delimiter.
 # Fields may be quoted ("C:\my movies\a.mkv") so paths with spaces/commas are fine.
+# The 4th field runs to end of line: `extra` is free-form CLI args, so unquoted delimiters inside it
+# are rejoined, not treated as further columns. `label,A,B,--only-gaps 3,7,12` passes all three gaps.
 #
 # Each pair writes to <CorpusRoot>/<label>/ (corpus.json + per-gap JSON + manifest.json) and a log
 # at <OutDir>/<label>.log.
@@ -93,9 +95,41 @@ $delimChar = switch ($Delimiter) {
     default { if ([IO.Path]::GetExtension($Manifest) -eq '.tsv') { "`t" } else { ',' } }
 }
 
-$rows = Get-Content $Manifest |
-    Where-Object { $_.Trim() -ne '' -and -not $_.Trim().StartsWith('#') } |
-    ConvertFrom-Csv -Delimiter $delimChar -Header 'label', 'a', 'b', 'extra'
+$dataLines = @(Get-Content $Manifest |
+    Where-Object { $_.Trim() -ne '' -and -not $_.Trim().StartsWith('#') })
+
+# Hand-split rather than `ConvertFrom-Csv -Header label,a,b,extra`, which DISCARDS every field past
+# the 4th without a word. The `extra` column holds CLI arguments, and the ones this script exists to
+# pass are themselves comma-separated (`--only-gaps 3,7,12`) — under ConvertFrom-Csv an unquoted row
+# truncates that to `3`, exits 0, and fingerprints the wrong gaps.
+#
+# RFC-4180 quoting is the textbook fix and it does work here, but requiring it is the wrong trade:
+# there is no fifth column, so everything after the third delimiter is `extra` by definition and
+# there is nothing for quotes to disambiguate. Demanding them only converts a silent wrong answer
+# into a loud refusal for a row whose meaning was never in doubt. So: quotes are honored (and
+# stripped) where present, and unquoted delimiters in the tail are simply rejoined.
+function Split-ManifestRow {
+    param([string]$Line, [string]$Delim)
+    $fields = [System.Collections.Generic.List[string]]::new()
+    $cur = [System.Text.StringBuilder]::new()
+    $inQuotes = $false
+    foreach ($ch in $Line.ToCharArray()) {
+        if ($ch -eq '"') { $inQuotes = -not $inQuotes; continue }
+        if ($ch -eq $Delim -and -not $inQuotes) { $fields.Add($cur.ToString()); $cur.Clear() | Out-Null; continue }
+        $cur.Append($ch) | Out-Null
+    }
+    $fields.Add($cur.ToString())
+    # Fields 4..n are one free-form argument string; rejoin with the delimiter that split them so an
+    # unquoted `--only-gaps 3,7,12` round-trips intact.
+    [pscustomobject]@{
+        label = if ($fields.Count -gt 0) { $fields[0] } else { '' }
+        a     = if ($fields.Count -gt 1) { $fields[1] } else { '' }
+        b     = if ($fields.Count -gt 2) { $fields[2] } else { '' }
+        extra = if ($fields.Count -gt 3) { ($fields[3..($fields.Count - 1)]) -join $Delim } else { '' }
+    }
+}
+
+$rows = @($dataLines | ForEach-Object { Split-ManifestRow -Line $_ -Delim $delimChar })
 
 $results = [System.Collections.Generic.List[object]]::new()
 

@@ -46,6 +46,19 @@ trigger — none is a known defect. Shipped behaviour: [gap-fingerprint.md](docs
 | `bit_depth` string → `BitDepth` parser | Deferred: the forward pin (`bit_depth_tokens_are_pinned`) is what protects corpora already on disk; a parser is dead code until a consumer reads the token, and none does. `bit_depth` is stored-for-later by design |
 
 
+### Equivalence margin band
+
+**Not a gate change yet — the gate stays on by default.** Thresholds provenance and the band *report*
+shipped 2026-08-01 (`GapEquivalenceThresholds`, `equivalence-calibration --band`); what is open is the
+experiment that would justify making the band a production rule. Semantics:
+[gap-fingerprint.md](docs/dev/gap-fingerprint.md) § *The margin band*.
+
+| Item | Direction |
+|------|-----------|
+| **Run the banded gaps with the gate off** (the gating step) | The band names 16 of 528 dropped gaps across 7 of 39 pairs (±1.0 dB dropout, ±1 donor block) — 3.0 % of drops. The dumps cannot say whether keeping them is right: a dropped gap has `outcome: skip` and no counterfactual. Re-run just those with `--no-skip-equivalent-gaps --only-gaps <tokens>` and read what the repair path does. If it declines most on their own merits the band is nearly free; if it patches most, listen before believing it is safe. **Blocked on a re-dump**: the 2026-07-31 39-pair corpus predates `thresholds`, so `--band` refuses it rather than assuming 35.0/0.5 |
+| Sizing note — the donor boundary dominates | Within-band populations on the 39-pair corpus: dropout boundary ±1 dB = 23 gaps (2.9 %), ±2 dB = 51; donor boundary at one block = 116 (14.5 %), because donor windows on the flip-sensitive set are 5–18 blocks so one block is 6–20 points of the fraction. An earlier read put the *rescued* set at 76; that over-counted by banding the donor axis alone — a `shared_silence` gap whose donor relaxes into occupancy still lands in `ambient_quiet` (a drop) unless A is also a dropout. Corrected figure is 16, pinned by `donor_relaxation_alone_does_not_rescue_a_non_dropout` |
+| Band as a production rule | Only after the experiment. Cost if adopted at these widths: ~350 vs 274 gaps entering the expensive path per 39 pairs (+28 %), against +193 % for disabling the gate outright. Do **not** pursue the disable-by-default variant without also revisiting the `min_gap_ms = 500` pairing, which exists because the gate cleans up after the sensitive scan (`config.rs` § `default_min_gap_ms`) |
+
 ### Dual-fit confidence axis
 
 **Fingerprint / analysis only** — not a production dual-fit scope change. Do not wire

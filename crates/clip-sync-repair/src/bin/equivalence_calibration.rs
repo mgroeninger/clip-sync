@@ -136,6 +136,51 @@ struct Args {
     /// A `--gap-fingerprints` corpus (dir or `corpus.json`) for the per-gap table, OR a parent directory
     /// of numbered corpora for a one-line-per-pair roll-up.
     path: PathBuf,
+
+    /// Margin-band census instead of the divergence table: which gaps production **drops** that sit
+    /// within a band of a class boundary, plus a `--only-gaps` token list per pair for re-running
+    /// them with `--no-skip-equivalent-gaps`.
+    #[arg(long)]
+    band: bool,
+
+    /// Band half-width on the dropout boundary, in dB. A dropped gap is banded when it would
+    /// classify `repairable_dropout` had the dropout margin been this much shallower.
+    #[arg(long, default_value_t = 1.0)]
+    band_dropout_db: f64,
+
+    /// Band width on the donor-occupancy boundary, in **blocks**. The donor lattice disagreement
+    /// measured between the two front-ends is exactly one block, and short donor windows (5–18
+    /// blocks on the flip-sensitive set) make one block worth 6–20 points of the fraction — so the
+    /// natural unit here is blocks, not a fraction.
+    #[arg(long, default_value_t = 1)]
+    band_donor_blocks: usize,
+}
+
+/// The classification rule with each boundary loosened by the band — **not** a reimplementation of
+/// it. At `band_dropout_db = 0` / `band_donor_blocks = 0` this reduces to
+/// `domain::gap_equivalence`'s `(is_dropout, b_occupied)` match exactly, which is what stops the
+/// band from drifting away from the gate it models.
+///
+/// Returns `None` when the verdict lacks a signal the rule needs (`not_evaluated`, no donor).
+fn banded_keep(
+    v: &GapEquivalenceVerdict,
+    band_dropout_db: f64,
+    band_donor_blocks: usize,
+) -> Option<bool> {
+    let t = v.thresholds?;
+    let a_below = v.a_below_noise_db?;
+    let (silent, total) = (v.donor_silent_blocks?, v.donor_total_blocks?);
+    if total == 0 {
+        return None;
+    }
+    // `a < nf − margin` ⟺ `a_below < −margin`; the band shallows the margin.
+    let is_dropout = a_below < -t.dropout_margin_db + band_dropout_db;
+    // The band lets the donor shed blocks, which is the direction that makes B *occupied*.
+    let relaxed = silent.saturating_sub(band_donor_blocks) as f64 / total as f64;
+    let b_occupied = relaxed < t.donor_silence_thresh;
+    // Only the (dropout, occupied) cell keeps. A `shared_silence` gap whose donor relaxes into
+    // occupancy but whose A is not a dropout lands in `ambient_quiet` — still a drop, not a rescue.
+    Some(is_dropout && b_occupied)
 }
 
 /// The per-gap comparison outcome between the production scan verdict and the diagnostic second opinion.
@@ -577,9 +622,170 @@ fn print_rollup(parent: &Path) -> ExitCode {
     }
 }
 
+/// One pair's banded gaps: the label, the tokens, and the census behind them.
+struct BandPair {
+    label: String,
+    drops: usize,
+    /// Zero-based dump indices of dropped gaps the band would keep.
+    rescued: Vec<usize>,
+    /// Gaps whose verdict predates the `thresholds` field, so the band had to be skipped.
+    unprovenanced: usize,
+}
+
+/// `--only-gaps` tokens for the rescued set.
+///
+/// **One-based**, because `--only-gaps` is (`resolve_only_gaps_is_order_insensitive_and_one_based`)
+/// while `GapFingerprint::index` is zero-based. This `+ 1` is the entire reason this lives in a
+/// binary with a test rather than in a shell one-liner: every token of an off-by-one list still
+/// resolves, so the mistake produces a clean run against the neighbouring gaps and no error.
+fn only_gaps_tokens(rescued: &[usize]) -> String {
+    rescued
+        .iter()
+        .map(|i| (i + 1).to_string())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn band_pair(label: String, corpus: &GapCorpus, args: &Args) -> BandPair {
+    let mut out = BandPair {
+        label,
+        drops: 0,
+        rescued: Vec::new(),
+        unprovenanced: 0,
+    };
+    for fp in &corpus.gaps {
+        let Some(v) = fp.scan_equivalence.as_ref() else {
+            continue;
+        };
+        if !v.drop {
+            continue;
+        }
+        out.drops += 1;
+        // Absent thresholds ⇒ the dump predates them and the band would have to *assume* 35.0/0.5.
+        // Counted and reported rather than assumed: assuming is exactly the hole this field closed.
+        if v.thresholds.is_none() {
+            out.unprovenanced += 1;
+            continue;
+        }
+        if banded_keep(v, args.band_dropout_db, args.band_donor_blocks) == Some(true) {
+            out.rescued.push(fp.index);
+        }
+    }
+    out
+}
+
+fn print_band(path: &Path, args: &Args) -> ExitCode {
+    // Same single-vs-rollup shape as the divergence report.
+    let corpora: Vec<(String, PathBuf)> = if path.is_file() {
+        vec![("(corpus)".to_string(), path.to_path_buf())]
+    } else if path.join("corpus.json").is_file() {
+        let label = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("(corpus)")
+            .to_string();
+        vec![(label, path.join("corpus.json"))]
+    } else {
+        let mut dirs: Vec<PathBuf> = match std::fs::read_dir(path) {
+            Ok(rd) => rd
+                .filter_map(|e| e.ok().map(|e| e.path()))
+                .filter(|p| p.is_dir() && p.join("corpus.json").is_file())
+                .collect(),
+            Err(e) => {
+                eprintln!("error: reading {}: {e}", path.display());
+                return ExitCode::from(2);
+            }
+        };
+        dirs.sort_by_key(|p| {
+            let name = p
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+            (name.parse::<u64>().unwrap_or(u64::MAX), name)
+        });
+        dirs.into_iter()
+            .map(|d| {
+                let name = d
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("?")
+                    .to_string();
+                (name, d.join("corpus.json"))
+            })
+            .collect()
+    };
+    if corpora.is_empty() {
+        eprintln!("no corpora found under {}", path.display());
+        return ExitCode::from(2);
+    }
+
+    println!(
+        "Margin band: dropout boundary ±{:.2} dB, donor boundary ±{} block(s).",
+        args.band_dropout_db, args.band_donor_blocks
+    );
+    println!(
+        "Gaps production DROPS that the band would KEEP — the set to re-run with \
+         --no-skip-equivalent-gaps.\n"
+    );
+    println!(
+        "  {:<16} {:<7} {:<9} --only-gaps (1-based)",
+        "pair", "drops", "rescued"
+    );
+
+    let mut pairs = Vec::new();
+    let mut read_errors = 0usize;
+    for (label, file) in &corpora {
+        let corpus: GapCorpus = match load(file) {
+            Ok(c) => c,
+            Err(e) => {
+                println!("  {label:<16} (read error: {e})");
+                read_errors += 1;
+                continue;
+            }
+        };
+        let bp = band_pair(label.clone(), &corpus, args);
+        if !bp.rescued.is_empty() {
+            println!(
+                "  {:<16} {:<7} {:<9} {}",
+                bp.label,
+                bp.drops,
+                bp.rescued.len(),
+                only_gaps_tokens(&bp.rescued)
+            );
+        }
+        pairs.push(bp);
+    }
+
+    let drops: usize = pairs.iter().map(|p| p.drops).sum();
+    let rescued: usize = pairs.iter().map(|p| p.rescued.len()).sum();
+    let unprovenanced: usize = pairs.iter().map(|p| p.unprovenanced).sum();
+    let with_tokens = pairs.iter().filter(|p| !p.rescued.is_empty()).count();
+    println!(
+        "\n  {rescued} of {drops} dropped gap(s) banded, across {with_tokens} of {} pair(s).",
+        pairs.len()
+    );
+    if unprovenanced > 0 {
+        println!(
+            "  ⚠ {unprovenanced} dropped gap(s) carry no `thresholds` block — dumps written before \
+             2026-08-01. The band is NOT applied to them: it would have to assume the 35.0 dB / 0.5 \
+             defaults were in force, which is the assumption that field exists to remove. Re-dump \
+             those pairs to include them."
+        );
+    }
+    if read_errors > 0 {
+        return ExitCode::from(2);
+    }
+    ExitCode::SUCCESS
+}
+
 fn main() -> ExitCode {
     let args = Args::parse();
     let p = &args.path;
+
+    if args.band {
+        return print_band(p, &args);
+    }
 
     // Single-corpus if the arg is a corpus.json file or a dir directly holding one; else roll up its subdirs.
     let direct = if p.is_file() {
@@ -635,6 +841,96 @@ mod tests {
     }
     fn ambient() -> GapEquivalenceVerdict {
         classify_gap_equivalence(Some(-80.0), Some(-70.0), Some(0.0), &on()) // ambient_quiet (drop)
+    }
+
+    /// Attach the donor populations `banded_keep` needs (`classify_gap_equivalence` takes only the
+    /// fraction). `silent`/`total` must be consistent with the fraction the verdict was built from.
+    fn with_donor(
+        mut v: GapEquivalenceVerdict,
+        silent: usize,
+        total: usize,
+    ) -> GapEquivalenceVerdict {
+        v.donor_silent_blocks = Some(silent);
+        v.donor_total_blocks = Some(total);
+        v
+    }
+
+    /// The band's load-bearing property: at zero width it *is* the production rule. If this drifts,
+    /// every banded count is measuring a second classifier rather than a margin around the first.
+    #[test]
+    fn band_of_zero_reproduces_the_production_verdict() {
+        for (a, nf, ds, silent, total) in [
+            (-106.0, -47.0, 0.0, 0, 10),  // repairable_dropout (keep)
+            (-108.0, -46.0, 1.0, 10, 10), // shared_silence (drop)
+            (-80.0, -70.0, 0.0, 0, 10),   // ambient_quiet (drop)
+            (-106.0, -47.0, 0.6, 6, 10),  // shared_silence, A is a dropout
+            (-80.0, -70.0, 0.6, 6, 10),   // shared_silence, A is not
+        ] {
+            let v = with_donor(
+                classify_gap_equivalence(Some(a), Some(nf), Some(ds), &on()),
+                silent,
+                total,
+            );
+            assert_eq!(
+                banded_keep(&v, 0.0, 0),
+                Some(!v.drop),
+                "band 0 must agree with production on {:?}",
+                v.class
+            );
+        }
+    }
+
+    /// A `shared_silence` gap whose donor relaxes into occupancy is only *rescued* when A is also a
+    /// dropout — otherwise it lands in `ambient_quiet`, which still drops. Banding the donor axis
+    /// alone would over-count the re-run set.
+    #[test]
+    fn donor_relaxation_alone_does_not_rescue_a_non_dropout() {
+        // Donor 5/9 = 0.556 (silent); shedding one block → 4/9 = 0.444 (occupied).
+        let dropout = with_donor(
+            classify_gap_equivalence(Some(-106.0), Some(-47.0), Some(5.0 / 9.0), &on()),
+            5,
+            9,
+        );
+        let ambient = with_donor(
+            classify_gap_equivalence(Some(-80.0), Some(-70.0), Some(5.0 / 9.0), &on()),
+            5,
+            9,
+        );
+        assert!(
+            dropout.drop && ambient.drop,
+            "both are shared_silence today"
+        );
+        assert_eq!(
+            banded_keep(&dropout, 0.0, 1),
+            Some(true),
+            "A is a dropout — rescued"
+        );
+        assert_eq!(
+            banded_keep(&ambient, 0.0, 1),
+            Some(false),
+            "A is room tone — relaxing the donor only moves it to ambient_quiet, still a drop"
+        );
+    }
+
+    /// Dumps predating the `thresholds` field cannot be banded — the band needs both endpoints of a
+    /// distance, and assuming the defaults is the hole the field closed.
+    #[test]
+    fn band_refuses_a_verdict_with_no_recorded_thresholds() {
+        let mut v = with_donor(
+            classify_gap_equivalence(Some(-106.0), Some(-47.0), Some(0.6), &on()),
+            6,
+            10,
+        );
+        v.thresholds = None;
+        assert_eq!(banded_keep(&v, 1.0, 1), None);
+    }
+
+    /// `GapFingerprint::index` is zero-based; `--only-gaps` is one-based. An off-by-one list still
+    /// resolves cleanly against the neighbouring gaps, so nothing downstream would catch it.
+    #[test]
+    fn only_gaps_tokens_convert_zero_based_indices_to_one_based() {
+        assert_eq!(only_gaps_tokens(&[0, 2, 11]), "1,3,12");
+        assert_eq!(only_gaps_tokens(&[]), "");
     }
 
     #[test]

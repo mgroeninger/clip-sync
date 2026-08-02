@@ -327,6 +327,59 @@ still carry the old JSON key — serde ignores it; do not rewrite fixtures just 
 `noise_floor_probes` still ships on the diagnostic `equivalence` verdict (see below); `scan_equivalence`
 never fills it, so the key is omitted there.
 
+#### `thresholds` — what the class was decided *against* (2026-08-01)
+
+`measurement` records how a verdict was measured; `thresholds` records what those measurements were
+compared to. Both live on `scan_equivalence` and `equivalence`.
+
+| field | meaning |
+|---|---|
+| `dropout_margin_db` | `GapEquivalenceParams::dropout_margin_db` as applied (35.0). A is a dropout below `noise_floor_db − dropout_margin_db` |
+| `donor_silence_thresh` | `GapEquivalenceParams::donor_silence_thresh` as applied (0.5). B is occupied below this fraction |
+
+Every *measured* input to the class was already emitted — `a_gap_rms_db`, `noise_floor_db`,
+`a_below_noise_db`, `donor_silence_fraction`, and the block populations behind the last. The values
+they are compared against were not, so a reader could only recompute a class by assuming the defaults
+in force the day the dump was written, and `GapEquivalenceParams` is explicitly overridable. Both
+front-ends hardcode `..Default::default()` today, so the assumption did hold for every dump written
+before 2026-08-01 — recording it is what stops that from being a fact about one month.
+
+**Presence is load-bearing.** `thresholds` is `Some` *iff the classifier actually compared something*:
+absent on both `NotEvaluated` returns (gate off, or a missing signal), present on every decided class.
+`measurement` cannot answer that question — the front-ends attach it after the fact and it appears on
+all four classes, including the 20 `not_evaluated` gaps of the 39-pair corpus.
+
+#### The margin band — `equivalence-calibration --band`
+
+The band asks which gaps production **drops** sit close enough to a class boundary that a small
+instrument error would have changed the verdict. It exists because the two failure directions are not
+symmetric: a false drop ships an unrepaired hole, a false keep costs one declined patch attempt.
+
+It is computed, never stored. `equivalence-calibration --band DIR` re-runs the classification rule
+with each boundary loosened — `--band-dropout-db` (default 1.0) and `--band-donor-blocks` (default 1,
+the measured donor-lattice disagreement) — and at width zero it reduces to the production rule
+exactly, which is what stops it from becoming a second classifier. Gaps whose verdict predates
+`thresholds` are **counted and refused**, not banded against assumed defaults.
+
+There is deliberately **no emitted `near_boundary` flag**: the width is a policy under calibration, and
+a stored boolean would freeze one width into every dump and drift the moment it is retuned.
+
+Output is a per-pair `--only-gaps` token list — **one-based**, converted from the zero-based
+`GapFingerprint::index`, which is why it lives in a tested binary rather than a shell one-liner (every
+token of an off-by-one list still resolves, so the mistake yields a clean run against the neighbouring
+gaps). Feed it back with the gate disabled to get the counterfactual the dumps cannot supply:
+
+```
+clip-sync-repair A B --gap-fingerprints DIR --no-skip-equivalent-gaps --only-gaps 3,7,12
+```
+
+Via `scripts/measure-gap-fingerprints.ps1` those go in the manifest's per-pair `extra` column, quoted
+or not — the 4th field runs to end of line, so unquoted delimiters inside it are rejoined rather than
+read as further columns. This is not `ConvertFrom-Csv`'s behaviour: with a 4-name `-Header` it
+discards surplus fields silently (`--only-gaps 3,7,12` → `3`, exit 0, wrong gaps, `$Error` empty).
+Quoting dodges that by keeping the field count at 4, but the script parses the row itself so the
+correct manifest is not the one that remembered to quote.
+
 #### `equivalence.noise_floor_probes` — context × bin × reduction counterfactuals
 
 Both live paths estimate the noise floor the *same way* (median of context bins outside the gap), at

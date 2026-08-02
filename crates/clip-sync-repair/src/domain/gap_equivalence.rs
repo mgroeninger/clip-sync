@@ -154,6 +154,58 @@ pub struct GapEquivalenceVerdict {
     /// residual attribution.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub noise_floor_probes: Vec<NoiseFloorProbe>,
+    /// The thresholds `class` was decided against — see [`GapEquivalenceThresholds`].
+    ///
+    /// `Some` **iff the classifier actually compared something**: absent on both `NotEvaluated`
+    /// returns (gate off, or a missing signal), present on every decided class. That is a stronger
+    /// signal than [`Self::measurement`], which is attached by the front-ends after the fact and is
+    /// present on all four classes — including the 20 `not_evaluated` gaps of the 39-pair corpus —
+    /// so it cannot answer "was a comparison made".
+    ///
+    /// Provenance only; never read to classify (it *is* what classified).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub thresholds: Option<GapEquivalenceThresholds>,
+}
+
+/// The two threshold constants one [`GapEquivalenceVerdict`] was decided against — the configured
+/// half of the classification, opposite the measured half already on the verdict.
+///
+/// **Why this is recorded.** Every other input to the class is emitted: `a_gap_rms_db`,
+/// `noise_floor_db`, `a_below_noise_db`, `donor_silence_fraction`, and the block populations behind
+/// the last of these. The numbers they are *compared against* were not, so a reader could recompute
+/// the class only by assuming the defaults in force on the day the dump was written — and
+/// [`GapEquivalenceParams`] is explicitly overridable. Both front-ends hardcode
+/// `..Default::default()` today, so the assumption happens to hold for every dump written before
+/// 2026-08-01; recording it is what stops that from being a fact about this month.
+///
+/// This is also what makes the **margin band** computable from a dump rather than from source: the
+/// band asks how far each gap sits from a boundary, and a distance needs both endpoints. Measured
+/// against 35.0 dB / 0.5 on the 39-pair corpus, 2.9 % of gaps sit within 1 dB of the dropout
+/// boundary and 14.5 % flip donor occupancy on a one-block change — but neither figure is
+/// reproducible from a dump that does not say what "the boundary" was.
+///
+/// Deliberately **not** paired with an emitted `near_boundary` flag: the band width is a policy
+/// under active calibration, and a stored boolean would freeze one width into every dump and drift
+/// the moment it is retuned. Distances are derived; see `bin/equivalence_calibration.rs`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct GapEquivalenceThresholds {
+    /// [`GapEquivalenceParams::dropout_margin_db`] as applied — A is a dropout below
+    /// `noise_floor_db − dropout_margin_db`. Distance to that boundary is
+    /// `a_below_noise_db + dropout_margin_db`.
+    pub dropout_margin_db: f64,
+    /// [`GapEquivalenceParams::donor_silence_thresh`] as applied — B is occupied below this
+    /// fraction. Distance to that boundary is `donor_silence_fraction − donor_silence_thresh`;
+    /// one block of it is `1 / donor_total_blocks`.
+    pub donor_silence_thresh: f64,
+}
+
+impl From<&GapEquivalenceParams> for GapEquivalenceThresholds {
+    fn from(p: &GapEquivalenceParams) -> Self {
+        Self {
+            dropout_margin_db: p.dropout_margin_db,
+            donor_silence_thresh: p.donor_silence_thresh,
+        }
+    }
 }
 
 /// Which span a front-end measured on — A-side window or donor window.
@@ -222,11 +274,18 @@ pub enum ChannelReduction {
 }
 
 /// A candidate `noise_floor_db` — median dB over the context bins **outside** the gap — measured at one
-/// `(context window, bin size, channel reduction)` combination. This is the **one surviving** axis
-/// between the two front-ends (I2): both now bin at `scan_block_ms` and reduce interleaved, but the
-/// context window is ±2.0 s (scan) vs ±3.0 s (diagnostic). Residual median **0.606 dB**, still biasing
-/// the diagnostic side **lower**, which shrinks `a_below_noise` and pushes gaps out of `repairable_dropout` — the safe
-/// direction. Kept deliberately un-converged; these probes are what make it attributable.
+/// `(context window, bin size, channel reduction)` combination.
+///
+/// This described I2 as "the one surviving axis" until 2026-08-01, when **I2 was closed by removal**:
+/// the diagnostic overlay now estimates its equivalence floor over scan's ±2.0 s
+/// (`EQUIVALENCE_CONTEXT_SECS`) rather than its own ±3.0 s, and the two floors agree to f32 rounding
+/// (median 1e-6 dB, max 0.258 dB over a 4-pair re-dump). Do not quote the old 0.606 dB residual — it
+/// was measured against an interval no path uses now. See `bin/equivalence_calibration.rs`.
+///
+/// The grid is **retained** anyway, and that is the point: it is what keeps context sensitivity
+/// *askable* after the live measurement stopped varying. A labelled row in the provenance is where a
+/// "what if the window were wider" question belongs — not as an unlabelled difference inside the
+/// verdict being compared.
 ///
 /// **Provenance only.** Emitted over a grid so the variables can be separated: the probe at scan's own
 /// `(2 s, scan_block_ms, Interleaved)` should reproduce `scan_equivalence.noise_floor_db`, and the
@@ -276,7 +335,16 @@ impl GapEquivalenceVerdict {
             donor_span_secs: None,
             measurement: None,
             noise_floor_probes: Vec::new(),
+            thresholds: None,
         }
+    }
+
+    /// Record the thresholds this verdict was decided against. Never changes `class` or `drop` —
+    /// they were already decided *by* these values; this only writes them down.
+    #[must_use]
+    fn with_thresholds(mut self, params: &GapEquivalenceParams) -> Self {
+        self.thresholds = Some(params.into());
+        self
     }
 
     /// Attach population provenance (A silent/total + donor silent/total). Never changes `class` or
@@ -376,7 +444,12 @@ pub fn classify_gap_equivalence(
         (_, false) => GapEquivalenceClass::SharedSilence,
         (false, true) => GapEquivalenceClass::AmbientQuiet,
     };
+    // `with_thresholds` only on this path, never on the two `NotEvaluated` returns above: its
+    // presence is the dump's answer to "was a comparison made", and stamping it on a refusal would
+    // make it describe an intent instead of a measurement — the defect already corrected twice this
+    // month (`a_span: core` on a raw-span read, `donor_span: core` with no donor).
     GapEquivalenceVerdict::of(class, a_gap_rms_db, noise_floor_db, donor_silence_fraction)
+        .with_thresholds(params)
 }
 
 /// A block's timeline center (used for gap/context membership). Block duration is the
@@ -540,6 +613,57 @@ mod tests {
 
     fn class(a: f64, nf: f64, ds: f64) -> GapEquivalenceClass {
         classify_gap_equivalence(Some(a), Some(nf), Some(ds), &on()).class
+    }
+
+    /// `thresholds` is present exactly when a comparison happened — the property the margin band
+    /// reads, and the one `measurement` cannot supply (it is attached by the front-ends after the
+    /// fact and appears on `not_evaluated` gaps too).
+    #[test]
+    fn thresholds_are_recorded_iff_the_classifier_compared_something() {
+        for (a, nf, ds) in [
+            (-106.0, -47.0, 0.0), // repairable_dropout
+            (-81.0, -71.0, 0.92), // shared_silence
+            (-80.0, -70.0, 0.0),  // ambient_quiet
+        ] {
+            let v = classify_gap_equivalence(Some(a), Some(nf), Some(ds), &on());
+            let t = v
+                .thresholds
+                .unwrap_or_else(|| panic!("{:?} must record what it was decided against", v.class));
+            assert!((t.dropout_margin_db - 35.0).abs() < f64::EPSILON);
+            assert!((t.donor_silence_thresh - 0.5).abs() < f64::EPSILON);
+        }
+
+        // Gate off: no comparison, so nothing to record.
+        let off = classify_gap_equivalence(
+            Some(-106.0),
+            Some(-47.0),
+            Some(0.0),
+            &GapEquivalenceParams::default(),
+        );
+        assert_eq!(off.class, NotEvaluated);
+        assert!(off.thresholds.is_none(), "gate off compared nothing");
+
+        // Missing signal: same — a refusal must not carry the marks of a decision.
+        let absent = classify_gap_equivalence(Some(-106.0), Some(-47.0), None, &on());
+        assert_eq!(absent.class, NotEvaluated);
+        assert!(absent.thresholds.is_none(), "no donor compared nothing");
+    }
+
+    /// Non-default params must round-trip, or the field records a constant instead of what ran.
+    #[test]
+    fn thresholds_record_the_params_in_force_not_the_defaults() {
+        let tuned = GapEquivalenceParams {
+            enabled: true,
+            dropout_margin_db: 20.0,
+            donor_silence_thresh: 0.8,
+        };
+        let v = classify_gap_equivalence(Some(-106.0), Some(-47.0), Some(0.7), &tuned);
+        let t = v.thresholds.expect("decided class records thresholds");
+        assert!((t.dropout_margin_db - 20.0).abs() < f64::EPSILON);
+        assert!((t.donor_silence_thresh - 0.8).abs() < f64::EPSILON);
+        // And the class actually followed them: donor 0.7 is occupied at 0.8 but silent at 0.5.
+        assert_eq!(v.class, RepairableDropout);
+        assert_eq!(class(-106.0, -47.0, 0.7), SharedSilence);
     }
 
     /// The four measured licensed-media cases (noise floor ~−45 to −70; margin 35, donor thresh 0.5).
