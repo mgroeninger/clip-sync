@@ -18,6 +18,8 @@ Last updated: 2026-07-31.
 | Plan | Covers |
 |------|--------|
 | [TEMP-nway-donor-alignment-plan.md](docs/dev/TEMP-nway-donor-alignment-plan.md) | N-way donor alignment: repair one damaged copy from multiple donors — draft, not started |
+| [TEMP-flac-output-plan.md](docs/dev/TEMP-flac-output-plan.md) | In-process `--flac` lossless output (peer of `--wav`, no ffmpeg) — draft, not started |
+| [TEMP-gap-listen-wav-plan.md](docs/dev/TEMP-gap-listen-wav-plan.md) | `--gap-listen [DIR]` WAV side channel on `--gap-fingerprints` (one decode) — draft |
 
 ## Open work
 
