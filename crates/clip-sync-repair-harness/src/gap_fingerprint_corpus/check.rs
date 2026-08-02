@@ -681,10 +681,16 @@ fn check_scan_equivalence_coverage(
 
 /// A donor window that runs past B's end is not a measurement of quiet.
 ///
-/// Scan fails closed here and returns `not_evaluated`; the diagnostic path clamps to the samples that
-/// exist and scores the truncated remainder, which came back 99.3–100 % silent on all 20 such gaps of
-/// the 2026-07-31 corpus — a drop verdict manufactured out of absent audio. Surfacing it keeps the
-/// divergence from being read as a real disagreement about silence.
+/// **This reports media geometry, not a defect, since 2026-08-01.** Scan has always failed closed here
+/// (`not_evaluated`); the diagnostic path used to clamp to the samples that exist and score the truncated
+/// remainder, which came back 99.3–100 % silent on all 20 such gaps of the 2026-07-31 corpus — a drop
+/// verdict manufactured out of absent audio. That path now refuses the window too (`donor_span: None`),
+/// so both sides agree by refusal and the overrun no longer produces a divergence.
+///
+/// Kept as a Warn anyway: the overrun is a real property of the pair's mapping worth seeing (worst
+/// observed +118 s), and it is the condition under which the equivalence gate declines to answer at all.
+/// A dump where these stop appearing on known-tail-gap media would mean the mapping changed, not that
+/// something got fixed.
 fn check_donor_within_b(label: &str, corpus: &CorpusFile, report: &mut HealthCheckReport) {
     let Some(b_dur) = corpus
         .source
@@ -721,9 +727,10 @@ fn check_donor_within_b(label: &str, corpus: &CorpusFile, report: &mut HealthChe
         severity: IssueSeverity::Warn,
         pair: label.to_string(),
         message: format!(
-            "{} gap(s) map a donor window past B's end ({b_dur:.2}s), worst +{worst:.2}s: {}{} — scan \
-             fails closed (not_evaluated) but the diagnostic equivalence clamps and scores the truncated \
-             window, so any drop verdict there rests on audio that does not exist",
+            "{} gap(s) map a donor window past B's end ({b_dur:.2}s), worst +{worst:.2}s: {}{} — both \
+             equivalence paths refuse these (not_evaluated / no donor measured), so the gaps are kept, \
+             not dropped; reported as pair geometry. Dumps written before 2026-08-01 instead scored the \
+             clamped remainder and can carry a drop verdict there resting on audio that does not exist",
             overruns.len(),
             sample.join(" "),
             if overruns.len() > sample.len() {
