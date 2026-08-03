@@ -21,9 +21,11 @@ clip-sync-repair A.mkv B.m4v --gap-fingerprints gap-files/ [--fingerprint-gap 3]
 - `--gap-fingerprints DIR` — after scan, write a corpus directory: `corpus.json` (all characterized
   gaps), one self-contained single-gap JSON **per gap** (the library), and a non-identifying
   `manifest.json`.
-- `--fingerprint-gap N` (repeatable) — characterize **only** these gaps. Omit it to characterize
-  **all** gaps. Each characterized gap gets full decision/repair detail (per-bracket gate
-  `failure_stage`, `baseline_lag`, `splice_dualfit`, …).
+- `--fingerprint-gap N` (repeatable, or comma-separated: `--fingerprint-gap 1,3,12`) — characterize
+  **only** these gaps. Omit it to characterize **all** gaps. Each characterized gap gets full
+  decision/repair detail (per-bracket gate `failure_stage`, `baseline_lag`, `splice_dualfit`, …).
+  Unlike `--only-gaps` it takes **bare numbers only** — no `START-END` / `START..END` ranges, no
+  timestamps.
   **`N` is 1-based**, matching the `#` column of the repair gap table (and every other user-facing gap
   number in the tool). `0` and out-of-range values are rejected.
   The **emitted corpus stays 0-based**: `GapFingerprint::index` and the `g{:03}` filename segment are
@@ -33,6 +35,68 @@ clip-sync-repair A.mkv B.m4v --gap-fingerprints gap-files/ [--fingerprint-gap 3]
 - `--fingerprint-diagnostics` — also write the **Tier-3 X-set** (`seam_probe`, `wide_envelope`,
   `b_levels`, diagnostic `lag`). Off by default (decision/repair fields only); slower. Needed for the
   analyzer's seam-probe reports.
+
+**`--only-gaps` / `--skip-gaps` do not narrow a dump.** They filter the *repair* plan; the dump
+selects with `--fingerprint-gap`. On a **scan-only** run (no `--wav` / `--mux` / `--repair-preview`)
+the repair selection is validated and then discarded, so passing them there is rejected pre-scan
+rather than silently producing a full-corpus dump the caller believes was narrowed. Alongside a real
+repair they are still accepted and still bound the repair — the dump just stays full-corpus.
+
+### `--gap-listen` — hear what the numbers describe
+
+```
+clip-sync-repair A.mkv B.m4v --gap-fingerprints gap-files/x --gap-listen --fingerprint-gap 10,14 \
+  --no-skip-equivalent-gaps
+```
+
+A **WAV side channel on the dump**, not a second corpus owner: one decode produces the fingerprint
+JSON *and* listenable clips, so ears and numbers join on the same stem. Requires
+`--gap-fingerprints`; gaps are selected with `--fingerprint-gap`.
+
+| Invocation | WAV root |
+|---|---|
+| `--gap-fingerprints JSON_DIR --gap-listen WAV_DIR` | `WAV_DIR` |
+| `--gap-fingerprints JSON_DIR --gap-listen` | `JSON_DIR` (noted on stderr when it defaults) |
+| `--gap-listen` without `--gap-fingerprints` | **error** |
+
+Per selected gap, named by the same `entry_stem` as the gap's JSON:
+
+| File | When |
+|---|---|
+| `<stem>_a_surround.wav` | always — the gap ± `gap_signature_context_secs` (3 s) from A |
+| `<stem>_b_surround.wav` | when the gap reaches the fill plan — the mapped donor span, same ± context so the two clips are comparable by ear |
+| `<stem>_a_patched.wav` | **only when the production gate patches** — the identical A window after the splice |
+
+**The patched clip comes from the production engine** (`characterize_region` → `execute_region_spec`
+→ `splice_into_a`), not from the fingerprint oracle. The oracle's `any_ok` can disagree with the
+production gate by design, so splicing from it would answer a different question than "is the repair
+this tool would actually make any good?". On a production skip **no patched WAV is written** — an
+invented fill would be worse than a missing file, and the skip reason is printed instead.
+
+**Selector and run modes.** `--only-gaps` / `--skip-gaps` are rejected (one selector must drive both
+the corpus and the fill plan, or they cover different sets). `--wav`, `--mux` and `--repair-preview`
+are rejected too — each makes the patched clip impossible or ambiguous, and unlike the `--mux` /
+`--gap-fingerprints` warn-and-ignore precedent this **errors**, because silently delivering
+two-thirds of an explicitly requested multi-hour diagnostic is the failure mode the flag exists to
+avoid. `dry_run` is *not* rejected: it defaults on and is cleared only by an output flag, so it is
+set on every legal listen run.
+
+**Cost.** Every selected gap costs three WAVs *and* a production characterize — the dominant term in
+a repair run. A bare `--gap-listen` selects the whole pair; above 25 gaps it warns before the decode
+so an accidental multi-hour run can still be aborted. Narrow with `--fingerprint-gap`.
+
+> **A listen corpus is a partial corpus.** The selector filters the dump, so the `corpus.json` a
+> listen run writes covers only the listened gaps. That keeps the run cheap, but it is **not** the
+> corpus of record for band analysis — keep roll-up tooling pointed at a full-pair dump, and write
+> listen runs somewhere they won't be mistaken for one.
+
+> **The WAV root holds licensed audio; the JSON does not.** Every `_surround` / `_patched` file is
+> decoded source material, so a listen WAV root is in the same class as `gap-files/`: **gitignored,
+> ephemeral, never committed, never quoted.** Point `--gap-listen` at a path already covered by
+> `.gitignore` — the bare-flag form puts licensed audio next to committable JSON, which is convenient
+> for listening and a hazard at commit time. The *stems* are `entry_stem`s (id prefixes and
+> timestamps, never titles or paths), so names are safe to quote in notes even though the files are
+> not. That is by construction; keep it that way if the naming authority ever changes.
 
 **Bulk runs (many pairs):** use [`scripts/measure-gap-fingerprints.ps1`](../../scripts/measure-gap-fingerprints.ps1)
 with the same manifest format as [`measure-repair-perf.ps1`](../../scripts/measure-repair-perf.ps1)
@@ -68,7 +132,8 @@ a fixture.
 **Repair takes priority.** This is a repair tool first, so a real repair wins over the diagnostic:
 if `--mux` is set, fingerprinting is **skipped** (with a warning if `--gap-fingerprints` was also
 passed). `--gap-fingerprints` therefore runs on a scan-only / `--wav` run. *(Note: `--gap-fingerprints`
-with `--wav` currently runs both and decodes A/B twice — fine, but not free.)*
+with `--wav` currently runs both and decodes A/B twice — fine, but not free.)* `--gap-listen` is the
+exception to the warn-and-ignore rule: with `--mux` it **errors** rather than being dropped.
 
 ## Performance
 
@@ -88,6 +153,17 @@ characterize baseline in [repair-perf.md §2](repair-perf.md) (2026-07-23) — f
 Fingerprint mode enumerates brackets exhaustively, so even that is an upper bound on the production
 path, which §3 measures at 2.7–4.1 s/bracket. Both numbers are snapshots; cite §2 rather than copying
 a bare figure forward.
+
+**This is a dump cost, and `--gap-listen` inherits all of it.** The per-bracket loop
+(`measure.rs:1680`) is gated on `DetailTier::Full` and runs over every feasible bracket
+**unconditionally** — nothing about it is triggered by the gate's verdict. Measured on a synthetic
+non-matching donor (2026-08-02): ~350 s total, of which the production gate's refusal was **0.65 s**
+and the rest was the dump's `anchor_matchability` / `local_anchor_xcorr` sweep. A plain production
+repair does *not* pay this (it evaluates the gate once per gap, not once per bracket). Practical
+consequence: on real media **every gap the gate refuses adds minutes of anchor oracle to a listen
+run** — and refused gaps are exactly what a margin-band experiment selects. Budget for it. Two
+cheapening hypotheses (bounding the fill search; shrinking the timeline) were measured and **both
+refuted**.
 
 Why it resisted a cheap speedup: on the licensed corpus, the expensive gaps are **timing-offset skips**
 (same audio shifted ~150–200 ms, lag-corr ≥ 0.98) that score every bracket only to fail the lag-0

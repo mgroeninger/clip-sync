@@ -17,7 +17,9 @@
 //! right home for an on-demand, corpus-dependent calibration probe.
 //!
 //! PR: **no**.
-//! Run: `cargo test -p clip-sync-repair --features validation-tests --test calibrate_anchor_prominence -- --ignored --nocapture`
+//! The binary is listed in `Invoke-RepairValidation` so it builds under `validation-tests`; the
+//! probe stays `#[ignore]`d (finding settled). Re-measure:
+//! `cargo test -p clip-sync-repair --features validation-tests --test calibrate_anchor_prominence -- --ignored --nocapture`
 
 use clip_sync::testing::corpus_sources::{
     find_source, load_sources, prepare_source_master_wav, source_cache_path, source_ready,
@@ -39,7 +41,7 @@ const SOURCES: &[(&str, &str)] = &[
 ];
 
 #[test]
-#[ignore = "validation: needs ffmpeg + fetch_corpus_sources.ps1 — run via test-tier validation"]
+#[ignore = "validation: settled CSV probe — re-run with --ignored --nocapture when anchor detection changes"]
 fn calibrate_anchor_prominence_csv() {
     require_validation_env();
     let temp = tempfile::tempdir().expect("tempdir");

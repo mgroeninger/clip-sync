@@ -1,6 +1,8 @@
 //! Ad-hoc diagnostic: a 1.5 s silent gap embedded in broadband noise, flanked by speech.
 //!
 //! Tier: **diagnostic** (`diagnostic-tests`). Synthetic A/B (no media / ffmpeg).
+//! Fast row `anchor_rescue_on_noise_bracketed_gap` runs in the plain diagnostic batch; the
+//! production-scale offset sweep is `#[ignore]`d and run release-only via the tier script.
 //!
 //! Reproduces the production geometry behind a `boundary correlation below threshold
 //! (pre=0.03 post=0.03)` skip, then exercises the anchor-seam machinery directly at the
@@ -353,6 +355,7 @@ fn build_offset_fixture(shift_secs: f64) -> EnergySignatureFixture {
 }
 
 #[test]
+#[ignore = "tier:diagnostic — production-scale 40s×4 gate probe; release via test-tier diagnostic"]
 fn anchor_rescue_under_global_b_offset() {
     // Gate search radius = 5 s (w5_anchor_rescue_repair's fill_border_search_secs).
     let search_radius_secs = 5.0;

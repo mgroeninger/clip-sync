@@ -217,6 +217,15 @@ try {
             'w5_anchor_rescue_pipeline',
             '--', '--ignored'
         )
+        # Noise-collar quiet-gap offset sweep (same production-scale gate cost; release-only).
+        Invoke-CargoTest @(
+            '-p', 'clip-sync-repair',
+            '--release',
+            '--features', 'diagnostic-tests',
+            '--test', 'diag_anchor_quiet_gap',
+            'anchor_rescue_under_global_b_offset',
+            '--', '--ignored'
+        )
         # `--gap-listen` against a gate-refused gap (slow: ~350 s, of which ~99.8% is the Full-tier
         # fingerprint per-bracket anchor oracle, not the refusal the test asserts — see
         # docs/dev/TEMP-gap-listen-wav-plan.md §12.2). Release-only for the same reason as above.

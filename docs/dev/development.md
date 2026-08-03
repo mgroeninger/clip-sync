@@ -220,7 +220,7 @@ means included in `.\scripts\test-tier.ps1 -Tier pr-repair` (and therefore `-Tie
 | `diag_anchor_seam` | diagnostic | `diagnostic-tests` | no | Anchor candidate/bracket CSV (`speech_peaks`, C3, flat C1) |
 | `diag_w5_anchor_rescue` | diagnostic | `diagnostic-tests` | no | W5 anchor-rescue single-cell scores (nominal/baseline + per-bracket gate CSV) |
 | `diag_w5_timing_offset` | diagnostic | `diagnostic-tests` | no | W5 timing-offset recoverability grid (`offset × drift` lag CSV); slow gate-probe row `#[ignore]` |
-| `diag_anchor_quiet_gap` | diagnostic | `diagnostic-tests` | no | Noise-collar anchor rescue domain probe (synthetic) |
+| `diag_anchor_quiet_gap` | diagnostic | `diagnostic-tests` | no | Noise-collar anchor rescue domain probe (synthetic); slow offset sweep `#[ignore]` |
 | `diag_splice_timescale` | diagnostic | `diagnostic-tests` | no | Seam timescale / uniqueness sweep (ffmpeg + `SPLICE_EXP_*`; soft-skip without env) |
 | `seam_residual_oracle` | diagnostic | `diagnostic-tests` | no | In-memory broadband patch oracle; slow rescue row `#[ignore]` |
 
