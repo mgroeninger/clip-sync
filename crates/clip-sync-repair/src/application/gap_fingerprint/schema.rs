@@ -347,9 +347,16 @@ pub struct GapFingerprint {
     pub channels: u16,
     pub geometry: GapGeometry,
     pub levels: LevelProfile,
-    pub silence: SilenceProfile,
-    pub contour: ContourInfo,
-    pub anchors: AnchorSet,
+    /// Collar / relative-silence test. `None` on the production projection path (never measured there).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub silence: Option<SilenceProfile>,
+    /// Anchor-seam contour flags. `None` on the production projection path.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub contour: Option<ContourInfo>,
+    /// Editorial anchors. `None` on the production projection path (empty was indistinguishable from
+    /// "measured none").
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub anchors: Option<AnchorSet>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub brackets: Vec<BracketInfo>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -446,14 +453,23 @@ pub struct GapGeometry {
 }
 
 /// RMS level envelope (dBFS) across the gap's pre/post context, plus salient summary levels.
+///
+/// Envelope fields (`bin_ms` / `profile_db` / `floor_db` / `speech_peak_db`) are `Option` / skip-empty so
+/// the production projection path can **omit** them rather than emit `0` / `[]` / `−120` placeholders.
+/// `noise_floor_db` / `gap_floor_db` remain required — those are the decision floors the corpus reader
+/// consumes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LevelProfile {
-    pub bin_ms: u32,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub bin_ms: Option<u32>,
     /// Per-bin RMS in dBFS across pre-context → post-context (silence floored, see `floor_db`).
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub profile_db: Vec<f32>,
     /// dBFS value substituted for true-silent bins (so the vector has no `-inf`).
-    pub floor_db: f32,
-    pub speech_peak_db: f32,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub floor_db: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub speech_peak_db: Option<f32>,
     pub noise_floor_db: f32,
     pub gap_floor_db: f32,
 }
@@ -814,18 +830,52 @@ fn ser_nan_as_null<S: serde::Serializer>(v: &f64, s: S) -> Result<S::Ok, S::Erro
 /// Same-master confirmation at the decision seam: how deeply B cancels A (least-squares residual, dB)
 /// versus the measured noise floor. `chosen_*_db ≤ floor_*_db` with `informative` ⇒ genuine same source
 /// (the strong test, beyond mere correlation). A shallow residual above the floor ⇒ B differs.
+///
+/// Per-side dB values are `None` when that side was unmeasured / non-finite / silence-floor sentinel
+/// (`−120`) — never emit a fabricated −120 as if it were a cancellation depth.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct ResidualInfo {
-    #[serde(deserialize_with = "de_null_as_nan")]
-    pub chosen_pre_db: f64,
-    #[serde(deserialize_with = "de_null_as_nan")]
-    pub chosen_post_db: f64,
-    #[serde(deserialize_with = "de_null_as_nan")]
-    pub floor_pre_db: f64,
-    #[serde(deserialize_with = "de_null_as_nan")]
-    pub floor_post_db: f64,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "de_residual_db_opt"
+    )]
+    pub chosen_pre_db: Option<f64>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "de_residual_db_opt"
+    )]
+    pub chosen_post_db: Option<f64>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "de_residual_db_opt"
+    )]
+    pub floor_pre_db: Option<f64>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "de_residual_db_opt"
+    )]
+    pub floor_post_db: Option<f64>,
     /// The noise floor established cancellation on every measured side — the residual is interpretable.
     pub informative: bool,
+}
+
+/// Map a residual dB to wire form: non-finite and the `SILENCE_FLOOR_DB` (−120) sentinel become `None`.
+pub(crate) fn residual_db_opt(db: f64) -> Option<f64> {
+    if db.is_finite() && (db - f64::from(SILENCE_FLOOR_DB)).abs() > 1e-9 {
+        Some(db)
+    } else {
+        None
+    }
+}
+
+fn de_residual_db_opt<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<f64>, D::Error> {
+    // Accept JSON `null`, absent (via default), bare number, and map −120 / non-finite → None so old
+    // dumps that wrote the silence-floor sentinel read as "unmeasured side".
+    Ok(Option::<f64>::deserialize(d)?.and_then(residual_db_opt))
 }
 
 /// `DonorInterior` + `donor_interior_at` moved to the shared `domain::donor` so the production dual-fit
@@ -930,7 +980,9 @@ pub struct WideEnvelopeFingerprint {
 pub struct GateOutcome {
     pub plan_kind: String,
     pub tier: String,
-    pub seam_shape: String,
+    /// Seam-shape label. `None` on the production projection path (was hardcoded `""`).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub seam_shape: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub fit_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
