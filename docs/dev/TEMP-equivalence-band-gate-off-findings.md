@@ -449,7 +449,9 @@ recorded and the nominal map stands, rather than an abstain that would keep ever
 material.
 
 **Still unvalidated:** everything above is measured on the same 12 gaps that motivated it. The
-out-of-set behaviour is only covered by synthetic fixtures — see §6.5.
+out-of-set behaviour is only covered by synthetic fixtures — see §6.5. The registration is now
+computed corpus-wide in `Observe` mode (§6.6), which will answer the *rate* question without
+putting a verdict at risk; `Apply` stays off until it has.
 
 ### 6.5 The out-of-set gap is a materials problem
 
@@ -466,8 +468,40 @@ registration change must **not** flip. Two routes, neither blocking the prototyp
 
 1. **A small second `--gap-listen` run** over a handful of `repairable_dropout` gaps drawn from
    pairs *not* among the eight already listened to. This is the real test — it is the only thing
-   that produces both timelines for material the method has not seen.
-2. **Emit the registration on the next corpus dump** (`donor_registration` is provenance; it can
-   ride along with the gate still measuring at the nominal map). That answers the *rate* question
-   §6.3 raises — how often the nominal map is wrong outside a set selected for sitting near a
-   boundary — without changing a single verdict.
+   that produces both timelines for material the method has not seen. Still open.
+2. ~~**Emit the registration on the next corpus dump**~~ — **DONE 2026-08-03**, see §6.6.
+
+### 6.6 Route 2 shipped: registration observed on the scan path
+
+`DonorRegistrationParams` now carries a **mode**:
+
+- `DonorRegistrationMode::Observe` — compute the registration, record it on the verdict, and
+  classify at the **nominal** map exactly as before. Provenance only: same class, same
+  `donor_silence_fraction`, same `donor_span_secs`, plus one `donor_registration` block per gap.
+  No abstain — an abstain is a verdict change, and a run that started keeping gaps because of a
+  mode flip would answer a different question than the one it was turned on to ask.
+- `DonorRegistrationMode::Apply` — measure at the registered lag and abstain below
+  `min_envelope_r`. The §6.4 fix. Not enabled anywhere.
+
+`Observe` is the `Default`, so a caller that asks for registration without saying what for cannot
+silently move a decision. `scan_gaps.rs` requests it unconditionally; the corpus dump picks it up
+for free, because `characterize_gaps` copies scan's verdict onto every `GapFingerprint`
+(`fp.scan_equivalence`). Nothing else changed — the whole default-feature suite passes unmodified,
+goldens included.
+
+**So the next corpus run answers the rate question directly.** Per gap the dump now carries
+`lag_blocks` / `lag_ms` (how far off the nominal map was), `peak_r` vs `nominal_r` (what the
+misregistration cost, and whether the window could be placed at all), `bins`, and the eroded
+`a_interior_db` / `b_interior_db` / `interior_delta_db`. Three things to read off it:
+
+1. **How often is `lag_blocks != 0`?** §6.3 says the 12-gap set cannot estimate this — it was
+   selected for sitting near a boundary, which is what a registration error causes.
+2. **How often would `Apply` have flipped a class?** Derivable per gap, since both windows are on
+   the verdict. The 132 `repairable_dropout` gaps are the ones that must not move.
+3. **How often is `peak_r < 0.70`?** That is the `Apply` abstain rate, and it is a cost: each one
+   is a gap kept with no judgement made.
+
+The end-to-end wiring is pinned by
+`scan_gaps.rs::scan_records_donor_registration_without_moving_the_verdict`, on a fixture whose
+registration is deliberately class-flipping (nominal reads B's content ⇒ `repairable_dropout`;
+registered lands on B's hole ⇒ would be `shared_silence`), so "unchanged" is a claim with teeth.

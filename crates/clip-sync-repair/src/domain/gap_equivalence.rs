@@ -66,6 +66,8 @@ impl Default for GapEquivalenceParams {
 /// instead. Registration is still allowed to **abstain** — see [`Self::min_envelope_r`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DonorRegistrationParams {
+    /// Whether the registration is allowed to change the verdict — see [`DonorRegistrationMode`].
+    pub mode: DonorRegistrationMode,
     /// Search half-width in blocks. `10` at the 100 ms default block ⇒ ±1.0 s, comfortably past the
     /// 410 ms worst case observed.
     pub max_lag_blocks: usize,
@@ -73,12 +75,43 @@ pub struct DonorRegistrationParams {
     /// **abstains** ([`NotEvaluatedReason::DonorRegistrationUnreliable`]) instead of classifying.
     /// Every gap on the listen set registered at 0.883 or better, so `0.70` fires only on material
     /// where the two timelines genuinely do not correspond — it is a floor, not a tuned split.
+    ///
+    /// Read only under [`DonorRegistrationMode::Apply`]; under `Observe` the abstain would *be* a
+    /// verdict change, so `peak_r` is merely recorded and the reader applies their own floor.
     pub min_envelope_r: f64,
+}
+
+/// What a computed [`DonorRegistration`] is allowed to do.
+///
+/// The two are deliberately separate because the open question is a **rate**, not a mechanism: the
+/// registration is validated on twelve gaps that were listened to, and nobody knows yet how often it
+/// abstains, or how often it moves the window far enough to flip a class, across the whole corpus.
+/// [`Observe`](Self::Observe) answers that from a dump without putting a single verdict at risk;
+/// [`Apply`](Self::Apply) is the shipped behaviour once the rate is known.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DonorRegistrationMode {
+    /// Compute the registration and record it on the verdict, then classify at the **nominal** map
+    /// exactly as an un-registered gate would. Provenance only — byte-identical verdicts, plus one
+    /// `donor_registration` block per gap. The default, so a caller that asks for registration
+    /// without saying what for cannot silently move a decision.
+    #[default]
+    Observe,
+    /// Measure the donor window at the registered lag, and **abstain**
+    /// ([`NotEvaluatedReason::DonorRegistrationUnreliable`]) when `peak_r < min_envelope_r`. This is
+    /// the fix; it changes classes by construction.
+    Apply,
+}
+
+impl DonorRegistrationMode {
+    fn applies(self) -> bool {
+        matches!(self, Self::Apply)
+    }
 }
 
 impl Default for DonorRegistrationParams {
     fn default() -> Self {
         Self {
+            mode: DonorRegistrationMode::Observe,
             max_lag_blocks: 10,
             min_envelope_r: 0.70,
         }
@@ -823,9 +856,11 @@ pub fn derive_gap_equivalence(
         }
         _ => None,
     };
-    // Registration moves the window; it never edits the reading taken there.
+    // Registration moves the window; it never edits the reading taken there. Under `Observe` it does
+    // not even do that — the lag is recorded and the nominal window measured, so the dump can report
+    // how far off the map was without any verdict depending on the answer.
     let donor_window = match (b_mapped, registration) {
-        (Some((s, e)), Some((_, reg))) => {
+        (Some((s, e)), Some((rp, reg))) if rp.mode.applies() => {
             let shift = reg.lag_ms / 1000.0;
             Some((s + shift, e + shift))
         }
@@ -845,7 +880,8 @@ pub fn derive_gap_equivalence(
     // A registration we don't believe is not a licence to fall back on the nominal map — that is the
     // window we already know is wrong. Abstain instead: `NotEvaluated` keeps the gap (fail open) and
     // the reason says why, so a keep here is honest rather than accidental.
-    let unreliable = registration.is_some_and(|(rp, reg)| reg.peak_r < rp.min_envelope_r);
+    let unreliable =
+        registration.is_some_and(|(rp, reg)| rp.mode.applies() && reg.peak_r < rp.min_envelope_r);
     let mut verdict = if unreliable && params.enabled {
         GapEquivalenceVerdict::of(
             GapEquivalenceClass::NotEvaluated,
@@ -1229,7 +1265,20 @@ mod tests {
 
     // --- Donor registration (§6.4 of the band findings) -----------------------------------------
 
+    /// Registration in [`Apply`](DonorRegistrationMode::Apply) mode — the behaviour under test in
+    /// this section. `Apply` is spelled out because it is *not* the default: see
+    /// [`observed_registration_records_the_lag_without_moving_the_window`].
     fn with_registration() -> GapEquivalenceParams {
+        GapEquivalenceParams {
+            donor_registration: Some(DonorRegistrationParams {
+                mode: DonorRegistrationMode::Apply,
+                ..Default::default()
+            }),
+            ..on()
+        }
+    }
+
+    fn observing_registration() -> GapEquivalenceParams {
         GapEquivalenceParams {
             donor_registration: Some(DonorRegistrationParams::default()),
             ..on()
@@ -1307,6 +1356,76 @@ mod tests {
         // The recorded span is the one measured, not the one requested.
         let (ds, _) = v.donor_span_secs.expect("donor span");
         assert!((ds - 5.5).abs() < 1e-6, "{:?}", v.donor_span_secs);
+    }
+
+    /// **The corpus-provenance contract.** `Observe` must produce the *un-registered* verdict — same
+    /// class, same fraction, same donor span — while still recording the lag it found. This is what
+    /// makes it safe to turn on across a whole corpus run to learn how often registration would move
+    /// something: every field a downstream consumer reads is byte-identical to the gate-off-by-lag
+    /// behaviour, and the one new field is inert.
+    ///
+    /// Run against the headline case, so the registration on offer is a big one (500 ms, class-
+    /// flipping under [`DonorRegistrationMode::Apply`]) and "unchanged" is a real claim.
+    #[test]
+    fn observed_registration_records_the_lag_without_moving_the_window() {
+        let a = timeline(120, 50..56, -110.0, 0);
+        let b = timeline(120, 55..61, -110.0, 5);
+
+        let nominal = derive_gap_equivalence(&a, 5.0, 5.6, Some(&b), Some((5.0, 5.6)), &on());
+        let observed = derive_gap_equivalence(
+            &a,
+            5.0,
+            5.6,
+            Some(&b),
+            Some((5.0, 5.6)),
+            &observing_registration(),
+        );
+
+        let reg = observed.donor_registration.expect("registration still ran");
+        assert_eq!(reg.lag_blocks, 5, "and found the same lag: {reg:?}");
+
+        // Everything else is the nominal verdict, field for field.
+        assert_eq!(
+            GapEquivalenceVerdict {
+                donor_registration: None,
+                ..observed
+            },
+            nominal,
+            "Observe must be provenance-only"
+        );
+        assert_eq!(nominal.class, RepairableDropout, "the un-registered call");
+    }
+
+    /// **Negative control for `Observe`.** A donor that cannot be registered is recorded as such and
+    /// nothing else happens — no abstain. The abstain is a verdict change, so it belongs to `Apply`
+    /// alone; a corpus run that started keeping gaps because of a mode change would answer a
+    /// different question than the one it was turned on to ask.
+    #[test]
+    fn observing_an_unregistrable_donor_does_not_abstain() {
+        let a = timeline(120, 50..56, -110.0, 0);
+        let mut b = timeline(120, 50..56, -110.0, 0);
+        for (i, blk) in b.iter_mut().enumerate() {
+            if !blk.silent {
+                blk.rms_db = content_db(i as i64 + 5_000);
+            }
+        }
+
+        let v = derive_gap_equivalence(
+            &a,
+            5.0,
+            5.6,
+            Some(&b),
+            Some((5.0, 5.6)),
+            &observing_registration(),
+        );
+        let reg = v.donor_registration.expect("registration was attempted");
+        assert!(reg.peak_r < 0.70, "same unregistrable donor: {reg:?}");
+        assert_eq!(v.class, SharedSilence, "classified at the nominal map");
+        assert!(
+            v.not_evaluated_reason.is_none(),
+            "Observe never abstains: {v:?}"
+        );
+        assert!(v.thresholds.is_some(), "a decision was made");
     }
 
     /// **Negative control.** A real dropout with a live donor must survive registration: B carries

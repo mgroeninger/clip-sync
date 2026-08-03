@@ -242,8 +242,21 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         // dropout to `ambient-quiet`. B's donor-silence window is the same core offset-mapped so it
         // matches A. Always computed and reported; the `skip_equivalent_gaps` drop happens later in
         // `build_gap_fill_plan`.
+        // `donor_registration` is **Observe**: the donor envelope is registered against A's and the
+        // result recorded on every verdict, but the classification still runs at the nominal offset
+        // map, so this changes no class, no fraction and no span — it only adds a field.
+        //
+        // The point is the rate. `docs/dev/TEMP-equivalence-band-gate-off-findings.md` §6.4 validated
+        // the registration on twelve gaps that were listened to, where the nominal map was off by
+        // 80–410 ms; what nobody can say yet is how often that happens corpus-wide, or how often it
+        // would be large enough to flip a class. Observing it costs ~21 dot products over 40–70 bins
+        // per gap (no decode) and answers that from the next dump. Switching to
+        // `DonorRegistrationMode::Apply` is the fix, and is a separate, evidence-led decision.
         let equivalence_params = crate::domain::gap_equivalence::GapEquivalenceParams {
             enabled: true,
+            donor_registration: Some(
+                crate::domain::gap_equivalence::DonorRegistrationParams::default(),
+            ),
             ..Default::default()
         };
         let b_levels_for_eq = (!b_scan.levels.is_empty()).then_some(b_scan.levels.as_slice());
@@ -630,6 +643,16 @@ mod tests {
             skip_start: f64,
             skip_end: f64,
         },
+        /// A **registrable** program: a 440 Hz tone under an aperiodic per-100 ms amplitude envelope,
+        /// with a digital-silence hole. Unlike [`Loud`](Self::Loud) its block levels *vary*, which is
+        /// what donor registration correlates on — a constant tone has a flat envelope and nothing to
+        /// align. `shift_secs` delays the envelope, so a B built with a shift is the same program
+        /// arriving late: the local drift the registration exists to find.
+        Program {
+            hole_start_secs: f64,
+            hole_end_secs: f64,
+            shift_secs: f64,
+        },
     }
 
     struct FixedReader(HashMap<PathBuf, (SessionKind, Duration)>);
@@ -654,6 +677,75 @@ mod tests {
         duration: Duration,
         skip_start: f64,
         skip_end: f64,
+    }
+
+    struct ProgramSession {
+        duration: Duration,
+        hole: std::ops::Range<f64>,
+        shift_secs: f64,
+    }
+
+    impl ProgramSession {
+        /// Amplitude in `0.15..1.0`, constant across each 100 ms bucket so it lands one value per
+        /// scan block. Aperiodic: a smooth sweep would let the lag search lock onto a harmonic and
+        /// peak at the wrong offset for the right-looking reason. The `0.15` floor keeps every
+        /// content block well clear of the silence predicate, so the only silence is the hole.
+        fn envelope(secs: f64) -> f32 {
+            let bucket = (secs * 10.0).floor() as i64;
+            let h = (bucket as u64)
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            0.15 + 0.85 * ((h >> 33) % 1000) as f32 / 1000.0
+        }
+    }
+
+    impl MediaSession for ProgramSession {
+        fn list_tracks(&self) -> Result<Vec<AudioTrack>, MediaError> {
+            Ok(vec![loud_track(self.duration)])
+        }
+
+        fn extract_mono(
+            &mut self,
+            _track: &AudioTrack,
+            window: &ClipWindow,
+            _progress: &dyn clip_sync::ProgressReporter,
+            _label: &str,
+        ) -> Result<MonoPcmClip, MediaError> {
+            let rate = 11_025u32;
+            let start = window.start.as_secs_f64();
+            let secs = (window.end - window.start).as_secs_f64();
+            let count = (rate as f64 * secs) as usize;
+            // Absolute time, not sample index: the envelope has to be a property of the timeline so
+            // it survives whatever windows the scanner asks for.
+            let samples: Vec<i16> = (0..count)
+                .map(|i| {
+                    let t = start + i as f64 / f64::from(rate);
+                    if t >= self.hole.start && t < self.hole.end {
+                        return 0;
+                    }
+                    let amp = Self::envelope(t - self.shift_secs);
+                    let phase = (t as f32) * 2.0 * std::f32::consts::PI * 440.0;
+                    (phase.sin() * amp * 8_000.0) as i16
+                })
+                .collect();
+            Ok(MonoPcmClip {
+                sample_rate: rate,
+                samples,
+                decode_error_skips: 0,
+                decoded_sample_count: None,
+            })
+        }
+
+        fn extract_interleaved(
+            &mut self,
+            track: &AudioTrack,
+            window: &ClipWindow,
+            progress: &dyn clip_sync::ProgressReporter,
+            label: &str,
+        ) -> Result<MultiChannelPcm, MediaError> {
+            let clip = self.extract_mono(track, window, progress, label)?;
+            Ok(mono_clip_to_multichannel(clip, track.channels))
+        }
     }
 
     impl MediaSession for SkipWindowSession {
@@ -759,6 +851,15 @@ mod tests {
                     skip_start: *skip_start,
                     skip_end: *skip_end,
                 }),
+                SessionKind::Program {
+                    hole_start_secs,
+                    hole_end_secs,
+                    shift_secs,
+                } => DispatchSession::Program(ProgramSession {
+                    duration: *dur,
+                    hole: *hole_start_secs..*hole_end_secs,
+                    shift_secs: *shift_secs,
+                }),
             })
         }
     }
@@ -768,6 +869,7 @@ mod tests {
         Silent(SilentSession),
         TailSeekFail(TailSeekFailSession),
         SkipWindow(SkipWindowSession),
+        Program(ProgramSession),
     }
 
     impl MediaSession for DispatchSession {
@@ -777,6 +879,7 @@ mod tests {
                 Self::Silent(s) => s.list_tracks(),
                 Self::TailSeekFail(s) => s.list_tracks(),
                 Self::SkipWindow(s) => s.list_tracks(),
+                Self::Program(s) => s.list_tracks(),
             }
         }
 
@@ -792,6 +895,7 @@ mod tests {
                 Self::Silent(s) => s.extract_mono(track, window, progress, label),
                 Self::TailSeekFail(s) => s.extract_mono(track, window, progress, label),
                 Self::SkipWindow(s) => s.extract_mono(track, window, progress, label),
+                Self::Program(s) => s.extract_mono(track, window, progress, label),
             }
         }
 
@@ -807,6 +911,7 @@ mod tests {
                 Self::Silent(s) => s.extract_interleaved(track, window, progress, label),
                 Self::TailSeekFail(s) => s.extract_interleaved(track, window, progress, label),
                 Self::SkipWindow(s) => s.extract_interleaved(track, window, progress, label),
+                Self::Program(s) => s.extract_interleaved(track, window, progress, label),
             }
         }
     }
@@ -1392,5 +1497,87 @@ mod tests {
             ds.is_some_and(|f| f < 0.5),
             "loud donor must score occupied, got {ds:?}"
         );
+    }
+
+    /// End-to-end proof that scan **computes and emits** the donor registration — decoded PCM →
+    /// block levels → verdict — and that `Observe` keeps it inert.
+    ///
+    /// The geometry is chosen so the two halves are separable. A holes 20.0–20.6 s; B is the same
+    /// program 500 ms late, so B's own hole is 20.5–21.1 s. At the nominal offset (0.0) the donor
+    /// window reads five content blocks and one silent one — B looks occupied and the gap is a
+    /// repairable dropout. Move the window the 500 ms registration finds and it lands on B's hole,
+    /// reads 6/6 silent, and the gap would drop as `shared_silence` instead. So the registration on
+    /// offer here is class-flipping, and "the verdict is unchanged" is a claim with teeth: it is
+    /// exactly the `Observe`/`Apply` split, on the shape §6.4 found on real media.
+    #[test]
+    fn scan_records_donor_registration_without_moving_the_verdict() {
+        let dur = Duration::from_secs(60);
+        let reader = FixedReader::new()
+            .with(
+                "a.wav",
+                SessionKind::Program {
+                    hole_start_secs: 20.0,
+                    hole_end_secs: 20.6,
+                    shift_secs: 0.0,
+                },
+                dur,
+            )
+            .with(
+                "b.wav",
+                SessionKind::Program {
+                    hole_start_secs: 20.5,
+                    hole_end_secs: 21.1,
+                    shift_secs: 0.5,
+                },
+                dur,
+            );
+        let progress = FakeProgressReporter;
+        let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
+
+        let mut request = scan_request("a.wav", "b.wav", 60);
+        // 100 ms blocks so the 500 ms shift is a whole number of them, no hold bridging.
+        request.recipe = crate::domain::ScanRecipe::with_hold_blocks(500, 0, 100, 0.01, 0.0);
+        request.scan_both = true;
+
+        let report = scan
+            .scan_after_alignment(request, aligned_result(Some(0.0)))
+            .expect("scan should succeed");
+
+        assert_eq!(report.gaps.len(), 1, "only the hole is silent");
+        let v = &report.gap_equivalence[0];
+
+        let reg = v
+            .donor_registration
+            .expect("scan must record the registration");
+        assert_eq!(reg.lag_blocks, 5, "B is 500 ms late: {reg:?}");
+        // `lag_ms` is `lag_blocks` × the level stream's **own** bin width, which is the block in
+        // samples (1103 at 11025 Hz) and not the 100 ms the recipe asked for. That ~0.05 % is the
+        // real quantization and the field is right to report it, so the tolerance is a millisecond.
+        assert!((reg.lag_ms - 500.0).abs() < 1.0, "{reg:?}");
+        assert!(
+            reg.peak_r > reg.nominal_r,
+            "the registered lag beats the nominal map: {reg:?}"
+        );
+
+        // ...and the verdict is the nominal one, unmoved.
+        assert_eq!(
+            v.class,
+            crate::domain::gap_equivalence::GapEquivalenceClass::RepairableDropout
+        );
+        assert!(!v.drop);
+        assert!(v.not_evaluated_reason.is_none());
+        assert!(
+            v.donor_silence_fraction.is_some_and(|f| f < 0.5),
+            "measured at the nominal window, where B has content: {:?}",
+            v.donor_silence_fraction
+        );
+        // The offset is 0.0, so an unshifted donor window is the A core itself. Comparing the two
+        // spans rather than a literal keeps this about the registration and not about where block
+        // quantization happens to put the core.
+        assert_eq!(
+            v.donor_span_secs, v.a_span_secs,
+            "the window measured is the nominal one, not the registered one"
+        );
+        assert_occupancy_agrees_with_donor(&report);
     }
 }
