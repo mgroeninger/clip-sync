@@ -22,6 +22,7 @@ use clip_sync_repair_fixtures::w5_timing_offset_diag::{
     w5_timing_offset_csv, w5_timing_offset_grid_default, W5TimingOffsetCell, COLLAR_SECS,
     PEAK_OFFSET_SECS, SR,
 };
+use clip_sync_repair_harness::seam_gate_failures::SeamGateFailureTally;
 
 #[test]
 fn diag_w5_timing_offset_recoverability_grid() {
@@ -69,17 +70,9 @@ fn diag_w5_timing_offset_gate_probe() {
             None => eprintln!("  baseline throat: DEGENERATE (no unified match)"),
         }
         eprintln!("  joint_winner: {:?}", scores.joint_winner);
-        let passed = scores.brackets.iter().filter(|b| b.passed_gate).count();
-        eprintln!(
-            "  brackets: {} ({} passed gate)",
-            scores.brackets.len(),
-            passed
-        );
-        let mut stages = std::collections::BTreeMap::<&str, usize>::new();
-        for b in scores.brackets.iter().filter(|b| !b.passed_gate) {
-            *stages.entry(b.failure_stage.unwrap_or("?")).or_default() += 1;
-        }
-        eprintln!("  failure stages (rejected brackets): {stages:?}");
+        let tally = SeamGateFailureTally::of(&scores.brackets);
+        let passed = tally.passed;
+        eprintln!("  brackets: {}", tally.summary(None));
 
         let skipped = matches!(scores.joint_winner, W5JointWinner::Skip);
         if expect_skip {

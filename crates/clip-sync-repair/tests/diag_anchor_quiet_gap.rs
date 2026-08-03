@@ -41,6 +41,7 @@ use clip_sync_repair_fixtures::energy_signature_fixtures::{
 };
 use clip_sync_repair_fixtures::energy_signature_production::w5_anchor_rescue_repair;
 use clip_sync_repair_fixtures::w5_anchor_rescue_diag::{score_w5_fixture, W5JointWinner};
+use clip_sync_repair_harness::seam_gate_failures::SeamGateFailureTally;
 
 const RATE: usize = 48_000;
 
@@ -386,16 +387,10 @@ fn anchor_rescue_under_global_b_offset() {
                 Some(acc.map_or((m, mv), |a| if m > a.0 { (m, mv) } else { a }))
             });
 
-        // Histogram of failure stages among non-passing brackets.
-        let mut stages = std::collections::BTreeMap::new();
-        for b in s.brackets.iter().filter(|b| !b.passed_gate) {
-            *stages
-                .entry(b.failure_stage.unwrap_or("?"))
-                .or_insert(0usize) += 1;
-        }
+        let tally = SeamGateFailureTally::of(&s.brackets);
         let detail = match best {
             Some((m, mv)) => format!("best min={:.3} move={} frames", m, mv),
-            None => format!("no pass; failures={stages:?}"),
+            None => format!("no pass; {}", tally.summary(None)),
         };
         let winner = match s.joint_winner {
             W5JointWinner::Skip => "SKIP".to_string(),

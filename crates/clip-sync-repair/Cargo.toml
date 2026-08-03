@@ -206,11 +206,6 @@ path = "tests/diag_anchor_seam.rs"
 required-features = ["diagnostic-tests"]
 
 [[test]]
-name = "diag_w5_anchor_rescue"
-path = "tests/diag_w5_anchor_rescue.rs"
-required-features = ["diagnostic-tests"]
-
-[[test]]
 name = "diag_anchor_quiet_gap"
 path = "tests/diag_anchor_quiet_gap.rs"
 required-features = ["diagnostic-tests"]

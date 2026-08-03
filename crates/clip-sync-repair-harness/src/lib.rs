@@ -11,8 +11,8 @@ pub mod gap_repair_spec_projection;
 pub mod golden_baseline;
 pub mod patch_audio;
 pub mod residual_gate;
+pub mod seam_gate_failures;
 pub mod seam_residual;
-pub mod w5_anchor_rescue_sweep;
 
 /// `clip-sync-repair` crate root for corpus paths — must expand in a repair `[[test]]` binary.
 ///
