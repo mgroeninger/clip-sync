@@ -27,6 +27,13 @@ See [development.md § Versioning and release](development.md#versioning-and-rel
 
 **CI today:** `.github/workflows/ci.yml` runs `check-repair-test-manifest.ps1` then `-Tier pr` only.
 
+**Adding a test binary takes two steps, and the guard checks both.** A `[[test]]` entry in
+`Cargo.toml` (required — the crate is `autotests = false`) makes it *buildable*; it does not make it
+*run*, because every tier here names its targets explicitly with `--test`.
+`check-repair-test-manifest.ps1` fails on a `tests/*.rs` with no `[[test]]` **and** on a `[[test]]`
+no tier lists. It carries a small ratchet list of targets that predate the second check — wire those
+into a tier as you touch them; never add a new name to it.
+
 ---
 
 ## Two kinds of “tier”

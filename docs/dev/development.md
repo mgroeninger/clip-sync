@@ -264,7 +264,7 @@ See **[test-tiers.md](test-tiers.md)** for the full tier catalog, composite prof
 
 ```powershell
 # PR gate (same as GitHub Actions)
-.\scripts\check-repair-test-manifest.ps1   # autotests=false [[test]] guard (also in CI)
+.\scripts\check-repair-test-manifest.ps1   # [[test]] declared + run by a tier (also in CI)
 .\scripts\test-tier.ps1 -Tier pr
 
 # Common local profiles (details in test-tiers.md)

@@ -85,8 +85,8 @@ try {
 
         # Needs its own invocation: `--gap-fingerprints` / `--gap-listen` only exist under
         # `calibration`, and these files are `#![cfg(feature = "calibration")]`, so folding them into
-        # the batch above would build empty binaries and pass vacuously. ~55 s in debug (~2 s
-        # release) — kept in debug so the tier stays on one profile rather than paying for a whole
+        # the batch above would build empty binaries and pass vacuously. ~130 s in debug (47 + 48 +
+        # 35) — kept in debug so the tier stays on one profile rather than paying for a whole
         # optimized build. `gap_listen_integration`'s slow gate-refusal row is `#[ignore]`d (it pays
         # the fingerprint anchor oracle, not the refusal) and runs in the diagnostic tier instead.
         Invoke-CargoTest @(

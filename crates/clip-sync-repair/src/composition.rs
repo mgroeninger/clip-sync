@@ -57,7 +57,7 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
     validate_config(&config)?;
     // Post-override so a TOML `only_gaps` is caught alongside the flag, but still before the scan.
     #[cfg(feature = "calibration")]
-    cli::validate_gap_listen_selector(&args, &config).map_err(RepairError::Config)?;
+    cli::validate_dump_gap_selector(&args, &config).map_err(RepairError::Config)?;
 
     clip_sync::init_tracing(&config.logging).map_err(RepairError::Align)?;
 
@@ -324,12 +324,14 @@ fn pending_after_scan(
     }
 }
 
-fn pending_repair_write(
-    config: &RepairAppConfig,
-    source_video: PathBuf,
-) -> Result<Option<PendingRepairWrite>, RepairError> {
+/// Whether the run will splice and write — i.e. [`pending_repair_write`] will yield a request.
+///
+/// Split out so the run mode can be known *before* the scan, without building the request (which
+/// clones settings and can fail on an unparseable bitrate policy). `pending_repair_write` is
+/// defined in terms of it, so the two can never drift.
+fn wants_repair_write(config: &RepairAppConfig) -> bool {
     if config.repair.dry_run {
-        return Ok(None);
+        return false;
     }
 
     let wants_wav = config.repair.output.wav_path.is_some();
@@ -338,7 +340,25 @@ fn pending_repair_write(
     #[cfg(not(feature = "ffmpeg-mux"))]
     let wants_mux = false;
 
-    if !wants_wav && !wants_mux {
+    wants_wav || wants_mux
+}
+
+/// Whether the run stops at the scan report — the [`PendingAfterScan::None`] arm.
+///
+/// That arm *validates* gap selection and then discards it (`validate_scan_only_selection`), so on
+/// a scan-only run `--only-gaps` / `--skip-gaps` change nothing. Every other arm applies the
+/// selection, which is why the dump-selector guard is conditioned on this rather than on
+/// `--gap-fingerprints` alone.
+#[cfg(feature = "calibration")]
+pub(crate) fn is_scan_only_run(config: &RepairAppConfig) -> bool {
+    !config.repair.repair_preview && !wants_repair_write(config)
+}
+
+fn pending_repair_write(
+    config: &RepairAppConfig,
+    source_video: PathBuf,
+) -> Result<Option<PendingRepairWrite>, RepairError> {
+    if !wants_repair_write(config) {
         return Ok(None);
     }
 

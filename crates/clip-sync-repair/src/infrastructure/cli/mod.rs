@@ -320,12 +320,24 @@ fn validate_gap_listen_run_mode(args: &Args) -> Result<(), String> {
     Ok(())
 }
 
-/// `--gap-listen` takes its gap set from `--fingerprint-gap`, so a second selector must be refused.
+/// A fingerprint dump selects gaps with `--fingerprint-gap`; reject the repair selectors when they
+/// would be a no-op or a second, competing list.
 ///
-/// Listen is a *mode of the fingerprint dump* — it cannot run without `--gap-fingerprints`, and the
-/// WAV stems are the corpus entry stems — so the dump's selector is the only one that makes sense.
-/// `--only-gaps` / `--skip-gaps` would leave the corpus and the fill plan covering different gap
-/// sets, which is the two-list drift this design exists to prevent.
+/// Two distinct failures, one guard, because both are "you named gaps and the dump did not use
+/// them":
+///
+/// - **`--gap-listen`** takes its gap set from `--fingerprint-gap` and fans it out to *both* the
+///   corpus and the fill plan. A second selector would leave the two covering different sets, which
+///   is the drift that design exists to prevent. Rejected whatever the run mode.
+/// - **A scan-only `--gap-fingerprints` run** never applies the repair selection at all: the
+///   `PendingAfterScan::None` arm validates the tokens and discards them, and the dump path reads
+///   `--fingerprint-gap`, never `request.selection`. So `--only-gaps` parses, validates, filters
+///   nothing, and exits 0 — a full-corpus dump the user believes was narrowed. This cost one real
+///   multi-hour run.
+///
+/// **Conditioned on the run mode, not on `--gap-fingerprints` alone.** With `--wav`, `--mux` or
+/// `--repair-preview` the selection genuinely bounds the repair half of the run while the dump
+/// stays full-corpus; that combination is meaningful and stays allowed.
 ///
 /// Separate from [`validate_gap_listen_run_mode`] because the reason is different in kind: those
 /// flags *cannot* produce a patched WAV, whereas these merely compete for the same job.
@@ -335,13 +347,10 @@ fn validate_gap_listen_run_mode(args: &Args) -> Result<(), String> {
 /// **pre-scan**: on real media the scan is the expensive part, and a conflict this cheap to detect
 /// must never cost one.
 #[cfg(feature = "calibration")]
-pub(crate) fn validate_gap_listen_selector(
+pub(crate) fn validate_dump_gap_selector(
     args: &Args,
     config: &RepairAppConfig,
 ) -> Result<(), String> {
-    if args.gap_listen.is_none() {
-        return Ok(());
-    }
     let second = if config.repair.only_gaps.is_some() {
         "only_gaps / --only-gaps"
     } else if config.repair.skip_gaps.is_some() {
@@ -349,10 +358,22 @@ pub(crate) fn validate_gap_listen_selector(
     } else {
         return Ok(());
     };
-    Err(format!(
-        "--gap-listen selects gaps with --fingerprint-gap, not {second} (one selector drives both \
-         the corpus and the patch plan)"
-    ))
+
+    if args.gap_listen.is_some() {
+        return Err(format!(
+            "--gap-listen selects gaps with --fingerprint-gap, not {second} (one selector drives \
+             both the corpus and the patch plan)"
+        ));
+    }
+    if args.gap_fingerprints.is_some() && crate::composition::is_scan_only_run(config) {
+        return Err(format!(
+            "{second} does not narrow a --gap-fingerprints dump — the dump selects gaps with \
+             --fingerprint-gap (also 1-based), and a scan-only run applies no repair selection. \
+             Use --fingerprint-gap to narrow the dump, or add --wav/--mux/--repair-preview if you \
+             meant to bound a repair alongside a full-corpus dump."
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -741,7 +762,7 @@ mod cli_override_tests {
             ]);
             let mut config = RepairAppConfig::default();
             apply_cli_overrides(&mut config, &args);
-            let err = validate_gap_listen_selector(&args, &config).unwrap_err();
+            let err = validate_dump_gap_selector(&args, &config).unwrap_err();
             assert!(
                 err.contains("--fingerprint-gap") && err.contains(extra[0]),
                 "message must name the rejected selector and the one to use instead, got {err}"
@@ -771,7 +792,7 @@ mod cli_override_tests {
         let mut config = RepairAppConfig::default();
         apply_cli_overrides(&mut config, &args);
         assert!(validate_fingerprint_flags(&args).is_ok());
-        assert!(validate_gap_listen_selector(&args, &config).is_ok());
+        assert!(validate_dump_gap_selector(&args, &config).is_ok());
         // The conversion `composition::gap_listen` performs: 1-based numbers → `--only-gaps` tokens.
         assert_eq!(
             crate::domain::gap_fill::GapSelectionMode::Only(
@@ -799,6 +820,99 @@ mod cli_override_tests {
             "3",
         ]);
         validate_fingerprint_flags(&args).expect("canonical listen invocation must be accepted");
+    }
+
+    /// The §5.1 footgun: on a scan-only dump run `--only-gaps` parses, validates, filters nothing,
+    /// and exits 0 — a full-corpus dump the user believes was narrowed. It must fail loudly and
+    /// name the flag that *does* narrow the dump.
+    #[cfg(feature = "calibration")]
+    #[test]
+    fn scan_only_fingerprint_dump_rejects_repair_selectors() {
+        use clap::Parser;
+
+        for extra in [["--only-gaps", "3"], ["--skip-gaps", "3"]] {
+            let args = Args::parse_from([
+                "clip-sync-repair",
+                "a.wav",
+                "b.wav",
+                "--gap-fingerprints",
+                "gap-files/out",
+                extra[0],
+                extra[1],
+            ]);
+            let mut config = RepairAppConfig::default();
+            apply_cli_overrides(&mut config, &args);
+            let err = validate_dump_gap_selector(&args, &config).unwrap_err();
+            assert!(
+                err.contains("--fingerprint-gap") && err.contains(extra[0]),
+                "message must name the rejected selector and the one to use instead, got {err}"
+            );
+        }
+    }
+
+    /// A TOML `only_gaps` is the same no-op as the flag, and `validate_dump_gap_selector` runs
+    /// after `apply_cli_overrides` precisely so it is caught too.
+    #[cfg(feature = "calibration")]
+    #[test]
+    fn scan_only_fingerprint_dump_rejects_only_gaps_from_toml() {
+        use clap::Parser;
+
+        let args = Args::parse_from([
+            "clip-sync-repair",
+            "a.wav",
+            "b.wav",
+            "--gap-fingerprints",
+            "gap-files/out",
+        ]);
+        let mut config = RepairAppConfig::default();
+        config.repair.only_gaps = Some(vec!["3".into()]);
+        apply_cli_overrides(&mut config, &args);
+        assert!(validate_dump_gap_selector(&args, &config).is_err());
+    }
+
+    /// The combination that must stay legal: the selection bounds the *repair*, the dump stays
+    /// full-corpus. Conditioning the guard on `--gap-fingerprints` alone would have broken this.
+    #[cfg(feature = "calibration")]
+    #[test]
+    fn fingerprint_dump_alongside_a_real_repair_keeps_repair_selectors() {
+        use clap::Parser;
+
+        for extra in [
+            vec!["--wav", "out.wav"],
+            vec!["--repair-preview"],
+            #[cfg(feature = "ffmpeg-mux")]
+            vec!["--mux", "out.mkv"],
+        ] {
+            let mut argv = vec![
+                "clip-sync-repair",
+                "a.wav",
+                "b.wav",
+                "--gap-fingerprints",
+                "gap-files/out",
+                "--only-gaps",
+                "3",
+            ];
+            argv.extend_from_slice(&extra);
+            let args = Args::parse_from(argv);
+            let mut config = RepairAppConfig::default();
+            apply_cli_overrides(&mut config, &args);
+            assert!(
+                validate_dump_gap_selector(&args, &config).is_ok(),
+                "--only-gaps bounds the repair half of a {extra:?} run and must stay allowed"
+            );
+        }
+    }
+
+    /// The guard is about the dump, so an ordinary repair run must be untouched by it.
+    #[cfg(feature = "calibration")]
+    #[test]
+    fn repair_selectors_without_a_dump_are_untouched() {
+        use clap::Parser;
+
+        let args = Args::parse_from(["clip-sync-repair", "a.wav", "b.wav", "--only-gaps", "3"]);
+        let mut config = RepairAppConfig::default();
+        apply_cli_overrides(&mut config, &args);
+        assert!(validate_dump_gap_selector(&args, &config).is_ok());
     }
 
     #[test]

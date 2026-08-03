@@ -176,10 +176,17 @@ band but in scope for the repair path.
 
 ## 4. Listening list
 
-A-timeline, ±5 s context so both seams are audible. Produce with
-`--no-skip-equivalent-gaps --only-gaps <n> --wav <out>` (one gap per run); `--only-gaps` **is**
-correct here — it drives the repair plan. Without `--no-skip-equivalent-gaps` the gate drops the gap
-and the output is unmodified.
+A-timeline, ±5 s context so both seams are audible. **Gap numbers in this section are 1-based**
+(what you type); §2 and §3 quote 0-based dump filenames, so they read one lower. Produce with
+
+```
+--gap-fingerprints <fresh-dir> --gap-listen --fingerprint-gap <n,m> --no-skip-equivalent-gaps
+```
+
+one run per *pair* (`--fingerprint-gap` takes comma lists). `--only-gaps` is **rejected** here —
+`--gap-listen` takes its set from `--fingerprint-gap` and fans it out to both the corpus and the fill
+plan. Without `--no-skip-equivalent-gaps` the gate drops the gap at plan time: A-only clip, no donor,
+no patch. Use a fresh directory — a listen run writes a partial corpus, not the corpus of record.
 
 **Tier 1 — the 5 band patches (the decision), riskiest first**
 
@@ -213,15 +220,15 @@ a studio sting, it is not a representative test.
 
 ## 5. Tooling footguns found (fix or document before the next run)
 
-1. **`--only-gaps` is a silent no-op on `--gap-fingerprints` runs.** It filters the repair plan
-   (`request.selection`); the fingerprint path never reads `selection`. Tokens are parsed and
-   validated, nothing is filtered, exit 0. Cost us one full-corpus dump that was believed narrowed.
-   *Proposed guard:* reject `--only-gaps`/`--skip-gaps` alongside `--gap-fingerprints` in
-   `validate_fingerprint_flags` — "use `--fingerprint-gap` to narrow the dump". Not yet implemented.
-2. **`--fingerprint-gap` is repeat-only.** `Vec<usize>`, no `value_delimiter`, so `2,9` is a parse
-   error. `--only-gaps` *does* take comma lists (`value_delimiter = ','`) and also accepts ranges and
-   timestamps. Two flags on the same 1-based axis, two grammars, and neither name says which stage it
-   acts on.
+1. ~~**`--only-gaps` is a silent no-op on `--gap-fingerprints` runs.**~~ **FIXED.**
+   `validate_dump_gap_selector` (`cli/mod.rs`) now rejects `--only-gaps`/`--skip-gaps` pre-scan on a
+   **scan-only** dump run, naming `--fingerprint-gap` as the flag that narrows the dump. Scoped to
+   scan-only deliberately: with `--wav`/`--mux`/`--repair-preview` the selection really does bound
+   the repair half while the dump stays full-corpus, so that combination is still allowed. A TOML
+   `only_gaps` key is caught too (the guard runs after `apply_cli_overrides`).
+2. **`--fingerprint-gap` takes comma lists** (`value_delimiter = ','`), same as `--only-gaps`.
+   ~~repeat-only~~. It does *not* accept the ranges or timestamps `--only-gaps` does. Two flags on
+   the same 1-based axis, two grammars, and neither name says which stage it acts on.
 3. **Dump filenames are 0-based** while both selection flags are 1-based (`--fingerprint-gap 12` →
    `g011`). Already warned in `args.rs`; locate files by timestamp, not by counting.
 4. **`--gap-fingerprints` twice is a hard clap error.** `measure-gap-fingerprints.ps1` supplies it
