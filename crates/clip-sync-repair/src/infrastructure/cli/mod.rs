@@ -305,14 +305,18 @@ pub(crate) fn validate_fingerprint_flags(args: &Args) -> Result<(), String> {
 #[cfg(feature = "calibration")]
 fn validate_gap_listen_run_mode(args: &Args) -> Result<(), String> {
     if args.repair_preview {
-        return Err("--gap-listen cannot be used with --repair-preview: preview stops before \
+        return Err(
+            "--gap-listen cannot be used with --repair-preview: preview stops before \
                     execute, so no patched audio exists to export"
-            .into());
+                .into(),
+        );
     }
     if args.wav.is_some() {
-        return Err("--gap-listen cannot be used with --wav: run the listen pass for gap clips, \
+        return Err(
+            "--gap-listen cannot be used with --wav: run the listen pass for gap clips, \
                     then a separate --wav pass for the full patched timeline"
-            .into());
+                .into(),
+        );
     }
     if args.mux.is_some() {
         return Err("--gap-listen cannot be used with --mux".into());

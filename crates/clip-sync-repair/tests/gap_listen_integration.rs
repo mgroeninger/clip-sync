@@ -502,10 +502,13 @@ fn the_run_returns_the_production_summary_for_reporting() {
 #[ignore = "~350s, and ~99.8% of it is the fingerprint anchor oracle, not the gate refusal asserted here"]
 fn a_gate_refused_gap_gets_both_surround_clips_and_no_patched_clip() {
     let fixture = build_fixture_with_b(&[(6.0, 9.0)], write_disagreeing_sine);
-    let (_, result) = run_listen_with(&fixture, PatchTestOptions {
-        disable_structure_trust: true,
-        ..listen_options(GapSelectionMode::All)
-    });
+    let (_, result) = run_listen_with(
+        &fixture,
+        PatchTestOptions {
+            disable_structure_trust: true,
+            ..listen_options(GapSelectionMode::All)
+        },
+    );
 
     // Reached the gate and was refused there — not dropped before it.
     assert!(

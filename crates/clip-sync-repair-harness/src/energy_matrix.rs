@@ -163,5 +163,6 @@ pub fn format_skip_reason(status: &GapPatchStatus) -> String {
         },
         GapPatchStatus::Patched { confidence, .. } => format!("patched({confidence:?})"),
         GapPatchStatus::NotPlanned { reason } => format!("not_planned({reason:?})"),
+        GapPatchStatus::NotApplied { reason } => format!("not_applied({reason:?})"),
     }
 }

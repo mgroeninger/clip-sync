@@ -84,6 +84,7 @@ pub fn gap_status_label(status: &GapPatchStatus) -> (&'static str, String) {
         GapPatchStatus::Patched { .. } => ("patched", String::new()),
         GapPatchStatus::Skipped { reason } => ("skipped", skip_reason_label(reason)),
         GapPatchStatus::NotPlanned { reason } => ("not_planned", format!("{reason:?}")),
+        GapPatchStatus::NotApplied { reason } => ("not_applied", format!("{reason:?}")),
     }
 }
 

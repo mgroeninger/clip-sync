@@ -257,6 +257,12 @@ fn run_oracle_config(
             f64::NAN,
             headroom,
         ),
+        GapPatchStatus::NotApplied { reason } => (
+            format!("not_applied:{reason:?}"),
+            f64::NAN,
+            f64::NAN,
+            headroom,
+        ),
     }
 }
 

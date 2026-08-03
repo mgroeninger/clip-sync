@@ -10,7 +10,7 @@ use crate::domain::{
     gap_tags::{FillTierThresholds, GapTags, GapTagsPatchContext},
     inactive_repair_flag_notes,
     patch_anchor::{format_patch_anchor_table_summary, PatchAnchorTable},
-    patch_result::PatchSummary,
+    patch_result::{GapPatchNotAppliedReason, PatchSummary},
     policies,
 };
 
@@ -125,6 +125,7 @@ fn empty_plan_result(
             fill_marginal_margin: request.fill_marginal_margin,
             fill_absolute_floor: request.fill_absolute_floor,
         },
+        &[],
     ));
     PatchAudioResult {
         pcm: None,
@@ -326,6 +327,8 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                 &region_results,
                 request.fill_mode,
                 thresholds,
+                // Preview never splices, so no splice can fail.
+                &[],
             ));
             return Ok(PatchAudioResult {
                 pcm: None,
@@ -339,7 +342,8 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
 
         // Pass 2 — execute patches (skips carry their outcome; nothing to run).
         let mut patches: Vec<RegionPatch> = Vec::new();
-        let mut patch_slot_by_gap: Vec<Option<usize>> = Vec::new();
+        // Parallel to `plan.regions` (one entry pushed per region below), *not* to gap indices.
+        let mut patch_slot_by_region: Vec<Option<usize>> = Vec::new();
         let mut region_results: Vec<(usize, RegionPatchOutcome, GapTags)> = Vec::new();
         for ((spec, tag_ctx), (index, region)) in characterizations
             .into_iter()
@@ -378,9 +382,9 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             if let Some(patch) = patch {
                 let slot = patches.len();
                 patches.push(patch);
-                patch_slot_by_gap.push(Some(slot));
+                patch_slot_by_region.push(Some(slot));
             } else {
-                patch_slot_by_gap.push(None);
+                patch_slot_by_region.push(None);
             }
         }
 
@@ -404,7 +408,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                     self.progress,
                     &mut AnchoredRetryState {
                         patches: &mut patches,
-                        patch_slot_by_gap: &mut patch_slot_by_gap,
+                        patch_slot_by_region: &mut patch_slot_by_region,
                         region_results: &mut region_results,
                     },
                     &plan.regions,
@@ -428,6 +432,18 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             self.progress
                 .phase(&format!("Splicing {patch_count} fill(s) into timeline..."));
         }
+        // Slot → gap index, built *after* the anchored-retry pass (which rewrites both `patches`
+        // and `patch_slot_by_region`) so a splice failure can be attributed to the right gap.
+        let mut gap_index_by_slot: Vec<Option<usize>> = vec![None; patches.len()];
+        for (position, slot) in patch_slot_by_region.iter().enumerate() {
+            if let (Some(slot), Some(region)) = (slot, plan.regions.get(position)) {
+                if let Some(entry) = gap_index_by_slot.get_mut(*slot) {
+                    *entry = Some(region.gap_index);
+                }
+            }
+        }
+
+        let mut not_applied: Vec<(usize, GapPatchNotAppliedReason)> = Vec::new();
         if patch_count > 0 {
             let _splice_span = tracing::info_span!("patch_splice", patch_count).entered();
             for (index, patch) in patches.iter().enumerate() {
@@ -439,7 +455,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                     .map(|&s| (s * patch.gain).clamp(-1.0, 1.0))
                     .collect();
 
-                splice_into_a(
+                if let Err(reason) = splice_into_a(
                     &mut a_pcm.samples,
                     &b_gained,
                     channels,
@@ -447,7 +463,19 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                     patch.a_end_frame,
                     patch.crossfade_secs,
                     sample_rate,
-                );
+                ) {
+                    // A is unchanged across this gap. Downgrade the gate's `Patched` verdict so no
+                    // consumer — gap table, JSON, `--gap-listen` WAVs — claims a repair happened.
+                    match gap_index_by_slot.get(index).copied().flatten() {
+                        Some(gap_index) => not_applied.push((gap_index, reason)),
+                        None => tracing::warn!(
+                            slot = index,
+                            ?reason,
+                            "splice failed for a patch with no gap attribution; outcome will still \
+                             read patched"
+                        ),
+                    }
+                }
             }
         }
 
@@ -457,6 +485,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             &region_results,
             request.fill_mode,
             thresholds,
+            &not_applied,
         ));
         if let Some(anchors) = patch_anchors_used {
             summary = summary.with_patch_anchors(anchors);

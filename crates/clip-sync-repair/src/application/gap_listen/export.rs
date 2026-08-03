@@ -141,30 +141,39 @@ mod tests {
     #[test]
     fn frame_range_floors_start_and_ceils_end() {
         // 1.5 s .. 2.25 s at 100 Hz = frames 150..225, both exact.
-        assert_eq!(frame_range(1.5, 2.25, 100, 1000), FrameRange {
-            start: 150,
-            end: 225
-        });
+        assert_eq!(
+            frame_range(1.5, 2.25, 100, 1000),
+            FrameRange {
+                start: 150,
+                end: 225
+            }
+        );
         // Fractional frames: start floors down, end ceils up, so the ask is fully covered.
         let r = frame_range(1.004, 2.001, 1000, 100_000);
-        assert_eq!(r, FrameRange {
-            start: 1004,
-            end: 2001
-        });
+        assert_eq!(
+            r,
+            FrameRange {
+                start: 1004,
+                end: 2001
+            }
+        );
     }
 
     #[test]
     fn frame_range_clamps_both_ends_instead_of_erroring() {
         // A gap near t=0 with 3 s of context asks for a negative start.
-        assert_eq!(frame_range(-3.0, 1.0, 100, 1000), FrameRange {
-            start: 0,
-            end: 100
-        });
+        assert_eq!(
+            frame_range(-3.0, 1.0, 100, 1000),
+            FrameRange { start: 0, end: 100 }
+        );
         // A gap near the end asks past the buffer.
-        assert_eq!(frame_range(9.0, 99.0, 100, 1000), FrameRange {
-            start: 900,
-            end: 1000
-        });
+        assert_eq!(
+            frame_range(9.0, 99.0, 100, 1000),
+            FrameRange {
+                start: 900,
+                end: 1000
+            }
+        );
         // Entirely past the end collapses to empty at the tail, never inverted.
         let r = frame_range(50.0, 60.0, 100, 1000);
         assert!(r.is_empty());

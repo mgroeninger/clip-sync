@@ -576,8 +576,14 @@ clip *is* the "before" clip. For a feature whose entire purpose is "listen befor
 is the worst possible failure: you hear an unrepaired gap and conclude the repair sounds bad.
 
 **This is a pre-existing engine footgun, uncovered by this work, not introduced by it.** Fixing the
-verdict itself is out of scope here (it would change production patch reporting); `--gap-listen`
-detects the symptom instead.
+verdict itself was out of scope here; `--gap-listen` detects the symptom instead.
+
+> **Superseded 2026-08-03 — the verdict was fixed.** `splice_into_a` now returns
+> `Result<(), GapPatchNotAppliedReason>` and a failure becomes `GapPatchStatus::NotApplied`, so
+> `--gap-listen` names the fault and writes **no** `_a_patched.wav` for these gaps rather than
+> writing an identical one. The digest detection below stays as a bytes-level backstop that does
+> not depend on the engine noticing. See BACKLOG.md § *Patch verdict integrity* and
+> `docs/json-output.md` § *GapPatchStatus*.
 
 - The pre-splice A window's `window_digest` (64-bit, over `f32::to_bits`, length folded in) is held
   on `PendingWindow` and compared to the patched window's. A digest rather than the samples because

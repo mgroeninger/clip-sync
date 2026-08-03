@@ -514,6 +514,21 @@ pub fn derive_gap_tags_from_status(
                 residual_headroom_margin_db: DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
             },
         ),
+        // The gap was fillable and planned — the splice, not the gate, is what failed — so the
+        // plan kind stays `Fillable` while every patch-quality tag reads not-applicable. No
+        // seam exists to shape, and no fill path completed.
+        GapPatchStatus::NotApplied { .. } => GapTags {
+            plan_kind: PlanKind::Fillable,
+            plan_skip_reason: None,
+            patch_tier: PatchTier::NotApplicable,
+            seam_shape: SeamShape::NotApplicable,
+            fit_path: None,
+            signature_mode: None,
+            residual_band: None,
+            anchor_seam_used: false,
+            anchor_bracket_move_frames: 0,
+            dual_fit_used: false,
+        },
     }
 }
 

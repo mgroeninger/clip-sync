@@ -118,27 +118,31 @@ fn should_apply_anchored_retry_outcome(
     }
 }
 
+/// `region_index` is a position in `plan.regions` / `region_results`, *not* a gap index; the two
+/// coincide only when every gap is planned. `patch_slot_by_region` is a slice precisely so this
+/// pass cannot change its length and break that parallelism.
 fn store_anchored_retry_patch(
     patches: &mut Vec<RegionPatch>,
-    patch_slot_by_gap: &mut [Option<usize>],
-    gap_index: usize,
+    patch_slot_by_region: &mut [Option<usize>],
+    region_index: usize,
     patch: RegionPatch,
 ) {
-    if let Some(slot) = patch_slot_by_gap
-        .get_mut(gap_index)
+    if let Some(slot) = patch_slot_by_region
+        .get_mut(region_index)
         .and_then(|slot| slot.as_mut())
     {
         patches[*slot] = patch;
     } else {
         let slot = patches.len();
         patches.push(patch);
-        patch_slot_by_gap[gap_index] = Some(slot);
+        patch_slot_by_region[region_index] = Some(slot);
     }
 }
 
 pub(super) struct AnchoredRetryState<'a> {
     pub(super) patches: &'a mut Vec<RegionPatch>,
-    pub(super) patch_slot_by_gap: &'a mut [Option<usize>],
+    /// Indexed by region position (see [`store_anchored_retry_patch`]).
+    pub(super) patch_slot_by_region: &'a mut [Option<usize>],
     pub(super) region_results: &'a mut [(usize, RegionPatchOutcome, GapTags)],
 }
 
@@ -210,7 +214,7 @@ pub(super) fn run_anchored_retry_pass(
             state.region_results[index].1 = outcome;
             state.region_results[index].2 = tags;
             if let Some(patch) = patch {
-                store_anchored_retry_patch(state.patches, state.patch_slot_by_gap, index, patch);
+                store_anchored_retry_patch(state.patches, state.patch_slot_by_region, index, patch);
             }
         }
     }

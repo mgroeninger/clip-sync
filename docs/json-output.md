@@ -225,10 +225,11 @@ Gap positions in `gaps[]` use the **decoded-sample clock**. When `delta_secs` is
 
 | Field | Type | Presence | Meaning |
 |-------|------|----------|---------|
-| `patched_count` | integer | always | Gaps spliced |
+| `patched_count` | integer | always | Gaps actually spliced into A's PCM |
 | `patched_marginal_count` | integer | always | Patches in warn tier (`confidence: marginal`) |
 | `skipped_count` | integer | always | Planned but skipped during splice |
 | `not_planned_count` | integer | always | Excluded at plan time |
+| `not_applied_count` | integer | when > 0 | **Bug indicator.** Gaps the seam gate approved whose splice then failed — A is unchanged across them. Never emitted on a healthy run; any non-zero value is a defect report, not a routine outcome |
 | `donor_relation` | string | when residual measured on ≥1 gap | `same_master` \| `mixed` \| `diff_capture` — inferred from informative-floor fraction |
 | `gaps` | array of [GapPatchOutcome](#gappatchoutcome) | always | Per-gap outcomes in scan order |
 
@@ -269,6 +270,11 @@ Optional `residual_db`, `floor_db`, `headroom_db` (worst-side scalars) are prese
 `structure_trusted` is `true` only when `fill_mode` was `gate` and structure scores skipped the waveform gate. Under default `fill_mode = fit`, it is always `false`. `confidence` is `marginal` when the patch passed the warn tier (`min_fill_correlation - fill_marginal_margin` ≤ `min(pre, post)` < `min_fill_correlation`). `gap_*_adjust_frames` record how far the winning A gap edges moved from the pre-search refined bracket (fit mode).
 - `{"skipped": {"reason": <GapPatchSkipReason>}}`
 - `{"not_planned": {"reason": <GapFillSkipReason>}}`
+- `{"not_applied": {"reason": <GapPatchNotAppliedReason>}}`
+
+**GapPatchNotAppliedReason** — object forms `{"destination_out_of_range": {"gap_start_frame", "gap_end_frame", "a_frames"}}` | `{"destination_empty_or_inverted": {"gap_start_frame", "gap_end_frame"}}` | `{"fill_shorter_than_gap": {"fill_frames", "gap_frames"}}`.
+
+`not_applied` is categorically different from `skipped`: `skipped` is the seam gate *declining* a gap, which is a routine, expected outcome. `not_applied` is the gate having **approved** the gap and the splice then failing to write it — A is byte-identical across the gap while a repair was reported as planned. Every arm is a geometry defect upstream of the splice, so any occurrence is a bug to file, with the frame counts in the reason identifying which invariant broke. `--gap-listen` writes no `_a_patched.wav` for these gaps, and `patched_count` excludes them.
 
 **GapPatchSkipReason** — string `"b_extract_failed"` | `"boundary_alignment_failed"` | `"aligned_segment_out_of_range"` | `"zero_length_gap"` | `"program_quiet"` (reserved — not emitted by production patch; D11 program-quiet is an analyzer/plan-time label, see [gap-fill-modes.md](gap-fill-modes.md) § Program-quiet (D11)), or object forms `{"correlation_below_threshold": {"pre_correlation", "post_correlation", "min_correlation", "best_attempt"?}}` (`best_attempt`: `{pre_correlation, post_correlation, source}` when a later placement beat the reported scores) | `{"residual_headroom_exceeded": {"pre_correlation", "post_correlation", "headroom_db", "floor_pre_db", "floor_post_db", "margin_db"}}`.
 

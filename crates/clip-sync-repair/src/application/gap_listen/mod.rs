@@ -38,7 +38,9 @@ use crate::application::patch_audio::{
 use crate::application::ports::PatchedAudioWriter;
 use crate::domain::gap_fill::build_gap_fill_plan;
 use crate::domain::gap_tags::format_plan_skip_reason;
-use crate::domain::patch_result::{format_gap_patch_skip_reason, GapPatchStatus};
+use crate::domain::patch_result::{
+    format_gap_patch_not_applied_reason, format_gap_patch_skip_reason, GapPatchStatus,
+};
 
 use export::{frame_range, slice_window, window_digest, write_window_wav, FrameRange};
 
@@ -60,11 +62,7 @@ const UNBOUNDED_LISTEN_WARN_GAPS: usize = 25;
 /// Three clips per gap, each the gap plus `context` on both sides. Deliberately computed from the
 /// report rather than the decode so the warning lands **before** the decode — a warning that
 /// arrives after the expensive part has started is just a log line.
-fn projected_export_secs(
-    gaps: &[crate::domain::gap::Gap],
-    select: &[usize],
-    context: f64,
-) -> f64 {
+fn projected_export_secs(gaps: &[crate::domain::gap::Gap], select: &[usize], context: f64) -> f64 {
     select
         .iter()
         .filter_map(|&i| gaps.get(i))
@@ -232,8 +230,11 @@ pub fn run_gap_listen<MR: MediaReader, PW: PatchedAudioWriter>(
     // lie on the case that matters most: with `skip_equivalent_gaps` on (the default) the dominant
     // reason is `already_matches_reference`, and equivalence-dropped gaps are precisely the ones
     // the margin-band experiment exists to listen to.
-    let plan_skip_by_gap: HashMap<usize, &crate::domain::patch_result::GapFillSkipReason> =
-        plan.skipped.iter().map(|s| (s.gap_index, &s.reason)).collect();
+    let plan_skip_by_gap: HashMap<usize, &crate::domain::patch_result::GapFillSkipReason> = plan
+        .skipped
+        .iter()
+        .map(|s| (s.gap_index, &s.reason))
+        .collect();
 
     // ── Step 5: pre-splice A/B windows, sliced by this caller ──────────────────────────────────
     // Plan geometry, not the production engine's refined edges. Two things move an edge past the
@@ -291,13 +292,7 @@ pub fn run_gap_listen<MR: MediaReader, PW: PatchedAudioWriter>(
             a_bit_depth,
             a_range,
         );
-        write_window_wav(
-            wav_writer,
-            &listen.wav_dir,
-            stem,
-            A_SURROUND_SUFFIX,
-            &a_pcm,
-        )?;
+        write_window_wav(wav_writer, &listen.wav_dir, stem, A_SURROUND_SUFFIX, &a_pcm)?;
 
         match region {
             Some(r) => {
@@ -325,13 +320,7 @@ pub fn run_gap_listen<MR: MediaReader, PW: PatchedAudioWriter>(
                         b_bit_depth,
                         b_range,
                     );
-                    write_window_wav(
-                        wav_writer,
-                        &listen.wav_dir,
-                        stem,
-                        B_SURROUND_SUFFIX,
-                        &b_pcm,
-                    )?;
+                    write_window_wav(wav_writer, &listen.wav_dir, stem, B_SURROUND_SUFFIX, &b_pcm)?;
                 }
             }
             None => progress.phase(&format!(
@@ -353,9 +342,8 @@ pub fn run_gap_listen<MR: MediaReader, PW: PatchedAudioWriter>(
     }
 
     if plan.regions.is_empty() {
-        progress.phase(
-            "gap-listen: no selected gap reached the fill plan; wrote surround WAVs only",
-        );
+        progress
+            .phase("gap-listen: no selected gap reached the fill plan; wrote surround WAVs only");
         // Not `Ok(())`-shaped even though nothing was patched: the caller reports this summary, and
         // "every gap NotPlanned, with its reason" is precisely what the run found. Built by the same
         // helper the executor's own empty-plan path uses, so skipping the executor here cannot make
@@ -372,7 +360,11 @@ pub fn run_gap_listen<MR: MediaReader, PW: PatchedAudioWriter>(
     let patch_result = {
         let _span = patch_audio_span(&plan, &patch_request, false).entered();
         log_patch_preamble(progress, &patch_request, false);
-        PatchAudio::new(media_reader, progress).execute_with_decoded(patch_request, plan, decoded)?
+        PatchAudio::new(media_reader, progress).execute_with_decoded(
+            patch_request,
+            plan,
+            decoded,
+        )?
     };
 
     // ── Step 7: post-splice windows, at the frame ranges recorded in step 5 ────────────────────
@@ -420,6 +412,20 @@ pub fn run_gap_listen<MR: MediaReader, PW: PatchedAudioWriter>(
                 }
                 continue;
             }
+            // The gate approved this gap and the splice then failed, so A is unchanged across it.
+            // Writing `_a_patched.wav` here would hand the listener a file that is byte-identical
+            // to `_a.wav` under a name that claims otherwise — the exact trap the digest check
+            // below exists to catch. The engine now names the fault, so refuse the file outright.
+            Some(GapPatchStatus::NotApplied { reason }) => {
+                eprintln!(
+                    "warning: gap-listen: gap #{} was approved but NOT APPLIED ({}); A is \
+                     unchanged across this gap and no patched WAV was written. This is a bug in \
+                     the splice geometry, not a gate decision.",
+                    window.gap_index + 1,
+                    format_gap_patch_not_applied_reason(reason),
+                );
+                continue;
+            }
             None => {
                 progress.phase(&format!(
                     "gap-listen: gap #{} has no patch outcome; no patched WAV",
@@ -435,12 +441,13 @@ pub fn run_gap_listen<MR: MediaReader, PW: PatchedAudioWriter>(
             a_bit_depth,
             window.a_range,
         );
-        // A gap can read `Patched` and still have had nothing spliced into it. `splice_into_a`
-        // early-returns on an out-of-range or inverted destination, or when the fill is shorter than
-        // the gap (`region.rs:2287–2335`), but the `Patched` verdict is decided upstream of it — so
-        // the failure is silent, and to the ear the "after" clip is simply the "before" clip. That
-        // is the single most misleading thing a listening test can hand you, so it is checked rather
-        // than assumed. The window is still written: the identical file *is* the evidence.
+        // Backstop for "reports Patched, sounds unchanged". `splice_into_a`'s three known no-op
+        // paths now surface as `NotApplied` (handled above), but this check does not depend on the
+        // engine noticing: it compares bytes. It still fires if a splice reports success and
+        // changes nothing, or if a failure could not be attributed to a gap. To the ear the "after"
+        // clip is simply the "before" clip, which is the single most misleading thing a listening
+        // test can hand you — so it is checked rather than assumed. The window is still written:
+        // the identical file *is* the evidence.
         if window_digest(&pcm.samples) == window.a_pre_digest {
             unchanged_count += 1;
             // `eprintln!`, not `progress.phase`: phase output is suppressible

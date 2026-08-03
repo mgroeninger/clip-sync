@@ -147,6 +147,58 @@ pub enum GapPatchSkipReason {
     ProgramQuiet,
 }
 
+/// Why an approved patch never reached A's PCM.
+///
+/// Distinct from [`GapPatchSkipReason`] in kind, not degree: a skip is the **seam gate declining**,
+/// whereas this is the gate having *approved* and the splice then failing to apply the fill. Every
+/// arm indicates a geometry defect upstream of the splice — the fill length or the destination
+/// frames disagree with the gap the plan described — so any occurrence is a bug report, not a
+/// routine outcome.
+///
+/// Each arm carries the numbers that identify which invariant broke, because the first real
+/// occurrence is expected on media that cannot be re-run.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GapPatchNotAppliedReason {
+    /// Destination frames fall outside A's buffer.
+    DestinationOutOfRange {
+        gap_start_frame: usize,
+        gap_end_frame: usize,
+        a_frames: usize,
+    },
+    /// Destination is empty or inverted (`start >= end`). Silent before this variant existed.
+    DestinationEmptyOrInverted {
+        gap_start_frame: usize,
+        gap_end_frame: usize,
+    },
+    /// The fill is shorter than the gap it must cover.
+    FillShorterThanGap {
+        fill_frames: usize,
+        gap_frames: usize,
+    },
+}
+
+/// Human-readable not-applied reason for stdout gap tables and verbose stderr (`-v`).
+pub fn format_gap_patch_not_applied_reason(reason: &GapPatchNotAppliedReason) -> String {
+    match reason {
+        GapPatchNotAppliedReason::DestinationOutOfRange {
+            gap_start_frame,
+            gap_end_frame,
+            a_frames,
+        } => format!(
+            "splice destination [{gap_start_frame}, {gap_end_frame}) outside A ({a_frames} frames)"
+        ),
+        GapPatchNotAppliedReason::DestinationEmptyOrInverted {
+            gap_start_frame,
+            gap_end_frame,
+        } => format!("splice destination empty or inverted [{gap_start_frame}, {gap_end_frame})"),
+        GapPatchNotAppliedReason::FillShorterThanGap {
+            fill_frames,
+            gap_frames,
+        } => format!("fill {fill_frames} frames shorter than gap {gap_frames} frames"),
+    }
+}
+
 /// Human-readable skip reason for stdout gap tables and verbose stderr (`-v`).
 pub fn format_gap_patch_skip_reason(reason: &GapPatchSkipReason) -> String {
     match reason {
@@ -344,6 +396,12 @@ pub enum GapPatchStatus {
     NotPlanned {
         reason: GapFillSkipReason,
     },
+    /// The seam gate approved this gap and a fill was built, but the splice never reached A's PCM.
+    /// A is byte-identical to its input across the gap. Always a geometry bug upstream of the
+    /// splice — see [`GapPatchNotAppliedReason`].
+    NotApplied {
+        reason: GapPatchNotAppliedReason,
+    },
 }
 
 #[allow(dead_code)]
@@ -361,6 +419,11 @@ fn is_false(b: &bool) -> bool {
     !*b
 }
 
+/// Skip serializing `not_applied_count` on healthy runs (the only expected value is 0).
+fn is_zero_count(count: &usize) -> bool {
+    *count == 0
+}
+
 /// User-visible summary of a `PatchAudio` run (no PCM payload).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct PatchSummary {
@@ -368,6 +431,10 @@ pub struct PatchSummary {
     pub patched_marginal_count: usize,
     pub skipped_count: usize,
     pub not_planned_count: usize,
+    /// Gaps the gate approved but the splice failed to apply. Non-zero means a bug; omitted from
+    /// JSON when zero, so a healthy run's output is unchanged by this field's existence.
+    #[serde(default, skip_serializing_if = "is_zero_count")]
+    pub not_applied_count: usize,
     pub gaps: Vec<GapPatchOutcome>,
     /// Run-level donor relationship inferred from informative-floor fraction (P4 diagnostic).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -389,6 +456,7 @@ impl PatchSummary {
         let mut patched_marginal_count = 0usize;
         let mut skipped_count = 0usize;
         let mut not_planned_count = 0usize;
+        let mut not_applied_count = 0usize;
         for gap in &gaps {
             match gap.status {
                 GapPatchStatus::Patched { confidence, .. } => {
@@ -399,6 +467,7 @@ impl PatchSummary {
                 }
                 GapPatchStatus::Skipped { .. } => skipped_count += 1,
                 GapPatchStatus::NotPlanned { .. } => not_planned_count += 1,
+                GapPatchStatus::NotApplied { .. } => not_applied_count += 1,
             }
         }
         Self {
@@ -406,6 +475,7 @@ impl PatchSummary {
             patched_marginal_count,
             skipped_count,
             not_planned_count,
+            not_applied_count,
             gaps,
             donor_relation,
             patch_anchors_used: None,

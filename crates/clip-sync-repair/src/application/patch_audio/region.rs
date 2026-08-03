@@ -30,8 +30,8 @@ use crate::domain::{
         PatchAnchorTable,
     },
     patch_result::{
-        residual_summary_scalar_fields, GapFillSkipReason, GapPatchOutcome, GapPatchSkipReason,
-        GapPatchStatus,
+        residual_summary_scalar_fields, GapFillSkipReason, GapPatchNotAppliedReason,
+        GapPatchOutcome, GapPatchSkipReason, GapPatchStatus,
     },
     policies::{self, GapBorderSpec, RefinedGapFrames},
     Gap,
@@ -163,12 +163,17 @@ pub(super) struct RegionPatchOpts<'a> {
 /// timestamps: the patch path refines `a_start_secs` locally, so timestamp identity is a
 /// correctness trap waiting for someone to pass a refined value. The index also makes two gaps
 /// with identical bounds distinguishable, which bit-pattern keys could not.
+///
+/// `not_applied` overrides the region outcome for gaps whose splice failed after the gate approved
+/// them: those report [`GapPatchStatus::NotApplied`], never `Patched`. Callers that do not splice
+/// (empty plan, preview) pass an empty slice.
 pub(super) fn outcomes_in_report_order(
     gaps: &[Gap],
     plan: &GapFillPlan,
     region_results: &[(usize, RegionPatchOutcome, GapTags)],
     fill_mode: FillMode,
     thresholds: FillTierThresholds,
+    not_applied: &[(usize, GapPatchNotAppliedReason)],
 ) -> Vec<GapPatchOutcome> {
     let mut status_by_gap: HashMap<usize, GapPatchStatus> = HashMap::new();
     let mut tags_by_gap: HashMap<usize, GapTags> = HashMap::new();
@@ -234,6 +239,16 @@ pub(super) fn outcomes_in_report_order(
         };
         status_by_gap.insert(*gap_index, status);
         tags_by_gap.insert(*gap_index, tags.clone());
+    }
+
+    // Applied last so it wins over the region outcome: the gate said patch, the splice did not.
+    for (gap_index, reason) in not_applied {
+        let status = GapPatchStatus::NotApplied {
+            reason: reason.clone(),
+        };
+        let tags = derive_gap_tags_from_status(&status, fill_mode, thresholds);
+        status_by_gap.insert(*gap_index, status);
+        tags_by_gap.insert(*gap_index, tags);
     }
 
     gaps.iter()
@@ -2284,6 +2299,10 @@ fn compute_a_border_rms(
 }
 
 /// Splice B samples into A's interleaved sample buffer at the gap location.
+///
+/// `Err` means A was left byte-identical across the gap: the caller must report the gap as
+/// [`GapPatchStatus::NotApplied`](crate::domain::patch_result::GapPatchStatus::NotApplied) rather
+/// than `Patched`. Every error arm is a geometry defect upstream of here, not a routine outcome.
 pub(super) fn splice_into_a(
     a_samples: &mut [f32],
     b_samples: &[f32],
@@ -2292,7 +2311,7 @@ pub(super) fn splice_into_a(
     gap_end_frame: usize,
     crossfade_secs: f64,
     sample_rate: u32,
-) {
+) -> Result<(), GapPatchNotAppliedReason> {
     let channels = channels.max(1);
 
     if gap_start_frame * channels >= a_samples.len() || gap_end_frame * channels > a_samples.len() {
@@ -2302,15 +2321,37 @@ pub(super) fn splice_into_a(
             a_len = a_samples.len() / channels,
             "splice_into_a: region out of range, skipping"
         );
-        return;
+        return Err(GapPatchNotAppliedReason::DestinationOutOfRange {
+            gap_start_frame,
+            gap_end_frame,
+            a_frames: a_samples.len() / channels,
+        });
     }
 
     if gap_start_frame >= gap_end_frame {
-        return;
+        tracing::warn!(
+            gap_start_frame,
+            gap_end_frame,
+            "splice_into_a: destination empty or inverted, skipping"
+        );
+        return Err(GapPatchNotAppliedReason::DestinationEmptyOrInverted {
+            gap_start_frame,
+            gap_end_frame,
+        });
     }
 
     let gap_frames = gap_end_frame.saturating_sub(gap_start_frame);
     let needed_samples = gap_frames * channels;
+    // Every fill path terminates in `fit_fill_to_gap_frames`, which pads or truncates to exactly
+    // `target_frames * channels` — so a short fill here means the fill was fitted to a different
+    // frame count than the destination it is being spliced into. Loud in debug, degraded to
+    // `NotApplied` in release rather than silently reported as `Patched`.
+    debug_assert!(
+        b_samples.len() >= needed_samples,
+        "fill ({} samples) shorter than splice destination ({needed_samples} samples): fill was \
+         fitted to a different frame count than [{gap_start_frame}, {gap_end_frame})",
+        b_samples.len()
+    );
     if b_samples.len() < needed_samples {
         tracing::warn!(
             gap_start_frame,
@@ -2319,7 +2360,10 @@ pub(super) fn splice_into_a(
             needed_samples,
             "splice_into_a: B fill shorter than gap, skipping"
         );
-        return;
+        return Err(GapPatchNotAppliedReason::FillShorterThanGap {
+            fill_frames: b_samples.len() / channels,
+            gap_frames,
+        });
     }
 
     let crossfade_frames = (crossfade_secs * sample_rate as f64) as usize;
@@ -2332,6 +2376,7 @@ pub(super) fn splice_into_a(
         gap_end_frame,
         crossfade_frames,
     );
+    Ok(())
 }
 
 #[cfg(test)]
@@ -2894,7 +2939,7 @@ mod tests {
         ];
 
         let outcomes =
-            outcomes_in_report_order(&gaps, &plan, &region_results, fill_mode, thresholds);
+            outcomes_in_report_order(&gaps, &plan, &region_results, fill_mode, thresholds, &[]);
 
         assert_eq!(outcomes.len(), gaps.len(), "one outcome per reported gap");
         for (i, (outcome, g)) in outcomes.iter().zip(gaps.iter()).enumerate() {
@@ -2940,5 +2985,149 @@ mod tests {
             "g3 appears in neither source and must default to NotPlanned, got {:?}",
             outcomes[3].status
         );
+    }
+
+    /// **A patch that never reached A must not report `Patched`.**
+    ///
+    /// `splice_into_a` can decline to write — the seam gate decides `Patched` upstream of it, so
+    /// without this override a gap the splice skipped would be counted, tabled, and exported as a
+    /// repair while A stayed byte-identical across it. The `not_applied` list wins over the region
+    /// result, and `PatchSummary` counts it apart from `patched_count`.
+    #[test]
+    fn not_applied_overrides_the_patched_region_outcome() {
+        use super::{outcomes_in_report_order, RegionPatchOutcome};
+        use crate::domain::gap::Gap;
+        use crate::domain::gap_fill::GapFillPlan;
+        use crate::domain::gap_tags::{derive_gap_tags_from_status, FillTierThresholds, PatchTier};
+        use crate::domain::patch_result::{
+            GapFillSkipReason, GapPatchNotAppliedReason, GapPatchStatus, PatchSummary,
+        };
+        use crate::domain::FillMode;
+
+        let gaps = vec![Gap {
+            video_a_start_secs: 1.5,
+            video_a_end_secs: 2.5,
+            video_b_start_secs: Some(1.5),
+            video_b_end_secs: Some(2.5),
+            b_has_energy: true,
+        }];
+        let fill_mode = FillMode::Fit;
+        let thresholds = FillTierThresholds::DEFAULT;
+        let plan = GapFillPlan {
+            regions: vec![],
+            skipped: vec![],
+        };
+        let patched = RegionPatchOutcome::Patched {
+            pre_correlation: 0.2,
+            post_correlation: 0.95,
+            align_adjustment_secs: 0.0,
+            waveform_adjustment_secs: 0.0,
+            structure_trusted: true,
+            confidence: FillConfidence::High,
+            gap_start_adjust_frames: 0,
+            gap_end_adjust_frames: 0,
+            fit_used_boundary_grid: false,
+            fit_boundary_grid_cells: None,
+            residual: None,
+            anchor_seam_used: false,
+            anchor_bracket_move_frames: 0,
+            dual_fit_used: false,
+        };
+        let tags = derive_gap_tags_from_status(
+            &GapPatchStatus::NotPlanned {
+                reason: GapFillSkipReason::NotFillable,
+            },
+            fill_mode,
+            thresholds,
+        );
+        let reason = GapPatchNotAppliedReason::FillShorterThanGap {
+            fill_frames: 100,
+            gap_frames: 4800,
+        };
+
+        let outcomes = outcomes_in_report_order(
+            &gaps,
+            &plan,
+            &[(0, patched, tags)],
+            fill_mode,
+            thresholds,
+            &[(0, reason.clone())],
+        );
+
+        assert_eq!(
+            outcomes[0].status,
+            GapPatchStatus::NotApplied { reason },
+            "the splice failure must win over the gate's Patched verdict"
+        );
+        assert_eq!(
+            outcomes[0].tags.patch_tier,
+            PatchTier::NotApplicable,
+            "no repair happened, so no patch tier applies"
+        );
+
+        let summary = PatchSummary::from_outcomes(outcomes);
+        assert_eq!(summary.patched_count, 0);
+        assert_eq!(summary.not_applied_count, 1);
+        assert!(
+            !summary.has_patches(),
+            "has_patches gates the WAV/mux write — a no-op splice must not qualify"
+        );
+    }
+
+    /// **Every `splice_into_a` bail is reportable, and none of them touch A.**
+    ///
+    /// Each arm names which invariant broke, because the first real occurrence is expected on
+    /// media that cannot be re-run. The fill-shorter arm is excluded here: it trips a
+    /// `debug_assert!` (see `splice_shorter_fill_trips_the_debug_assert`) and is only reachable in
+    /// release.
+    #[test]
+    fn splice_bails_report_a_reason_and_leave_a_untouched() {
+        use super::splice_into_a;
+        use crate::domain::patch_result::GapPatchNotAppliedReason;
+
+        let fill = vec![0.5f32; 64];
+
+        let mut a = vec![0.25f32; 16];
+        let before = a.clone();
+        assert_eq!(
+            splice_into_a(&mut a, &fill, 2, 100, 200, 0.0, 48_000),
+            Err(GapPatchNotAppliedReason::DestinationOutOfRange {
+                gap_start_frame: 100,
+                gap_end_frame: 200,
+                a_frames: 8,
+            })
+        );
+        assert_eq!(a, before, "an out-of-range destination must not modify A");
+
+        let mut a = vec![0.25f32; 16];
+        let before = a.clone();
+        assert_eq!(
+            splice_into_a(&mut a, &fill, 2, 4, 4, 0.0, 48_000),
+            Err(GapPatchNotAppliedReason::DestinationEmptyOrInverted {
+                gap_start_frame: 4,
+                gap_end_frame: 4,
+            })
+        );
+        assert_eq!(a, before, "an empty destination must not modify A");
+
+        let mut a = vec![0.25f32; 16];
+        assert_eq!(
+            splice_into_a(&mut a, &fill, 2, 0, 8, 0.0, 48_000),
+            Ok(()),
+            "a well-formed splice still succeeds"
+        );
+        assert_ne!(a, before, "a successful splice must modify A");
+    }
+
+    /// The fill-length invariant is *enforced*, not sampled. Every fill path terminates in
+    /// `fit_fill_to_gap_frames`, which returns exactly `target_frames * channels` — so a short fill
+    /// is a construction bug, and no corpus can prove it will never happen. Debug builds panic on
+    /// it; release degrades to `NotApplied` rather than a false `Patched`.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "shorter than splice destination")]
+    fn splice_shorter_fill_trips_the_debug_assert() {
+        let mut a = vec![0.25f32; 16];
+        let _ = super::splice_into_a(&mut a, &[0.5f32; 4], 2, 0, 8, 0.0, 48_000);
     }
 }

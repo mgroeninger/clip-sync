@@ -65,7 +65,13 @@ Per selected gap, named by the same `entry_stem` as the gap's JSON:
 |---|---|
 | `<stem>_a_surround.wav` | always — the gap ± `gap_signature_context_secs` (3 s) from A |
 | `<stem>_b_surround.wav` | when the gap reaches the fill plan — the mapped donor span, same ± context so the two clips are comparable by ear |
-| `<stem>_a_patched.wav` | **only when the production gate patches** — the identical A window after the splice |
+| `<stem>_a_patched.wav` | **only when the production gate patches and the splice applies** — the identical A window after the splice |
+
+A missing `_a_patched.wav` always has a stated reason on stderr: a gate refusal (`skipped`), a
+plan-time exclusion (`not_planned`), or — the bug case — `NOT APPLIED`, meaning the gate approved
+the gap and the splice then failed, leaving A unchanged across it. The file is withheld rather than
+written identical, because an "after" clip that is really the "before" clip is the one artifact that
+would invert a listening finding.
 
 **The patched clip comes from the production engine** (`characterize_region` → `execute_region_spec`
 → `splice_into_a`), not from the fingerprint oracle. The oracle's `any_ok` can disagree with the

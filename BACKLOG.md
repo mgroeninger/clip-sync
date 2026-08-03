@@ -89,30 +89,32 @@ From [archive/repair-write-path-plan.md](docs/dev/archive/repair-write-path-plan
 
 ---
 
-### Patch verdict integrity — `Patched` does not mean spliced
+### Patch verdict integrity — `Patched` does not mean spliced — **FIXED**
 
-**Latent defect, detector already shipped.** `splice_into_a` (`patch_audio/region.rs:2287`) returns
-`()` and has three early returns; the `Patched` verdict is decided *upstream* of it
-(`region.rs:189–221`, from `region_results`) and the summary is built from that same pre-splice list
-(`patch_audio/mod.rs:454`). Nothing tells the summary the splice bailed.
+`splice_into_a` used to return `()` with three early returns, while the `Patched` verdict was
+decided *upstream* of it and the summary was built from that same pre-splice list. A bailed splice
+was reported as a repair: the gap table said repaired, the audio was unchanged, and the
+inverted/empty case emitted no signal at all. Worst for `--gap-listen`, where `_a_patched.wav` came
+back byte-identical to `_a.wav` — you hear an unrepaired gap and conclude *the repair sounds bad*,
+inverting the finding on exactly the gaps a margin-band experiment selects.
 
-| Bail condition | Line | Reported today |
-|---|---|---|
-| destination out of range | `:2298` | `tracing::warn!` |
-| inverted / empty (`start >= end`) | `:2308` | **nothing at all** |
-| fill shorter than the gap | `:2314` | `tracing::warn!` |
+Fixed by making the splice's outcome part of the verdict rather than something a consumer could
+overlook. `splice_into_a` returns `Result<(), GapPatchNotAppliedReason>`; a failure becomes
+`GapPatchStatus::NotApplied`, a **new variant** rather than a flag on `Patched`. That choice is the
+substance of the fix: ~15 consumers match `Patched { .. }` tolerantly, so a boolean field would
+have left every one of them still reporting a repair. The variant broke each exhaustive match
+instead and forced a decision — `patched_count` excludes it, `has_patches()` (which gates the
+`--wav`/`--mux` write) returns false, the gap table prints `NOT APPLIED (bug)`, and `--gap-listen`
+writes no `_a_patched.wav`. Each reason carries its frame counts, since the first real occurrence
+is expected on media that cannot be re-run.
 
-Effect: the gap table says repaired, the audio is unchanged, and in the middle case there is no
-signal whatsoever. Worst for `--gap-listen`, where `_a_patched.wav` comes back byte-identical to
-`_a_surround.wav` — you hear an unrepaired gap and conclude *the repair sounds bad*, inverting the
-finding on exactly the gaps a margin-band experiment selects.
-
-**Detection exists; the verdict is still wrong.** `--gap-listen` digests the A window before and
-after the splice and warns on a match (`gap_listen/mod.rs:444`) — a symptom check on one diagnostic
-path, not a fix. Direction: have `splice_into_a` report applied/not-applied and reflect that in the
-gap status. Reachable by inspection only — **no observed real-media occurrence**, and the firing
-path has no end-to-end test (forcing a genuine no-op splice needs fault injection that does not
-exist yet). Uncovered by, but not introduced by, the gap-listen work.
+**No observed real-media occurrence** — and none is expected: every fill path terminates in
+`fit_fill_to_gap_frames`, which returns exactly `target_frames * channels`. That is a construction
+argument, not evidence, so it is enforced by a `debug_assert!` at the splice boundary (loud in
+debug, degraded to `NotApplied` in release) rather than by sampling a corpus that could never be
+large enough to rule the condition out. The `--gap-listen` before/after digest check stays as a
+bytes-level backstop that does not depend on the engine noticing. Uncovered by, but not introduced
+by, the gap-listen work.
 
 ---
 

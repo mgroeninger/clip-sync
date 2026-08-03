@@ -12,9 +12,10 @@ use crate::application::error::RepairError;
 use crate::application::patch_audio::PatchAudioResult;
 use crate::application::ports::GapReporter;
 use crate::domain::{
-    diagnostics::collect_repair_warnings, format_gap_patch_skip_reason, gap_tags::PatchTier,
-    CompatibilityVerdict, Gap, GapFillSkipReason, GapPatchOutcome, GapPatchStatus, GapReport,
-    PatchSummary, TrackCompatibility,
+    diagnostics::collect_repair_warnings, format_gap_patch_not_applied_reason,
+    format_gap_patch_skip_reason, gap_tags::PatchTier, CompatibilityVerdict, Gap,
+    GapFillSkipReason, GapPatchOutcome, GapPatchStatus, GapReport, PatchSummary,
+    TrackCompatibility,
 };
 use crate::infrastructure::config::OutputFormat;
 
@@ -201,6 +202,24 @@ fn format_human(
         tracing::warn!("{warning}");
     }
 
+    // Not a `collect_repair_warnings` warning: those are all derived from scan/alignment scalars,
+    // whereas this one reports that the engine's own patch verdict disagrees with what it wrote.
+    // It belongs with the run-level warnings rather than only in the per-gap table, because the
+    // table row is easy to miss and this is never a routine outcome.
+    if let Some(summary) = patch {
+        if summary.not_applied_count > 0 {
+            let warning = format!(
+                "Warning:   {} gap(s) were approved for repair but NOT APPLIED — the audio is \
+                 unchanged across them. This is a bug in the splice geometry, not a gate \
+                 decision; see the per-gap rows below and please report it.",
+                summary.not_applied_count
+            );
+            out.push_str(&warning);
+            out.push('\n');
+            tracing::warn!("{warning}");
+        }
+    }
+
     out.push('\n');
     out.push_str(&format_unified_gap_report(
         report,
@@ -279,6 +298,7 @@ fn format_gap_equivalence_suffix(report: &GapReport, index: usize) -> String {
 enum GapDisplayPriority {
     Skipped,
     NotPlanned,
+    NotApplied,
     Patched,
     ScanOnly,
 }
@@ -287,6 +307,7 @@ fn gap_display_priority(outcome: Option<&GapPatchOutcome>) -> GapDisplayPriority
     match outcome.map(|o| &o.status) {
         Some(GapPatchStatus::Skipped { .. }) => GapDisplayPriority::Skipped,
         Some(GapPatchStatus::NotPlanned { .. }) => GapDisplayPriority::NotPlanned,
+        Some(GapPatchStatus::NotApplied { .. }) => GapDisplayPriority::NotApplied,
         Some(GapPatchStatus::Patched { .. }) => GapDisplayPriority::Patched,
         None => GapDisplayPriority::ScanOnly,
     }
@@ -307,6 +328,9 @@ fn format_gap_row_index(priority: GapDisplayPriority, index: usize) -> String {
     match priority {
         GapDisplayPriority::Skipped => format!(">{index:<2}"),
         GapDisplayPriority::NotPlanned => format!("-{index:<2}"),
+        // `x`, not `!`: `!` already means "long gap" in the duration column of this same table, and
+        // a not-applied gap ≥ 30 s would print it twice meaning two different things.
+        GapDisplayPriority::NotApplied => format!("x{index:<2}"),
         _ => format!("{index:<3}"),
     }
 }
@@ -315,7 +339,9 @@ fn format_gap_duration(duration_secs: f64, priority: GapDisplayPriority) -> Stri
     let marker = if duration_secs >= LONG_GAP_SECS
         && matches!(
             priority,
-            GapDisplayPriority::Skipped | GapDisplayPriority::NotPlanned
+            GapDisplayPriority::Skipped
+                | GapDisplayPriority::NotPlanned
+                | GapDisplayPriority::NotApplied
         ) {
         "!"
     } else {
@@ -394,12 +420,13 @@ fn format_alignment_instability_warning(
 }
 
 fn format_patch_duration_summary(report: &GapReport, patch: &PatchSummary) -> Option<String> {
-    if patch.patched_count == 0 && patch.skipped_count == 0 {
+    if patch.patched_count == 0 && patch.skipped_count == 0 && patch.not_applied_count == 0 {
         return None;
     }
 
     let mut patched_secs = 0.0;
     let mut skipped_secs = 0.0;
+    let mut not_applied_secs = 0.0;
     let mut longest_skip: Option<(usize, f64, f64)> = None;
 
     for (i, outcome) in patch.gaps.iter().enumerate() {
@@ -417,6 +444,9 @@ fn format_patch_duration_summary(report: &GapReport, patch: &PatchSummary) -> Op
                     longest_skip = Some((i + 1, duration_secs, start_secs));
                 }
             }
+            // Counted apart from `skipped_secs`: the gate approved these, so folding them into the
+            // skip total would hide a bug behind a routine-looking number.
+            GapPatchStatus::NotApplied { .. } => not_applied_secs += duration_secs,
             GapPatchStatus::NotPlanned { .. } => {}
         }
     }
@@ -435,6 +465,12 @@ fn format_patch_duration_summary(report: &GapReport, patch: &PatchSummary) -> Op
         } else {
             parts.push(format!("skipped {:.1}s", skipped_secs));
         }
+    }
+    if patch.not_applied_count > 0 {
+        parts.push(format!(
+            "NOT APPLIED {:.1}s ({} approved gap(s) left unrepaired — see warnings)",
+            not_applied_secs, patch.not_applied_count
+        ));
     }
 
     Some(format!("           {}\n", parts.join("; ")))
@@ -460,8 +496,15 @@ fn format_unified_gap_header(
                 summary.not_planned_count,
             );
         }
+        // Without this the counts silently fail to sum to `found` on the one run where that matters.
+        // (Preview above needs no equivalent: it never splices, so it cannot produce a not-applied.)
+        let not_applied_note = if summary.not_applied_count > 0 {
+            format!(", {} NOT APPLIED", summary.not_applied_count)
+        } else {
+            String::new()
+        };
         return format!(
-            "Gaps in video A ({found} found, {} repaired{marginal_note}, {} skipped, {} unfillable):\n",
+            "Gaps in video A ({found} found, {} repaired{marginal_note}, {} skipped, {} unfillable{not_applied_note}):\n",
             summary.patched_count,
             summary.skipped_count,
             summary.not_planned_count,
@@ -598,6 +641,10 @@ fn format_unified_gap_status(
             GapFillSkipReason::OutsideReferenceCoverage => "skipped (outside clip coverage)".into(),
             other => format!("not planned: {}", format_fill_skip_reason(other)),
         },
+        GapPatchStatus::NotApplied { reason } => format!(
+            "NOT APPLIED (bug): {}",
+            format_gap_patch_not_applied_reason(reason)
+        ),
     };
 
     format!(
@@ -813,8 +860,14 @@ pub fn format_patch_summary(summary: &PatchSummary) -> String {
         .map(|r| format!(" donor_relation={}", r.as_str()))
         .unwrap_or_default();
 
+    let not_applied = if summary.not_applied_count > 0 {
+        format!(", {} NOT APPLIED", summary.not_applied_count)
+    } else {
+        String::new()
+    };
+
     out.push_str(&format!(
-        "\nPatch results ({} patched, {} skipped, {} not planned){donor}:\n",
+        "\nPatch results ({} patched, {} skipped, {} not planned{not_applied}){donor}:\n",
         summary.patched_count, summary.skipped_count, summary.not_planned_count
     ));
 
@@ -856,6 +909,10 @@ pub fn format_patch_summary(summary: &PatchSummary) -> String {
             GapPatchStatus::NotPlanned { reason } => {
                 format!("not planned: {}", format_fill_skip_reason(reason))
             }
+            GapPatchStatus::NotApplied { reason } => format!(
+                "NOT APPLIED (bug): {}",
+                format_gap_patch_not_applied_reason(reason)
+            ),
         };
         out.push_str(&format!(
             "  #{:<3} [{:>8.2}s – {:>8.2}s]  ({:.1}s)  {}\n",
