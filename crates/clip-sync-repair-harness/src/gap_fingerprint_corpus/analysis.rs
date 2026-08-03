@@ -187,6 +187,10 @@ struct Bracket {
     seam_pre: Option<f64>,
     #[serde(default)]
     seam_post: Option<f64>,
+    #[serde(default)]
+    structure_pre: Option<f64>,
+    #[serde(default)]
+    structure_post: Option<f64>,
     /// Chosen placement — `None` on pre-2026-07-25 dumps and on projected (non-measured) brackets.
     #[serde(default)]
     start_frame: Option<usize>,
@@ -194,6 +198,22 @@ struct Bracket {
     fill_frames: Option<usize>,
     #[serde(default)]
     failure_stage: Option<String>,
+}
+
+/// Progress toward passing for closest-failure selection. Structure-floor brackets rank by
+/// structure scores; everything else by waveform seam scores (matches `bracket_failure_progress`).
+fn bracket_failure_progress(b: &Bracket) -> f64 {
+    if b.failure_stage.as_deref() == Some("structure_floor") {
+        match (b.structure_pre, b.structure_post) {
+            (Some(a), Some(c)) => a.min(c),
+            _ => f64::NEG_INFINITY,
+        }
+    } else {
+        match (b.seam_pre, b.seam_post) {
+            (Some(a), Some(c)) => a.min(c),
+            _ => f64::NEG_INFINITY,
+        }
+    }
 }
 
 /// The bracket with the highest min-seam — the same "closest to chosen" rule `best_bracket_seam`
@@ -576,18 +596,14 @@ fn gap_row(pair: &str, source: &SourceMeta, gap: &GapEntry, eps: f64, tail_secs:
             .iter()
             .filter(|b| b.failure_stage.is_none())
             .count(),
-        // Failure stage of the bracket with the highest min-seam (the closest to passing).
+        // Failure stage of the bracket with the highest progress score (closest to passing).
         closest_failure_stage: gap
             .brackets
             .iter()
             .filter(|b| b.failure_stage.is_some())
             .max_by(|x, y| {
-                let mn = |b: &Bracket| match (b.seam_pre, b.seam_post) {
-                    (Some(a), Some(c)) => a.min(c),
-                    _ => f64::NEG_INFINITY,
-                };
-                mn(x)
-                    .partial_cmp(&mn(y))
+                bracket_failure_progress(x)
+                    .partial_cmp(&bracket_failure_progress(y))
                     .unwrap_or(std::cmp::Ordering::Equal)
             })
             .and_then(|b| b.failure_stage.clone()),

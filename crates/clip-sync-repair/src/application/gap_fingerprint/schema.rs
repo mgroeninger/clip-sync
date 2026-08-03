@@ -102,6 +102,40 @@ pub enum IncomparableReason {
     ChannelLayoutMismatch,
 }
 
+/// Seam-gate floors / margins the dump's `failure_stage` values were decided against — corpus-level
+/// provenance mirroring [`crate::domain::GapEquivalenceThresholds`] for the equivalence gate.
+///
+/// Present on from-decode dumps (`characterize_gaps_from_decode`); absent on pre-2026-08-03 corpora and
+/// on summary-only / refused corpora that never ran the gate. With bracket scores, this is enough to
+/// re-derive `structure_floor` / `waveform_floor` (and check residual margin) without re-scoring PCM.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CorpusGateRecipe {
+    pub min_structure_match_score: f32,
+    pub min_fill_correlation: f32,
+    pub fill_absolute_floor: f32,
+    pub fill_marginal_margin: f32,
+    pub short_gap_mean_correlation_secs: f64,
+    pub short_gap_one_strong_seam_fallback: bool,
+    pub residual_headroom_margin_db: f64,
+    pub residual_gate: crate::domain::ResidualGateMode,
+}
+
+impl CorpusGateRecipe {
+    /// Echo the patch settings the seam gate used for this dump.
+    pub fn from_settings(s: &crate::application::PatchRequestSettings) -> Self {
+        Self {
+            min_structure_match_score: s.min_structure_match_score,
+            min_fill_correlation: s.min_fill_correlation,
+            fill_absolute_floor: s.fill_absolute_floor,
+            fill_marginal_margin: s.fill_marginal_margin,
+            short_gap_mean_correlation_secs: s.short_gap_mean_correlation_secs,
+            short_gap_one_strong_seam_fallback: s.short_gap_one_strong_seam_fallback,
+            residual_headroom_margin_db: s.residual_headroom_margin_db,
+            residual_gate: s.residual_gate,
+        }
+    }
+}
+
 /// Non-identifying provenance for a corpus: the A/B file identities (pair = entry identity), the scan
 /// recipe, and the gap count. No titles, no paths.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -113,6 +147,9 @@ pub struct SourceMeta {
     /// Set when pairwise characterization was refused. Optional so pre-gate corpora still parse.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub incomparable: Option<IncomparableReason>,
+    /// Seam-gate thresholds used when scoring brackets — see [`CorpusGateRecipe`].
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub gate_recipe: Option<CorpusGateRecipe>,
     /// Dotted paths of per-gap fields the emitting path **never populated**, so their serialized values
     /// are structural defaults rather than measurements — see [`NOT_MEASURED_BY_PROJECTION`].
     ///
@@ -471,10 +508,16 @@ pub struct BracketInfo {
     pub post_time_secs: f64,
     pub span_secs: f64,
     pub move_frames: usize,
+    /// Structure-match scores at the gate placement. Populated on
+    /// [`FailureStage::StructureFloor`] (and on paths that record structure for every bracket);
+    /// **not** stuffed into [`Self::seam_pre`] / [`Self::seam_post`].
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub structure_pre: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub structure_post: Option<f64>,
+    /// Waveform Pearson at the gate placement. Present on pass and on
+    /// [`FailureStage::WaveformFloor`] / [`FailureStage::Residual`]; absent on
+    /// [`FailureStage::StructureFloor`] / [`FailureStage::StructureAlign`].
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub seam_pre: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -494,6 +537,27 @@ pub struct BracketInfo {
     pub fill_frames: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub failure_stage: Option<FailureStage>,
+    /// Residual headroom margin (dB) from `SeamGateFailure::ResidualHeadroomExceeded` when
+    /// [`Self::failure_stage`] is [`FailureStage::Residual`]. Absent otherwise (and on dumps that
+    /// predate this field). Compare against [`CorpusGateRecipe::residual_headroom_margin_db`].
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub residual_margin_db: Option<f64>,
+}
+
+/// Progress score for "closest failing bracket" selection: structure scores on
+/// [`FailureStage::StructureFloor`], waveform seam scores otherwise. `NEG_INFINITY` when the
+/// relevant pair is missing (e.g. [`FailureStage::StructureAlign`]).
+pub fn bracket_failure_progress(b: &BracketInfo) -> f64 {
+    match b.failure_stage {
+        Some(FailureStage::StructureFloor) => match (b.structure_pre, b.structure_post) {
+            (Some(a), Some(c)) => a.min(c),
+            _ => f64::NEG_INFINITY,
+        },
+        _ => match (b.seam_pre, b.seam_post) {
+            (Some(a), Some(c)) => a.min(c),
+            _ => f64::NEG_INFINITY,
+        },
+    }
 }
 
 /// Which gate stage rejected a bracket (mirrors the W5 `failure_stage` taxonomy).
@@ -973,8 +1037,13 @@ mod tests {
             scan_recipe: CorpusScanRecipe::default(),
             gap_count: 0,
             incomparable: None,
+            gate_recipe: None,
             not_measured: Vec::new(),
         };
+        assert!(
+            !serde_json::to_string(&meta).unwrap().contains("gate_recipe"),
+            "absent gate_recipe must omit key"
+        );
         let json = serde_json::to_string(&meta).unwrap();
         assert!(
             !json.contains("incomparable"),
@@ -1012,7 +1081,23 @@ mod tests {
             start_frame: None,
             fill_frames: None,
             failure_stage,
+            residual_margin_db: None,
         }
+    }
+
+    #[test]
+    fn bracket_failure_progress_uses_structure_on_structure_floor() {
+        let mut b = bracket(Some(FailureStage::StructureFloor));
+        b.structure_pre = Some(0.4);
+        b.structure_post = Some(0.5);
+        b.seam_pre = Some(0.99); // must be ignored for structure_floor
+        b.seam_post = Some(0.99);
+        assert!((bracket_failure_progress(&b) - 0.4).abs() < 1e-12);
+
+        let mut w = bracket(Some(FailureStage::WaveformFloor));
+        w.seam_pre = Some(0.2);
+        w.seam_post = Some(0.3);
+        assert!((bracket_failure_progress(&w) - 0.2).abs() < 1e-12);
     }
 
     fn splice_dualfit(gate_pass: bool) -> SpliceDualfit {

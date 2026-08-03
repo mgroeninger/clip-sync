@@ -1614,6 +1614,7 @@ pub fn build_gap_fingerprint(
             start_frame: None,
             fill_frames: None,
             failure_stage: None,
+            residual_margin_db: None,
         })
         .collect();
 
@@ -1809,22 +1810,59 @@ impl FingerprintConfig {
     }
 }
 
-/// Map a gate failure to the fingerprint's `failure_stage` + the seam scores it carries.
-fn stage_of(
-    failure: &crate::application::patch_region::SeamGateFailure,
-) -> (FailureStage, Option<f64>, Option<f64>) {
+/// Scores + stage extracted from a gate failure — keeps structure and waveform channels separate.
+struct BracketStageDetail {
+    stage: FailureStage,
+    structure_pre: Option<f64>,
+    structure_post: Option<f64>,
+    seam_pre: Option<f64>,
+    seam_post: Option<f64>,
+    residual_margin_db: Option<f64>,
+}
+
+/// Map a gate failure to the fingerprint's `failure_stage` and the scores that belong on each field.
+/// Structure floors land on `structure_*`; waveform/residual on `seam_*`; residual also carries
+/// `residual_margin_db`. Never overload structure correlations onto `seam_*`.
+fn stage_of(failure: &crate::application::patch_region::SeamGateFailure) -> BracketStageDetail {
     use crate::application::patch_region::SeamGateFailure as F;
     match failure {
-        F::StructureAlignmentFailed => (FailureStage::StructureAlign, None, None),
-        F::StructureBelowThreshold { pre, post } => {
-            (FailureStage::StructureFloor, Some(*pre), Some(*post))
-        }
-        F::WaveformBelowThreshold { pre, post, .. } => {
-            (FailureStage::WaveformFloor, Some(*pre), Some(*post))
-        }
-        F::ResidualHeadroomExceeded { pre, post, .. } => {
-            (FailureStage::Residual, Some(*pre), Some(*post))
-        }
+        F::StructureAlignmentFailed => BracketStageDetail {
+            stage: FailureStage::StructureAlign,
+            structure_pre: None,
+            structure_post: None,
+            seam_pre: None,
+            seam_post: None,
+            residual_margin_db: None,
+        },
+        F::StructureBelowThreshold { pre, post } => BracketStageDetail {
+            stage: FailureStage::StructureFloor,
+            structure_pre: Some(*pre),
+            structure_post: Some(*post),
+            seam_pre: None,
+            seam_post: None,
+            residual_margin_db: None,
+        },
+        F::WaveformBelowThreshold { pre, post, .. } => BracketStageDetail {
+            stage: FailureStage::WaveformFloor,
+            structure_pre: None,
+            structure_post: None,
+            seam_pre: Some(*pre),
+            seam_post: Some(*post),
+            residual_margin_db: None,
+        },
+        F::ResidualHeadroomExceeded {
+            pre,
+            post,
+            margin_db,
+            ..
+        } => BracketStageDetail {
+            stage: FailureStage::Residual,
+            structure_pre: None,
+            structure_post: None,
+            seam_pre: Some(*pre),
+            seam_post: Some(*post),
+            residual_margin_db: Some(*margin_db),
+        },
     }
 }
 
@@ -1963,7 +2001,7 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
         // placement recorded by `characterize_gap_region` runs at `waveform_weight: 0.0` and is
         // blind to those terms by construction.) It costs nothing here: the gate already computed
         // it. `None` on a gate failure — there is no chosen placement to report.
-        let (seam_pre, seam_post, stage, placement) =
+        let (structure_pre, structure_post, seam_pre, seam_post, stage, residual_margin_db, placement) =
             match oracle_score_fit_candidate(&params, &cache, br.refined, refined, true) {
                 Ok(sc) => {
                     any_ok = true;
@@ -1971,15 +2009,26 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
                         throat_structure_frame = Some(sc.structure_start_frame);
                     }
                     (
+                        None,
+                        None,
                         Some(sc.report_pre),
                         Some(sc.report_post),
+                        None,
                         None,
                         Some(sc.alignment),
                     )
                 }
                 Err(f) => {
-                    let (stage, pre, post) = stage_of(&f);
-                    (pre, post, Some(stage), None)
+                    let d = stage_of(&f);
+                    (
+                        d.structure_pre,
+                        d.structure_post,
+                        d.seam_pre,
+                        d.seam_post,
+                        Some(d.stage),
+                        d.residual_margin_db,
+                        None,
+                    )
                 }
             };
         infos.push(BracketInfo {
@@ -1987,13 +2036,14 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
             post_time_secs: br.post.frame as f64 / rate,
             span_secs: br.post.frame.saturating_sub(br.pre.frame) as f64 / rate,
             move_frames: br.move_frames,
-            structure_pre: None,
-            structure_post: None,
+            structure_pre,
+            structure_post,
             seam_pre,
             seam_post,
             start_frame: placement.map(|a| a.start_frame),
             fill_frames: placement.map(|a| a.fill_frames),
             failure_stage: stage,
+            residual_margin_db,
         });
         if include_diagnostics
             && br.pre.source == AnchorSource::EnergyPeak
@@ -2244,6 +2294,7 @@ fn refused_channel_mismatch_corpus(
             scan_recipe: CorpusScanRecipe::from_report(report),
             gap_count: report.gaps.len(),
             incomparable: Some(IncomparableReason::ChannelLayoutMismatch),
+            gate_recipe: None,
             // Refusal ⇒ `gaps` is empty, so there is nothing to qualify.
             not_measured: Vec::new(),
         },
@@ -2317,6 +2368,9 @@ pub fn characterize_gaps_from_decode(
     }
     let cfg = FingerprintConfig::from_request(request, report.recipe.silence_peak_fraction());
     let mut corpus = characterize_gaps(report, pcm, &cfg, select);
+    // Seam-gate floors used for every bracket `failure_stage` on this dump — stamped once at corpus
+    // level (same idea as equivalence `thresholds`). Summary-only `characterize_gaps` leaves this None.
+    corpus.source.gate_recipe = Some(CorpusGateRecipe::from_settings(&request.settings));
     // Gaps whose `baseline_lag` block came from `projected_lag_entry` rather than a real sweep —
     // the population `PROJECTED_BASELINE_LAG_FIELDS` exists to disown. Zero on a dump where every
     // measured gap carried its sweep through, which is the normal from-decode case.
@@ -2849,6 +2903,8 @@ pub fn characterize_gaps(
             scan_recipe: CorpusScanRecipe::from_report(report),
             gap_count: report.gaps.len(),
             incomparable: None,
+            // Summary-only path does not run the seam gate; from-decode stamps `gate_recipe`.
+            gate_recipe: None,
             // **No `not_measured` here.** This path measures every one of those fields —
             // `build_gap_fingerprint` below fills levels/silence/contour/anchors for real. The
             // declaration belongs to `characterize_gaps_from_decode`, which *replaces* these gaps with
@@ -3283,6 +3339,7 @@ mod tests {
             start_frame: None,
             fill_frames: None,
             failure_stage: stage,
+            residual_margin_db: None,
         };
         let m = RegionMeasurements {
             brackets: vec![
@@ -4108,6 +4165,24 @@ mod tests {
             "the production dump must declare its unmeasured fields — and exactly those: this path \
              threads the real `baseline_lag` through, so `PROJECTED_BASELINE_LAG_FIELDS` must be absent"
         );
+        let recipe = corpus
+            .source
+            .gate_recipe
+            .as_ref()
+            .expect("from-decode dump stamps the seam-gate recipe");
+        assert_eq!(
+            recipe.min_fill_correlation,
+            request.min_fill_correlation,
+            "gate_recipe must echo the settings used to score brackets"
+        );
+        assert_eq!(
+            recipe.fill_absolute_floor, request.fill_absolute_floor,
+            "gate_recipe must echo the settings used to score brackets"
+        );
+        assert_eq!(
+            recipe.residual_headroom_margin_db,
+            request.residual_headroom_margin_db
+        );
         let full: Vec<_> = corpus
             .gaps
             .iter()
@@ -4161,6 +4236,78 @@ mod tests {
                 "{f} is conditional; it must not sit in the unconditional list too"
             );
         }
+    }
+
+    /// Structure-floor scores land on `structure_*`; residual failures keep `residual_margin_db`.
+    /// Never overload structure correlations onto `seam_*` (the pre-2026-08-03 dump bug).
+    #[test]
+    fn stage_of_keeps_structure_and_residual_channels_separate() {
+        use crate::application::patch_region::SeamGateFailure;
+        use crate::domain::policies::{SeamFloorProbe, SeamFloorSource, SeamResidualVerdict};
+
+        let structure = stage_of(&SeamGateFailure::StructureBelowThreshold {
+            pre: 0.41,
+            post: 0.52,
+        });
+        assert_eq!(structure.stage, FailureStage::StructureFloor);
+        assert_eq!(structure.structure_pre, Some(0.41));
+        assert_eq!(structure.structure_post, Some(0.52));
+        assert_eq!(structure.seam_pre, None);
+        assert_eq!(structure.seam_post, None);
+        assert_eq!(structure.residual_margin_db, None);
+
+        let waveform = stage_of(&SeamGateFailure::WaveformBelowThreshold {
+            pre: 0.11,
+            post: 0.12,
+            min: 0.12,
+            best_attempt: None,
+        });
+        assert_eq!(waveform.stage, FailureStage::WaveformFloor);
+        assert_eq!(waveform.structure_pre, None);
+        assert_eq!(waveform.seam_pre, Some(0.11));
+        assert_eq!(waveform.seam_post, Some(0.12));
+        assert_eq!(waveform.residual_margin_db, None);
+
+        let residual = SeamResidualVerdict::from_parts_with_placement(
+            &SeamFloorProbe {
+                residual_db: -10.0,
+                source: SeamFloorSource::None,
+                best_lag: 0,
+                gain: 1.0,
+            },
+            &SeamFloorProbe {
+                residual_db: -10.0,
+                source: SeamFloorSource::None,
+                best_lag: 0,
+                gain: 1.0,
+            },
+            &SeamFloorProbe {
+                residual_db: -40.0,
+                source: SeamFloorSource::None,
+                best_lag: 0,
+                gain: 1.0,
+            },
+            &SeamFloorProbe {
+                residual_db: -40.0,
+                source: SeamFloorSource::None,
+                best_lag: 0,
+                gain: 1.0,
+            },
+            -15.0,
+            0,
+            0,
+        );
+        let residual_fail = stage_of(&SeamGateFailure::ResidualHeadroomExceeded {
+            pre: 0.9,
+            post: 0.91,
+            residual,
+            margin_db: 6.0,
+        });
+        assert_eq!(residual_fail.stage, FailureStage::Residual);
+        assert_eq!(residual_fail.seam_pre, Some(0.9));
+        assert_eq!(residual_fail.seam_post, Some(0.91));
+        assert_eq!(residual_fail.structure_pre, None);
+        assert_eq!(residual_fail.residual_margin_db, Some(6.0));
     }
 
     /// A gap the fingerprint cannot measure still carries scan's verdict.
@@ -4927,6 +5074,7 @@ mod tests {
                 scan_recipe: CorpusScanRecipe::default(),
                 gap_count: 2,
                 incomparable: None,
+                gate_recipe: None,
                 not_measured: Vec::new(),
             },
             gaps: vec![mk_fp(0, false), mk_fp(3, true)],

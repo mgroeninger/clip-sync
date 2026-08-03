@@ -189,7 +189,7 @@ approaches were refuted by measurement. Full analysis + cost hierarchy: that pla
 | `silence` | key always; **not measured on the production path** | intended: collar RMS/peak ratio + whether it clears the **relative** silence test (border walk-off discriminator) |
 | `contour` | key always; **not measured on the production path** | intended: `has_anchor_seam_contour`, pre/post envelope flatness |
 | `anchors` | key always; **not measured on the production path** | intended: pre/post candidates `{ time, source, prominence, rms_db }`. Production dumps carry `pre: []`, `post: []` |
-| `brackets` | full | feasible brackets `{ span, move, seam_*, failure_stage }`; `start_frame`/`fill_frames` only on brackets that pass the gate (2356/13619 on the 2026‑07‑31 corpus). `structure_*` is **absent on this path** — the production run uses `skip_baseline_placement`, so no structure score is computed (see *Bracket placement* below) |
+| `brackets` | full | feasible brackets `{ span, move, seam_*, structure_*, failure_stage, residual_margin_db? }`; `start_frame`/`fill_frames` only on brackets that pass the gate. On `structure_floor`, scores live in `structure_*` (not overloaded onto `seam_*`); on `residual`, `residual_margin_db` carries the applied headroom margin. Gap-level `structure`/`seams` blocks remain omitted under `skip_baseline_placement` (F1) |
 | `structure` / `seams` | **omitted on the production path** | intended: baseline scores; seams carry per-channel + selected channels. Suppressed by `skip_baseline_placement`; deferred as Finding F1 (`archive/TEMP-pipeline-perf-redesign-plan.md` §8g.4a) |
 | `baseline_lag` | full, B present | **decision** per-shoulder lag fingerprint registered at **`b_mapped`** (see *Registration & dual-fit*) |
 | `splice` | full, B present | first-class registration step derived from `baseline_lag` mono: `step_ms`, per-side `peak_r`/`peak_z`, `edge_pinned` |
@@ -258,6 +258,22 @@ than as a value. Two guards keep the declaration honest:
 
 Corpora dumped before 2026‑08‑01 have no `not_measured` key. That absence is not a promise the fields
 are real — it predates the declaration.
+
+### Gate recipe — seam-gate thresholds on `source`
+
+From-decode dumps stamp `source.gate_recipe` with the seam-gate floors used to assign every
+`brackets[].failure_stage`:
+
+| field | role |
+|-------|------|
+| `min_structure_match_score` | `structure_floor` |
+| `min_fill_correlation` / `fill_absolute_floor` / `fill_marginal_margin` | `waveform_floor` (plus short-gap mean / one-strong-seam flags) |
+| `short_gap_mean_correlation_secs` / `short_gap_one_strong_seam_fallback` | short-gap structure/waveform relaxations |
+| `residual_headroom_margin_db` / `residual_gate` | `residual` stage |
+
+Absent on pre-2026-08-03 corpora and on summary-only / refused corpora. With bracket scores, this is
+enough to audit stage assignment without re-scoring PCM. Equivalence has the same pattern in
+`scan_equivalence.thresholds`.
 
 ### Bracket placement — `start_frame`, `fill_frames`, and why the seam does not choose them
 

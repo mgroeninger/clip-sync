@@ -278,19 +278,24 @@ fn synth_brackets(
         failing == 0 || closest_stage.is_some(),
         "a failing bracket needs a closest_failure_stage to round-trip"
     );
-    let mk = |seam: Option<f64>, failure_stage: Option<FailureStage>| BracketInfo {
-        pre_time_secs: 0.0,
-        post_time_secs: 0.0,
-        span_secs: 0.0,
-        move_frames: 0,
-        structure_pre: None,
-        structure_post: None,
-        seam_pre: seam,
-        seam_post: seam,
-        // Projection is a synthetic reconstruction from roll-up counts — it has no placement.
-        start_frame: None,
-        fill_frames: None,
-        failure_stage,
+    let mk = |score: Option<f64>, failure_stage: Option<FailureStage>| {
+        let structure_floor = matches!(failure_stage, Some(FailureStage::StructureFloor));
+        BracketInfo {
+            pre_time_secs: 0.0,
+            post_time_secs: 0.0,
+            span_secs: 0.0,
+            move_frames: 0,
+            structure_pre: if structure_floor { score } else { None },
+            structure_post: if structure_floor { score } else { None },
+            // Projection is a synthetic reconstruction from roll-up counts — it has no placement.
+            // Structure-floor failures carry scores on `structure_*`, not overloaded onto `seam_*`.
+            seam_pre: if structure_floor { None } else { score },
+            seam_post: if structure_floor { None } else { score },
+            start_frame: None,
+            fill_frames: None,
+            failure_stage,
+            residual_margin_db: None,
+        }
     };
     (0..total)
         .map(|i| {
@@ -465,9 +470,8 @@ pub(crate) fn tags_from_fields(
         .iter()
         .filter(|b| b.failure_stage.is_some())
         .max_by(|x, y| {
-            min_seam(x)
-                .unwrap_or(f64::NEG_INFINITY)
-                .partial_cmp(&min_seam(y).unwrap_or(f64::NEG_INFINITY))
+            bracket_failure_progress(x)
+                .partial_cmp(&bracket_failure_progress(y))
                 .unwrap_or(std::cmp::Ordering::Equal)
         })
         .and_then(|b| b.failure_stage.map(|s| failure_stage_tag(s).to_string()));
