@@ -78,11 +78,11 @@ fn level_profile(
     let context_bins = context_bins_db.len();
     (
         LevelProfile {
-            bin_ms,
-            speech_peak_db: profile_db.iter().copied().fold(SILENCE_FLOOR_DB, f32::max),
+            bin_ms: Some(bin_ms),
+            speech_peak_db: Some(profile_db.iter().copied().fold(SILENCE_FLOOR_DB, f32::max)),
             noise_floor_db: median(context_bins_db),
             gap_floor_db,
-            floor_db: SILENCE_FLOOR_DB,
+            floor_db: Some(SILENCE_FLOOR_DB),
             profile_db,
         },
         context_bins,
@@ -479,16 +479,6 @@ fn to_db(rms: f32) -> f32 {
         SILENCE_FLOOR_DB
     } else {
         20.0 * rms.log10()
-    }
-}
-
-/// Replace a non-finite dB (e.g. residual cancellation to ~0 ⇒ `-inf`) with the silence floor, so it
-/// serializes as a finite number rather than JSON `null` (which breaks strict consumers / the analyzer).
-fn finite_db(db: f64) -> f64 {
-    if db.is_finite() {
-        db
-    } else {
-        f64::from(SILENCE_FLOOR_DB)
     }
 }
 
@@ -1530,11 +1520,11 @@ pub fn build_gap_fingerprint(
     } else {
         0.0
     };
-    let silence = SilenceProfile {
+    let silence = Some(SilenceProfile {
         collar_rms_peak_ratio: collar_ratio,
         collar_above_relative_floor: collar_ratio >= cfg.silence_peak_fraction,
         silence_peak_fraction: cfg.silence_peak_fraction,
-    };
+    });
 
     let sig_params = structure_params_for(cfg, gap_frames.max(1), bin_frames, 0, 0);
     let signature = build_gap_signature(
@@ -1564,11 +1554,11 @@ pub fn build_gap_fingerprint(
         cfg.silence_peak_fraction,
         cfg.absolute_silence_rms,
     );
-    let contour = ContourInfo {
+    let contour = Some(ContourInfo {
         has_anchor_seam_contour: signature.has_anchor_seam_contour(),
         pre_flatness: flatness(&pre_env),
         post_flatness: flatness(&post_env),
-    };
+    });
 
     let bracket_params = AnchorSeamParams {
         context_frames,
@@ -1588,10 +1578,10 @@ pub fn build_gap_fingerprint(
         prominence: c.prominence,
         rms_db: to_db((c.rms.exp() - 1.0).max(0.0)),
     };
-    let anchors = AnchorSet {
+    let anchors = Some(AnchorSet {
         pre: candidates.pre.iter().map(map_anchor).collect(),
         post: candidates.post.iter().map(map_anchor).collect(),
-    };
+    });
     let raw_brackets = list_feasible_anchor_brackets(&candidates, refined, &bracket_params);
 
     // --- pairwise (B present) ---
@@ -2066,7 +2056,7 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
         } else {
             "skip".into()
         },
-        seam_shape: String::new(),
+        seam_shape: None,
         fit_path: None,
         signature_mode: None,
         skip_reason: (!patched).then(|| "gate skipped".into()),
@@ -2204,10 +2194,10 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
         throat_structure_frame.or_else(|| oracle_throat_structure_frame(&params, &cache, refined));
     let residual = throat_frame.and_then(|throat_frame| {
         oracle_measure_residual(&params, &cache, refined, throat_frame).map(|v| ResidualInfo {
-            chosen_pre_db: finite_db(v.chosen_pre_db),
-            chosen_post_db: finite_db(v.chosen_post_db),
-            floor_pre_db: finite_db(v.floor_pre_db),
-            floor_post_db: finite_db(v.floor_post_db),
+            chosen_pre_db: residual_db_opt(v.chosen_pre_db),
+            chosen_post_db: residual_db_opt(v.chosen_post_db),
+            floor_pre_db: residual_db_opt(v.floor_pre_db),
+            floor_post_db: residual_db_opt(v.floor_post_db),
             informative: v.informative,
         })
     });
@@ -2766,16 +2756,14 @@ pub fn characterize_gaps_from_decode(
         fp.scan_equivalence = report.gap_equivalence.get(fp.index).cloned();
     }
 
-    // Declare the fields this path does not answer — stamped **here**, not in `characterize_gaps`,
-    // because it is this function that strips them: the `*fp = spec_to_fingerprint_summary(..)` rebuild
-    // above discards the real levels/silence/contour/anchors `characterize_gaps` measured and writes
-    // structural defaults in their place. The types cannot say so (`bin_ms` is a `u32`, not an
-    // `Option<u32>`), so a `0` reads as a measured zero unless the corpus says otherwise.
+    // Declare fabricated stand-ins this path still writes — stamped **here**, not in
+    // `characterize_gaps`, because it is this function that rebuilds via
+    // `spec_to_fingerprint_summary`. Envelope / silence / contour / anchors / seam_shape are now
+    // omitted (`None`) rather than zeroed, so [`NOT_MEASURED_BY_PROJECTION`] is empty; only
+    // `baseline_lag.*` may still need a declaration when the sweep was projected rather than measured.
     //
-    // Scoped to `DetailTier::Full` — see `NOT_MEASURED_BY_PROJECTION`. Gaps that never reached the
-    // rebuild keep `characterize_gaps`'s real values and stay `Summary`, which is why the declaration
-    // names a tier instead of claiming the whole corpus. Only claim it if the rebuild actually ran:
-    // a corpus with nothing at full tier stripped nothing and has nothing to disown.
+    // Scoped to `DetailTier::Full` — gaps that never reached the rebuild keep `characterize_gaps`'s
+    // real values and stay `Summary`. Only claim anything if the rebuild actually ran.
     //
     // `baseline_lag.*` is appended only when some gap actually got the fabricated row. This path
     // normally threads the real sweep through `MeasuredDetail`, so the usual answer is "not declared,
@@ -3349,7 +3337,7 @@ mod tests {
             outcome: GateOutcome {
                 plan_kind: "fillable".into(),
                 tier: "patch".into(),
-                seam_shape: String::new(),
+                seam_shape: None,
                 fit_path: None,
                 signature_mode: None,
                 skip_reason: None,
@@ -3384,10 +3372,10 @@ mod tests {
             }),
             wide_envelope: None,
             residual: Some(ResidualInfo {
-                chosen_pre_db: -42.0,
-                chosen_post_db: -41.0,
-                floor_pre_db: -40.0,
-                floor_post_db: -40.0,
+                chosen_pre_db: Some(-42.0),
+                chosen_post_db: Some(-41.0),
+                floor_pre_db: Some(-40.0),
+                floor_post_db: Some(-40.0),
                 informative: true,
             }),
             lag: None,
@@ -3895,14 +3883,19 @@ mod tests {
         );
         assert!(
             fp.anchors
+                .as_ref()
+                .expect("measured anchors")
                 .pre
                 .iter()
                 .any(|p| p.source == AnchorSourceKind::EnergyPeak),
             "expected a pre energy-peak anchor: {:?}",
-            fp.anchors.pre
+            fp.anchors.as_ref().map(|a| &a.pre)
         );
         assert!(
-            fp.contour.has_anchor_seam_contour,
+            fp.contour
+                .as_ref()
+                .expect("measured contour")
+                .has_anchor_seam_contour,
             "speech bursts give contour"
         );
 
@@ -4014,13 +4007,13 @@ mod tests {
             "summary path measures these fields; declaring them unmeasured is a false claim: {:?}",
             corpus.source.not_measured
         );
-        // Not vacuous: prove the path really does fill something on the list.
+        // Not vacuous: prove the path really does fill the envelope it used to declare unmeasured.
         assert!(
             corpus
                 .gaps
                 .iter()
-                .any(|g| g.levels.bin_ms != 0 || !g.levels.profile_db.is_empty()),
-            "fixture must exercise a field on NOT_MEASURED_BY_PROJECTION"
+                .any(|g| g.levels.bin_ms.is_some_and(|b| b != 0) || !g.levels.profile_db.is_empty()),
+            "fixture must exercise a measured levels envelope field"
         );
     }
 
@@ -4119,15 +4112,10 @@ mod tests {
         );
     }
 
-    /// The production dump declares the fields it does not measure, and the declaration is **true** —
-    /// every listed full-tier field really is at its structural default.
-    ///
-    /// Pins both halves, because either alone rots: a list that drifts from the emitter is worse than no
-    /// list (it would license trusting the fields it stopped covering), and a list nobody checks is a
-    /// comment. The 2026-07-31 corpus recorded 12 such fields on 802/802 full-tier gaps with nothing
-    /// saying so; `--check` now fails on the same condition.
+    /// Production from-decode dump omits unmeasured Option fields and leaves `not_measured` empty
+    /// when the real `baseline_lag` sweep was threaded through (no fabricated lag stand-ins).
     #[test]
-    fn production_dump_declares_and_honours_its_unmeasured_fields() {
+    fn production_dump_omits_unmeasured_option_fields() {
         use crate::application::PatchAudioRequest;
         use crate::infrastructure::config::RepairConfig;
         use clip_sync_repair_fixtures::NoOpProgressReporter;
@@ -4162,8 +4150,8 @@ mod tests {
         );
         assert_eq!(
             corpus.source.not_measured, NOT_MEASURED_BY_PROJECTION,
-            "the production dump must declare its unmeasured fields — and exactly those: this path \
-             threads the real `baseline_lag` through, so `PROJECTED_BASELINE_LAG_FIELDS` must be absent"
+            "the production dump must leave not_measured empty when it threads the real \
+             `baseline_lag` through (no `PROJECTED_BASELINE_LAG_FIELDS`)"
         );
         let recipe = corpus
             .source
@@ -4190,16 +4178,18 @@ mod tests {
             .collect();
         assert!(!full.is_empty(), "fixture must produce a measured gap");
         for g in full {
-            assert_eq!(g.levels.bin_ms, 0);
+            assert!(g.levels.bin_ms.is_none());
             assert!(g.levels.profile_db.is_empty());
-            assert_eq!(g.silence.collar_rms_peak_ratio, 0.0);
-            assert!(!g.silence.collar_above_relative_floor);
-            assert_eq!(g.contour.pre_flatness, 0.0);
-            assert!(g.anchors.pre.is_empty() && g.anchors.post.is_empty());
-            assert_eq!(
-                g.outcome.as_ref().map(|o| o.seam_shape.as_str()),
-                Some(""),
-                "seam_shape is hardcoded empty, hence listed"
+            assert!(g.levels.floor_db.is_none());
+            assert!(g.levels.speech_peak_db.is_none());
+            assert!(g.silence.is_none());
+            assert!(g.contour.is_none());
+            assert!(g.anchors.is_none());
+            assert!(
+                g.outcome
+                    .as_ref()
+                    .is_some_and(|o| o.seam_shape.is_none()),
+                "seam_shape must be omitted, not hardcoded empty"
             );
             // This path threads the real sweep through `MeasuredDetail`, so the rows must NOT carry
             // `projected_lag_entry`'s signature: a real sweep reports its search width, and `lag0_r`
@@ -4988,24 +4978,24 @@ mod tests {
                 fill_offset_secs: None,
             },
             levels: LevelProfile {
-                bin_ms: 50,
+                bin_ms: Some(50),
                 profile_db: vec![],
-                floor_db: -120.0,
-                speech_peak_db: -40.0,
+                floor_db: Some(-120.0),
+                speech_peak_db: Some(-40.0),
                 noise_floor_db: -53.0,
                 gap_floor_db: -98.0,
             },
-            silence: SilenceProfile {
+            silence: Some(SilenceProfile {
                 collar_rms_peak_ratio: 0.1,
                 collar_above_relative_floor: true,
                 silence_peak_fraction: 0.01,
-            },
-            contour: ContourInfo {
+            }),
+            contour: Some(ContourInfo {
                 has_anchor_seam_contour: true,
                 pre_flatness: 0.0,
                 post_flatness: 0.0,
-            },
-            anchors: AnchorSet::default(),
+            }),
+            anchors: Some(AnchorSet::default()),
             brackets: vec![],
             structure: None,
             seams: None,

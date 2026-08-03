@@ -185,10 +185,10 @@ approaches were refuted by measurement. Full analysis + cost hierarchy: that pla
 | Field | When | Meaning |
 |-------|------|---------|
 | `geometry` | always | A reported/refined edges, duration; B mapped edges + fill offset (B present) |
-| `levels` | key always; **`bin_ms`/`profile_db`/`speech_peak_db` not measured on the production path** | intended: `bin_ms`, `profile_db[]` (RMS dBFS across pre→post context), speech-peak/noise-floor/gap-floor dB. In a production dump only `noise_floor_db` and the gap floor are real — see *Not measured* below |
-| `silence` | key always; **not measured on the production path** | intended: collar RMS/peak ratio + whether it clears the **relative** silence test (border walk-off discriminator) |
-| `contour` | key always; **not measured on the production path** | intended: `has_anchor_seam_contour`, pre/post envelope flatness |
-| `anchors` | key always; **not measured on the production path** | intended: pre/post candidates `{ time, source, prominence, rms_db }`. Production dumps carry `pre: []`, `post: []` |
+| `levels` | floors always; envelope **omitted on the production path** | `noise_floor_db` / `gap_floor_db` required. `bin_ms` / `profile_db` / `floor_db` / `speech_peak_db` are `Option` / skip-empty — present on the summary measure path, omitted after projection |
+| `silence` | **omitted on the production path** | collar RMS/peak ratio + relative silence test (border walk-off). `Option` whole block |
+| `contour` | **omitted on the production path** | `has_anchor_seam_contour`, pre/post envelope flatness. `Option` whole block |
+| `anchors` | **omitted on the production path** | pre/post candidates `{ time, source, prominence, rms_db }`. `Option` whole block |
 | `brackets` | full | feasible brackets `{ span, move, seam_*, structure_*, failure_stage, residual_margin_db? }`; `start_frame`/`fill_frames` only on brackets that pass the gate. On `structure_floor`, scores live in `structure_*` (not overloaded onto `seam_*`); on `residual`, `residual_margin_db` carries the applied headroom margin. Gap-level `structure`/`seams` blocks remain omitted under `skip_baseline_placement` (F1) |
 | `structure` / `seams` | **omitted on the production path** | intended: baseline scores; seams carry per-channel + selected channels. Suppressed by `skip_baseline_placement`; deferred as Finding F1 (`archive/TEMP-pipeline-perf-redesign-plan.md` §8g.4a) |
 | `baseline_lag` | full, B present | **decision** per-shoulder lag fingerprint registered at **`b_mapped`** (see *Registration & dual-fit*) |
@@ -196,8 +196,8 @@ approaches were refuted by measurement. Full analysis + cost hierarchy: that pla
 | `donor_interior` | full, B present | B occupancy over the **aligned** bridge span (`b_mapped_start+L_pre … b_mapped_end+L_post`): `rms_db`, `silence_fraction`, `longest_silence_ms`, `continuous` |
 | `donor_interior_nominal` | full, B present | B occupancy over the **nominal** geometry span (no lag adjustment) — registration-independent; the D11 program-quiet signal |
 | `splice_dualfit` | full, B present | dual-fit viability: seams scored at per-shoulder placement + `gate_pass` / `trim_frames` / validators (see below) |
-| `residual` | full, B present | least-squares same-source cancellation (dB) vs noise floor at the decision seam |
-| `outcome` | B present | plan_kind, tier, fit_path, signature_mode, skip_reason. `seam_shape` is **not measured on the production path** (always `""`) |
+| `residual` | full, B present | least-squares same-source cancellation (dB) vs noise floor; per-side dB values are `Option` (absent for non-finite / −120 sentinel) |
+| `outcome` | B present | plan_kind, tier, fit_path, signature_mode, skip_reason. `seam_shape` is **omitted** on the production path (`None`) |
 | `equivalence` | B present | **gap-equivalence class (diagnostic)** — does this gap need patching? (silence-character; see below) |
 | `scan_equivalence` | scan classified | the **authoritative production** verdict for the same gap (`GapReport::gap_equivalence`; block size = the `scan_block_ms` knob), copied in so one dump holds both readings for calibration. **This is the authoritative one** — see below |
 | `lag` | diagnostics | **Tier-3** per pre/post anchor lag fingerprint at the best-energy bracket / structure throat — requires `--fingerprint-diagnostics` |
@@ -207,19 +207,19 @@ approaches were refuted by measurement. Full analysis + cost hierarchy: that pla
 
 ### Not measured — the fields a production dump does *not* fill
 
-Several fields above are structurally present but never measured on the path a real
-`--gap-fingerprints` run takes. They are not missing data to be chased; they are **questions the
-production path does not ask**. The type system cannot say so — `bin_ms` is a `u32`, not an
-`Option<u32>` — so a `0` is indistinguishable from a measured zero, and every consumer that read one
-as a measurement read a fabrication.
+Several fields above are questions the production path does not ask. Since 2026‑08‑03 they are
+**omitted** rather than written as zeros / `−120` / `""`:
 
-Two emitters produce them, both by design:
+- `levels.bin_ms` / `profile_db` / `floor_db` / `speech_peak_db` — `Option` / skip-empty; only the
+  decision floors (`noise_floor_db` / `gap_floor_db`) stay required.
+- `silence` / `contour` / `anchors` — whole blocks are `Option`, `None` after projection.
+- `outcome.seam_shape` — `Option<String>`, omitted when unmeasured.
+- `residual.*_db` sides — `Option`; non-finite and the `SILENCE_FLOOR_DB` (−120) sentinel serialize
+  as absent (legacy dumps that wrote bare `−120` deserialize as `None`).
 
-- `spec_to_fingerprint_summary` (`project.rs`) rebuilds each **measured** gap from its plan spec, and
-  the spec carries no envelope, collar, contour, anchor set, or seam shape. So it writes structural
-  defaults.
-- `projected_level_profile` (same file) hardcodes `bin_ms: 0`, an empty `profile_db`, and
-  `floor_db`/`speech_peak_db` at `SILENCE_FLOOR_DB` (−120).
+`NOT_MEASURED_BY_PROJECTION` is therefore empty. The only remaining fabricated stand-ins are the
+conditional `baseline_lag.*` fields:
+
 - `projected_lag_entry` (same file) builds each `baseline_lag` shoulder from four stored scalars —
   `peak_r`, `frac_lag_ms`, `peak_z`, `prominence`, all real — and fabricates the rest of the row:
   `window_ms`/`max_lag_ms`/`peak_lag_samples`/`frac_lag_samples` at `0`, `lag0_r` as a **second copy
@@ -243,18 +243,17 @@ Two emitters produce them, both by design:
   projected, and none of them declare it. Any conclusion drawn from their verdict distribution or
   their apparent zero-lag registration needs re-deriving from a fresh dump.
 
-Note the inversion this creates: a gap that the pipeline **measured successfully** is stripped, while
-a gap that failed early enough to skip projection keeps its real values. On the 2026‑07‑31 corpus that
-was 802 stripped and 27 intact — so "some gaps have anchors" is not evidence the rest lack them.
+Note the inversion this creates on **pre-omission** corpora: a gap that the pipeline **measured
+successfully** was stripped to zeros, while a gap that failed early enough to skip projection kept
+its real values. On the 2026‑07‑31 corpus that was 802 stripped and 27 intact — so "some gaps have
+anchors" was not evidence the rest lack them. Fresh dumps omit the stripped fields entirely.
 
-The dump therefore **declares** the list, in `source.not_measured` (`SourceMeta`), populated from
-`NOT_MEASURED_BY_PROJECTION` (`schema.rs`). Consumers should treat a listed field as absent rather
-than as a value. Two guards keep the declaration honest:
+Consumers should treat an omitted field as absent. Two guards keep honesty:
 
-- a unit test (`production_dump_declares_and_honours_its_unmeasured_fields`) asserts the production
-  builder emits the list **and** that every listed field really is at its default;
-- `--check` (harness) fails a corpus whose gaps show the tell-tale constants without the declaration,
-  and fails one that declares a field it actually measured.
+- a unit test (`production_dump_omits_unmeasured_option_fields`) asserts the production builder omits
+  the Option placeholders and leaves `not_measured` empty when lag was measured;
+- `--check` (harness) warns a corpus whose gaps still show the legacy tell-tale constants without a
+  declaration, and fails one that declares a field it actually measured.
 
 Corpora dumped before 2026‑08‑01 have no `not_measured` key. That absence is not a promise the fields
 are real — it predates the declaration.

@@ -98,8 +98,9 @@ struct DonorInterior {
 struct BLevels {
     gap_floor_db: f64,
     noise_floor_db: f64,
+    #[serde(default)]
     #[allow(dead_code)]
-    speech_peak_db: f64,
+    speech_peak_db: Option<f64>,
 }
 
 #[derive(Deserialize)]
@@ -234,9 +235,11 @@ fn best_seam_bracket(brackets: &[Bracket]) -> Option<&Bracket> {
 
 #[derive(Deserialize)]
 struct Residual {
-    // `Option` because the writer emits non-finite dB (a silent gap cancels to ~0 ⇒ `to_db(0) = -inf`) as
-    // JSON `null`; a required `f64` here would fail the **whole** `corpus.json` parse and silently drop
-    // every measured gap in the pair (it did — see the residual-null bug). `None` ⇒ residual unavailable.
+    // `Option` because the writer emits non-finite dB / the −120 silence-floor sentinel as absent
+    // (JSON `null` or omitted). A required `f64` here would fail the **whole** `corpus.json` parse
+    // and silently drop every measured gap in the pair (it did — see the residual-null bug).
+    // `None` ⇒ residual side unavailable. Legacy dumps that wrote bare `−120` are mapped to `None`
+    // at the headroom fold below.
     #[serde(default)]
     chosen_pre_db: Option<f64>,
     #[serde(default)]
@@ -247,6 +250,12 @@ struct Residual {
     floor_post_db: Option<f64>,
     #[serde(default)]
     informative: bool,
+}
+
+/// Drop non-finite and the −120 silence-floor sentinel so legacy dumps that wrote that constant do
+/// not look like perfect cancellation (`chosen == floor == −120` ⇒ headroom 0).
+fn residual_db_side(v: Option<f64>) -> Option<f64> {
+    clip_sync_repair::application::gap_fingerprint::residual_db_opt(v.unwrap_or(f64::NAN))
 }
 
 #[derive(Deserialize)]
@@ -564,10 +573,10 @@ fn gap_row(pair: &str, source: &SourceMeta, gap: &GapEntry, eps: f64, tail_secs:
         // Worst (least-cancelling) side: max of the two headrooms. `None` if any dB was null (non-finite).
         residual_headroom_db: gap.residual.as_ref().and_then(|r| {
             match (
-                r.chosen_pre_db,
-                r.floor_pre_db,
-                r.chosen_post_db,
-                r.floor_post_db,
+                residual_db_side(r.chosen_pre_db),
+                residual_db_side(r.floor_pre_db),
+                residual_db_side(r.chosen_post_db),
+                residual_db_side(r.floor_post_db),
             ) {
                 (Some(cp), Some(fp), Some(cq), Some(fq)) => Some((cp - fp).max(cq - fq)),
                 _ => None,

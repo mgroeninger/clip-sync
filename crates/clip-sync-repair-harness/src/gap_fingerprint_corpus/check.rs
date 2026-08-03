@@ -477,11 +477,14 @@ fn check_gap(
 /// what the file actually contains.
 ///
 /// The union of the emitter's two lists, deliberately: the `baseline_lag.*` tail is
-/// `PROJECTED_BASELINE_LAG_FIELDS`, which a dump declares only when it projected the row rather than
-/// measuring it. This reader must recognize the paths either way — a corpus that declares them is a
-/// projected one (fine), and a corpus that carries a *real* sweep while declaring them is the false
-/// declaration [`check_not_measured`] exists to catch. Flattening the two into one list here is safe
-/// because nothing in this module re-emits it; it is only ever matched against.
+/// Paths whose **presence at a projection default** still means "unmeasured" on legacy dumps that
+/// wrote zeros / `−120` / `""` instead of omitting the field. New dumps omit these via `Option` /
+/// skip-empty and no longer declare them in `source.not_measured`.
+///
+/// Also includes `PROJECTED_BASELINE_LAG_FIELDS`, which a dump declares only when it projected the
+/// row rather than measuring it. This reader must recognize the paths either way — a corpus that
+/// declares them is a projected one (fine), and a corpus that carries a *real* sweep while declaring
+/// them is the false declaration [`check_not_measured`] exists to catch.
 const KNOWN_UNMEASURED: &[&str] = &[
     "levels.bin_ms",
     "levels.profile_db",
@@ -504,7 +507,7 @@ const KNOWN_UNMEASURED: &[&str] = &[
     "baseline_lag.verdict",
 ];
 
-/// The `floor_db` / `speech_peak_db` constant `projected_level_profile` writes (`SILENCE_FLOOR_DB`).
+/// The `floor_db` / `speech_peak_db` constant older `projected_level_profile` writes (`SILENCE_FLOOR_DB`).
 const PROJECTED_FLOOR_DB: f64 = -120.0;
 
 /// The `verdict` `projected_lag_entry` hardcodes onto every synthesized shoulder row.
@@ -667,9 +670,10 @@ fn check_not_measured(label: &str, corpus: &CorpusFile, report: &mut HealthCheck
             severity: IssueSeverity::Warn,
             pair: label.to_string(),
             message: format!(
-                "{} full-tier gap(s) carry all {} projection-default fields with no source.not_measured \
-                 declaration: corpus predates the declaration, so levels/silence/contour/anchors/seam_shape \
-                 zeros here are structural, not measurements",
+                "{} full-tier gap(s) carry all {} legacy projection-default fields with no \
+                 source.not_measured declaration: corpus predates honest omission (or the \
+                 declaration), so levels/silence/contour/anchors/seam_shape zeros here are \
+                 structural, not measurements",
                 full.len(),
                 KNOWN_UNMEASURED.len()
             ),

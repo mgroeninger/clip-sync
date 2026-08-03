@@ -33,8 +33,9 @@ pub struct FingerprintXSet {
 /// then carries the real thing. `Default` (both `None`) is the oracle/spec-only path, which has
 /// nothing to hand over.
 ///
-/// **Whatever is left `None` here is what `source.not_measured` must declare** — the two are opposite
-/// halves of one statement, so a caller that starts supplying a field must stop declaring it.
+/// Fabricated `baseline_lag` shoulders (when this is `None`) are what
+/// [`crate::application::gap_fingerprint::PROJECTED_BASELINE_LAG_FIELDS`] declares. Envelope /
+/// silence / contour / anchors / seam_shape are omitted outright (`None`) rather than declared.
 #[derive(Debug, Clone, Default)]
 pub struct MeasuredDetail {
     /// Real per-bracket rows (8g.4b), else [`synth_brackets`]' reconstruction from the stored counts.
@@ -49,9 +50,10 @@ pub struct MeasuredDetail {
 /// (the A7 single-source rule): every seam/lag/donor scalar is the value characterize already computed. X-set
 /// fields are attached only when supplied.
 ///
-/// Lossy **by design** on non-decision fields: `silence`/`contour`/`anchors` are minimal placeholders (X, not
-/// read by the corpus reader); `outcome.tier` is `patch`/`skip` (matching the scan path, `gap_fingerprint.rs`
-/// tier logic); uniqueness validators (`*_seam_prom`/`*_seam_z`, `peak_z`) are `None` on the production path
+/// Lossy **by design** on non-decision fields: `silence`/`contour`/`anchors`/`seam_shape` and the
+/// levels envelope are omitted (`None` / skip-empty) when the spec cannot carry them — absence, not
+/// zeros. `outcome.tier` is `patch`/`skip` (matching the scan path, `gap_fingerprint.rs` tier logic);
+/// uniqueness validators (`*_seam_prom`/`*_seam_z`, `peak_z`) are `None` on the production path
 /// (Tier-3, tolerated by the golden diff). `brackets` and `baseline_lag` are the **real** measurements
 /// when [`MeasuredDetail`] supplies them (the from-decode dump, 8g.4b), else reconstructed from the
 /// stored scalars — round-tripping the counts/best/closest and the four registration scalars
@@ -126,10 +128,10 @@ pub fn spec_to_fingerprint_summary(
         mono_post: m,
     });
     let residual = gate.residual.map(|r| ResidualInfo {
-        chosen_pre_db: r.chosen_pre_db,
-        chosen_post_db: r.chosen_post_db,
-        floor_pre_db: r.floor_pre_db,
-        floor_post_db: r.floor_post_db,
+        chosen_pre_db: residual_db_opt(r.chosen_pre_db),
+        chosen_post_db: residual_db_opt(r.chosen_post_db),
+        floor_pre_db: residual_db_opt(r.floor_pre_db),
+        floor_post_db: residual_db_opt(r.floor_post_db),
         informative: r.informative,
     });
     // Real per-bracket rows when characterize supplied them (from-decode dump, 8g.4b); else synthesize just
@@ -188,17 +190,9 @@ pub fn spec_to_fingerprint_summary(
             fill_offset_secs: Some(spec.gap_offset_secs),
         },
         levels: projected_level_profile(tags.levels.as_ref()),
-        silence: SilenceProfile {
-            collar_rms_peak_ratio: 0.0,
-            collar_above_relative_floor: false,
-            silence_peak_fraction: 0.0,
-        },
-        contour: ContourInfo {
-            has_anchor_seam_contour: false,
-            pre_flatness: 0.0,
-            post_flatness: 0.0,
-        },
-        anchors: AnchorSet::default(),
+        silence: None,
+        contour: None,
+        anchors: None,
         brackets,
         structure,
         seams,
@@ -216,7 +210,7 @@ pub fn spec_to_fingerprint_summary(
             plan_kind: "fillable".into(),
             dual_fit_rescue,
             tier,
-            seam_shape: String::new(),
+            seam_shape: None,
             fit_path: None,
             signature_mode: None,
             skip_reason,
@@ -330,17 +324,18 @@ fn failure_stage_from_tag(tag: &str) -> Option<FailureStage> {
 }
 
 /// A minimal [`LevelProfile`] carrying only the summary floors the corpus reader consumes (`gap_floor_db`,
-/// `noise_floor_db`); the RMS envelope is X (unread). `None` tags ⇒ silence-floored placeholder.
+/// `noise_floor_db`); the RMS envelope is omitted (`None` / empty), not written as `0` / `−120`.
+/// `None` tags ⇒ silence-floored placeholder floors.
 fn projected_level_profile(l: Option<&LevelTags>) -> LevelProfile {
     let (gap_floor_db, noise_floor_db) = match l {
         Some(lt) => (lt.a_gap_floor_db as f32, lt.a_noise_floor_db as f32),
         None => (SILENCE_FLOOR_DB, SILENCE_FLOOR_DB),
     };
     LevelProfile {
-        bin_ms: 0,
+        bin_ms: None,
         profile_db: Vec::new(),
-        floor_db: SILENCE_FLOOR_DB,
-        speech_peak_db: SILENCE_FLOOR_DB,
+        floor_db: None,
+        speech_peak_db: None,
         noise_floor_db,
         gap_floor_db,
     }
@@ -476,10 +471,10 @@ pub(crate) fn tags_from_fields(
         })
         .and_then(|b| b.failure_stage.map(|s| failure_stage_tag(s).to_string()));
     let residual = residual.map(|r| crate::domain::policies::SeamResidualVerdict {
-        chosen_pre_db: r.chosen_pre_db,
-        chosen_post_db: r.chosen_post_db,
-        floor_pre_db: r.floor_pre_db,
-        floor_post_db: r.floor_post_db,
+        chosen_pre_db: r.chosen_pre_db.unwrap_or(f64::NAN),
+        chosen_post_db: r.chosen_post_db.unwrap_or(f64::NAN),
+        floor_pre_db: r.floor_pre_db.unwrap_or(f64::NAN),
+        floor_post_db: r.floor_post_db.unwrap_or(f64::NAN),
         floor_source_pre: crate::domain::policies::SeamFloorSource::None,
         floor_source_post: crate::domain::policies::SeamFloorSource::None,
         informative: r.informative,

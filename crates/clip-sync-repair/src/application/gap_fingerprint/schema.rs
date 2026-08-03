@@ -150,66 +150,27 @@ pub struct SourceMeta {
     /// Seam-gate thresholds used when scoring brackets — see [`CorpusGateRecipe`].
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub gate_recipe: Option<CorpusGateRecipe>,
-    /// Dotted paths of per-gap fields the emitting path **never populated**, so their serialized values
-    /// are structural defaults rather than measurements — see [`NOT_MEASURED_BY_PROJECTION`].
+    /// Dotted paths of per-gap fields the emitting path left as **present structural defaults** rather
+    /// than measurements — see [`NOT_MEASURED_BY_PROJECTION`] and [`PROJECTED_BASELINE_LAG_FIELDS`].
     ///
-    /// Every field named here is a non-`Option` in [`GapFingerprint`], so it cannot express "not asked":
-    /// it serializes as `0.0` / `false` / `[]` / `-120.0`, which is exactly what a real measurement of a
-    /// silent, flat, anchorless gap looks like. Fields that *can* go absent (`structure`, `seams`,
-    /// `lag`, `second_peak_r`) need no entry — absence already says it.
-    ///
-    /// This exists because the 2026-07-31 39-pair corpus recorded `collar_rms_peak_ratio: 0.0` and
-    /// `anchors: {pre: [], post: []}` on **802 of 802** full-tier gaps while the committed golden
-    /// (`curated/01`, also full tier) carries `0.066` and five anchors per side. Nothing in the corpus
-    /// distinguished the two, so a reader diffing them sees a measurement change where the truth is a
-    /// path change. The provenance plan's §1.1 principle: an unanswerable corpus must **say so**.
-    ///
-    /// Empty on a corpus whose emitting path measures everything, and absent on any corpus written
-    /// before this field existed — which is itself unambiguous, since those predate the guarantee.
+    /// Only fields that still serialize a non-`Option` stand-in need an entry here. Envelope /
+    /// silence / contour / anchors / `seam_shape` are `Option` (or skip-empty) and simply **omit**
+    /// when unmeasured — absence already says it, so they are no longer listed. Empty on a corpus
+    /// whose emitting path measured everything it still emits as required scalars; absent on any
+    /// corpus written before this field existed.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub not_measured: Vec<String>,
 }
 
-/// The per-gap fields the **production projection path** (`project.rs`) leaves at their structural
-/// defaults. Recorded in [`SourceMeta::not_measured`]; asserted against the emitted corpus by the
-/// harness `--check`.
+/// Unconditional unmeasured-field paths for the production projection rebuild.
 ///
-/// Grouped by why, since the groups have different futures:
-/// - `levels.*` — `projected_level_profile` keeps only the two floor summaries it can recover from
-///   `LevelTags`; the envelope itself is not carried. `floor_db` / `speech_peak_db` sit at
-///   `SILENCE_FLOOR_DB`, which reads as a real −120 dB measurement.
-/// - `silence.*` / `contour.*` / `anchors.*` — never computed on this path (`project.rs` builds them
-///   from literals / `AnchorSet::default()`).
-/// - `outcome.seam_shape` — a plain `String` hardcoded `String::new()` at **both** emit sites, unlike
-///   its `Option` siblings `fit_path` / `signature_mode`, which correctly vanish.
+/// Empty since 2026-08-03: `levels` envelope / `silence` / `contour` / `anchors` / `outcome.seam_shape`
+/// are omitted (`Option` / skip-empty) rather than written as zeros / `−120` / `""`. The only remaining
+/// fabricated stand-ins are the conditional [`PROJECTED_BASELINE_LAG_FIELDS`].
 ///
-/// `baseline_lag.*` is **not** here — it is conditional, so it lives in its own list
-/// ([`PROJECTED_BASELINE_LAG_FIELDS`]) that the emitter appends only when it actually projected.
-///
-/// `structure` / `seams` are deliberately **not** listed: they are `Option` and omitted outright
-/// (Finding F1, deferred — see `docs/dev/archive/TEMP-pipeline-perf-redesign-plan.md` §8g.4a), so the
-/// corpus already states their absence in the only way that matters.
-///
-/// **Scope: [`DetailTier::Full`] gaps only** — and note the inversion. A gap the path *measured* is
-/// rebuilt wholesale by `spec_to_fingerprint_summary`, which drops these fields; a gap it *could not*
-/// measure keeps its initial `build_gap_fingerprint` values and still carries them for real. So the
-/// unmeasured fields survive exactly on the gaps that failed. On the 39-pair corpus that is 802 gaps
-/// stripped and 27 (all head gaps) intact.
-pub const NOT_MEASURED_BY_PROJECTION: &[&str] = &[
-    "levels.bin_ms",
-    "levels.profile_db",
-    "levels.floor_db",
-    "levels.speech_peak_db",
-    "silence.collar_rms_peak_ratio",
-    "silence.collar_above_relative_floor",
-    "silence.silence_peak_fraction",
-    "contour.has_anchor_seam_contour",
-    "contour.pre_flatness",
-    "contour.post_flatness",
-    "anchors.pre",
-    "anchors.post",
-    "outcome.seam_shape",
-];
+/// Kept as a named constant so emitters and `--check` still share one list, and so older tests that
+/// assert "production declares exactly this" keep compiling against the empty claim.
+pub const NOT_MEASURED_BY_PROJECTION: &[&str] = &[];
 
 /// The `baseline_lag` shoulder fields `projected_lag_entry` fabricates — appended to
 /// [`SourceMeta::not_measured`] **only when some gap was actually projected**.
@@ -864,7 +825,7 @@ pub struct ResidualInfo {
 }
 
 /// Map a residual dB to wire form: non-finite and the `SILENCE_FLOOR_DB` (−120) sentinel become `None`.
-pub(crate) fn residual_db_opt(db: f64) -> Option<f64> {
+pub fn residual_db_opt(db: f64) -> Option<f64> {
     if db.is_finite() && (db - f64::from(SILENCE_FLOOR_DB)).abs() > 1e-9 {
         Some(db)
     } else {
@@ -1374,24 +1335,24 @@ mod tests {
                 fill_offset_secs: Some(-5.552),
             },
             levels: LevelProfile {
-                bin_ms: 50,
+                bin_ms: Some(50),
                 profile_db: vec![-45.0, -24.0, -45.0],
-                floor_db: -120.0,
-                speech_peak_db: -22.0,
+                floor_db: Some(-120.0),
+                speech_peak_db: Some(-22.0),
                 noise_floor_db: -45.0,
                 gap_floor_db: -120.0,
             },
-            silence: SilenceProfile {
+            silence: Some(SilenceProfile {
                 collar_rms_peak_ratio: 0.42,
                 collar_above_relative_floor: true,
                 silence_peak_fraction: 0.01,
-            },
-            contour: ContourInfo {
+            }),
+            contour: Some(ContourInfo {
                 has_anchor_seam_contour: true,
                 pre_flatness: 0.1,
                 post_flatness: 0.1,
-            },
-            anchors: AnchorSet {
+            }),
+            anchors: Some(AnchorSet {
                 pre: vec![AnchorPoint {
                     time_secs: 831.3,
                     source: AnchorSourceKind::EnergyPeak,
@@ -1399,7 +1360,7 @@ mod tests {
                     rms_db: -24.0,
                 }],
                 post: vec![],
-            },
+            }),
             brackets: vec![],
             structure: Some(StructureScores {
                 baseline_pre: 0.996,
@@ -1416,10 +1377,10 @@ mod tests {
             lag: None,
             baseline_lag: None,
             residual: Some(ResidualInfo {
-                chosen_pre_db: -42.0,
-                chosen_post_db: -38.0,
-                floor_pre_db: -40.0,
-                floor_post_db: -39.0,
+                chosen_pre_db: Some(-42.0),
+                chosen_post_db: Some(-38.0),
+                floor_pre_db: Some(-40.0),
+                floor_post_db: Some(-39.0),
                 informative: true,
             }),
             seam_probe: Some(SeamProbeFingerprint {
@@ -1464,7 +1425,7 @@ mod tests {
             outcome: Some(GateOutcome {
                 plan_kind: "fillable".into(),
                 tier: "hard_skip".into(),
-                seam_shape: "symmetric_weak".into(),
+                seam_shape: Some("symmetric_weak".into()),
                 fit_path: Some("baseline_only".into()),
                 signature_mode: Some("energy".into()),
                 skip_reason: Some("boundary correlation below threshold".into()),
@@ -1480,5 +1441,21 @@ mod tests {
         assert!(!json.contains("\"lag\""));
         assert!(!json.contains("\"baseline_lag\""));
         assert!(!json.contains("\"brackets\""));
+    }
+
+    #[test]
+    fn residual_silence_floor_sentinel_deserializes_as_none() {
+        let r: ResidualInfo = serde_json::from_str(
+            r#"{"chosen_pre_db":-120.0,"chosen_post_db":null,"floor_pre_db":-40.0,"floor_post_db":-39.0,"informative":false}"#,
+        )
+        .expect("parse");
+        assert_eq!(r.chosen_pre_db, None);
+        assert_eq!(r.chosen_post_db, None);
+        assert_eq!(r.floor_pre_db, Some(-40.0));
+        assert_eq!(r.floor_post_db, Some(-39.0));
+        let wire = serde_json::to_string(&r).expect("serialize");
+        assert!(!wire.contains("-120"));
+        assert!(!wire.contains("chosen_pre_db"));
+        assert!(!wire.contains("chosen_post_db"));
     }
 }
