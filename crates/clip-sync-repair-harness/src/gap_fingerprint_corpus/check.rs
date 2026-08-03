@@ -475,6 +475,13 @@ fn check_gap(
 /// binary. The two lists are kept honest from both ends — the emitter has a unit test asserting it
 /// declares this set, and [`check_not_measured`] below fails a corpus whose declaration disagrees with
 /// what the file actually contains.
+///
+/// The union of the emitter's two lists, deliberately: the `baseline_lag.*` tail is
+/// `PROJECTED_BASELINE_LAG_FIELDS`, which a dump declares only when it projected the row rather than
+/// measuring it. This reader must recognize the paths either way — a corpus that declares them is a
+/// projected one (fine), and a corpus that carries a *real* sweep while declaring them is the false
+/// declaration [`check_not_measured`] exists to catch. Flattening the two into one list here is safe
+/// because nothing in this module re-emits it; it is only ever matched against.
 const KNOWN_UNMEASURED: &[&str] = &[
     "levels.bin_ms",
     "levels.profile_db",
