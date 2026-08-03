@@ -89,6 +89,33 @@ From [archive/repair-write-path-plan.md](docs/dev/archive/repair-write-path-plan
 
 ---
 
+### Patch verdict integrity — `Patched` does not mean spliced
+
+**Latent defect, detector already shipped.** `splice_into_a` (`patch_audio/region.rs:2287`) returns
+`()` and has three early returns; the `Patched` verdict is decided *upstream* of it
+(`region.rs:189–221`, from `region_results`) and the summary is built from that same pre-splice list
+(`patch_audio/mod.rs:454`). Nothing tells the summary the splice bailed.
+
+| Bail condition | Line | Reported today |
+|---|---|---|
+| destination out of range | `:2298` | `tracing::warn!` |
+| inverted / empty (`start >= end`) | `:2308` | **nothing at all** |
+| fill shorter than the gap | `:2314` | `tracing::warn!` |
+
+Effect: the gap table says repaired, the audio is unchanged, and in the middle case there is no
+signal whatsoever. Worst for `--gap-listen`, where `_a_patched.wav` comes back byte-identical to
+`_a_surround.wav` — you hear an unrepaired gap and conclude *the repair sounds bad*, inverting the
+finding on exactly the gaps a margin-band experiment selects.
+
+**Detection exists; the verdict is still wrong.** `--gap-listen` digests the A window before and
+after the splice and warns on a match (`gap_listen/mod.rs:444`) — a symptom check on one diagnostic
+path, not a fix. Direction: have `splice_into_a` report applied/not-applied and reflect that in the
+gap status. Reachable by inspection only — **no observed real-media occurrence**, and the firing
+path has no end-to-end test (forcing a genuine no-op splice needs fault injection that does not
+exist yet). Uncovered by, but not introduced by, the gap-listen work.
+
+---
+
 ### Residual gate follow-ups
 
 From [archive/residual-gate-findings.md](docs/dev/archive/residual-gate-findings.md) and
