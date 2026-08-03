@@ -1,5 +1,8 @@
 //! The scan-vs-diagnostic equivalence **divergence** contract (F15 → instrument convergence).
 //!
+//! Tier: **pr-repair** — media-free committed fixtures; guards the production scan-time
+//! equivalence gate (on by default).
+//!
 //! The two equivalence front-ends share `classify_gap_equivalence` but historically fed it
 //! differently-defined inputs (`docs/dev/gap-fingerprint.md` § *`equivalence` vs `scan_equivalence`*).
 //! F15 closed the three diagnostic-path sensor defects; I1 converged the equivalence bin size onto

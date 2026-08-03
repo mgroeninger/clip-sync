@@ -71,8 +71,8 @@ CLI integration tests enable `clip-sync` with `test-utils` and `he-aac` via `dev
 | `he-aac` | no | Passthrough: `clip-sync/he-aac` |
 | `ac3` | no | Passthrough: `clip-sync/ac3` |
 | `ffmpeg-tests` | no | Passthrough: `clip-sync/ffmpeg-tests` (AC-3 dual-track scan integration test) |
-| `validation-tests` | no | Compiles `validate_floor_oracle`, `validate_residual_gate`, `validate_patch_audio` integration binaries |
-| `diagnostic-tests` | no | Compiles `diag_energy_matrix`, `diag_seam_residual`, `diag_patch_audio`, `diag_anchor_seam`, `diag_w5_anchor_rescue`, `diag_w5_timing_offset`, `seam_residual_oracle` integration binaries |
+| `validation-tests` | no | Compiles `validate_floor_oracle`, `validate_residual_gate`, `validate_patch_audio`, `validate_dual_fit_oracle`, `calibrate_anchor_prominence` integration binaries |
+| `diagnostic-tests` | no | Compiles `diag_energy_matrix`, `diag_seam_residual`, `diag_patch_audio`, `diag_anchor_seam`, `diag_w5_anchor_rescue`, `diag_w5_timing_offset`, `diag_anchor_quiet_gap`, `diag_splice_timescale`, `seam_residual_oracle` integration binaries |
 | `calibration` | no | Gap-fingerprint calibration workflow: the `--gap-fingerprints` / `--fingerprint-gap` / `--fingerprint-diagnostics` producer flags + corpus writer, the `equivalence-calibration` bin (`clip-sync-repair`), and the `gap-fingerprint-stats` bin (`clip-sync-repair-harness`). Off by default so the diagnostic surface stays out of the production binary |
 
 Without `ffmpeg-mux`, `--mux` is rejected at argument parse with a clear error ([error-mapping.md](../error-mapping.md)).
@@ -149,8 +149,8 @@ validation changes.
 | Feature | Binaries |
 |---------|----------|
 | *(default)* | lib + integration + `oracle_*` + `integration_gap_corpus` |
-| `validation-tests` | `validate_floor_oracle`, `validate_residual_gate`, `validate_patch_audio` |
-| `diagnostic-tests` | `diag_energy_matrix`, `diag_seam_residual`, `diag_patch_audio`, `diag_anchor_seam`, `diag_w5_anchor_rescue`, `diag_w5_timing_offset`, `seam_residual_oracle` |
+| `validation-tests` | `validate_floor_oracle`, `validate_residual_gate`, `validate_patch_audio`, `validate_dual_fit_oracle`, `calibrate_anchor_prominence` |
+| `diagnostic-tests` | `diag_energy_matrix`, `diag_seam_residual`, `diag_patch_audio`, `diag_anchor_seam`, `diag_w5_anchor_rescue`, `diag_w5_timing_offset`, `diag_anchor_quiet_gap`, `diag_splice_timescale`, `seam_residual_oracle` |
 | `calibration` | `equivalence-calibration` + `gap-fingerprint-stats` bins (not tests) |
 
 ```powershell
@@ -203,17 +203,25 @@ means included in `.\scripts\test-tier.ps1 -Tier pr-repair` (and therefore `-Tie
 | `gap_cell_fixtures` | integration | — | yes | Per-gap-**type** classification contract on committed curated fixtures (footguns; media-free) |
 | `golden_baseline_invariance` | integration | — | yes | Curated fixtures vs self-hosting `curated.golden.json` (media-free; `CURATED_GOLDEN_REGEN=1` to rebase) |
 | `gap_repair_spec_diff` | integration | — | yes | Projection-fidelity differential over the curated fixtures (media-free) |
+| `curated_fixture_backfill` | integration | — | yes | Derived-field backfill guard (no-op unless `CURATED_FIXTURE_BACKFILL=1`) |
+| `decode_path_projection` | integration | — | yes | C5 from-decode dump projection self-guard (synthetic A/B) |
+| `equivalence_divergence` | integration | — | yes | Scan-vs-diagnostic equivalence contract (media-free fixtures) |
+| `w5_timing_offset` | integration | — | yes | W5 timing-offset fixture reproduces g003 signature |
 | `patch_audio_integration` | integration | — | **extended only** | Sine seam grid (~15 min); SP04 (`i4_f3`); `pr-repair-extended` |
 | `cli_mux_integration` | integration | `ffmpeg-mux` | compile on PR† | Mux CLI; e2e mux `#[ignore]` — **validation** tier when ffmpeg on PATH |
 | `validate_floor_oracle` | validation | `validation-tests` | no | Floor oracle codec matrix (ffmpeg + `fetch_corpus_sources`) |
 | `validate_residual_gate` | validation | `validation-tests` | no | RG catalog rows + EC06 patch discrimination |
 | `validate_patch_audio` | validation | `validation-tests` | no | SP05 — production-default fit smoke |
+| `validate_dual_fit_oracle` | validation | `validation-tests` | no | Real-media jump-cut dual-fit rescue (ffmpeg + corpus) |
+| `calibrate_anchor_prominence` | validation | `validation-tests` | no | Anchor-prominence CSV probe (`#[ignore]`; re-run on demand) |
 | `diag_energy_matrix` | diagnostic | `diagnostic-tests` | no | Energy mode matrix CSV |
 | `diag_seam_residual` | diagnostic | `diagnostic-tests` | no | Seam residual CSV |
 | `diag_patch_audio` | diagnostic | `diagnostic-tests` | no | Patch geometry CSV (I1/I3) |
 | `diag_anchor_seam` | diagnostic | `diagnostic-tests` | no | Anchor candidate/bracket CSV (`speech_peaks`, C3, flat C1) |
 | `diag_w5_anchor_rescue` | diagnostic | `diagnostic-tests` | no | W5 anchor-rescue single-cell scores (nominal/baseline + per-bracket gate CSV) |
 | `diag_w5_timing_offset` | diagnostic | `diagnostic-tests` | no | W5 timing-offset recoverability grid (`offset × drift` lag CSV); slow gate-probe row `#[ignore]` |
+| `diag_anchor_quiet_gap` | diagnostic | `diagnostic-tests` | no | Noise-collar anchor rescue domain probe (synthetic) |
+| `diag_splice_timescale` | diagnostic | `diagnostic-tests` | no | Seam timescale / uniqueness sweep (ffmpeg + `SPLICE_EXP_*`; soft-skip without env) |
 | `seam_residual_oracle` | diagnostic | `diagnostic-tests` | no | In-memory broadband patch oracle; slow rescue row `#[ignore]` |
 
 The cross-corpus `--gap-fingerprints` analyzer (former `diag_fingerprint_corpus` test, P0 prevalence) is now

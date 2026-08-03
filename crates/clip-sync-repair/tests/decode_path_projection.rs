@@ -1,7 +1,7 @@
 //! **C5 — live from-decode dump self-guard (always-on, no media).**
 //!
-//! Tier: **default** (synthetic A/B fixture; runs on every `cargo test`). Runs the live `--gap-fingerprints`
-//! dump pipeline (`characterize_gaps_from_decode`, via the `synth_ab_from_decode_corpus` fixture) and asserts
+//! Tier: **pr-repair** (synthetic A/B fixture; media-free). Runs the live from-decode dump pipeline
+//! (`characterize_gaps_from_decode`, via the `synth_ab_from_decode_corpus` fixture) and asserts
 //! its output is well-formed and survives a projection round-trip (`GapFingerprint → GapRepairTags →
 //! GapFingerprint`) with every `golden_baseline` decision axis preserved — in both lean and diagnostics modes.
 //!

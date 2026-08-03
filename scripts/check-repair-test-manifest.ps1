@@ -60,22 +60,10 @@ foreach ($path in $declaredPaths) {
     }
 }
 
-# Targets no tier runs. This is a **ratchet**, not a blessing: the list below is the state of the
-# backlog when the tier-coverage check was added, kept only so the check can go in without turning
-# nine pre-existing holes into a red build. Each of these declares a tier in its own //! header that
-# test-tier.ps1 does not implement. Delete entries as they get wired; never add one to silence this
-# check — wire the target into a tier instead.
+# Targets no tier runs. This is a **ratchet**, not a blessing: kept empty once pre-existing holes
+# are wired. Never add a name to silence this check — wire the target into a tier instead.
 $untieredBacklog = [System.Collections.Generic.HashSet[string]]::new(
-    [string[]] @(
-        'calibrate_anchor_prominence',  # header: validation
-        'curated_fixture_backfill',     # header: pr-repair
-        'decode_path_projection',       # header: default (but no tier runs bare `cargo test`)
-        'diag_anchor_quiet_gap',        # header: no tier line
-        'diag_splice_timescale',        # header: diagnostic (needs ffmpeg on PATH)
-        'equivalence_divergence',       # header: no tier line
-        'validate_dual_fit_oracle',     # header: validation
-        'w5_timing_offset'              # header: no tier line
-    ),
+    [string[]] @(),
     [StringComparer]::OrdinalIgnoreCase
 )
 

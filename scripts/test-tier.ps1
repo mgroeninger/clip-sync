@@ -70,7 +70,11 @@ try {
             '--test', 'wav_bit_depth_integration',
             '--test', 'gap_cell_fixtures',
             '--test', 'golden_baseline_invariance',
-            '--test', 'gap_repair_spec_diff'
+            '--test', 'gap_repair_spec_diff',
+            '--test', 'curated_fixture_backfill',
+            '--test', 'decode_path_projection',
+            '--test', 'equivalence_divergence',
+            '--test', 'w5_timing_offset'
         )
 
         if (Test-FfmpegOnPath) {
@@ -142,12 +146,16 @@ try {
         }
         # golden_baseline_invariance + gap_repair_spec_diff moved to pr-repair (media-free curated
         # fixtures) in Phase 3 of the gap-fixture-corpus plan.
+        # calibrate_anchor_prominence is listed so the binary builds under this feature, but its
+        # only row is #[ignore] (settled CSV probe — re-run with --ignored --nocapture on demand).
         Invoke-CargoTest @(
             '-p', 'clip-sync-repair',
             '--features', 'validation-tests',
             '--test', 'validate_floor_oracle',
             '--test', 'validate_residual_gate',
-            '--test', 'validate_patch_audio'
+            '--test', 'validate_patch_audio',
+            '--test', 'validate_dual_fit_oracle',
+            '--test', 'calibrate_anchor_prominence'
         )
         # Patch-timing rows: release-calibrated budgets; debug is ~10–20× slower.
         foreach ($gapFilter in @('gap_corpus_generated', 'gap_corpus_external', 'gap_corpus_patch_timing')) {
@@ -182,6 +190,7 @@ try {
             '--test', 'diag_anchor_seam',
             '--test', 'diag_w5_anchor_rescue',
             '--test', 'diag_w5_timing_offset',
+            '--test', 'diag_anchor_quiet_gap',
             '--test', 'seam_residual_oracle'
         )
         # W5 timing-offset gate probe (slow: full unified gate per cell; release-only by preference).
@@ -232,8 +241,15 @@ try {
                 'mux_reports_progress_for_short_fixture',
                 '--', '--ignored'
             )
+            # Soft-skips without SPLICE_EXP_* env vars; ffmpeg required when those are set.
+            Invoke-CargoTest @(
+                '-p', 'clip-sync-repair',
+                '--features', 'diagnostic-tests',
+                '--test', 'diag_splice_timescale'
+            )
         } else {
             Write-Host '>> skip mux_reports_progress_for_short_fixture (ffmpeg not on PATH)' -ForegroundColor DarkYellow
+            Write-Host '>> skip diag_splice_timescale (ffmpeg not on PATH)' -ForegroundColor DarkYellow
         }
     }
 

@@ -31,8 +31,7 @@ See [development.md § Versioning and release](development.md#versioning-and-rel
 `Cargo.toml` (required — the crate is `autotests = false`) makes it *buildable*; it does not make it
 *run*, because every tier here names its targets explicitly with `--test`.
 `check-repair-test-manifest.ps1` fails on a `tests/*.rs` with no `[[test]]` **and** on a `[[test]]`
-no tier lists. It carries a small ratchet list of targets that predate the second check — wire those
-into a tier as you touch them; never add a new name to it.
+no tier lists. Never leave a declared target untiered — wire it into `test-tier.ps1` when adding it.
 
 ---
 
@@ -104,7 +103,7 @@ flowchart TB
 | **`pr-repair`** | `clip-sync-repair` | Repair lib + fixtures lib + harness lib + integration smokes (see below) + curated gap-fixture tests (`gap_cell_fixtures`, `golden_baseline_invariance`, `gap_repair_spec_diff`) |
 | **`pr-repair-extended`** | `clip-sync-repair` | `pr-repair` + `patch_audio_integration` (~15 min) |
 
-**`pr-repair` integration binaries:** `config_roundtrip`, `scan_gaps_integration`, `cli_wav_integration`, `query_reference_integration`, `integration_residual_gate_smoke`, `integration_floor_oracle_smoke`, `integration_gap_corpus` (non-ignored rows), `integration_energy_smoke`, `oracle_energy` (non-ignored rows), `seam_residual_corpus`, `wav_bit_depth_integration`, `gap_cell_fixtures`, `golden_baseline_invariance`, `gap_repair_spec_diff`, `cli_mux_integration` (non-ignored, when `ffmpeg` on PATH).
+**`pr-repair` integration binaries:** `config_roundtrip`, `scan_gaps_integration`, `cli_wav_integration`, `query_reference_integration`, `integration_residual_gate_smoke`, `integration_floor_oracle_smoke`, `integration_gap_corpus` (non-ignored rows), `integration_energy_smoke`, `oracle_energy` (non-ignored rows), `seam_residual_corpus`, `wav_bit_depth_integration`, `gap_cell_fixtures`, `golden_baseline_invariance`, `gap_repair_spec_diff`, `curated_fixture_backfill`, `decode_path_projection`, `equivalence_divergence`, `w5_timing_offset`, `cli_mux_integration` (non-ignored, when `ffmpeg` on PATH).
 
 **Not in PR** (run via `integration` or `oracle` tiers): `patch_audio_integration`, `integration_energy_patch`, `anchor_seam_oracle`, `oracle_energy --ignored`.
 
@@ -186,6 +185,8 @@ Add `-Tier diagnostic` when regenerating CSVs or golden surfaces.
 | `validate_floor_oracle` | **~4 h** (7 tests; `source_gap_oracle_floor_csv` alone ~35 min) |
 | `validate_residual_gate` | ~4 min |
 | `validate_patch_audio` | ~1–2 min |
+| `validate_dual_fit_oracle` | minutes (real-media jump-cut; needs corpus) |
+| `calibrate_anchor_prominence` | skipped (`#[ignore]`; opt-in re-measure) |
 | `integration_gap_corpus` ignored rows | ~2–5 min |
 | `cli_mux_integration` ignored mux e2e | ~1 min |
 

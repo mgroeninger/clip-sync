@@ -1,5 +1,7 @@
 //! Ad-hoc diagnostic: a 1.5 s silent gap embedded in broadband noise, flanked by speech.
 //!
+//! Tier: **diagnostic** (`diagnostic-tests`). Synthetic A/B (no media / ffmpeg).
+//!
 //! Reproduces the production geometry behind a `boundary correlation below threshold
 //! (pre=0.03 post=0.03)` skip, then exercises the anchor-seam machinery directly at the
 //! **domain** level (no alignment / decode plumbing) to answer one question:
