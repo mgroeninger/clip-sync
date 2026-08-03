@@ -563,7 +563,10 @@ pub enum RegionPatchOutcomeView<'a> {
     Skipped(&'a GapPatchSkipReason),
 }
 
-fn format_plan_skip_reason(reason: &GapFillSkipReason) -> &'static str {
+/// Canonical snake_case token for a plan-time drop. The domain counterpart of
+/// [`crate::domain::patch_result::format_gap_patch_skip_reason`], which renders the *gate-time*
+/// skips; between them every non-`Patched` outcome has exactly one authority for its wording.
+pub fn format_plan_skip_reason(reason: &GapFillSkipReason) -> &'static str {
     match reason {
         GapFillSkipReason::NotFillable => "not_fillable",
         GapFillSkipReason::OutsideReferenceCoverage => "outside_reference_coverage",

@@ -82,7 +82,7 @@ The single-decode design rests on these. Each was checked; if one flips, the cit
 | Seam | Where | Reuse |
 |------|-------|-------|
 | Full decode | `patch_audio/decode.rs` `decode_ab` | Shared by `--wav` and `--gap-fingerprints` today (**separately** — two calls if both flags set) |
-| Gap selection for patch | `domain/gap_fill.rs` `build_gap_fill_plan` + `--only-gaps` | Real patch restriction |
+| Gap selection for patch | `domain/gap_fill.rs` `build_gap_fill_plan` + `--only-gaps` (on a listen run, `--fingerprint-gap` converted to the same tokens) | Real patch restriction |
 | Decision vs fill | `patch_audio/region.rs` `characterize_region` → `GapRepairSpec` → `execute_region_spec` → `RegionPatch` | Production gate + fill PCM |
 | Splice | `splice_into_a` | Mutates full A in place |
 | WAV I/O | `infrastructure/wav_writer.rs` `WavPatchedAudioWriter` (hound) | No new crate |
@@ -110,18 +110,40 @@ before the decode is handed over:
 - `FillRegion.a_start_secs` / `a_end_secs` / `b_start_secs` / `b_end_secs` are public fields
   (`domain/gap_fill.rs:424–436`)
 
-Edge refinement moves each edge by at most `GAP_EDGE_REFINE_SECS = 0.75` (`patch_audio/mod.rs:50`),
-and the export pads ±3 s of context anyway — so a plan-geometry window **always** contains the
-refined throat with ≥2.25 s of real context per side. The window difference is smaller than the
-padding, which is why chasing refined edges is not worth a callback into the production engine
-(see §6 step 5 and §8).
+Two things move an edge past its plan bounds, not one *(corrected 2026-08-02, at implement time —
+the original text counted only the first)*:
+
+| Mover | Bound | Default |
+|-------|-------|---------|
+| Edge refinement | `GAP_EDGE_REFINE_SECS` (`patch_audio/mod.rs:50`) | 0.75 s |
+| Seam-fail extension retry | `gap_end_extend_max_ms` / `gap_start_extend_max_ms` (`config.rs:241`) | 0.5 s, and `gap_{end,start}_extend_on_*_seam_fail` both default `true` (`config.rs:234–238`) |
+
+So an edge can move up to **~1.25 s**, and the export pads ±3 s of context — a plan-geometry window
+still **always** contains the final throat, with **≥1.75 s** of real context per side (not the
+≥2.25 s this section originally claimed). The conclusion is unchanged: the window difference is
+smaller than the padding, which is why chasing refined edges is not worth a callback into the
+production engine (see §6 step 5 and §8). Revisit if either bound is raised past ~2 s, or if the
+±3 s context default is lowered.
 
 ---
 
 ## 4. What is *not* the right glue
 
-- **`--fingerprint-gap` does not patch.** It only filters the calibration dump. Patching uses
-  `--only-gaps`.
+- **`--fingerprint-gap` did not patch — as shipped, on a listen run, it does.** *(Revised
+  2026-08-02; the original plan routed selection through `--only-gaps`.)* On a plain
+  `--gap-fingerprints` run it still only filters the dump. But `--gap-listen` **is a mode of the
+  dump** — it errors without `--gap-fingerprints`, and the WAV stems *are* the corpus entry stems
+  (`entry_stem`) — so taking a second selector from the patch side was the wrong seam. Listen now
+  converts the `--fingerprint-gap` numbers into `--only-gaps` tokens (both 1-based) and resolves
+  them with the same `resolve_gap_selection`, so the same set bounds the corpus *and*
+  `build_gap_fill_plan`. Without that bound the production patch would characterize every gap in
+  the pair — gate search is ~93% of wall clock, so "listen to three gaps" would cost a full repair.
+  `--only-gaps` / `--skip-gaps` are rejected on a listen run, pre-scan.
+
+  Cost of the switch: `--fingerprint-gap` is `Vec<usize>`, so the listen selector loses the range
+  and timestamp grammar `--only-gaps` has. The band experiment is unaffected — `only_gaps_tokens`
+  emits bare 1-based numbers — and the flag gained `value_delimiter = ','` so that output pastes in
+  directly as `--fingerprint-gap 1,3,12`.
 
   It *is* a real filter, which is why `--gap-listen` requiring `--gap-fingerprints` costs nothing
   extra: `characterize_gaps` keeps only the selected gaps (`measure.rs:2766–2771`,
@@ -183,14 +205,28 @@ When WAV root equals JSON dir, WAVs sit beside the per-gap JSON (or in a `wav/` 
 > analysis. Write it somewhere that won't be mistaken for a full-pair dump, or keep the roll-up
 > tooling pointed at the full-run corpus.
 
+> **The WAV directory holds licensed audio; the JSON does not.** Every `…_surround.wav` /
+> `…_patched.wav` is decoded source material, so a listen WAV root is in the same class as
+> `gap-files/`: **gitignored, ephemeral, never committed, never quoted in the repo or in memory.**
+> The fingerprint JSON is sample-free and stays the durable artifact. Two practical consequences:
+>
+> - Point `--gap-listen` at a path already covered by `.gitignore`. Defaulting the WAV root to the
+>   fingerprint dir (the no-value form) puts licensed audio next to committable JSON — convenient for
+>   listening, a hazard at commit time. Prefer an explicit `WAV_DIR` under `gap-files/` for anything
+>   that outlives the session.
+> - Stems are `entry_stem`s — id prefixes and timestamps, not titles or filenames — so the *names*
+>   are safe to quote in notes and logs even though the *files* are not. That is by construction
+>   (§5), not luck; keep it that way if the naming authority ever changes.
+
 **Stems come from the fingerprint, so they can only be built after step 4.** Per-gap JSON is named by
-the private `entry_filename` (`measure.rs:2877`), `<a8>_<b4>_t<hh-mm-ss>_g<idx>_<tier>_<verdict>.json`,
+`entry_stem` (`measure.rs:2938`; was the private `entry_filename` before the §7.5 refactor —
+`pub(crate)` and extension-free now), `<a8>_<b4>_t<hh-mm-ss>_g<idx>_<tier>_<verdict>` + `.json`,
 where `a8`/`b4` are `SourceMeta` id prefixes and `tier` / `verdict` come from the **built**
 `GapFingerprint`. So the WAV stem is not derivable from the gap alone — the export must look its gap
 up in the corpus by `index`. Two consequences:
 
-- `entry_filename` bakes `.json` into the format string. Split it into a stem builder + extension so
-  WAVs and JSON share one naming authority (§7).
+- `entry_filename` baked `.json` into the format string. Split it into a stem builder + extension so
+  WAVs and JSON share one naming authority (§7). **Done** — `entry_stem`.
 - A gap with no fingerprint entry has **no stem** (layout-mismatch refusal returns `gaps` empty).
   Folded into the §10 open item.
 
@@ -201,8 +237,19 @@ up in the corpus by `index`. Two consequences:
 
 | Field on the B surround `MultiChannelPcm` | Source |
 |---|---|
-| `channels` | `decoded.sources.b.native_channels` — **not** `a_pcm.channels` |
+| `channels` | `DecodedAb::b_channels` — **not** `a_pcm.channels`, and **not** `sources.b.native_channels` |
 | `sample_rate` | `a_pcm.sample_rate` (post-resample) |
+
+> **Revised at implement time (item 5).** This row originally said
+> `decoded.sources.b.native_channels`. That is wrong in a subtle way: `SourceDescriptor::of` reads
+> `track.channels`, i.e. **container/probe** metadata, so striding a real PCM buffer by it trusts the
+> probe to agree with the decoder. `DecodedAb` now carries `b_channels`, captured from the decoded
+> `MultiChannelPcm` before the resample branch moves `b_pcm_full.samples` (resampling preserves
+> channel count, so it is correct on both branches). A workspace-wide grep confirmed the listen
+> export was the **only** site striding real PCM by probe metadata — everywhere else
+> `native_channels` is provenance or the layout-mismatch gate. The exhaustive `DecodedAb` destructure
+> in `patch_audio/mod.rs` (`b_channels: _`) is the compile-time guard that a future field gets the
+> same scrutiny.
 
 On the normal path the two layouts coincide, because `characterize_gaps_from_decode` refuses a
 layout mismatch outright (`measure.rs:2215`, surfaced at `composition.rs:167`). The trap is exactly
@@ -230,13 +277,24 @@ WAV export / production patch (third WAV from production splice).
 
 1. **Validate:** `--gap-listen` requires `--gap-fingerprints DIR`. Resolve WAV root = listen `DIR` if
    present, else the fingerprint `DIR`. Note the resolved WAV path when defaulting.
-2. **One selector.** Accept the **`--only-gaps` token grammar**, not bare numbers: it is
-   `Vec<String>` supporting 1-based numbers, `START-END` identity ranges, `START..END` containment
-   ranges, and timestamps (`domain/gap_fill.rs:84–128`). Call `resolve_gap_selection` **once** to get
-   a 0-based `GapSelection`, and feed both consumers from it — production selection directly, and
-   the fingerprint `select` (also 0-based) derived from the same set. Do not keep two independent
-   lists, and do not narrow the mode to plain integers: the band experiment's tokens come from
-   `equivalence_calibration`'s `only_gaps_tokens` (`bin/equivalence_calibration.rs:641`).
+2. **One selector — `--fingerprint-gap`** *(revised 2026-08-02; the original text below routed
+   selection through `--only-gaps`, see §4)*. Listen cannot run without the dump, so it takes the
+   dump's selector and refuses `--only-gaps` / `--skip-gaps` pre-scan. Convert the 1-based numbers to
+   `--only-gaps` tokens, then follow the original recipe unchanged from "call `resolve_gap_selection`
+   **once**". Going through the token resolver rather than `resolve_fingerprint_gap_select` is
+   deliberate: it is what `build_gap_fill_plan` already consumes, and its 0-and-out-of-range wording
+   is identical. What is lost is the range/timestamp grammar; the band experiment's tokens
+   (`equivalence_calibration`'s `only_gaps_tokens`, `bin/equivalence_calibration.rs:641`) are bare
+   1-based numbers, and `--fingerprint-gap` now takes `value_delimiter = ','`, so they paste in
+   directly.
+
+   > *Original:* Accept the **`--only-gaps` token grammar**, not bare numbers: it is
+   > `Vec<String>` supporting 1-based numbers, `START-END` identity ranges, `START..END` containment
+   > ranges, and timestamps (`domain/gap_fill.rs:84–128`). Call `resolve_gap_selection` **once** to
+   > get a 0-based `GapSelection`, and feed both consumers from it — production selection directly,
+   > and the fingerprint `select` (also 0-based) derived from the same set. Do not keep two
+   > independent lists.
+
    *Needs a small addition:* `GapSelection.selected` is private with only `is_selected` /
    `is_filtered` exposed (`gap_fill.rs:15–82`) — add an iterator over the selected indices.
 3. **One decode:** `decode_ab` once into `DecodedAb`.
@@ -293,7 +351,7 @@ Licensing: WAVs under gitignored `gap-files/` / temp; JSON corpus stays sample-f
 
 ```mermaid
 flowchart TD
-  scan[ScanGaps] --> select["resolve_gap_selection once (--only-gaps grammar)"]
+  scan[ScanGaps] --> select["resolve_gap_selection once (--fingerprint-gap numbers as tokens)"]
   select --> decode[decode_ab once]
   decode --> fpJson["Fingerprint JSON, shared borrow → --gap-fingerprints DIR"]
   fpJson --> plan[build_gap_fill_plan]
@@ -314,14 +372,23 @@ into the patch (mutable). Anything that exports *after* the splice would read pa
    `pub(crate)` (`decode.rs:68`) and is the only `self.media_reader` use in `run`.
 2. **Export helper** — slice interleaved frames into `MultiChannelPcm` + write (reuse
    `WavPatchedAudioWriter`), honoring the §5.1 field rules.
-3. **A fourth `PendingAfterScan` arm** — `Listen { patch_settings, crossfade_ms, wav_dir }`
-   alongside `Preview` / `Write` (`application/run_repair.rs:40–51`). Needed regardless of decode
-   count: `Write` requires an output path (`composition.rs:249–257`) so it can't express "patch in
-   memory, write no `--wav`", and `Preview` returns before execute (`patch_audio/mod.rs:221–246`) so
-   it can never produce a patched WAV.
-   *Annoyance, not a blocker:* the variant is `calibration`-only while `PendingAfterScan` is not, so
-   the `match` at `run_repair.rs:138–158` needs a `#[cfg]`'d arm — the same shape the existing
-   `ffmpeg-mux` gating already uses in that file.
+3. ~~**A fourth `PendingAfterScan` arm**~~ — **RETRACTED 2026-08-02, before implementation.** The
+   premise was that listen routes through `run_repair`. It does not: the fingerprint dump is called
+   from `composition.rs:72–81`, *after* `run_repair_with_defaults` returns, and owns its own
+   `decode_ab` (`composition.rs:128`). For the canonical invocation (no `--wav` / `--mux` — the shape
+   `measure-gap-fingerprints.ps1` uses) `pending_repair_write` returns `None`, so `run_repair` takes
+   the `PendingAfterScan::None` arm and **never decodes at all**. That invocation is already one
+   decode today, and listen fits entirely inside the `calibration`-gated dump function:
+
+   ```text
+   run_repair(...)        // PendingAfterScan::None — no decode
+   run_gap_listen(...)    // the ONE decode; replaces dump_gap_fingerprints
+   ```
+
+   `run_repair.rs` and `PendingAfterScan` are **unchanged** — no `#[cfg]`'d arm, and no
+   calibration-only config threaded through a non-calibration orchestration module.
+
+   The arm would only have earned its keep for `--wav`, which is now rejected (item 7).
 4. **`GapSelection` accessor** — iterator over selected indices (§6 step 2).
 5. **Shared naming authority** — `entry_filename` / `entry_verdict` / `detail_tier_str` / `hms` are
    private fns in `measure.rs:2841–2887`, gated `#[cfg(any(feature = "calibration", test))]`, and
@@ -329,22 +396,24 @@ into the patch (mutable). Anything that exports *after* the splice would read pa
    callers appending `.json` / `_a_surround.wav` / …, and raise it to `pub(crate)` so the export
    helper can reach it. Without this the WAVs cannot share stems with the JSON, which is the whole
    ears ↔ JSON join.
-5. **Visibility — settled, pick the second option.** "Call into the same internals from composition"
+6. **Visibility — settled, pick the second option.** "Call into the same internals from composition"
    is *not* available: the region functions are `pub(super)` and `PatchAudio::run` owns the decode.
    The only workable shape is `PatchAudio` gaining the run-with-existing-decode entry from §6 step 6.
    With caller-side slicing (§6 step 5) no export callbacks are needed, so nothing widens beyond
    `run_with_decoded` and no diagnostic concern enters the patch hot loop.
-6. **CLI validation** — reject `--gap-listen` without `--gap-fingerprints` (mirror
-   `--fingerprint-gap` in `validate_fingerprint_flags`, `cli/mod.rs:272`), plus the four run-mode
-   rejections settled in §10.1: error on `--repair-preview`, `--dry-run`, and `--mux`; allow `--wav`
-   and satisfy it from the listen run's own `PatchAudioResult.pcm`.
-7. **No windowed decode for v1** — full decode is already paid; region WAVs are cheap slices.
+7. **CLI validation** — reject `--gap-listen` without `--gap-fingerprints` (mirror
+   `--fingerprint-gap` in `validate_fingerprint_flags`, `cli/mod.rs:272`), plus the run-mode
+   rejections settled in §10.1: error on `--repair-preview`, `--mux`, **and `--wav`** (§10.1
+   revision) — one rule, three flags. Not `--dry-run`: see the retraction in §10.1.
+8. **No windowed decode for v1** — full decode is already paid; region WAVs are cheap slices.
    Seeking-only decode can stay a later optimization.
 
-**Expectation on cost:** the two decodes today are *sequential* (`composition.rs:69` then `:128`), so
-this halves decode wall-clock but does **not** halve peak RSS. Against the ~15 GB seen on real-media
-corpus runs, peak stays roughly flat — A is mutated in place, and the only extra live data is a
-handful of seconds-long window buffers.
+**Expectation on cost:** *(revised 2026-08-02)* the "two sequential decodes" framing applies only to
+`--wav` / `--repair-preview`, which listen now rejects. On the canonical no-output-flags invocation
+there is **one decode today and one after** — listen buys no decode-wall-clock saving there; what it
+buys is the production-patched WAV, which no invocation can produce today. Peak RSS stays roughly
+flat against the ~15 GB seen on real-media corpus runs: A is mutated in place, and the only extra
+live data is a handful of seconds-long window buffers.
 
 ---
 
@@ -372,17 +441,15 @@ fingerprint pass.
 
 ---
 
-## 10. Open at implement time (minor)
+## 10. Open at implement time — **all resolved, see §10.1**
 
-- WAV layout under the WAV root: siblings of per-gap JSON (when co-located) vs a `wav/` subdir
-  (stems must still join so ears ↔ JSON match by filename).
-- **Layout-mismatch pairs** (`characterize_gaps_from_decode` refuses, corpus is provenance-only with
-  `gaps` empty — `measure.rs:2215`): does listen still write A/B WAVs from the raw decode, or refuse
-  with the same message? No patched WAV exists either way, since the plan is empty.
-- **B pad width** for `…_b_surround.wav`. v1 uses mapped span + a fixed pad rather than the exact
-  `b_extract` haystack (which is spec-derived, §3). Pick a pad that comfortably covers the search
-  range so the ear can hear where the fill came from.
-*(Nothing outstanding — see §10.1.)*
+Kept as the record of what was open and where each landed; none of these is outstanding.
+
+| Was open | Resolved as |
+|----------|-------------|
+| WAV layout under the WAV root: siblings of per-gap JSON (when co-located) vs a `wav/` subdir — stems must join either way | **Siblings.** `<stem>_a_surround.wav` etc. next to `<stem>.json`; no subdir |
+| **Layout-mismatch pairs** (`characterize_gaps_from_decode` refuses, corpus provenance-only with `gaps` empty — `measure.rs:2215`): write raw A/B WAVs, or refuse? No patched WAV either way, since the plan is empty | **Refuse the whole run** (§10.1) — unnamed clips that join to no fingerprint are a trap |
+| **B pad width** for `…_b_surround.wav`: mapped span + fixed pad vs the exact spec-derived `b_extract` haystack | **Mapped span ± `gap_signature_context_secs`** (§10.1) — same shape as A, so the pair is comparable by ear |
 
 ## 10.1 Decisions (settled 2026-08-02)
 
@@ -402,9 +469,9 @@ shape. `--gap-listen` resolves as:
 | With | `--gap-listen` behavior | Rationale |
 |------|--------------------------|-----------|
 | *(no output flags)* | **The normal case.** Scan → one decode → JSON + WAVs | Matches the established dump invocation |
-| `--wav` | **Allowed, and satisfied from the same run.** The listen path already runs the full production patch in memory and gets `PatchAudioResult.pcm` back (`patch_audio/mod.rs:391`) — write the full patched WAV from it. No second patch, no second decode. | Strictly better than today's `--wav` + `--gap-fingerprints` |
+| `--wav` | **Error.** *(revised 2026-08-02 — was "allowed, satisfied from the same run".)* | Satisfying it in one decode requires suppressing `run_repair`'s `Write` arm (threading listen-ness into `pending_after_scan`) and re-implementing `RepairVideos`' `has_patches` output gate in the calibration path — real plumbing for a combination the corpus workflow never uses (`scripts/measure-gap-fingerprints.ps1:154` passes neither `--wav` nor `--mux`). Rejecting it keeps all four run-mode rejections one rule. Revisit if a listen run ever wants the full-timeline WAV too. |
 | `--repair-preview` | **Error.** | Preview returns before execute (`patch_audio/mod.rs:221–246`), so `…_a_patched.wav` is impossible. Silently degrading to two WAVs would be the same misleading-diagnostics class as §4. |
-| `--dry-run` | **Error.** | `dry_run` means "produce no output"; `--gap-listen` means "produce WAVs". Direct contradiction — say so rather than picking a winner. |
+| `--dry-run` | **Allowed** (retracted 2026-08-02, at implement time). | There is no `--dry-run` flag. `dry_run` defaults to `true` (`config.rs:535`) and is *cleared* by `--wav` / `--mux`, so it is set on every legal listen run. Rejecting it would reject the "normal case" row above. |
 | `--mux` | **Error**, not the existing warn-and-ignore. | `--gap-listen` is an explicit diagnostic request; silently dropping it wastes a multi-hour run. This deliberately diverges from the `--mux` / `--gap-fingerprints` precedent, which is arguably the same bug. |
 
 **Gaps selected but not planned** — `build_gap_fill_plan` drops unfillable / unmapped gaps, and
@@ -441,13 +508,149 @@ gets, so the two WAVs are the same shape and directly comparable by ear.
 
 The single-decode refactor touches the production patch path, so the first two are non-negotiable.
 
-| What | How | Guards against |
-|------|-----|----------------|
-| **`run_with_decoded` is behavior-neutral** | Existing `patch_audio_integration` / `w5_timing_offset` suites must pass unchanged — no new assertions needed, the split is only correct if nothing moves | The refactor silently changing production patch output |
-| **Pre/patched WAVs are sample-aligned and differ only inside the gap** | Fixture pair with a known gap: assert the two A WAVs have identical length, are sample-identical outside `[gap_start - crossfade, gap_end + crossfade]`, and differ inside | The length-preserving assumption (§2.1) breaking; a future fill mode that resizes |
-| **B WAV channel count follows B** | Unit test on the export helper with `a_channels != b_channels` | The §5.1 interleaving trap — the failure is audible, not a panic, so no existing test would catch it |
-| **One decode, not two** | Count `decode_ab` calls (test `MediaReader` counting `open`) for a listen run | Silent regression to the double-decode path |
-| **Stems join** | Assert every emitted WAV's stem has a corpus JSON sibling with the same stem | The `entry_filename` refactor (§7.5) drifting the two namings apart |
-| **Selector parity** | Same tokens produce the same gap set in the corpus and in the patch plan | The forbidden two-list drift (§6 step 2) |
+| What | How | Guards against | Landed as |
+|------|-----|----------------|-----------|
+| **`run_with_decoded` is behavior-neutral** | Existing `patch_audio_integration` / `w5_timing_offset` suites must pass unchanged — no new assertions needed, the split is only correct if nothing moves | The refactor silently changing production patch output | existing suites, re-run green |
+| **Pre/patched WAVs are sample-aligned and differ only inside the gap** | Fixture pair with a known gap: assert the two A WAVs have identical length, are sample-identical outside `[gap_start - crossfade, gap_end + crossfade]`, and differ inside | The length-preserving assumption (§2.1) breaking; a future fill mode that resizes | `pre_and_patched_windows_are_sample_aligned_and_differ_only_inside_the_gap` |
+| **B WAV channel count follows B** | Unit test on the export helper with `a_channels != b_channels` | The §5.1 interleaving trap — the failure is audible, not a panic, so no existing test would catch it | `slice_window_strides_by_the_buffers_own_channel_count` (`gap_listen::export`) |
+| **One decode, not two** | Count `decode_ab` calls (test `MediaReader` counting `open`) for a listen run | Silent regression to the double-decode path | `gap_listen_decodes_the_pair_exactly_once` |
+| **Stems join** | Assert every emitted WAV's stem has a corpus JSON sibling with the same stem | The `entry_stem` refactor (§7.5) drifting the two namings apart | `gap_listen_writes_surround_and_patched_wavs_joined_to_the_corpus` |
+| **Selector parity** | Same tokens produce the same gap set in the corpus and in the patch plan | The forbidden two-list drift (§6 step 2) | `one_selector_drives_both_the_corpus_and_the_patch` |
+| **Unplanned gaps still exportable** (added at implement time) | A selected gap that `build_gap_fill_plan` drops still gets its A/B surround clips, and no `…_a_patched.wav` | The §10.1 "selected but not planned" row degrading to silent omission | `unplanned_gap_still_gets_an_a_only_clip` |
+| **The production summary survives the call** (added at implement time, §12) | `run_gap_listen` returns the `PatchAudioResult`; assert it is not `preview` and records the patch | The verdicts behind the clips being discarded — clips without reasons | `the_run_returns_the_production_summary_for_reporting` |
+| **Empty plan still returns a reason per gap** (added at implement time, §12) | Unmapped-only fixture: the short-circuit returns a whole-report table of `NotPlanned` | The short-circuit printing a run that looks like it had no gaps | `an_empty_plan_still_returns_a_reason_per_gap` |
+| **No-op splice is detectable** (added at implement time, §12.1) | `window_digest` unit tests: one changed sample, prefix vs. whole, `-0.0` vs `0.0`. The healthy path is covered by the sample-alignment test above; the firing path is not exercised end-to-end | A `Patched` gap whose "after" clip is the "before" clip, read as "the repair sounds bad" | `window_digest_detects_a_single_changed_sample`, `window_digest_separates_a_window_from_its_prefix`, `window_digest_is_bitwise_not_numeric` (`gap_listen::export`) |
+| **A gate-refused gap gets both surround clips and no patched clip** (added at implement time, §12.2) | Donor at a different frequency + `disable_structure_trust`, asserting `Skipped` plus `_a_surround` / `_b_surround` present and `_a_patched` absent. **`#[ignore]`d** — see §12.2 | Synthesizing a patched clip from the oracle when production produced no patch; dropping the donor clip a refusal can only be judged against | `a_gate_refused_gap_gets_both_surround_clips_and_no_patched_clip` (ignored; run with `-- --ignored`) |
+| **A layout-mismatched pair refuses the whole run** (added at implement time, §10.1) | A stereo / B mono: assert the run errors rather than emitting unnamed clips | Clips that cannot be joined back to any fingerprint | `a_layout_mismatched_pair_refuses_the_whole_run` |
+| **An unbounded run warns before it decodes** (added at implement time, item 7) | Projection unit tests: three padded clips per selected gap, unknown indices ignored, degenerate gaps floored at their padding, threshold in band | A bare `--gap-listen` on a big corpus quietly writing gigabytes of WAV, discovered after the decode | `projection_counts_three_padded_clips_per_selected_gap`, `projection_ignores_indices_with_no_gap`, `projection_floors_degenerate_gaps_at_their_padding`, `warn_threshold_is_in_the_intended_band` (`gap_listen`) |
+| **`--gap-listen` is wired through `composition.rs`** (added at implement time, item 14) | Real binary on a chirp pair with A muted 30–60 s: all three clips written to the named dir, every stem joins a corpus JSON, and the gap table reports **`1 repaired`** | The dispatch never being reached, or the returned `PatchAudioResult` being dropped instead of folded into `RepairRunOutcome.patch_result` — both invisible to tests that call `run_gap_listen` directly | `gap_listen_is_wired_through_composition_and_reports_its_verdicts` (`cli_gap_listen`) |
+| **Listen selector is `--fingerprint-gap`** (added at implement time, §4) | Pre-scan validation: `--only-gaps` / `--skip-gaps` rejected (flag *and* TOML key), `--fingerprint-gap 3,7` accepted and converted to an `Only` selection | The two-list drift, and paying a scan to learn about a flag conflict | `gap_listen_rejects_a_second_gap_selector_before_the_scan`, `gap_listen_accepts_fingerprint_gap_and_it_bounds_the_plan` (`infrastructure::cli`) |
+
+Integration tests live in `crates\clip-sync-repair\tests\gap_listen_integration.rs`
+(`#![cfg(feature = "calibration")]`); the CLI-level wiring test in
+`crates\clip-sync-repair\tests\cli_gap_listen.rs`; the window-slicing unit tests sit next to the code
+in `application\gap_listen\export.rs`, and the flag-validation tests in
+`infrastructure\cli\mod.rs::cli_override_tests`.
+
+**Considered and declined: a one-decode assertion at the CLI level** (item 15). `--gap-listen`
+decoding the pair exactly once is already pinned by `gap_listen_decodes_the_pair_exactly_once`,
+which counts `open` calls on a test `MediaReader`. Across a process boundary there is no counter to
+read: the only proxies are wall-clock or log-scraping, and both would fail for reasons unrelated to
+a second decode. A flaky guard on a property already covered exactly is worse than no second guard.
+
+---
+
+## 12. Reporting the production verdicts (added 2026-08-02)
+
+The clips say *whether* a gap was patched. They cannot say **why not** — and "why not" is the whole
+question the margin-band experiment is asking. `run_gap_listen` therefore returns the production
+`PatchAudioResult`, and `run_inner` folds it into `RepairRunOutcome.patch_result` before
+`print_repair_outcome`.
+
+- **Nothing is overwritten.** A listen run takes `run_repair`'s `PendingAfterScan::None` arm and
+  never decodes, so that slot is `Ok(None)`.
+- **No new rendering.** The listen run gets the ordinary gap table, identical in shape to
+  `--repair-preview`'s, and `--format json` for free.
+- **No false output claim.** `output_written` downstream is derived from
+  `config.repair.output.{wav_path,video_path}`, both `None` on a listen run because `--wav` / `--mux`
+  are rejected.
+- **The empty-plan short-circuit returns a summary too**, built by the same
+  `empty_plan_write_result` the executor's own empty-plan path uses, so skipping the executor cannot
+  make the table disagree with a full run's.
+
+### 12.1 No-op-splice detection (item 2)
+
+A gap can report `Patched` and still have had **nothing spliced into it**. `splice_into_a`
+early-returns on an out-of-range or inverted destination, or when the fill is shorter than the gap
+(`region.rs:2287–2335`), but the `Patched` verdict is decided *upstream* of it. The failure is
+silent, and the `…_a_patched.wav` it produces is byte-identical to `…_a_surround.wav` — the "after"
+clip *is* the "before" clip. For a feature whose entire purpose is "listen before believing", that
+is the worst possible failure: you hear an unrepaired gap and conclude the repair sounds bad.
+
+**This is a pre-existing engine footgun, uncovered by this work, not introduced by it.** Fixing the
+verdict itself is out of scope here (it would change production patch reporting); `--gap-listen`
+detects the symptom instead.
+
+- The pre-splice A window's `window_digest` (64-bit, over `f32::to_bits`, length folded in) is held
+  on `PendingWindow` and compared to the patched window's. A digest rather than the samples because
+  the splice consumes the decode and mutates A in place; holding every pre-window would cost
+  megabytes per gap for a comparison that needs 8 bytes.
+- On a match: an `eprintln!` **warning** naming the gap and the file, plus a count in the closing
+  summary line. `eprintln!` and not `progress.phase` because phase output is suppressible
+  (`StderrProgressReporter::new(config.logging.progress)`) and this one says the engine's own verdict
+  disagrees with what it wrote — same precedent as the `--mux` warning (`composition.rs:80`).
+- The file is **still written**. The identical file is the evidence.
+
+Coverage is honest about its limits: `window_digest`'s three unit tests cover the detection basis
+(single changed sample, prefix vs. whole, bitwise not numeric), and
+`pre_and_patched_windows_are_sample_aligned_and_differ_only_inside_the_gap` proves the healthy path
+does not trip it. The firing path itself is not exercised end-to-end — forcing a real no-op splice
+needs an engine-level fault injection that does not exist yet.
+
+### 12.2 A gate-refused gap costs minutes of oracle (measured 2026-08-02)
+
+The gate-refusal test (item 12) took **~350 s** and was `#[ignore]`d. The reason is worth recording,
+because it is a property of `--gap-listen` on real media, not a fixture artifact.
+
+Forcing the refusal needs `PatchTestOptions { disable_structure_trust: true }`, not just a bad
+donor: with structure trust on, `structure_trusted: true` short-circuits the waveform check and the
+engine reports `pre/post_correlation: 1.0` **without consulting the waveform at all**. A pure-noise
+donor still came back `Patched`. Same lever as
+`patch_audio_integration::patch_audio_skips_when_structure_trust_disabled_and_waveform_disagrees`.
+
+`CLIP_SYNC_SPAN_TIMING` breakdown of the 350 s:
+
+```text
+anchor_matchability   time.busy=42.0s  x5 brackets   <- fingerprint dump oracle
+  local_anchor_xcorr  time.busy=21.9s
+  local_anchor_xcorr  time.busy=22.0s
+patch_audio           time.busy=654ms                <- the refusal being asserted
+  characterize:char_gate_search  time.busy=128ms
+  patch_gap  outcome="skipped" skip_reason="CorrelationBelowThreshold {
+      pre_correlation: 2.56e-5, post_correlation: -1.22e-5, min_correlation: 0.5 }"
+```
+
+**The gate refuses in 0.65 s.** Everything else is the per-bracket oracle in the *fingerprint dump*
+that a listen run does first.
+
+**This is a dump cost, not a refusal cost, and not a `--gap-listen` cost.** The per-bracket loop
+(`measure.rs:1680`) is gated on `tier == DetailTier::Full` and runs over every feasible bracket
+**unconditionally** — no part of it is triggered by the gate refusing. Consequences:
+
+- A plain **`--gap-fingerprints`** run pays exactly the same thing; `--gap-listen` inherits it only
+  because it always runs the dump first. Same result as the 8g.5 deferral (dump cost = per-bracket
+  oracle, ~82% of wall clock), reached without any listen involvement.
+- A plain **production repair** does not: it evaluates the gate once per gap, not once per bracket.
+  Caveat — `anchor_matchability` lives in the shared seam gate behind `if anchor_seam_bracket`
+  (`patch_region.rs:1642`), so production can pay it once per gate evaluation when anchor-seam
+  bracketing is active. It was inactive on this run.
+
+What the non-matching donor changes is the **per-bracket** cost, not whether the loop runs: A is
+identical in the fast matching-donor tests, so the bracket set is the same and the whole difference
+is inside the search — a quick lock against a matching donor, an exhaustive scan against a
+mismatched one.
+
+Two hypotheses were measured and **both refuted**:
+
+- *Bounding the fill search* (`fill_border_search_secs` 30 → 3.5, gap-end extension off): 344 s → 334 s.
+- *Shrinking the timeline* (20 s → 7 s): 334 s → 354 s. `local_anchor_xcorr` stays ~20 s per call at
+  both lengths, so the cost is not timeline-bounded.
+
+Consequence for the experiment: on real media, **every gap the gate refuses adds minutes of anchor
+oracle to a listen run** — and refused gaps are exactly the ones the margin-band experiment selects.
+Budget for it, or find a way to cheapen the dump's oracle on a non-matching donor. This is the same
+per-bracket oracle recorded as ~82% of dump wall-clock in the 8g.5 deferral, reached here by a
+different route. Not addressed in this plan.
+
+Tiering: `#[ignore]` in place rather than a `validation-tests` / `diagnostic-tests` target. Those
+tiers are for real-codec calibration sweeps and human-review dumps respectively; this is an ordinary
+contract test that happens to drag an expensive oracle behind it. The cheap half of its contract
+("no patched clip when there is no patch") stays in the default run via
+`unplanned_gap_still_gets_an_a_only_clip`; only the gate-refusal route is ignored.
+
+Considered and **not** adopted: writing `patch_summary.json` into the WAV directory. `PatchSummary`
+is `Serialize` and licensing-safe (timestamps only, no paths), and it would make the listen dir
+self-describing. But `--format json` already covers the machine-readable need; revisit only if the
+WAV directory needs to travel separately from the console log.
 
 Media hygiene applies to fixtures too: use synthetic/committed fixtures, not corpus media.

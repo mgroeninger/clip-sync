@@ -30,14 +30,25 @@ pub struct Args {
     #[arg(long, value_name = "DIR")]
     pub gap_fingerprints: Option<PathBuf>,
 
-    /// Gap number (repeatable), 1-based as shown in the repair gap table's `#` column. When given,
-    /// characterize ONLY these gaps; omit to characterize ALL gaps. Each characterized gap gets full
-    /// detail (per-bracket scores + lag). Only meaningful with --gap-fingerprints. Note the emitted
-    /// corpus stays 0-based: `--fingerprint-gap 3` writes `..._g002_....json`; locate files by the
-    /// A-timeline timestamp in the name rather than by counting.
+    /// Gap number (repeatable, or comma-separated), 1-based as shown in the repair gap table's `#`
+    /// column. When given, characterize ONLY these gaps; omit to characterize ALL gaps. Each
+    /// characterized gap gets full detail (per-bracket scores + lag). Only meaningful with
+    /// --gap-fingerprints. With --gap-listen it additionally bounds the fill plan, so the production
+    /// patch only characterizes the gaps you asked to hear. Note the emitted corpus stays 0-based:
+    /// `--fingerprint-gap 3` writes `..._g002_....json`; locate files by the A-timeline timestamp in
+    /// the name rather than by counting.
     #[cfg(feature = "calibration")]
-    #[arg(long, value_name = "N")]
+    #[arg(long, value_name = "N", value_delimiter = ',')]
     pub fingerprint_gap: Vec<usize>,
+
+    /// Diagnostic: also write listenable WAVs for each characterized gap — the gap + context from A,
+    /// the mapped donor span from B, and (when the production gate patches) the same A window after
+    /// the splice. Requires --gap-fingerprints; select gaps with --fingerprint-gap. With no value,
+    /// WAVs go beside the fingerprint corpus. Rejected with --wav / --mux / --repair-preview, and
+    /// with --only-gaps / --skip-gaps (one selector drives both the corpus and the patch plan).
+    #[cfg(feature = "calibration")]
+    #[arg(long, value_name = "DIR", num_args = 0..=1)]
+    pub gap_listen: Option<Option<PathBuf>>,
 
     /// Include Tier-3 diagnostic measurements in `--gap-fingerprints` output (`seam_probe`,
     /// `wide_envelope`, diagnostic `lag`, `b_levels`). Slower; needed for analyzer seam-probe reports

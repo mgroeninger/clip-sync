@@ -49,6 +49,93 @@ enum PatchRunKind {
 /// How far gap edges may be adjusted against A's decoded PCM (seconds).
 const GAP_EDGE_REFINE_SECS: f64 = 0.75;
 
+/// The `patch_audio` tracing span. A free fn so the calibration listen path raises an identically
+/// shaped span over its own patch step; in [`PatchAudio::run`] the caller enters it *before* the
+/// decode, so `decode_ab`'s spans stay nested where the repair profile expects them.
+pub(crate) fn patch_audio_span(
+    plan: &crate::domain::gap_fill::GapFillPlan,
+    request: &PatchAudioRequest,
+    preview: bool,
+) -> tracing::Span {
+    tracing::info_span!(
+        "patch_audio",
+        region_count = plan.regions.len(),
+        fill_mode = ?request.fill_mode,
+        fill_offset_mode = ?request.fill_offset_mode,
+        preview,
+    )
+}
+
+/// Progress/verbose notes emitted once per patch run, before any region work.
+pub(crate) fn log_patch_preamble(
+    progress: &dyn ProgressReporter,
+    request: &PatchAudioRequest,
+    preview: bool,
+) {
+    if preview {
+        progress.phase("Repair preview: characterizing gaps (no splice / write; pass-1 only)...");
+    }
+
+    progress.phase_verbose(&format_repair_profile_verbose(
+        request.profile,
+        request.fit_boundary_search,
+        request.fill_border_search_secs,
+        request.gap_end_extend_on_post_seam_fail,
+        request.gap_start_extend_on_pre_seam_fail,
+    ));
+    let patch_config_view = repair_patch_config_view(request);
+    for note in inactive_repair_flag_notes(patch_config_view) {
+        progress.phase_verbose(&format!("repair note: {note}"));
+    }
+}
+
+/// The result an empty plan produces: every gap `NotPlanned`, no PCM.
+///
+/// Shared by [`PatchAudio::run`]'s pre-decode early return and [`PatchAudio::execute_with_decoded`]
+/// so the two entries cannot disagree about what "nothing to patch" looks like. Without it the
+/// decoded entry would fall through to the region loop and hand back `pcm: Some(unpatched_a)` where
+/// `run` returns `None` — a caller could then export an "after" clip identical to its "before".
+/// [`empty_plan_result`] for callers outside this module, which run patches, never previews.
+///
+/// Exists so `PatchRunKind` can stay private: the distinction is internal to the patch orchestrator,
+/// and an external caller that skipped the executor still ran a write-kind pass — it just had
+/// nothing to write.
+///
+/// `--gap-listen` is its only caller, hence the feature gate.
+#[cfg(feature = "calibration")]
+pub(crate) fn empty_plan_write_result(
+    request: &PatchAudioRequest,
+    plan: &crate::domain::gap_fill::GapFillPlan,
+) -> PatchAudioResult {
+    empty_plan_result(request, plan, PatchRunKind::Write)
+}
+
+fn empty_plan_result(
+    request: &PatchAudioRequest,
+    plan: &crate::domain::gap_fill::GapFillPlan,
+    kind: PatchRunKind,
+) -> PatchAudioResult {
+    let summary = PatchSummary::from_outcomes(outcomes_in_report_order(
+        &request.report.gaps,
+        plan,
+        &[],
+        request.fill_mode,
+        FillTierThresholds {
+            min_fill_correlation: request.min_fill_correlation,
+            fill_marginal_margin: request.fill_marginal_margin,
+            fill_absolute_floor: request.fill_absolute_floor,
+        },
+    ));
+    PatchAudioResult {
+        pcm: None,
+        summary,
+        preview: kind == PatchRunKind::Preview,
+        source_audio_bitrate_a_bps: None,
+        source_audio_bitrate_b_bps: None,
+        pcm_container_skew: None,
+    }
+}
+
 pub struct PatchAudio<'r, MR: MediaReader> {
     media_reader: &'r MR,
     progress: &'r dyn ProgressReporter,
@@ -80,6 +167,27 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         self.run(request, crossfade_ms, PatchRunKind::Preview)
     }
 
+    /// Full production patch (characterize → execute → anchored retry → splice) driven from a
+    /// decode the caller already owns — the `--gap-listen` entry point.
+    ///
+    /// Deliberately offers no preview mode: [`PatchRunKind::Preview`] returns before execute and so
+    /// can never produce patched PCM, which is the whole point of the listen path.
+    ///
+    /// An empty plan short-circuits to the same result [`Self::run`] returns, rather than falling
+    /// through to a region loop with nothing in it — see [`empty_plan_result`].
+    #[cfg(feature = "calibration")]
+    pub(crate) fn execute_with_decoded(
+        &self,
+        request: PatchAudioRequest,
+        plan: crate::domain::gap_fill::GapFillPlan,
+        decoded: DecodedAb,
+    ) -> Result<PatchAudioResult, RepairError> {
+        if plan.regions.is_empty() {
+            return Ok(empty_plan_result(&request, &plan, PatchRunKind::Write));
+        }
+        self.run_with_decoded(request, plan, PatchRunKind::Write, decoded)
+    }
+
     fn run(
         &self,
         request: PatchAudioRequest,
@@ -98,54 +206,34 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         if plan.regions.is_empty() {
             self.progress
                 .phase("No gaps planned for patch; skipping audio decode.");
-            let summary = PatchSummary::from_outcomes(outcomes_in_report_order(
-                &request.report.gaps,
-                &plan,
-                &[],
-                request.fill_mode,
-                FillTierThresholds {
-                    min_fill_correlation: request.min_fill_correlation,
-                    fill_marginal_margin: request.fill_marginal_margin,
-                    fill_absolute_floor: request.fill_absolute_floor,
-                },
-            ));
-            return Ok(PatchAudioResult {
-                pcm: None,
-                summary,
-                preview: kind == PatchRunKind::Preview,
-                source_audio_bitrate_a_bps: None,
-                source_audio_bitrate_b_bps: None,
-                pcm_container_skew: None,
-            });
+            return Ok(empty_plan_result(&request, &plan, kind));
         }
 
-        let _patch_audio_span = tracing::info_span!(
-            "patch_audio",
-            region_count = plan.regions.len(),
-            fill_mode = ?request.fill_mode,
-            fill_offset_mode = ?request.fill_offset_mode,
-            preview = kind == PatchRunKind::Preview,
-        )
-        .entered();
+        let _patch_audio_span =
+            patch_audio_span(&plan, &request, kind == PatchRunKind::Preview).entered();
+        log_patch_preamble(self.progress, &request, kind == PatchRunKind::Preview);
 
-        if kind == PatchRunKind::Preview {
-            self.progress
-                .phase("Repair preview: characterizing gaps (no splice / write; pass-1 only)...");
-        }
+        // Steps 2–6: decode A + B (shared with the gap-fingerprint diagnostic). This is the only
+        // `self.media_reader` use in the run; everything below it is `run_with_decoded`, which the
+        // calibration listen path calls with a decode it already owns.
+        let decoded = decode_ab(self.media_reader, &request.report, self.progress)?;
+        self.run_with_decoded(request, plan, kind, decoded)
+    }
 
-        self.progress.phase_verbose(&format_repair_profile_verbose(
-            request.profile,
-            request.fit_boundary_search,
-            request.fill_border_search_secs,
-            request.gap_end_extend_on_post_seam_fail,
-            request.gap_start_extend_on_pre_seam_fail,
-        ));
-        let patch_config_view = repair_patch_config_view(&request);
-        for note in inactive_repair_flag_notes(patch_config_view) {
-            self.progress.phase_verbose(&format!("repair note: {note}"));
-        }
-
-        // Steps 2–6: decode A + B (shared with the gap-fingerprint diagnostic).
+    /// Everything after the decode: characterize → (preview stop) → execute → anchored retry →
+    /// splice. Split out of [`Self::run`] so a caller that already holds a [`DecodedAb`] can drive
+    /// the **production** gate without decoding twice (`--gap-listen`).
+    ///
+    /// Takes `plan` rather than rebuilding it: two `build_gap_fill_plan` calls with drifting
+    /// `crossfade_ms` / `skip_equivalent_gaps` / selection would patch a different set of regions
+    /// than the caller exported windows for.
+    fn run_with_decoded(
+        &self,
+        request: PatchAudioRequest,
+        plan: crate::domain::gap_fill::GapFillPlan,
+        kind: PatchRunKind,
+        decoded: DecodedAb,
+    ) -> Result<PatchAudioResult, RepairError> {
         let DecodedAb {
             mut a_pcm,
             b_samples_full,
@@ -153,7 +241,11 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             source_audio_bitrate_b_bps,
             container_duration_a_secs,
             sources: _, // fingerprint-dump provenance only; the repair path reads the bitrates above
-        } = decode_ab(self.media_reader, &request.report, self.progress)?;
+            // The fill path strides both sides by `a_pcm.channels` below, which is sound only
+            // because production fill already refuses mismatched layouts upstream. `--gap-listen`
+            // exports B on its own and so needs B's real count; this path does not.
+            b_channels: _,
+        } = decoded;
 
         // Step 7: Compute global A RMS as normalization fallback.
         let global_a_rms = policies::rms_interleaved(&a_pcm.samples);

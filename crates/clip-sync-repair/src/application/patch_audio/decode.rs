@@ -47,6 +47,17 @@ pub(crate) struct DecodedAb {
     pub a_pcm: MultiChannelPcm,
     /// B resampled to A's rate (interleaved).
     pub b_samples_full: Vec<f32>,
+    /// The channel count [`Self::b_samples_full`] is **actually** interleaved at.
+    ///
+    /// Taken from the decoded `MultiChannelPcm`, not from `sources.b.native_channels`: the latter is
+    /// container/probe metadata (`SourceDescriptor::of` reads `track.channels`), and any caller that
+    /// strides the buffer by it is trusting the probe to agree with the decoder. When they disagree
+    /// the result is a right-length, wrong-audio read — no panic, no error, just scrambled
+    /// interleaving. Resampling preserves channel count, so this is correct on both branches below.
+    ///
+    /// Read only by the `calibration`-gated `--gap-listen` export, hence the gate; see `sources`.
+    #[cfg_attr(not(feature = "calibration"), allow(dead_code))]
+    pub b_channels: u16,
     pub source_audio_bitrate_a_bps: Option<u32>,
     pub source_audio_bitrate_b_bps: Option<u32>,
     /// A track's container-reported duration (for PCM-vs-container skew).
@@ -123,6 +134,9 @@ pub(crate) fn decode_ab<MR: MediaReader>(
             .map_err(RepairError::Media)?
     };
     let source_audio_bitrate_b_bps = b_pcm_full.measured_bitrate_bps();
+    // The decoder's own count, captured before the branch below moves `b_pcm_full.samples`. See
+    // `DecodedAb::b_channels` for why this is not read back off `sources.b.native_channels`.
+    let b_channels = b_pcm_full.channels;
     // Capture both descriptors before the resample branch below moves `b_pcm_full.samples`.
     let sources = AbSources {
         a: SourceDescriptor::of(&track_a, source_audio_bitrate_a_bps),
@@ -148,6 +162,7 @@ pub(crate) fn decode_ab<MR: MediaReader>(
     Ok(DecodedAb {
         a_pcm,
         b_samples_full,
+        b_channels,
         source_audio_bitrate_a_bps,
         source_audio_bitrate_b_bps,
         container_duration_a_secs: duration_a.as_secs_f64(),

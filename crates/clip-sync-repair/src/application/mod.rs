@@ -3,6 +3,8 @@ pub mod error;
 pub mod fit_routing;
 pub mod gap_equivalence;
 pub mod gap_fingerprint;
+#[cfg(feature = "calibration")]
+pub mod gap_listen;
 #[doc(hidden)]
 pub mod gate_oracle;
 pub mod mux_bitrate;

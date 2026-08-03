@@ -55,6 +55,9 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
     validate_fingerprint_flags(&args).map_err(RepairError::Config)?;
     cli::apply_cli_overrides(&mut config, &args);
     validate_config(&config)?;
+    // Post-override so a TOML `only_gaps` is caught alongside the flag, but still before the scan.
+    #[cfg(feature = "calibration")]
+    cli::validate_gap_listen_selector(&args, &config).map_err(RepairError::Config)?;
 
     clip_sync::init_tracing(&config.logging).map_err(RepairError::Align)?;
 
@@ -66,15 +69,27 @@ fn run_inner(args: Args) -> Result<(), RepairError> {
     ));
 
     let input = repair_run_input(&config, args.video_a.clone(), args.video_b.clone())?;
-    let outcome = run_repair_with_defaults(input, &progress)?;
+    #[cfg_attr(not(feature = "calibration"), allow(unused_mut))]
+    let mut outcome = run_repair_with_defaults(input, &progress)?;
 
     #[cfg(feature = "calibration")]
     if let Some(dir) = args.gap_fingerprints.clone() {
         // Repair takes priority: a real repair (--mux) wins over the fingerprint diagnostic.
+        // `--gap-listen` never reaches this branch with --mux set; it errors in validation instead,
+        // because silently dropping an explicit diagnostic request wastes a multi-hour run.
         if args.mux.is_some() {
             eprintln!(
                 "warning: --mux takes priority; ignoring --gap-fingerprints / --fingerprint-gap"
             );
+        } else if args.gap_listen.is_some() {
+            let patched = gap_listen(&args, &config, &outcome.report, &progress, &dir)?;
+            // A listen run never decodes inside `run_repair` (the `PendingAfterScan::None` arm), so
+            // this slot is `Ok(None)` and nothing real is overwritten. Filling it lets the ordinary
+            // gap table report the production verdicts behind the clips — which gap the gate
+            // patched and, for the rest, the reason it refused — instead of discarding them.
+            // `output_written` stays `None` downstream because no `--wav`/`--mux` path is set (both
+            // are rejected on a listen run), so this cannot claim a file that was never written.
+            outcome.patch_result = Ok(Some(patched));
         } else {
             dump_gap_fingerprints(&args, &config, &outcome.report, &progress, &dir)?;
         }
@@ -111,9 +126,80 @@ fn resolve_fingerprint_gap_select(
         .collect()
 }
 
+/// `--gap-listen`: the fingerprint dump plus listenable A/B/patched WAVs, from one decode.
+///
+/// Deliberately **not** routed through `run_repair`. The dump has always run here, after the scan,
+/// owning its own decode — and with no output flags `run_repair` takes the `PendingAfterScan::None`
+/// arm and never decodes at all, so this is already the only decode in the run. A fourth
+/// `PendingAfterScan` arm would buy nothing and would push calibration-only config through a
+/// non-calibration orchestration module.
+///
+/// Gap selection comes from `--fingerprint-gap`, the dump's own selector — listen is a mode of the
+/// dump, so it has no business taking a second one. The numbers are converted to `--only-gaps`
+/// tokens (both are 1-based) and resolved by the same `resolve_gap_selection` the ordinary patch
+/// path uses, down to identical out-of-range wording; the resolved set is then fanned out inside
+/// `run_gap_listen` to both the corpus and the fill plan.
+///
+/// **This is what bounds the patch.** `--fingerprint-gap` filters only the corpus on a plain dump
+/// run, but here it must also bound `build_gap_fill_plan` — otherwise listening to three gaps would
+/// characterize every gap in the pair, and gate search is ~93% of wall clock.
+///
+/// `--only-gaps` / `--skip-gaps` are rejected alongside it, in `cli::validate_gap_listen_selector`,
+/// which runs **before** the scan. Duplicating that here would only re-report an impossible state
+/// after the expensive part is paid.
+#[cfg(feature = "calibration")]
+fn gap_listen(
+    args: &Args,
+    config: &RepairAppConfig,
+    report: &GapReport,
+    progress: &dyn ProgressReporter,
+    fingerprint_dir: &std::path::Path,
+) -> Result<crate::application::patch_audio::PatchAudioResult, RepairError> {
+    // `--gap-listen DIR` → DIR; bare `--gap-listen` → beside the fingerprint corpus.
+    let wav_dir = match args.gap_listen.as_ref().and_then(|d| d.clone()) {
+        Some(dir) => dir,
+        None => {
+            progress.phase(&format!(
+                "gap-listen: writing WAVs to {}",
+                fingerprint_dir.display()
+            ));
+            fingerprint_dir.to_path_buf()
+        }
+    };
+
+    let mut settings = config.repair.patch_settings();
+    settings.gap_selection = if args.fingerprint_gap.is_empty() {
+        crate::domain::gap_fill::GapSelectionMode::All
+    } else {
+        crate::domain::gap_fill::GapSelectionMode::Only(
+            args.fingerprint_gap.iter().map(usize::to_string).collect(),
+        )
+    };
+    let patch_request = settings
+        .into_request(report.clone())
+        .map_err(RepairError::GapSelection)?;
+
+    crate::application::gap_listen::run_gap_listen(
+        &SymphoniaMediaReader,
+        &WavPatchedAudioWriter,
+        progress,
+        patch_request,
+        crate::application::gap_listen::GapListenRequest {
+            fingerprint_dir: fingerprint_dir.to_path_buf(),
+            wav_dir,
+            fingerprint_diagnostics: config.repair.fingerprint_diagnostics,
+            crossfade_ms: config.repair.crossfade_ms,
+        },
+    )
+}
+
 /// Diagnostic: decode A/B (shared `decode_ab`), characterize each gap, and write a licensing-safe
-/// corpus directory (`corpus.json` + per-gap files + `manifest.json`). Gaps named via
-/// `--fingerprint-gap` get full detail (per-bracket gate `failure_stage` + lag); the rest summary.
+/// corpus directory (`corpus.json` + per-gap files + `manifest.json`).
+///
+/// `--fingerprint-gap` **filters the corpus** (empty ⇒ all gaps); it does not set a detail tier.
+/// Every gap that reaches the rebuild becomes `Full` — only gaps that bail early (no `mapped_b_span`)
+/// stay `Summary` — and the Tier-3 extras are gated by `--fingerprint-diagnostics`. The three axes
+/// are independent.
 #[cfg(feature = "calibration")]
 fn dump_gap_fingerprints(
     args: &Args,

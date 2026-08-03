@@ -267,11 +267,15 @@ pub(crate) fn validate_repair_profile_flags(args: &Args) -> Result<(), String> {
     Ok(())
 }
 
-/// `--fingerprint-gap` and `--fingerprint-diagnostics` only apply when dumping a corpus.
+/// `--fingerprint-gap`, `--fingerprint-diagnostics` and `--gap-listen` only apply when dumping a
+/// corpus; `--gap-listen` additionally rejects the run modes that cannot produce a patched WAV.
 /// The flags exist only under the `calibration` feature, so this is a no-op otherwise.
 pub(crate) fn validate_fingerprint_flags(args: &Args) -> Result<(), String> {
     #[cfg(feature = "calibration")]
     {
+        if args.gap_listen.is_some() {
+            validate_gap_listen_run_mode(args)?;
+        }
         if args.gap_fingerprints.is_some() {
             return Ok(());
         }
@@ -281,10 +285,74 @@ pub(crate) fn validate_fingerprint_flags(args: &Args) -> Result<(), String> {
         if args.fingerprint_diagnostics {
             return Err("--fingerprint-diagnostics requires --gap-fingerprints DIR".into());
         }
+        if args.gap_listen.is_some() {
+            return Err("--gap-listen requires --gap-fingerprints DIR".into());
+        }
     }
     #[cfg(not(feature = "calibration"))]
     let _ = args;
     Ok(())
+}
+
+/// Run modes `--gap-listen` refuses, each because it cannot deliver the patched WAV that is the
+/// point of the flag. Every rejection is explicit: silently degrading a multi-hour diagnostic run
+/// to two-thirds of its output is the misleading-diagnostics failure this feature exists to avoid,
+/// and is why this deliberately diverges from the warn-and-ignore `--mux` / `--gap-fingerprints`
+/// precedent.
+///
+/// **`dry_run` is not in this list.** It defaults to `true` and is cleared only by an output flag,
+/// so a scan-only run *is* the canonical listen invocation — rejecting it would reject everything.
+#[cfg(feature = "calibration")]
+fn validate_gap_listen_run_mode(args: &Args) -> Result<(), String> {
+    if args.repair_preview {
+        return Err("--gap-listen cannot be used with --repair-preview: preview stops before \
+                    execute, so no patched audio exists to export"
+            .into());
+    }
+    if args.wav.is_some() {
+        return Err("--gap-listen cannot be used with --wav: run the listen pass for gap clips, \
+                    then a separate --wav pass for the full patched timeline"
+            .into());
+    }
+    if args.mux.is_some() {
+        return Err("--gap-listen cannot be used with --mux".into());
+    }
+    Ok(())
+}
+
+/// `--gap-listen` takes its gap set from `--fingerprint-gap`, so a second selector must be refused.
+///
+/// Listen is a *mode of the fingerprint dump* — it cannot run without `--gap-fingerprints`, and the
+/// WAV stems are the corpus entry stems — so the dump's selector is the only one that makes sense.
+/// `--only-gaps` / `--skip-gaps` would leave the corpus and the fill plan covering different gap
+/// sets, which is the two-list drift this design exists to prevent.
+///
+/// Separate from [`validate_gap_listen_run_mode`] because the reason is different in kind: those
+/// flags *cannot* produce a patched WAV, whereas these merely compete for the same job.
+///
+/// Takes `config` rather than just `args` so a `only_gaps`/`skip_gaps` key in the TOML is caught
+/// too — [`apply_cli_overrides`] has already folded the CLI flags in by the time this runs. Still
+/// **pre-scan**: on real media the scan is the expensive part, and a conflict this cheap to detect
+/// must never cost one.
+#[cfg(feature = "calibration")]
+pub(crate) fn validate_gap_listen_selector(
+    args: &Args,
+    config: &RepairAppConfig,
+) -> Result<(), String> {
+    if args.gap_listen.is_none() {
+        return Ok(());
+    }
+    let second = if config.repair.only_gaps.is_some() {
+        "only_gaps / --only-gaps"
+    } else if config.repair.skip_gaps.is_some() {
+        "skip_gaps / --skip-gaps"
+    } else {
+        return Ok(());
+    };
+    Err(format!(
+        "--gap-listen selects gaps with --fingerprint-gap, not {second} (one selector drives both \
+         the corpus and the patch plan)"
+    ))
 }
 
 #[cfg(test)]
@@ -604,6 +672,133 @@ mod cli_override_tests {
             "--fingerprint-diagnostics",
         ]);
         validate_fingerprint_flags(&args).expect("valid fingerprint flag combo");
+    }
+
+    #[cfg(feature = "calibration")]
+    #[test]
+    fn gap_listen_without_dump_dir_is_rejected() {
+        use clap::Parser;
+
+        let args = Args::parse_from(["clip-sync-repair", "a.wav", "b.wav", "--gap-listen"]);
+        let err = validate_fingerprint_flags(&args).unwrap_err();
+        assert!(err.contains("--gap-fingerprints"), "got {err}");
+    }
+
+    /// Each run mode that cannot produce the patched WAV must be refused by name, and the message
+    /// must say which flag collided — a bare "invalid combination" would send the user back to the
+    /// docs after they have already paid for a scan.
+    #[cfg(feature = "calibration")]
+    #[test]
+    fn gap_listen_rejects_run_modes_that_cannot_produce_a_patched_wav() {
+        use clap::Parser;
+
+        // `--mux` is declared unconditionally (the `ffmpeg-mux` feature gates muxing, not the flag),
+        // so all three are reachable in a default calibration build.
+        for flag in [
+            vec!["--repair-preview"],
+            vec!["--wav", "out.wav"],
+            vec!["--mux", "out.mkv"],
+        ] {
+            let mut argv = vec![
+                "clip-sync-repair",
+                "a.wav",
+                "b.wav",
+                "--gap-fingerprints",
+                "gap-files/out",
+                "--gap-listen",
+            ];
+            argv.extend_from_slice(&flag);
+            let args = Args::parse_from(argv);
+            let Err(err) = validate_fingerprint_flags(&args) else {
+                panic!("{flag:?} must be rejected alongside --gap-listen");
+            };
+            assert!(
+                err.contains("--gap-listen") && err.contains(flag[0]),
+                "message must name both flags, got {err}"
+            );
+        }
+    }
+
+    /// The second selector must be refused before the scan. Regression guard for the version that
+    /// only caught this in `composition::gap_listen`, i.e. after a full scan had been paid for.
+    /// Both polarities, and both the flag and the TOML key, since `apply_cli_overrides` has already
+    /// merged them by the time the check runs.
+    #[cfg(feature = "calibration")]
+    #[test]
+    fn gap_listen_rejects_a_second_gap_selector_before_the_scan() {
+        use clap::Parser;
+
+        for extra in [["--only-gaps", "3"], ["--skip-gaps", "3"]] {
+            let args = Args::parse_from([
+                "clip-sync-repair",
+                "a.wav",
+                "b.wav",
+                "--gap-fingerprints",
+                "gap-files/out",
+                "--gap-listen",
+                extra[0],
+                extra[1],
+            ]);
+            let mut config = RepairAppConfig::default();
+            apply_cli_overrides(&mut config, &args);
+            let err = validate_gap_listen_selector(&args, &config).unwrap_err();
+            assert!(
+                err.contains("--fingerprint-gap") && err.contains(extra[0]),
+                "message must name the rejected selector and the one to use instead, got {err}"
+            );
+        }
+    }
+
+    /// `--fingerprint-gap` is the selector `--gap-listen` *wants*, so it must survive the check that
+    /// used to reject it — and it must reach the fill plan as an `Only` selection, not just the
+    /// corpus filter it is on a plain dump run.
+    #[cfg(feature = "calibration")]
+    #[test]
+    fn gap_listen_accepts_fingerprint_gap_and_it_bounds_the_plan() {
+        use clap::Parser;
+
+        let args = Args::parse_from([
+            "clip-sync-repair",
+            "a.wav",
+            "b.wav",
+            "--gap-fingerprints",
+            "gap-files/out",
+            "--gap-listen",
+            "--fingerprint-gap",
+            "3,7",
+        ]);
+        assert_eq!(args.fingerprint_gap, vec![3, 7], "comma form must split");
+        let mut config = RepairAppConfig::default();
+        apply_cli_overrides(&mut config, &args);
+        assert!(validate_fingerprint_flags(&args).is_ok());
+        assert!(validate_gap_listen_selector(&args, &config).is_ok());
+        // The conversion `composition::gap_listen` performs: 1-based numbers → `--only-gaps` tokens.
+        assert_eq!(
+            crate::domain::gap_fill::GapSelectionMode::Only(
+                args.fingerprint_gap.iter().map(usize::to_string).collect()
+            ),
+            crate::domain::gap_fill::GapSelectionMode::Only(vec!["3".into(), "7".into()])
+        );
+    }
+
+    /// The canonical listen invocation — no output flags, so `dry_run` stays `true`. This is the
+    /// row the `--dry-run` rejection would have broken had it survived review.
+    #[cfg(feature = "calibration")]
+    #[test]
+    fn gap_listen_with_dump_dir_and_no_output_flags_is_accepted() {
+        use clap::Parser;
+
+        let args = Args::parse_from([
+            "clip-sync-repair",
+            "a.wav",
+            "b.wav",
+            "--gap-fingerprints",
+            "gap-files/out",
+            "--gap-listen",
+            "--only-gaps",
+            "3",
+        ]);
+        validate_fingerprint_flags(&args).expect("canonical listen invocation must be accepted");
     }
 
     #[test]

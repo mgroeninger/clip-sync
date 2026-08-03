@@ -83,14 +83,18 @@ try {
             Write-Host '>> skip cli_mux_integration (ffmpeg not on PATH)' -ForegroundColor DarkYellow
         }
 
-        # Needs its own invocation: `--gap-fingerprints` only exists under `calibration`, and the
-        # test file is `#![cfg(feature = "calibration")]`, so folding it into the batch above would
-        # build an empty binary and pass vacuously. ~55 s in debug (~2 s release) — kept in debug so
-        # the tier stays on one profile rather than paying for a whole optimized build.
+        # Needs its own invocation: `--gap-fingerprints` / `--gap-listen` only exist under
+        # `calibration`, and these files are `#![cfg(feature = "calibration")]`, so folding them into
+        # the batch above would build empty binaries and pass vacuously. ~55 s in debug (~2 s
+        # release) — kept in debug so the tier stays on one profile rather than paying for a whole
+        # optimized build. `gap_listen_integration`'s slow gate-refusal row is `#[ignore]`d (it pays
+        # the fingerprint anchor oracle, not the refusal) and runs in the diagnostic tier instead.
         Invoke-CargoTest @(
             '-p', 'clip-sync-repair',
             '--features', 'calibration',
-            '--test', 'cli_gap_fingerprint_provenance'
+            '--test', 'cli_gap_fingerprint_provenance',
+            '--test', 'gap_listen_integration',
+            '--test', 'cli_gap_listen'
         )
 
         Invoke-CargoTest @('-p', 'clip-sync-repair-harness', '--lib')
@@ -202,6 +206,17 @@ try {
             '--release',
             '--test', 'anchor_seam_oracle',
             'w5_anchor_rescue_pipeline',
+            '--', '--ignored'
+        )
+        # `--gap-listen` against a gate-refused gap (slow: ~350 s, of which ~99.8% is the Full-tier
+        # fingerprint per-bracket anchor oracle, not the refusal the test asserts — see
+        # docs/dev/TEMP-gap-listen-wav-plan.md §12.2). Release-only for the same reason as above.
+        Invoke-CargoTest @(
+            '-p', 'clip-sync-repair',
+            '--release',
+            '--features', 'calibration',
+            '--test', 'gap_listen_integration',
+            'a_gate_refused_gap',
             '--', '--ignored'
         )
         # Lib stragglers (golden generator; ffmpeg mux unit when feature enabled).

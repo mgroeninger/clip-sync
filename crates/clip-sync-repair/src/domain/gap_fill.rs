@@ -75,6 +75,18 @@ impl GapSelection {
         self.selected.contains(&gap_index)
     }
 
+    /// The selected gaps as 0-based report indices, **ascending**.
+    ///
+    /// Sorted rather than raw `HashSet` order because callers feed it to consumers that are keyed
+    /// on report order — the gap-fingerprint `select` list and `FillRegion::gap_index`. `--gap-listen`
+    /// resolves the selection once and derives both from this, so the corpus and the patch plan
+    /// cannot drift onto different gap sets.
+    pub fn selected_indices(&self) -> Vec<usize> {
+        let mut indices: Vec<usize> = self.selected.iter().copied().collect();
+        indices.sort_unstable();
+        indices
+    }
+
     /// True when a selection flag was in effect and did not name every gap.
     pub fn is_filtered(&self, gap_count: usize) -> bool {
         self.filter.is_some() && self.selected.len() != gap_count

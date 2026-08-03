@@ -2221,7 +2221,7 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
 /// layout because that is the layout everything was measured at. The split is deliberate: there is no
 /// common measurement here to describe B against, so B is described honestly against itself. Note the
 /// consequence — `b_source.id` digests B's own channel count, so a refused corpus and a normal one over
-/// the same media carry different `b_source.id`s. Harmless today (`gaps` is empty, so `entry_filename`
+/// the same media carry different `b_source.id`s. Harmless today (`gaps` is empty, so `entry_stem`
 /// never runs), but a `(a_id, b_id)` join across the two would not match. Both halves of the rule are
 /// asserted: `characterize_gaps_refuses_channel_layout_mismatch` and the from-decode threading test.
 fn refused_channel_mismatch_corpus(
@@ -2872,13 +2872,23 @@ fn entry_verdict(gap: &GapFingerprint) -> String {
         .unwrap_or_else(|| "na".to_string())
 }
 
-/// `<a8>_<b4>_t<hh-mm-ss>_g<idx>_<tier>_<verdict>.json` — non-leaking, sortable, classifiable.
+/// `<a8>_<b4>_t<hh-mm-ss>_g<idx>_<tier>_<verdict>` — non-leaking, sortable, classifiable.
+///
+/// **Extension-free on purpose.** This is the single naming authority for everything a gap emits:
+/// `write_corpus_dir` appends `.json`, and the `--gap-listen` export appends `_a_surround.wav` /
+/// `_b_surround.wav` / `_a_patched.wav`. That shared stem is the ears ↔ JSON join, so a WAV can
+/// always be traced back to the fingerprint that describes it. Baking `.json` in here (as this did
+/// before 2026-08-02) would force the exporter to reconstruct the format string and let the two
+/// namings drift apart silently.
+///
+/// Note the stem is a function of the **built** fingerprint (`tier`, `verdict`, refined start), not
+/// of the gap alone — so an exporter must look its gap up in the corpus by `index`.
 #[cfg(any(feature = "calibration", test))]
-fn entry_filename(source: &SourceMeta, gap: &GapFingerprint) -> String {
+pub(crate) fn entry_stem(source: &SourceMeta, gap: &GapFingerprint) -> String {
     let a8: String = source.a_source.id.chars().take(8).collect();
     let b4: String = source.b_source.id.chars().take(4).collect();
     format!(
-        "{a8}_{b4}_t{}_g{:03}_{}_{}.json",
+        "{a8}_{b4}_t{}_g{:03}_{}_{}",
         hms(gap.geometry.a_refined_start_secs),
         gap.index,
         detail_tier_str(gap.tier),
@@ -2925,7 +2935,7 @@ pub(crate) fn write_corpus_dir(
 
     let mut entries = Vec::with_capacity(corpus.gaps.len());
     for gap in &corpus.gaps {
-        let file = entry_filename(&corpus.source, gap);
+        let file = format!("{}.json", entry_stem(&corpus.source, gap));
         let single = GapCorpus {
             source: corpus.source.clone(),
             gaps: vec![gap.clone()],

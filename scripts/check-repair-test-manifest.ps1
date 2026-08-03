@@ -1,5 +1,13 @@
-# Verify clip-sync-repair integration test binaries match Cargo.toml [[test]] entries.
-# With autotests = false, a new tests/*.rs without [[test]] is silently ignored by cargo test.
+# Verify clip-sync-repair integration test binaries match Cargo.toml [[test]] entries, and that
+# every declared binary is actually run by some tier in test-tier.ps1.
+#
+# Two ways a test can exist and never run:
+#   1. With autotests = false, a tests/*.rs without [[test]] is silently ignored by cargo test.
+#   2. Every tier in test-tier.ps1 names its targets explicitly with `--test`, so a [[test]] entry
+#      no tier lists is built by nobody. This is the same failure one level up, and it is the one
+#      that actually bit: gap_listen_integration and cli_gap_listen were both declared and correct
+#      and ran in zero tiers.
+#
 # Run from repo root: .\scripts\check-repair-test-manifest.ps1
 
 Set-StrictMode -Version Latest
@@ -52,7 +60,64 @@ foreach ($path in $declaredPaths) {
     }
 }
 
+# Targets no tier runs. This is a **ratchet**, not a blessing: the list below is the state of the
+# backlog when the tier-coverage check was added, kept only so the check can go in without turning
+# nine pre-existing holes into a red build. Each of these declares a tier in its own //! header that
+# test-tier.ps1 does not implement. Delete entries as they get wired; never add one to silence this
+# check — wire the target into a tier instead.
+$untieredBacklog = [System.Collections.Generic.HashSet[string]]::new(
+    [string[]] @(
+        'calibrate_anchor_prominence',  # header: validation
+        'curated_fixture_backfill',     # header: pr-repair
+        'decode_path_projection',       # header: default (but no tier runs bare `cargo test`)
+        'diag_anchor_quiet_gap',        # header: no tier line
+        'diag_splice_timescale',        # header: diagnostic (needs ffmpeg on PATH)
+        'equivalence_divergence',       # header: no tier line
+        'validate_dual_fit_oracle',     # header: validation
+        'w5_timing_offset'              # header: no tier line
+    ),
+    [StringComparer]::OrdinalIgnoreCase
+)
+
+$TierScript = Join-Path $PSScriptRoot 'test-tier.ps1'
+if (-not (Test-Path $TierScript)) {
+    Write-Error "Missing $TierScript"
+}
+$tierText = Get-Content -Raw -Path $TierScript
+$tieredNames = [System.Collections.Generic.HashSet[string]]::new(
+    [StringComparer]::OrdinalIgnoreCase
+)
+foreach ($m in [regex]::Matches($tierText, "'--test'\s*,\s*'([^']+)'")) {
+    [void]$tieredNames.Add($m.Groups[1].Value)
+}
+
+$untiered = @()
+$staleBacklog = @()
+foreach ($name in $declaredNames) {
+    if ($tieredNames.Contains($name)) {
+        if ($untieredBacklog.Contains($name)) {
+            $staleBacklog += $name
+        }
+    } elseif (-not $untieredBacklog.Contains($name)) {
+        $untiered += $name
+    }
+}
+
 $failed = $false
+if ($untiered.Count -gt 0) {
+    $failed = $true
+    Write-Host '[[test]] binaries no test-tier.ps1 tier runs (built by nobody):' -ForegroundColor Red
+    $untiered | Sort-Object | ForEach-Object { Write-Host "  $_" }
+    Write-Host '  -> add each to a tier in scripts/test-tier.ps1 (match the //! Tier: line).'
+}
+
+if ($staleBacklog.Count -gt 0) {
+    $failed = $true
+    Write-Host 'now wired into a tier but still listed in $untieredBacklog:' -ForegroundColor Red
+    $staleBacklog | Sort-Object | ForEach-Object { Write-Host "  $_" }
+    Write-Host '  -> delete these from the backlog list in this script.'
+}
+
 if ($missingFromCargo.Count -gt 0) {
     $failed = $true
     Write-Host 'tests/*.rs files without [[test]] in Cargo.toml (silently ignored by cargo):' -ForegroundColor Red
@@ -71,4 +136,8 @@ if ($failed) {
     exit 1
 }
 
-Write-Host "clip-sync-repair test manifest OK ($($declaredNames.Count) [[test]] entries, $($diskFiles.Count) tests/*.rs)" -ForegroundColor Green
+$tieredCount = $declaredNames.Count - $untieredBacklog.Count
+Write-Host "clip-sync-repair test manifest OK ($($declaredNames.Count) [[test]] entries, $($diskFiles.Count) tests/*.rs, $tieredCount tiered)" -ForegroundColor Green
+if ($untieredBacklog.Count -gt 0) {
+    Write-Host "  $($untieredBacklog.Count) known-untiered target(s) on the backlog list — see this script's header" -ForegroundColor DarkYellow
+}
