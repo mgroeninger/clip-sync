@@ -3,26 +3,54 @@
 #
 # Sibling of `measure-repair-perf.ps1` (same manifest format), but runs the diagnostic dump path
 # instead of a repair write. Use this for Phase B corpus placement roll-ups, fixture extraction, or
-# any bulk `--gap-fingerprints` pass. Not a perf harness — no span timing, no WAV.
+# any bulk `--gap-fingerprints` pass. Not a perf harness — no span timing.
 #
 # Usage:
 #   ./scripts/measure-gap-fingerprints.ps1 -Manifest pairs.csv
 #   ./scripts/measure-gap-fingerprints.ps1 -Manifest pairs.csv -CorpusRoot gap-files/anchor-bracket-corpus
 #   ./scripts/measure-gap-fingerprints.ps1 -Manifest pairs.csv -ScanArgs "--min-gap-ms 500" -FingerprintDiagnostics
 #   ./scripts/measure-gap-fingerprints.ps1 -Manifest pairs.csv -Check
+#   # listenable WAVs too (see LISTEN below) — narrow each row with --fingerprint-gap first:
+#   ./scripts/measure-gap-fingerprints.ps1 -Manifest narrowed.csv -ScanArgs "--gap-listen"
 #
 # Manifest format (CSV or TSV; '#' comments and blank lines ignored): one pair per line, no header
 #     label , path/to/A.mkv , path/to/B.m4v [, extra per-pair args]
 # Delimiter is auto-picked from the extension (.tsv => tab, else comma); override with -Delimiter.
 # Fields may be quoted ("C:\my movies\a.mkv") so paths with spaces/commas are fine.
 # The 4th field runs to end of line: `extra` is free-form CLI args, so unquoted delimiters inside it
-# are rejoined, not treated as further columns. `label,A,B,--only-gaps 3,7,12` passes all three gaps.
+# are rejoined, not treated as further columns. `label,A,B,--fingerprint-gap 3,7,12` dumps all three.
+#
+# SELECTING GAPS: use `--fingerprint-gap` (repeatable, or comma-separated), not `--only-gaps`. It is
+# the corpus filter, so a narrowed row costs only the named gaps; `--only-gaps` bounds the scan/fill
+# plan instead, and is *rejected* outright alongside `--gap-listen` (one selector must drive both the
+# corpus and the patch plan). Numbers are 1-BASED, as shown in the repair gap table's `#` column, but
+# the emitted filenames are 0-based: `--fingerprint-gap 3` writes `..._g002_....json`. Locate files
+# by the A-timeline timestamp in the name rather than by counting.
 #
 # Each pair writes to <CorpusRoot>/<label>/ (corpus.json + per-gap JSON + manifest.json) and a log
 # at <OutDir>/<label>.log.
 #
-# MEDIA HYGIENE: the manifest and every log contain absolute paths to licensed media. Neither may be
-# committed. -OutDir defaults outside the repo ($env:TEMP); put corpora under gitignored `gap-files/`.
+# LISTEN: passing `--gap-listen` through -ScanArgs (or a manifest row's `extra`) additionally writes
+# three WAVs per characterized gap — the gap + context from A, the mapped donor span from B, and,
+# when the production gate patches, the same A window after the splice. With no value it writes them
+# beside each pair's corpus, which is already per-pair, so no extra parameter is needed here. It is
+# not free: it runs a production characterize on every selected gap, the dominant cost of a repair
+# run. Narrow with `--fingerprint-gap`. Size is modest by comparison — clips are the gap plus
+# `gap_signature_context_secs` (default 3 s) on both sides, at the source's own rate/channels/depth,
+# so a 1 s gap is ~21 s of audio across the three clips (~4 MB stereo 16-bit, ~18 MB 5.1 24-bit).
+# The `clips` summary column counts what landed; `patched` counts the third clip, so `clips` without
+# `patched` is a gap the production gate declined. Sharing the corpus dir is safe for -Check: both
+# the analyzer and the checker filter on a `.json` extension, so stray WAVs are ignored.
+# See docs/dev/TEMP-gap-listen-wav-plan.md.
+#
+# MEDIA HYGIENE: nothing this script produces may be committed, and the two outputs are protected by
+# different mechanisms — know which is which before you move either.
+#   * -CorpusRoot defaults under `gap-files/`, which is gitignored (`.gitignore`: `/gap-files/`).
+#     Point it somewhere else in the repo and the ignore no longer covers it. Listen WAVs land here
+#     too: decoded licensed audio, the heaviest artifact here and deletable wholesale.
+#   * -OutDir defaults to $env:TEMP — outside the repo entirely, not gitignored. Every log contains
+#     absolute paths to licensed media, as does the manifest itself.
+# Neither media filenames nor titles belong in the repo; refer to pairs by label or index.
 # See docs/dev/repair-perf.md §"Media handling" and docs/dev/gap-fingerprint.md.
 
 [CmdletBinding()]
@@ -100,8 +128,8 @@ $dataLines = @(Get-Content $Manifest |
 
 # Hand-split rather than `ConvertFrom-Csv -Header label,a,b,extra`, which DISCARDS every field past
 # the 4th without a word. The `extra` column holds CLI arguments, and the ones this script exists to
-# pass are themselves comma-separated (`--only-gaps 3,7,12`) — under ConvertFrom-Csv an unquoted row
-# truncates that to `3`, exits 0, and fingerprints the wrong gaps.
+# pass are themselves comma-separated (`--fingerprint-gap 3,7,12`) — under ConvertFrom-Csv an
+# unquoted row truncates that to `3`, exits 0, and fingerprints the wrong gaps.
 #
 # RFC-4180 quoting is the textbook fix and it does work here, but requiring it is the wrong trade:
 # there is no fifth column, so everything after the third delimiter is `extra` by definition and
@@ -181,8 +209,25 @@ foreach ($row in $rows) {
         catch { $gapCount = $null }
     }
 
-    Write-Host ("[$label] exit {0} in {1:N1}s  gaps={2}" -f $rc, $sw.Elapsed.TotalSeconds, $(
+    # Listen clips, when the run wrote any. Counted from disk rather than scraped from stdout: the
+    # suffixes are the verdict. Every characterized gap gets `_a_surround` + `_b_surround`, but
+    # `_a_patched` only exists when the production gate actually patched — so clips-without-patched
+    # is a gap the gate declined, which is the thing worth seeing in a bulk run.
+    #
+    # Only finds clips written *beside* the corpus, which is where bare `--gap-listen` puts them. A
+    # row that passes an explicit `--gap-listen DIR` in its `extra` reports blank, not zero.
+    $clipCount = $null
+    $patchedCount = $null
+    $clips = @(Get-ChildItem -Path $corpus -Filter '*.wav' -File -ErrorAction SilentlyContinue)
+    if ($clips.Count -gt 0) {
+        $clipCount = $clips.Count
+        $patchedCount = @($clips | Where-Object { $_.Name.EndsWith('_a_patched.wav') }).Count
+    }
+
+    Write-Host ("[$label] exit {0} in {1:N1}s  gaps={2}{3}" -f $rc, $sw.Elapsed.TotalSeconds, $(
             if ($null -eq $gapCount) { '?' } else { $gapCount }
+        ), $(
+            if ($null -eq $clipCount) { '' } else { "  clips=$clipCount (patched=$patchedCount)" }
         ))
     if ($rc -ne 0) { Write-Warning "[$label] exited $rc (log kept at $log)" }
 
@@ -191,6 +236,8 @@ foreach ($row in $rows) {
             ExitCode   = $rc
             Seconds    = [math]::Round($sw.Elapsed.TotalSeconds, 1)
             Gaps       = $gapCount
+            Clips      = $clipCount
+            Patched    = $patchedCount
             CorpusDir  = $corpus
             Log        = $log
         })
@@ -198,11 +245,17 @@ foreach ($row in $rows) {
 
 Write-Host ''
 Write-Host 'Summary' -ForegroundColor Green
-'{0,-20} {1,6} {2,8} {3,5}' -f 'pair', 'exit', 'secs', 'gaps'
-Write-Host ('-' * 44)
+# `clips` / `patched` stay '-' unless the run wrote WAVs, so a plain dump does not look like a
+# listen run that exported nothing.
+'{0,-20} {1,6} {2,8} {3,5} {4,6} {5,8}' -f 'pair', 'exit', 'secs', 'gaps', 'clips', 'patched'
+Write-Host ('-' * 60)
 foreach ($r in $results) {
-    '{0,-20} {1,6} {2,8:N1} {3,5}' -f $r.Label, $r.ExitCode, $r.Seconds, $(
+    '{0,-20} {1,6} {2,8:N1} {3,5} {4,6} {5,8}' -f $r.Label, $r.ExitCode, $r.Seconds, $(
         if ($null -eq $r.Gaps) { '?' } else { $r.Gaps }
+    ), $(
+        if ($null -eq $r.Clips) { '-' } else { $r.Clips }
+    ), $(
+        if ($null -eq $r.Patched) { '-' } else { $r.Patched }
     )
 }
 Write-Host ''
