@@ -297,6 +297,40 @@ pub struct GapEquivalenceVerdict {
     /// see [`NotEvaluatedReason`].
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub not_evaluated_reason: Option<NotEvaluatedReason>,
+    /// Per-block evidence behind [`Self::donor_silence_fraction`] — see [`DonorBlockEvidence`].
+    /// Provenance only; never classified on. Empty (and omitted) when no donor window was measured.
+    ///
+    /// **Why the counts were not enough.** [`GapEquivalenceThresholds`] already makes the distance to
+    /// the occupancy boundary computable *in blocks* (`1 / donor_total_blocks`), and on the 39-pair
+    /// corpus 14.5 % of gaps flip that boundary on a one-block change. What it cannot say is whether
+    /// any given block is *near* flipping: a block 0.2 dB from the floor and one 30 dB below it both
+    /// count as one silent block. That distinction is what separates a fraction that would survive a
+    /// re-measurement from one that would not, and it is the question the 2026-08-03 run raised and
+    /// could not answer — ten silent-donor gaps sitting at 0.500–0.625 with no way to tell how much
+    /// slack was behind the count.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub donor_blocks: Vec<DonorBlockEvidence>,
+}
+
+/// One donor block's contribution to [`GapEquivalenceVerdict::donor_silence_fraction`], recorded so the
+/// fraction can be re-derived — and its robustness judged — from the dump alone.
+///
+/// The gate counts a donor block silent when `flagged_silent || margin_db < 0`, so
+/// `donor_silent_blocks` is exactly the number of these satisfying that predicate. Keeping the two
+/// clauses apart is deliberate: they answer different questions and fail differently. `flagged_silent`
+/// is the scanner's peak/crest test on **every channel**, which is level-blind by construction;
+/// `margin_db` is a level comparison against A's gap floor, which is the clause a mis-placed donor
+/// window moves.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct DonorBlockEvidence {
+    /// `rms_db − gap_floor_db` for this block. Negative ⇒ it cleared the level test, and the magnitude
+    /// is the slack: how far the block would have to move to stop counting. `None` when the gap had no
+    /// finite floor to compare against, in which case only `flagged_silent` could have fired.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub margin_db: Option<f64>,
+    /// Whether the scanner's own per-block [`BlockLevel::silent`] flag fired. Independent of
+    /// `margin_db` — either clause alone counts the block silent.
+    pub flagged_silent: bool,
 }
 
 /// The two threshold constants one [`GapEquivalenceVerdict`] was decided against — the configured
@@ -463,6 +497,7 @@ impl GapEquivalenceVerdict {
             a_gap_total_blocks: None,
             donor_silent_blocks: None,
             donor_total_blocks: None,
+            donor_blocks: Vec::new(),
             a_span_secs: None,
             donor_span_secs: None,
             measurement: None,
@@ -834,16 +869,25 @@ pub fn derive_gap_equivalence(
     let count_donor = |bl: &[BlockLevel], (b_start, b_end): (f64, f64)| {
         let mut total = 0usize;
         let mut silent = 0usize;
+        let mut evidence = Vec::new();
         for b in bl.iter().filter(|b| {
             let c = block_center(b);
             c >= b_start && c < b_end
         }) {
             total += 1;
-            if b.silent || gap_floor.is_some_and(|g| b.rms_db < g) {
+            let margin_db = gap_floor.map(|g| b.rms_db - g);
+            // Same disjunction as the count, written once — `margin_db < 0` *is* `rms_db < gap_floor`,
+            // so the recorded evidence reproduces `silent` exactly rather than approximating it.
+            let counted = b.silent || margin_db.is_some_and(|m| m < 0.0);
+            if counted {
                 silent += 1;
             }
+            evidence.push(DonorBlockEvidence {
+                margin_db,
+                flagged_silent: b.silent,
+            });
         }
-        (silent, total)
+        (silent, total, evidence)
     };
 
     // Register the donor window before measuring it. The nominal map is a single global constant for
@@ -867,9 +911,15 @@ pub fn derive_gap_equivalence(
         (bm, _) => bm,
     };
 
-    let donor_blocks = match (b_levels, donor_window) {
+    let counted = match (b_levels, donor_window) {
         (Some(bl), Some(win)) => Some(count_donor(bl, win)),
         _ => None,
+    };
+    // Split the evidence off the counts: `with_scan_provenance` takes the pair, and the per-block
+    // vector is attached separately so the existing provenance signature stays a pair of scalars.
+    let (donor_blocks, donor_block_evidence) = match counted {
+        Some((silent, total, ev)) => (Some((silent, total)), ev),
+        None => (None, Vec::new()),
     };
     let donor_silence_fraction =
         donor_blocks.and_then(|(silent, total)| (total > 0).then(|| silent as f64 / total as f64));
@@ -895,6 +945,7 @@ pub fn derive_gap_equivalence(
     }
     .with_scan_provenance(gap_floor, a_gap_blocks, donor_blocks)
     .with_donor_registration(registration.map(|(_, reg)| reg));
+    verdict.donor_blocks = donor_block_evidence;
     // Record the intervals themselves, not just their kind — and hand the core to the fingerprint's
     // diagnostic path, which has no other way to see it (`GapFingerprint::geometry` carries the raw
     // span). Unconditional on `a_levels`: the window is a property of the caller's gap, known even
@@ -1120,6 +1171,70 @@ mod tests {
         assert_eq!(v.class, SharedSilence);
         assert_eq!(v.donor_silence_fraction, Some(1.0));
         assert!(v.drop);
+    }
+
+    /// The per-block evidence must **reproduce** the fraction, not merely accompany it: one entry per
+    /// donor block, and re-applying the gate's own disjunction to those entries recovers
+    /// `donor_silent_blocks` exactly. A reader that cannot re-derive the count cannot trust the slack.
+    #[test]
+    fn donor_block_evidence_reproduces_the_counted_fraction() {
+        let a = vec![
+            blk(9.5, -45.0),
+            blk(9.75, -45.0),
+            blk(10.0, -100.0),
+            blk(10.25, -100.0),
+            blk(10.5, -45.0),
+        ];
+        // Four donor blocks spanning both clauses and both sides of the boundary: flagged-but-loud,
+        // unflagged-and-well-below, unflagged-and-barely-below, unflagged-and-above.
+        // `blk` blocks are 0.25 s wide and membership is by centre (`t + 0.125`), so these four start
+        // at 9.875 to put every centre inside the half-open `[10.0, 10.5)` window.
+        let b = vec![
+            blk_silent(9.875, -20.0, true),
+            blk_silent(10.0, -118.0, false),
+            blk_silent(10.125, -100.5, false),
+            blk_silent(10.25, -30.0, false),
+        ];
+        let v = derive_gap_equivalence(&a, 10.0, 10.5, Some(&b), Some((10.0, 10.5)), &on());
+
+        let floor = v.gap_floor_db.expect("a silent-block floor was measured");
+        assert_eq!(
+            v.donor_blocks.len(),
+            v.donor_total_blocks.unwrap(),
+            "one entry per measured donor block"
+        );
+        let recount = v
+            .donor_blocks
+            .iter()
+            .filter(|e| e.flagged_silent || e.margin_db.is_some_and(|m| m < 0.0))
+            .count();
+        assert_eq!(
+            recount,
+            v.donor_silent_blocks.unwrap(),
+            "evidence must recover the count: {:?}",
+            v.donor_blocks
+        );
+
+        // And the margins are real distances to the floor, not a restatement of the boolean — the
+        // barely-below block carries the small negative margin that the count alone flattens away.
+        let margins: Vec<f64> = v
+            .donor_blocks
+            .iter()
+            .map(|e| {
+                e.margin_db
+                    .expect("finite floor ⇒ every block has a margin")
+            })
+            .collect();
+        assert!((margins[0] - (-20.0 - floor)).abs() < 1e-9, "{margins:?}");
+        assert!(margins[1] < -15.0, "well below the floor: {margins:?}");
+        assert!(
+            margins[2] < 0.0 && margins[2] > -1.0,
+            "barely below — the slack the fraction hides: {margins:?}"
+        );
+        assert!(margins[3] > 0.0, "above the floor: {margins:?}");
+        // Block 0 counts silent on the flag alone despite sitting far above the floor: the two clauses
+        // are independent, which is why they are recorded separately.
+        assert!(v.donor_blocks[0].flagged_silent && margins[0] > 0.0);
     }
 
     /// Digitally silent / abs-floor-quiet B must not read occupied via `rms < gap_floor` alone (F1/R1).

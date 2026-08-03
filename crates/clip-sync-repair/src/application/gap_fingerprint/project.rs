@@ -24,6 +24,26 @@ pub struct FingerprintXSet {
     pub lag: Option<LagFingerprint>,
 }
 
+/// Per-gap detail the **from-decode** path measured and the spec cannot carry.
+///
+/// The spec stores decision *scalars*; anything richer (the per-bracket rows, the full lag sweep) is
+/// reconstructed by this module when it is absent, and reconstruction is lossy in ways that read as
+/// measurements — see [`projected_lag_entry`] and [`synth_brackets`]. A caller that actually ran the
+/// measurement hands it over here instead of letting the projection invent a stand-in, and the dump
+/// then carries the real thing. `Default` (both `None`) is the oracle/spec-only path, which has
+/// nothing to hand over.
+///
+/// **Whatever is left `None` here is what `source.not_measured` must declare** — the two are opposite
+/// halves of one statement, so a caller that starts supplying a field must stop declaring it.
+#[derive(Debug, Clone, Default)]
+pub struct MeasuredDetail {
+    /// Real per-bracket rows (8g.4b), else [`synth_brackets`]' reconstruction from the stored counts.
+    pub brackets: Option<Vec<BracketInfo>>,
+    /// The real ±`max_lag_ms` sweep at `b_mapped` (`lag_at_placement`), else [`projected_lag_entry`]'s
+    /// four-scalar stand-in.
+    pub baseline_lag: Option<LagFingerprint>,
+}
+
 /// Project a characterized [`GapRepairSpec`] into the licensing-safe [`GapFingerprint`] export schema
 /// (Fingerprint-unification 8e). **Pure** — reads the spec's stored D/R tags + verdict and measures nothing
 /// (the A7 single-source rule): every seam/lag/donor scalar is the value characterize already computed. X-set
@@ -32,15 +52,16 @@ pub struct FingerprintXSet {
 /// Lossy **by design** on non-decision fields: `silence`/`contour`/`anchors` are minimal placeholders (X, not
 /// read by the corpus reader); `outcome.tier` is `patch`/`skip` (matching the scan path, `gap_fingerprint.rs`
 /// tier logic); uniqueness validators (`*_seam_prom`/`*_seam_z`, `peak_z`) are `None` on the production path
-/// (Tier-3, tolerated by the golden diff). `bracket` scores are the **real** per-bracket rows when
-/// `real_brackets` is `Some` (the from-decode dump, 8g.4b), else synthesized to round-trip the stored
-/// counts/best/closest through the corpus reader, not the original per-bracket detail. See §2.5.2a / 8e.
+/// (Tier-3, tolerated by the golden diff). `brackets` and `baseline_lag` are the **real** measurements
+/// when [`MeasuredDetail`] supplies them (the from-decode dump, 8g.4b), else reconstructed from the
+/// stored scalars — round-tripping the counts/best/closest and the four registration scalars
+/// respectively, not the original detail. See §2.5.2a / 8e.
 pub fn spec_to_fingerprint_summary(
     spec: &GapRepairSpec,
     sample_rate: u32,
     channels: u16,
     x: Option<FingerprintXSet>,
-    real_brackets: Option<Vec<BracketInfo>>,
+    measured: MeasuredDetail,
 ) -> GapFingerprint {
     let tags = &spec.tags_ctx;
     let rate = f64::from(sample_rate.max(1));
@@ -68,24 +89,28 @@ pub fn spec_to_fingerprint_summary(
         }),
         _ => None,
     };
-    let baseline_lag = if reg.pre_peak_r.is_some() || reg.post_peak_r.is_some() {
-        Some(LagFingerprint {
-            pre_anchor: projected_lag_entry(
-                reg.pre_peak_r,
-                reg.pre_frac_lag_ms,
-                reg.pre_peak_z,
-                reg.pre_prominence,
-            ),
-            post_anchor: projected_lag_entry(
-                reg.post_peak_r,
-                reg.post_frac_lag_ms,
-                reg.post_peak_z,
-                reg.post_prominence,
-            ),
-        })
-    } else {
-        None
-    };
+    // The measured sweep when the caller ran one; otherwise the four-scalar stand-in, whose fabricated
+    // half `source.not_measured` disowns.
+    let baseline_lag = measured.baseline_lag.or_else(|| {
+        if reg.pre_peak_r.is_some() || reg.post_peak_r.is_some() {
+            Some(LagFingerprint {
+                pre_anchor: projected_lag_entry(
+                    reg.pre_peak_r,
+                    reg.pre_frac_lag_ms,
+                    reg.pre_peak_z,
+                    reg.pre_prominence,
+                ),
+                post_anchor: projected_lag_entry(
+                    reg.post_peak_r,
+                    reg.post_frac_lag_ms,
+                    reg.post_peak_z,
+                    reg.post_prominence,
+                ),
+            })
+        } else {
+            None
+        }
+    });
 
     let gate = &tags.gate;
     let structure = gate.structure_min.map(|m| StructureScores {
@@ -110,7 +135,7 @@ pub fn spec_to_fingerprint_summary(
     // Real per-bracket rows when characterize supplied them (from-decode dump, 8g.4b); else synthesize just
     // enough structure to round-trip the stored counts/best/closest (the corpus-projection path, which can't
     // recover per-bracket detail from stored tags).
-    let brackets = real_brackets.unwrap_or_else(|| {
+    let brackets = measured.brackets.unwrap_or_else(|| {
         synth_brackets(
             gate.brackets_total,
             gate.brackets_passing,
@@ -593,12 +618,14 @@ mod tests {
                 silence_fraction: 0.03,
                 longest_silence_ms: 0.0,
                 continuous: true,
+                basis: None,
             }),
             donor_nominal: Some(crate::domain::donor::DonorInterior {
                 rms_db: -25.0,
                 silence_fraction: 0.10,
                 longest_silence_ms: 0.0,
                 continuous: true,
+                basis: None,
             }),
             gate: GateTags {
                 brackets_total: 4,
@@ -636,7 +663,7 @@ mod tests {
             tags_ctx: tags,
         };
 
-        let fp = spec_to_fingerprint_summary(&spec, 48_000, 2, None, None);
+        let fp = spec_to_fingerprint_summary(&spec, 48_000, 2, None, MeasuredDetail::default());
 
         // outcome: a skip (tier is patch/skip, matching the scan path).
         let o = fp.outcome.as_ref().unwrap();

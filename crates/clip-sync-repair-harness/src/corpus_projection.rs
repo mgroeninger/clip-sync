@@ -6,7 +6,7 @@
 //! characterized corpus) so both read specs through identical code.
 
 use clip_sync_repair::application::gap_fingerprint::{
-    fingerprint_to_spec, spec_to_fingerprint_summary, FingerprintXSet, GapCorpus,
+    fingerprint_to_spec, spec_to_fingerprint_summary, FingerprintXSet, GapCorpus, MeasuredDetail,
 };
 
 use crate::gap_fingerprint_corpus::analyze_dirs;
@@ -25,9 +25,16 @@ pub fn project_corpus(orig: &GapCorpus) -> GapCorpus {
                 b_levels: fp.b_levels.clone(),
                 ..Default::default()
             };
-            // `None` real_brackets: the spec (from stored tags) carries only bracket counts, not per-bracket
-            // rows, so synthesize. `golden_baseline` reads counts, not rows, so this is faithful for the diff.
-            spec_to_fingerprint_summary(&spec, fp.sample_rate, fp.channels, Some(x), None)
+            // Default `MeasuredDetail`: this is the oracle path — the spec (from stored tags) carries
+            // bracket counts but not rows, and four registration scalars but not the lag sweep, so both are
+            // reconstructed. `golden_baseline` reads counts and the scalars, so the diff stays faithful.
+            spec_to_fingerprint_summary(
+                &spec,
+                fp.sample_rate,
+                fp.channels,
+                Some(x),
+                MeasuredDetail::default(),
+            )
         })
         .collect();
     GapCorpus {

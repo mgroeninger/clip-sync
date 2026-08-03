@@ -489,10 +489,19 @@ const KNOWN_UNMEASURED: &[&str] = &[
     "anchors.pre",
     "anchors.post",
     "outcome.seam_shape",
+    "baseline_lag.window_ms",
+    "baseline_lag.max_lag_ms",
+    "baseline_lag.peak_lag_samples",
+    "baseline_lag.frac_lag_samples",
+    "baseline_lag.lag0_r",
+    "baseline_lag.verdict",
 ];
 
 /// The `floor_db` / `speech_peak_db` constant `projected_level_profile` writes (`SILENCE_FLOOR_DB`).
 const PROJECTED_FLOOR_DB: f64 = -120.0;
+
+/// The `verdict` `projected_lag_entry` hardcodes onto every synthesized shoulder row.
+const PROJECTED_LAG_VERDICT: &str = "timing_offset";
 
 /// Which of [`KNOWN_UNMEASURED`] this gap carries a **real** value for.
 ///
@@ -553,7 +562,44 @@ fn measured_paths(gap: &GapEntry) -> Vec<&'static str> {
     {
         out.push("outcome.seam_shape");
     }
+    // A shoulder row is "measured" per-field: the projection zeroes the search parameters and the
+    // integer lag, copies `peak_r` into `lag0_r`, and hardcodes the verdict. Any shoulder departing
+    // from one of those is enough — a real sweep cannot systematically reproduce them.
+    if let Some(bl) = gap.baseline_lag.as_ref() {
+        for e in bl.pre_anchor.iter().chain(bl.post_anchor.iter()) {
+            if e.window_ms.unwrap_or(0) != 0 {
+                push_once(&mut out, "baseline_lag.window_ms");
+            }
+            if e.max_lag_ms.unwrap_or(0) != 0 {
+                push_once(&mut out, "baseline_lag.max_lag_ms");
+            }
+            if e.peak_lag_samples.unwrap_or(0) != 0 {
+                push_once(&mut out, "baseline_lag.peak_lag_samples");
+            }
+            if e.frac_lag_samples.unwrap_or(0.0) != 0.0 {
+                push_once(&mut out, "baseline_lag.frac_lag_samples");
+            }
+            // The tell: projected rows peak exactly at lag 0 because `lag0_r` *is* `peak_r`.
+            if let (Some(l0), Some(pk)) = (e.lag0_r, e.peak_r) {
+                if l0 != pk {
+                    push_once(&mut out, "baseline_lag.lag0_r");
+                }
+            }
+            if e.verdict
+                .as_deref()
+                .is_some_and(|v| v != PROJECTED_LAG_VERDICT)
+            {
+                push_once(&mut out, "baseline_lag.verdict");
+            }
+        }
+    }
     out
+}
+
+fn push_once(out: &mut Vec<&'static str>, path: &'static str) {
+    if !out.contains(&path) {
+        out.push(path);
+    }
 }
 
 /// `source.not_measured` must be present when it is true, and true when it is present.
@@ -848,6 +894,36 @@ struct GapEntry {
     anchors: Option<Anchors>,
     #[serde(default)]
     scan_equivalence: Option<ScanEquivalence>,
+    #[serde(default)]
+    baseline_lag: Option<BaselineLag>,
+}
+
+#[derive(Deserialize)]
+struct BaselineLag {
+    #[serde(default)]
+    pre_anchor: Vec<LagRow>,
+    #[serde(default)]
+    post_anchor: Vec<LagRow>,
+}
+
+/// Only the fields [`KNOWN_UNMEASURED`] covers, plus `peak_r` — needed because `lag0_r`'s default is
+/// not a constant but "whatever `peak_r` is".
+#[derive(Deserialize)]
+struct LagRow {
+    #[serde(default)]
+    window_ms: Option<u32>,
+    #[serde(default)]
+    max_lag_ms: Option<u32>,
+    #[serde(default)]
+    peak_lag_samples: Option<i64>,
+    #[serde(default)]
+    frac_lag_samples: Option<f64>,
+    #[serde(default)]
+    lag0_r: Option<f64>,
+    #[serde(default)]
+    peak_r: Option<f64>,
+    #[serde(default)]
+    verdict: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1251,6 +1327,74 @@ mod tests {
             .iter()
             .any(|i| i.message.contains("levels.speech_peak_db")
                 && i.message.contains("carry real values")));
+    }
+
+    /// A real sweep is distinguishable from `projected_lag_entry`'s fabrication, and declaring it
+    /// unmeasured then fails.
+    ///
+    /// The two tells are independent: a nonzero `max_lag_ms` (the projection has no search to report)
+    /// and `lag0_r != peak_r` (the projection copies one into the other, so every projected shoulder
+    /// reads as peaking at zero lag). Either alone must be enough.
+    #[test]
+    fn declaring_a_measured_baseline_lag_fails() {
+        for (field, row) in [
+            (
+                "baseline_lag.max_lag_ms",
+                serde_json::json!({"peak_r":0.9,"lag0_r":0.9,"max_lag_ms":600,"verdict":"timing_offset"}),
+            ),
+            (
+                "baseline_lag.lag0_r",
+                serde_json::json!({"peak_r":0.9,"lag0_r":0.1,"verdict":"timing_offset"}),
+            ),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let dir = root.path().join("1");
+            write_healthy_pair(&dir);
+            let mut corpus: serde_json::Value =
+                serde_json::from_str(&fs::read_to_string(dir.join("corpus.json")).unwrap())
+                    .unwrap();
+            for g in corpus["gaps"].as_array_mut().unwrap() {
+                defaults_only(g);
+                g["baseline_lag"] = serde_json::json!({"pre_anchor":[row], "post_anchor":[]});
+            }
+            corpus["source"]["not_measured"] = serde_json::json!(KNOWN_UNMEASURED);
+            fs::write(dir.join("corpus.json"), corpus.to_string()).unwrap();
+
+            let report = check_dirs(&[root.path().to_path_buf()], &HealthCheckOptions::default());
+            assert!(
+                report
+                    .issues
+                    .iter()
+                    .any(|i| i.message.contains(field) && i.message.contains("carry real values")),
+                "{field}: {}",
+                report.summary_text()
+            );
+        }
+    }
+
+    /// The projected shape — zeroed search, `lag0_r == peak_r`, constant verdict — stays silent.
+    #[test]
+    fn declaring_a_projected_baseline_lag_is_clean() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("1");
+        write_healthy_pair(&dir);
+        let mut corpus: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(dir.join("corpus.json")).unwrap()).unwrap();
+        for g in corpus["gaps"].as_array_mut().unwrap() {
+            defaults_only(g);
+            g["baseline_lag"] = serde_json::json!({
+                "pre_anchor":[{"window_ms":0,"max_lag_ms":0,"lag0_r":0.9,"peak_r":0.9,
+                               "peak_lag_samples":0,"frac_lag_samples":0.0,"frac_lag_ms":-3.0,
+                               "verdict":"timing_offset"}],
+                "post_anchor":[]
+            });
+        }
+        corpus["source"]["not_measured"] = serde_json::json!(KNOWN_UNMEASURED);
+        fs::write(dir.join("corpus.json"), corpus.to_string()).unwrap();
+
+        let report = check_dirs(&[root.path().to_path_buf()], &HealthCheckOptions::default());
+        assert!(report.ok(), "{}", report.summary_text());
+        assert_eq!(report.warn_count(), 0, "{}", report.summary_text());
     }
 
     #[test]

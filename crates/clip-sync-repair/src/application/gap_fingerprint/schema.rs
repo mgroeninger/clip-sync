@@ -146,6 +146,9 @@ pub struct SourceMeta {
 /// - `outcome.seam_shape` — a plain `String` hardcoded `String::new()` at **both** emit sites, unlike
 ///   its `Option` siblings `fit_path` / `signature_mode`, which correctly vanish.
 ///
+/// `baseline_lag.*` is **not** here — it is conditional, so it lives in its own list
+/// ([`PROJECTED_BASELINE_LAG_FIELDS`]) that the emitter appends only when it actually projected.
+///
 /// `structure` / `seams` are deliberately **not** listed: they are `Option` and omitted outright
 /// (Finding F1, deferred — see `docs/dev/archive/TEMP-pipeline-perf-redesign-plan.md` §8g.4a), so the
 /// corpus already states their absence in the only way that matters.
@@ -169,6 +172,33 @@ pub const NOT_MEASURED_BY_PROJECTION: &[&str] = &[
     "anchors.pre",
     "anchors.post",
     "outcome.seam_shape",
+];
+
+/// The `baseline_lag` shoulder fields `projected_lag_entry` fabricates — appended to
+/// [`SourceMeta::not_measured`] **only when some gap was actually projected**.
+///
+/// Conditional because, unlike the lists above, this one has a path that answers it.
+/// `lag_at_placement` sweeps ±`lag_max_lag_ms` at `b_mapped` on the from-decode path and the caller
+/// hands the result over via [`MeasuredDetail`], so those dumps carry a real row and must **not**
+/// declare it. The oracle path projects from a `GapRepairSpec` alone — four registration scalars, no
+/// PCM — and cannot recover the rest, so it fabricates and must.
+///
+/// What gets fabricated: `window_ms` / `max_lag_ms` / `peak_lag_samples` / `frac_lag_samples` at `0`,
+/// `lag0_r` as a second copy of `peak_r`, and `verdict` hardcoded [`crate::domain::seam_local::LagVerdict::TimingOffset`].
+/// The last two are the ones that misled readers. `lag0_r == peak_r` reads as "this shoulder peaks
+/// exactly at zero lag" — textbook perfect registration — on every gap in the file, while the true
+/// lag-0 correlation is carried nowhere; and `verdict` reads as a classification while being a
+/// constant, so "the whole corpus is `timing_offset`, none decorrelated" describes the function
+/// rather than the media. Both were read at face value before this declaration existed.
+///
+/// [`MeasuredDetail`]: super::project::MeasuredDetail
+pub const PROJECTED_BASELINE_LAG_FIELDS: &[&str] = &[
+    "baseline_lag.window_ms",
+    "baseline_lag.max_lag_ms",
+    "baseline_lag.peak_lag_samples",
+    "baseline_lag.frac_lag_samples",
+    "baseline_lag.lag0_r",
+    "baseline_lag.verdict",
 ];
 
 fn fnv_feed(h: &mut u64, bytes: &[u8]) {
@@ -1008,6 +1038,7 @@ mod tests {
             silence_fraction,
             longest_silence_ms: 0.0,
             continuous,
+            basis: None,
         }
     }
 
@@ -1272,6 +1303,7 @@ mod tests {
                 silence_fraction: 0.0,
                 longest_silence_ms: 0.0,
                 continuous: true,
+                basis: None,
             }),
             splice: Some(SpliceSummary {
                 step_ms: 4.2,

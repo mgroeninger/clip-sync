@@ -157,6 +157,7 @@ mod tests {
             silence_fraction,
             longest_silence_ms: 0.0,
             continuous,
+            basis: None,
         }
     }
 
@@ -370,7 +371,11 @@ mod tests {
     /// The production export projection under test: spec → `GapFingerprint` → serialize → frozen `gap_row`.
     fn project_to_row(spec: &GapRepairSpec) -> GapRow {
         let fp = clip_sync_repair::application::gap_fingerprint::spec_to_fingerprint_summary(
-            spec, 48_000, 2, None, None,
+            spec,
+            48_000,
+            2,
+            None,
+            clip_sync_repair::application::gap_fingerprint::MeasuredDetail::default(),
         );
         let gaps_json = serde_json::to_string(&[fp]).unwrap();
         let root = tempfile::tempdir().unwrap();

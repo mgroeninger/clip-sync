@@ -3,10 +3,13 @@
 //! **aligned** bridge span (bridges vs BROKEN) and the **nominal** geometry span (program-quiet, D11). One
 //! implementation so the two paths can't drift.
 
+use crate::domain::gap_equivalence::ChannelReduction;
 use serde::{Deserialize, Serialize};
 
 const SILENCE_FLOOR_DB: f32 = -120.0;
-const DONOR_BIN_MS: f64 = 50.0;
+/// Bin width every reading on this path uses — stamped onto [`DonorInteriorBasis::bin_ms`] rather than
+/// restated at the call sites, so the constant and the provenance cannot drift apart.
+pub const DONOR_BIN_MS: f64 = 50.0;
 /// A donor with no internal sub-floor run longer than this is treated as continuous (bridges the gap).
 pub const DONOR_CONTINUITY_MS: f64 = 150.0;
 /// B `silence_fraction` at the **nominal** `b_mapped` span at/above this ⇒ program-quiet (D11/G5) — quiet in
@@ -25,12 +28,47 @@ fn to_db(rms: f32) -> f32 {
 /// whether **B carries audio there** — the donor half of the fill predicate (§4). `silence_fraction` /
 /// `longest_silence_ms` come from 50 ms RMS bins vs the gap floor; `continuous` ⇒ no internal sub-floor run
 /// longer than [`DONOR_CONTINUITY_MS`], i.e. B bridges the hole unbroken.
+///
+/// **`silence_fraction` is not comparable to the scan gate's `donor_silence_fraction`.** Both carry that
+/// name and both count "silent donor bins ÷ total", but they are measured on different bases — 50 ms mono
+/// bins against the loudest bin *anywhere* in the gap span here, versus 100 ms interleaved blocks against
+/// the loudest **silent** block there. On a hold-bridged gap the two floors diverge by tens of dB (56 dB
+/// observed on the 2026-08-03 run), and the fractions diverge in proportion. [`DonorInteriorBasis`] is
+/// stamped on every reading so that divergence is visible in the dump instead of only in this doc comment;
+/// the scan side records the same thing via `GapEquivalenceVerdict::gap_floor_db` / `measurement`.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct DonorInterior {
     pub rms_db: f64,
     pub silence_fraction: f64,
     pub longest_silence_ms: f64,
     pub continuous: bool,
+    /// What this reading was measured on — see [`DonorInteriorBasis`]. `None` only on corpora written
+    /// before the basis was stamped (2026-08-03); those are the dumps whose fractions cannot be
+    /// safely compared against anything.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub basis: Option<DonorInteriorBasis>,
+}
+
+/// The measurement basis behind one [`DonorInterior`] — bin width, channel reduction, and the floor the
+/// bins were thresholded against.
+///
+/// Recorded for the same reason [`crate::domain::gap_equivalence::GapEquivalenceThresholds`] is: every
+/// input to `silence_fraction` was emitted except the ones it was *compared against*, so a reader could
+/// only interpret it by assuming the constants in force on the day of the dump. Unlike the scan gate's
+/// thresholds these are not configurable, but they do differ **between paths**, which is the failure mode
+/// that actually bit: a nominal-vs-aligned comparison within one basis is sound, a scan-vs-fingerprint
+/// comparison across two is not, and nothing in the file distinguished them.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct DonorInteriorBasis {
+    /// Bin width the span was chopped into — [`DONOR_BIN_MS`] on this path.
+    pub bin_ms: f64,
+    /// Channel reduction behind each bin's RMS. Mono downmix on this path, which reads ~`10·log10(N)`
+    /// quieter than the scan's interleaved reduction on uncorrelated multichannel content (7.8 dB at 6
+    /// channels, confirmed by the corpus's own `noise_floor_probes`).
+    pub reduction: ChannelReduction,
+    /// The `gap_floor_db` each bin was tested against (`rms < floor ⇒ silent`). The single number that
+    /// makes two `silence_fraction`s comparable or not.
+    pub floor_db: f64,
 }
 
 /// Donor-interior energy of `b_mono` over `[start_frame, end_frame)`. For the **aligned** bridge the caller
@@ -72,6 +110,14 @@ pub fn donor_interior_at(
         silence_fraction: silent as f64 / total.max(1) as f64,
         longest_silence_ms,
         continuous: longest_silence_ms < DONOR_CONTINUITY_MS,
+        // Taken from the values this call actually used, not from the constants — `floor_db` is the
+        // caller's argument, and a caller passing a floor from a different basis is exactly what the
+        // stamp exists to expose.
+        basis: Some(DonorInteriorBasis {
+            bin_ms: DONOR_BIN_MS,
+            reduction: ChannelReduction::Downmix,
+            floor_db: gap_floor_db,
+        }),
     })
 }
 

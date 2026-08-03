@@ -2317,6 +2317,10 @@ pub fn characterize_gaps_from_decode(
     }
     let cfg = FingerprintConfig::from_request(request, report.recipe.silence_peak_fraction());
     let mut corpus = characterize_gaps(report, pcm, &cfg, select);
+    // Gaps whose `baseline_lag` block came from `projected_lag_entry` rather than a real sweep —
+    // the population `PROJECTED_BASELINE_LAG_FIELDS` exists to disown. Zero on a dump where every
+    // measured gap carried its sweep through, which is the normal from-decode case.
+    let mut projected_lag_gaps = 0usize;
 
     let mut gate_derived = crate::application::patch_region::SeamGateDerived::from_repair(
         request,
@@ -2451,13 +2455,25 @@ pub fn characterize_gaps_from_decode(
         };
         // Carry the REAL per-bracket rows (8g.4b) so the flipped dump is byte-faithful to the oracle's
         // `brackets` in both modes — the oracle enumerates them unconditionally, so from-decode must too.
-        *fp = spec_to_fingerprint_summary(
-            &spec,
-            sample_rate,
-            channels as u16,
-            Some(x),
-            Some(m.brackets),
-        );
+        //
+        // And the REAL `baseline_lag`: `lag_at_placement` already swept ±`lag_max_lag_ms` at `b_mapped`
+        // above, and the projection used to throw that away and rebuild a row from four stored scalars —
+        // zeroed search parameters, `lag0_r` a copy of `peak_r`, `verdict` hardcoded `TimingOffset`. The
+        // copy is the damaging one: it reads as "this shoulder peaks exactly at zero lag" on every gap,
+        // which is the opposite of what a registration study wants to know. The measurement exists; it
+        // just was not plumbed. The oracle path (spec only, no PCM) still cannot recover it and still
+        // projects — which is why the declaration below is conditional rather than a constant.
+        let measured = MeasuredDetail {
+            brackets: Some(m.brackets),
+            baseline_lag: m.baseline_lag,
+        };
+        let lag_supplied = measured.baseline_lag.is_some();
+        *fp = spec_to_fingerprint_summary(&spec, sample_rate, channels as u16, Some(x), measured);
+        // Count only gaps that ended up with a *fabricated* block. A gap with no sweep and no scalars
+        // has no `baseline_lag` at all, and absence needs no disowning.
+        if !lag_supplied && fp.baseline_lag.is_some() {
+            projected_lag_gaps += 1;
+        }
 
         // Gap-equivalence classification overlay (gap-equivalence plan §7.4) — emitted for tuning/categorizing.
         // Silence-character signals: A gap RMS vs the recording's noise floor + donor silence at nominal.
@@ -2706,9 +2722,18 @@ pub fn characterize_gaps_from_decode(
     // rebuild keep `characterize_gaps`'s real values and stay `Summary`, which is why the declaration
     // names a tier instead of claiming the whole corpus. Only claim it if the rebuild actually ran:
     // a corpus with nothing at full tier stripped nothing and has nothing to disown.
+    //
+    // `baseline_lag.*` is appended only when some gap actually got the fabricated row. This path
+    // normally threads the real sweep through `MeasuredDetail`, so the usual answer is "not declared,
+    // because measured" — the declaration tracks what happened, not what the code is capable of.
     if corpus.gaps.iter().any(|g| g.tier == DetailTier::Full) {
         corpus.source.not_measured = NOT_MEASURED_BY_PROJECTION
             .iter()
+            .chain(if projected_lag_gaps > 0 {
+                PROJECTED_BASELINE_LAG_FIELDS
+            } else {
+                &[]
+            })
             .map(|s| (*s).to_string())
             .collect();
     }
@@ -3244,6 +3269,7 @@ mod tests {
             silence_fraction: silence,
             longest_silence_ms: 0.0,
             continuous: cont,
+            basis: None,
         };
         let bracket = |stage: Option<FailureStage>, seam: Option<f64>| BracketInfo {
             pre_time_secs: 0.0,
@@ -4079,7 +4105,8 @@ mod tests {
         );
         assert_eq!(
             corpus.source.not_measured, NOT_MEASURED_BY_PROJECTION,
-            "the production dump must declare its unmeasured fields"
+            "the production dump must declare its unmeasured fields — and exactly those: this path \
+             threads the real `baseline_lag` through, so `PROJECTED_BASELINE_LAG_FIELDS` must be absent"
         );
         let full: Vec<_> = corpus
             .gaps
@@ -4098,6 +4125,40 @@ mod tests {
                 g.outcome.as_ref().map(|o| o.seam_shape.as_str()),
                 Some(""),
                 "seam_shape is hardcoded empty, hence listed"
+            );
+            // This path threads the real sweep through `MeasuredDetail`, so the rows must NOT carry
+            // `projected_lag_entry`'s signature: a real sweep reports its search width, and `lag0_r`
+            // is an independent read rather than a copy of `peak_r`. Guarding the shape here is what
+            // keeps the conditional declaration below honest in the other direction — if the
+            // pass-through ever regresses to projection, this fires before the declaration does.
+            for e in g
+                .baseline_lag
+                .iter()
+                .flat_map(|bl| bl.pre_anchor.iter().chain(bl.post_anchor.iter()))
+            {
+                assert_ne!(e.max_lag_ms, 0, "real sweep reports its search width");
+                assert_ne!(e.window_ms, 0, "real sweep reports its window");
+            }
+        }
+        assert!(
+            corpus.gaps.iter().any(|g| g.baseline_lag.is_some()),
+            "fixture must produce a baseline_lag to make the assertions above non-vacuous"
+        );
+    }
+
+    /// The conditional list must not overlap the unconditional one.
+    ///
+    /// If a `baseline_lag.*` path appeared in both, the declaration would be emitted even on dumps
+    /// that measured the sweep — claiming a field is unmeasured when it is real, which `--check`
+    /// treats as worse than no declaration at all (it licenses discarding good data). The
+    /// exact-equality assertion in the test above is what proves the from-decode dump omits them;
+    /// this proves the constants can't make that impossible.
+    #[test]
+    fn conditional_lag_fields_stay_out_of_the_unconditional_list() {
+        for f in PROJECTED_BASELINE_LAG_FIELDS {
+            assert!(
+                !NOT_MEASURED_BY_PROJECTION.contains(f),
+                "{f} is conditional; it must not sit in the unconditional list too"
             );
         }
     }

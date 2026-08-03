@@ -220,6 +220,28 @@ Two emitters produce them, both by design:
   defaults.
 - `projected_level_profile` (same file) hardcodes `bin_ms: 0`, an empty `profile_db`, and
   `floor_db`/`speech_peak_db` at `SILENCE_FLOOR_DB` (−120).
+- `projected_lag_entry` (same file) builds each `baseline_lag` shoulder from four stored scalars —
+  `peak_r`, `frac_lag_ms`, `peak_z`, `prominence`, all real — and fabricates the rest of the row:
+  `window_ms`/`max_lag_ms`/`peak_lag_samples`/`frac_lag_samples` at `0`, `lag0_r` as a **second copy
+  of `peak_r`**, and `verdict` hardcoded `timing_offset`.
+
+  The last two matter beyond bookkeeping. `lag0_r == peak_r` says the shoulder peaks exactly at zero
+  lag — textbook perfect registration — on every gap it touches, while the real lag-0 correlation is
+  not carried anywhere. And `verdict` reads as a classification while being a constant: **a projected
+  row can never be `decorrelated` or `ambiguous`**, so "every gap in the corpus is `timing_offset`"
+  describes this function, not the media.
+
+  **This is now the fallback, not the norm.** `lag_at_placement` already sweeps ±`lag_max_lag_ms` at
+  `b_mapped` on the from-decode path, and `characterize_gaps_from_decode` hands that real
+  `LagFingerprint` to `spec_to_fingerprint_summary` via `MeasuredDetail` — the same pass-through
+  brackets use. Only the oracle path (`GapRepairSpec` alone, no PCM) still projects, because the spec
+  stores the four scalars and nothing else. So the declaration is **conditional**: the six
+  `baseline_lag.*` paths live in `PROJECTED_BASELINE_LAG_FIELDS` and are appended to `not_measured`
+  only when some gap actually got a fabricated row.
+
+  Corpora dumped **before 2026‑08‑03** predate the pass-through: every `baseline_lag` row in them is
+  projected, and none of them declare it. Any conclusion drawn from their verdict distribution or
+  their apparent zero-lag registration needs re-deriving from a fresh dump.
 
 Note the inversion this creates: a gap that the pipeline **measured successfully** is stripped, while
 a gap that failed early enough to skip projection keeps its real values. On the 2026‑07‑31 corpus that

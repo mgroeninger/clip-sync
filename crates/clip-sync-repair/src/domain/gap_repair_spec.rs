@@ -646,6 +646,7 @@ mod tests {
             silence_fraction,
             longest_silence_ms: 0.0,
             continuous,
+            basis: None,
         }
     }
 
