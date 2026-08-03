@@ -17,6 +17,7 @@ Two corpora are in play:
 |---|---|
 | `gap-files/2026-07-31-...` (39 pairs) | full fingerprint run, gate **on**, binary **predates** `thresholds` |
 | `gap-files/2026-08-01-v.0.5.1-band-test` (10 pairs, 21 gaps) | the gate-off experiment, binary **records** `thresholds` |
+| `gap-files/2026-08-01-v.0.5.1-band-test-with-listen` (8 pairs, 12 gaps) | the §4 listen pass — same gaps re-run with `--gap-listen`, so each has A / B / patched WAVs alongside its dump. The evidence for §2.5, §3.1a and §3.3. |
 
 The 21 gaps are the union of two independently-derived sets over the 39-pair corpus:
 
@@ -79,32 +80,97 @@ like one systematic registration problem counted nine times, not nine independen
 **Excluding pair 25 the band is 4 patches from 7 rescues**, a materially different proposition.
 Any sizing of the band should report with and without pair 25.
 
-### 2.5 The donor boundary is degenerate, not fuzzy — possibly the real finding
+### 2.5 The donor boundary is degenerate *and* the measurement feeding it is misregistered
 
 **7 of the 21 gaps sit at donor fraction exactly 0.500**: 6/12, 2/4, 3/6, 5/10, 4/8, 7/14, 5/10.
+Within the 12-gap listen subset it is **6 of 12** (10/11 = 6/12, 14/9 = 2/4, 25/1 = 3/6, 25/8 = 5/10,
+28/22 = 5/10, 34/1 = 6/12).
 
 Block counts are 4–14, so 0.5 is the most probable rational value the measurement can produce. The
-strict `<` in `classify_gap_equivalence` decides a third of this sample by itself, on an exact tie.
+strict `<` in `classify_gap_equivalence` (`gap_equivalence.rs:441`) decides a third of this sample by
+itself, on an exact tie.
 
-That reframes the problem. A ±1-block band is a blunt instrument aimed at a boundary that is not
-uncertain but *quantized*. Two cheaper candidates to evaluate before shipping the band:
+**Why so many land on the tie: the donor window is measured at the wrong place.** The 2026-08-02
+listen run makes this checkable, because `--gap-listen` writes B's mapped span with the same context
+as A's. Re-deriving the true A↔B lag from those WAVs (1 ms-step Pearson on the 2 s pre-gap mono
+window, ±1 s) and re-measuring B *inside the gap* at that lag:
 
-1. **Tie-breaks keep rather than drop** (`<=` on the donor comparison). One-character change,
-   directly matches the cost asymmetry, and catches 10/11 — the gap that started this.
-2. **Raise donor block resolution** so exact ties become rare, making the boundary meaningful.
+| gap | fitted lag | A in gap | B @ nominal | B @ fitted lag | Δ(A,B) |
+|---|---|---|---|---|---|
+| 10/11 | +28 ms | −65.5 | −65.5 | −65.5 | 0.0 |
+| 12/7 | −81 ms | −51.5 | −38.0 | −51.5 | 0.0 |
+| 14/9 | −119 ms | −70.7 | −38.5 | −70.7 | 0.0 |
+| 14/13 | −122 ms | −58.3 | −53.3 | −58.3 | 0.0 |
+| 18/49 | +341 ms | −85.8 | −48.5 | −85.1 | 0.7 |
+| 25/1 | +332 ms | −88.8 | −69.1 | −88.8 | 0.0 |
+| 25/8 | +410 ms | −85.4 | −66.1 | −85.4 | 0.0 |
+| 25/36 | +347 ms | −89.0 | −52.6 | −89.0 | 0.0 |
+| 28/22 | +47 ms | −50.3 | −50.3 | −50.3 | 0.0 |
+| 33/17 | −19 ms | −108.4 | −72.4 | −72.2 | **36.2** |
+| 34/1 | −115 ms | −55.7 | −52.7 | −55.7 | 0.0 |
+| 34/24 | −7 ms | −66.3 | −65.1 | −66.4 | 0.1 |
 
-Neither is a substitute for the band on the *dropout* axis, which is continuous and where a margin
-does make sense.
+**On 11 of 12, B matches A to ≤0.7 dB once registered** — these are mutual program silence, exactly
+as the ear reports (§3.1a). The "half-occupied donor" the classifier sees is 13–37 dB of adjacent
+program dragged into a 4–12 block window by a mapping error of 80–410 ms. Recomputing the donor
+fraction at the fitted lag raises it on 11 of 12 (+0.08 to +0.57); **every** boundary case moves
+*further into* `shared_silence`, and 14/13 — the one gap the gate kept, at 3/7 = 0.429 — reads 0.625
+once registered.
+
+Pair 25's three listened gaps give +332 / +410 / +347 ms, a consistent ~360 ms systematic error.
+§2.4's "one registration problem counted nine times" is now measured, not inferred.
+
+**This retires the tie-break proposal.** `<=` on the donor comparison would flip all 6 exact-0.500
+ties in the listen set to *occupied*; all 6 are dropouts on the A axis, so all 6 become
+`repairable_dropout` → keep. The ear says all 6 are mutual silence. The one-character change moves
+6 of 12 correct drops to false keeps — do not ship it.
+
+The same argument sinks the ±1-block band: one block is 8–25 % of a 4–12 block window, so ±1 flips
+roughly 8 of the 10 `shared_silence` gaps here. The boundary is not fuzzy and it is not too tight;
+it is being fed a number measured in the wrong window.
+
+**The candidate that survives:** measure `donor_silence_fraction` at the **fitted** lag rather than
+the nominal offset map. That moves every gap in this set away from the boundary in the correct
+direction, would have caught 14/13, needs no new tunable, and makes the ±1-block question moot. It
+is also the same defect class as `dualfit-revalidation-window-bug` (A7) — a correct comparison run
+on the wrong window. Raising donor block resolution is still worth doing, but it is second-order: it
+sharpens a boundary that is currently fed bad data.
 
 ---
 
 ## 3. Concerns / open
 
-### 3.1 Nothing has been heard
+### 3.1 ~~Nothing has been heard~~ — RESOLVED 2026-08-03, see §3.1a
 
-No audio was rendered — the fingerprint path never muxes. **The 8 patches are structurally
-plausible, not verified.** The band decision should not be made on structure alone; the A3 dual-fit
-work set the precedent of an ear check, and this is the same class of claim.
+~~No audio was rendered — the fingerprint path never muxes.~~ A `--gap-listen` run over 12 of the 21
+(`gap-files/2026-08-01-v.0.5.1-band-test-with-listen`) supplied the A / B / patched WAVs. The
+concern below stands as written only for the 9 gaps that run did not cover.
+
+The band decision should not be made on structure alone; the A3 dual-fit work set the precedent of
+an ear check, and this is the same class of claim.
+
+### 3.1a What the ear check found
+
+**Verdict: none of the 12 is a legitimate dropout worth patching, and the patches are wrong.**
+
+- On 11 of 12, A and B carry the same content in the gap to ≤0.7 dB once registered (§2.5). These
+  are program silence present in both masters — the `shared_silence` cell, correctly identified.
+- All 8 gate-off patches **raise** the level inside the silence, by 9 to 46 dB, and several rewrite
+  seconds of surrounding A:
+
+  | gap | A in gap | patched | Δ | frames the splice rewrote (rel. gap start) |
+  |---|---|---|---|---|
+  | 33/17 | −100.6 | −54.2 | **+46.3** | −0.01 … +0.98 s |
+  | 25/1 | −80.1 | −44.1 | **+36.0** | −0.01 … +0.71 s |
+  | 14/9 | −62.9 | −43.5 | +19.4 | −2.46 … +0.92 s |
+  | 34/24 | −58.9 | −45.5 | +13.4 | −0.01 … +2.41 s |
+  | 10/11 | −58.5 | −46.1 | +12.4 | −0.01 … +1.30 s |
+  | 18/49 | −80.4 | −68.7 | +11.7 | −0.86 … +0.82 s |
+  | 34/1 | −47.9 | −37.4 | +10.5 | −0.56 … +2.44 s |
+  | 12/7 | −46.8 | −37.9 | +8.9 | −0.01 … +3.43 s |
+
+The listener's report was independent of and prior to the measurement, and agreed with it: the pairs
+sound identical, and on close listening the patch on 33/17 is audibly wrong.
 
 ### 3.2 The residual axis abstains — and *why* is itself evidence
 
@@ -146,15 +212,57 @@ timing-offset story and is independently corroborated by `beyond_lag_reach()`
 (`seam_residual.rs:798`), which abstains for the same reason on the placement axis — but it is
 **not** evidence that the donor content is wrong, and must not be quoted as such.
 
-### 3.3 Two patches with internally inconsistent metrics
+### 3.3 The two internally-inconsistent patches — both resolved, and 33/17 is a defect
 
-- **18/49** — `splice.post_peak_r` 0.136 and `step_ms` −134.9 (one shoulder does not correlate),
-  while `splice_dualfit` reports `pre_seam_r` 0.982 / `post_seam_r` 0.993. These are different
-  measurements and the gate uses the bracket path, so this is not proof of a defect — but it is the
-  widest internal disagreement in the set and it patched.
-- **33/17** — `post_seam_r` 0.973 vs `post_seam_global_r` 0.030, and the only nonzero `trim_frames`
-  (1461) in the set. It patched. Given `dualfit-revalidation-window-bug` (A7) was exactly a
-  wrong-window seam-scoring defect in this area, this deserves confirmation rather than assumption.
+Both were "confirm rather than assume" items. The listen run confirmed them; neither is a metric
+artifact.
+
+**18/49 — explained by registration, not a seam bug.** `splice.post_peak_r` 0.136 with `step_ms`
+−134.9 against `splice_dualfit`'s 0.982 / 0.993 was the widest internal disagreement in the set. The
+WAV says the nominal donor window is off by **+341 ms**: B reads −48.5 dB there but −85.1 dB at the
+fitted lag, against A's −85.8 dB. The shoulder that "does not correlate" is the one measured on
+displaced content. Same root cause as §2.5; nothing seam-specific to fix here. (Caveat: the shoulder
+fit itself is weak on this gap, r = 0.19 — the level agreement is the stronger evidence.)
+
+**33/17 — a real dropout, perceptually nothing, and the repair is worse than the hole.** This is the
+one gap in the set where B genuinely does *not* match A, and it is the most important finding in the
+file.
+
+The passage is extremely quiet: a −67…−69 dB bed of sparse clicks (peaks 40–90 LSB, occasional
+250–1400), one voice event at the clip head (−47 dB) and one at −52 dB shortly before the gap.
+A and B correlate at **r = 0.988 at +10.8 ms** over the post-gap shoulder — same rip. Inside the gap:
+
+| 3.00–3.62 s | RMS | peak (16-bit LSB) |
+|---|---|---|
+| A | **−101.5 dB** | **1–2** |
+| B | −65…−68 dB | 60–410 |
+| patched | −54 dB | **1632** |
+
+**A goes to hard digital zero for 620 ms while B continues the same click bed it carries everywhere
+else in the clip.** So this is a true dropout — A's noise floor really does die — of material at
+−68 dB, which is why it is inaudible and why the ear reports the pair as identical. "B should match
+A" is perceptually true and technically false here, and the gate needs to survive that distinction.
+
+Three things follow.
+
+1. **The gate dropped it by luck, not by design.** `a_below_noise` is −34.4 dB, **0.6 dB** short of
+   the 35 dB margin ⇒ `ambient_quiet` ⇒ drop. But that 34.4 dB is the distance from a −67.2 dB bed to
+   digital zero; the number is small only because the passage is this quiet. The identical
+   digital-silence hole in a normal-level passage reads 50–60 dB down and classifies
+   `repairable_dropout` immediately. `ambient_quiet` is not protecting against this case — the local
+   floor is.
+2. **The patch it produces is a defect.** The fill sits at −60.4 dB with a 1632 LSB spike — ~8 dB
+   above the bed it replaces and 4× B's peak there. It correlates with B at r = 0.958 but only at
+   **+36 ms** (at lag 0, r = −0.048), so the donor content is placed 36 ms off.
+3. **The damage runs past the gap.** 3.62–4.00 s is −69.5 dB in A and −69.4 dB in B but **−57.8 dB**
+   in the patched file, including a 5534 LSB click at 3.90 s where both sources have ~1400 — ~12 dB
+   of injected content and a 12 dB click overshoot, 380 ms beyond the gap end. Confirmed audible.
+
+The `post_seam_r` 0.973 vs `post_seam_global_r` 0.030 disagreement and the lone nonzero
+`trim_frames` (1461) are consistent with that 36 ms misplacement, so the A7-adjacent suspicion was
+well founded — but the actionable defect is the patch itself, not the score. **Open item:** the
+repair path produced a fill louder than its own surroundings and wrote outside the gap. That belongs
+to the seam/splice path and is independent of the band decision.
 
 ### 3.4 A decline that may be a seam-gate miss, not an equivalence win
 
@@ -241,13 +349,125 @@ a studio sting, it is not a representative test.
 
 ---
 
-## 6. What would change the conclusion
+## 6. Where this leaves us
 
-- **Tier 1 patches sound bad** → band does not ship at ±1.0/±1; revisit width, or drop the band in
-  favour of the tie-break fix (§2.5).
-- **Tier 1 patches sound good and 28/23 has an audible hole** → the equivalence gate is not the main
-  source of shipped holes; priority moves to the seam gate.
-- **Tie-break fix alone recovers most of the band set** → ship that instead; it is far smaller, has
-  no width parameter to calibrate, and needs no new production concept.
-- **Pair 25's nine gaps are one registration bug** → fix it there and the band's remaining case is
-  7 gaps / 4 patches, which may not justify a production rule at all.
+The §4 listening list was run and the branches below resolved. Recording both the outcome and the
+predictions, since the predictions were written before the audio existed.
+
+### 6.1 Resolved
+
+- **"Tier 1 patches sound bad" → hit.** All 8 gate-off patches inject 9–46 dB into program silence
+  (§3.1a). **The band does not ship at ±1.0 / ±1, and does not ship at a revised width either** —
+  §2.5 shows the boundary is fed a misregistered measurement, so no width is the right width.
+- **"Tie-break fix alone recovers most of the band set" → refuted, and inverted.** `<=` on the donor
+  comparison flips 6 of the 12 listened gaps from correct drop to false keep. **Do not ship it.**
+- **"Pair 25's nine gaps are one registration bug" → confirmed by measurement.** Its three listened
+  gaps show a consistent ~360 ms nominal-mapping error. It is one bug, and it is not confined to
+  pair 25 — the same error is 80–410 ms across seven other pairs.
+- **28/22 (§3.4) → not a seam-gate miss.** A and B match at −50.3 dB at the fitted lag; there is no
+  audible hole for the seam gate to have missed. The decline was correct.
+
+### 6.2 What to do next, in order
+
+1. **Register the donor window locally before measuring it** (§2.5, §6.4). Not "use the fitted lag" —
+   that was the wrong shape and is corrected in §6.4. The gate runs **pre-decode**
+   (`scan_gaps.rs:284`) with a single global `offset_secs` for the whole pair, and one constant
+   cannot track 80–410 ms of local drift. Derive the lag from the block-level timelines the scanner
+   already holds; see §6.4 for the validated method.
+2. **Fix the 33/17 patch defect** (§3.3): a fill 8 dB above its own surroundings, placed 36 ms off,
+   writing 380 ms past the gap end. Seam/splice path, independent of the band.
+3. **Re-examine the dropout margin against 33/17's mechanism** (§3.3 point 1). A fixed 35 dB margin
+   below a *local* floor cannot express "A went to digital zero"; in a quiet passage the two are only
+   34 dB apart. Whatever replaces it must not turn 33/17 into a keep.
+4. **Close the band item.** With (1) done there is no boundary-width question left to size. If the
+   band is revisited it must be re-derived from post-fix dumps; the numbers in §2.3 are measured
+   against the broken donor window and should not be carried forward.
+
+### 6.3 What would change *this* conclusion
+
+- **The 9 unheard gaps of the 21 behave differently.** The listen run covered 12; §3.1 still stands
+  for the rest. A second listen pass is cheap now that the tooling footguns in §5 are documented.
+- **The fitted-lag donor fix does not reproduce these results in-engine.** The lag here was derived
+  offline from the listen WAVs with a simple Pearson search, not by the production fit. If the
+  production fit lands elsewhere on these gaps, (1) needs rethinking before it ships.
+- **A corpus-wide re-dump shows the nominal-map error is rare outside this selected set.** These 21
+  were chosen for sitting near a boundary, which is exactly what a registration error would cause —
+  so the sample cannot estimate how often it happens. It bounds the *mechanism*, not the *rate*.
+
+### 6.4 The validated registration method
+
+**Cheap enough for the pre-decode gate, and measured on all 12.** Cross-correlate A's and B's
+100 ms `BlockLevel.rms_db` **dB envelopes** — the arrays the scanner already holds — over the gap
+± `EQUIVALENCE_CONTEXT_SECS` (2.0 s), searching ±10 blocks. That is ~21 dot products over 40–70 bins
+per gap, no decode, no fit. Prototyped in `domain/gap_equivalence.rs` as `register_donor_window`
+behind `GapEquivalenceParams::donor_registration` (opt-in; `None` reproduces today byte for byte).
+
+Three properties had to be got right, and two of them were only found by measuring:
+
+1. **Exclude the gap core from the correlation.** Register on the *shoulders*. The core is the one
+   stretch where A and B are expected to differ, and including it makes registration fail on exactly
+   the gaps that most need placing: a deep A dropout against a live B is a run of −110 dB outliers
+   that dominates the variance. Measured both ways on all 12 — identical lags, and the worst
+   correlation rises from 0.447 to 0.883:
+
+   | | lag (incl. core) | r | lag (excl. core) | r |
+   |---|---|---|---|---|
+   | 10/11 | +0 ms | 0.935 | +0 ms | 0.980 |
+   | 12/7 | −100 | 0.985 | −100 | 0.990 |
+   | 14/9 | −100 | 0.968 | −100 | 0.973 |
+   | 14/13 | −100 | 0.948 | −100 | 0.918 |
+   | 18/49 | +300 | 0.954 | +300 | 0.972 |
+   | 25/1 | +300 | 0.997 | +300 | 0.992 |
+   | 25/8 | +400 | 0.993 | +400 | 0.999 |
+   | 25/36 | +300 | 0.957 | +300 | 0.883 |
+   | 28/22 | +100 | 0.909 | +100 | 0.929 |
+   | **33/17** | +0 | **0.447** | +0 | **0.970** |
+   | 34/1 | −100 | 0.997 | −100 | 0.987 |
+   | 34/24 | +0 | 0.972 | +0 | 0.994 |
+
+   The 33/17 row is the point. Gap-inclusive, its low `r` was **conflating two different facts** —
+   "the window can't be placed" and "the interior differs" — and it is the second one that is true.
+   Registered on the shoulders it scores 0.970 like everything else, and its real signal moves to
+   `interior_delta_db` (+35.3 dB), which is where a "B has content A lost" claim belongs.
+
+2. **Erode one bin at each gap edge before comparing levels.** Without erosion the 100 ms grid
+   quantization produced +25 dB (18/49) and −15 dB (25/8) artifacts. With it, 11 of 12 agree to
+   ≤1.0 dB and the twelfth is 33/17's genuine +35.3 dB.
+
+3. **`r` is a registration test, not an equivalence test.** Below `min_envelope_r` (0.70) the two
+   timelines do not correspond at all and no statement about B's occupancy is defensible — so the
+   gate **abstains**: `NotEvaluated` with `not_evaluated_reason: donor_registration_unreliable`,
+   which keeps the gap. That is the "honest about why" half of the requirement. Every gap on this
+   set registered at 0.883 or better, so 0.70 is a floor, not a tuned split.
+
+**What the prototype's tests pin.** Beyond the flip case (nominal reads B's content ⇒ false keep;
+registered lands on B's silence ⇒ correct drop), the negative controls are the ones that matter:
+a **real dropout with a live donor still registers and still classifies `RepairableDropout`** —
+registration may only move the window, never talk the gate out of a fill — and unrelated timelines
+abstain and fail open. Flat envelopes are "cannot ask", not "does not match": no registration is
+recorded and the nominal map stands, rather than an abstain that would keep every gap on quiet
+material.
+
+**Still unvalidated:** everything above is measured on the same 12 gaps that motivated it. The
+out-of-set behaviour is only covered by synthetic fixtures — see §6.5.
+
+### 6.5 The out-of-set gap is a materials problem
+
+Testing this on gaps outside the 12 cannot be done offline from what exists today:
+
+- No `--gap-listen` WAVs exist outside `2026-08-01-v.0.5.1-band-test-with-listen` (24 wavs / 12 dumps).
+  The large corpus has 907 dumps and 0 WAVs.
+- The dumps carry **no B-side level timeline**, and only **14 of 405** sampled gaps carry
+  `levels.profile_db` at all — so the envelope correlation cannot be replayed from a dump either.
+
+The negative controls that matter are the 132 `repairable_dropout` gaps in the 39-pair corpus
+(against 229 `shared_silence`, 30 `ambient_quiet`, 14 unclassified): those are the gaps a
+registration change must **not** flip. Two routes, neither blocking the prototype:
+
+1. **A small second `--gap-listen` run** over a handful of `repairable_dropout` gaps drawn from
+   pairs *not* among the eight already listened to. This is the real test — it is the only thing
+   that produces both timelines for material the method has not seen.
+2. **Emit the registration on the next corpus dump** (`donor_registration` is provenance; it can
+   ride along with the gate still measuring at the nominal map). That answers the *rate* question
+   §6.3 raises — how often the nominal map is wrong outside a set selected for sitting near a
+   boundary — without changing a single verdict.

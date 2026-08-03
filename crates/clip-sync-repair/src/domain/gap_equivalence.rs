@@ -36,6 +36,10 @@ pub struct GapEquivalenceParams {
     /// B counts as **occupied** when `donor_silence_fraction < donor_silence_thresh` (default `0.5`, the
     /// program-quiet valley); at/above ⇒ B silent ⇒ nothing to fill.
     pub donor_silence_thresh: f64,
+    /// Register the donor window against A's envelope before measuring it — see
+    /// [`DonorRegistrationParams`]. `None` (the default) measures at the nominal offset map, which is
+    /// what every dump before 2026-08-03 recorded.
+    pub donor_registration: Option<DonorRegistrationParams>,
 }
 
 impl Default for GapEquivalenceParams {
@@ -44,8 +48,93 @@ impl Default for GapEquivalenceParams {
             enabled: false,
             dropout_margin_db: 35.0,
             donor_silence_thresh: 0.5,
+            donor_registration: None,
         }
     }
+}
+
+/// Tunables for **local donor registration** — the fix for the defect in
+/// `docs/dev/TEMP-equivalence-band-gate-off-findings.md` §2.5/§6.4.
+///
+/// The gate runs pre-decode with a single global `offset_secs` for the whole pair, and one constant
+/// cannot track local drift: on the 12-gap listen set the donor window was misplaced by 80–410 ms,
+/// which is what clustered `donor_silence_fraction` at exactly 0.500 and made the margin band look
+/// like a threshold problem. Re-registering B against A's own block envelope — no decode, ~21 dot
+/// products over 40–70 bins — recovered the lag on all 12 and brought the in-gap levels to within
+/// 0.7 dB on 11 of them. The twelfth is a real dropout A rides at digital zero while B keeps its
+/// −68 dB bed; it registers cleanly (r = 0.970) and separates on `interior_delta_db` (+35.3 dB)
+/// instead. Registration is still allowed to **abstain** — see [`Self::min_envelope_r`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DonorRegistrationParams {
+    /// Search half-width in blocks. `10` at the 100 ms default block ⇒ ±1.0 s, comfortably past the
+    /// 410 ms worst case observed.
+    pub max_lag_blocks: usize,
+    /// Peak envelope correlation below which the registration is not trusted and the gap
+    /// **abstains** ([`NotEvaluatedReason::DonorRegistrationUnreliable`]) instead of classifying.
+    /// Every gap on the listen set registered at 0.883 or better, so `0.70` fires only on material
+    /// where the two timelines genuinely do not correspond — it is a floor, not a tuned split.
+    pub min_envelope_r: f64,
+}
+
+impl Default for DonorRegistrationParams {
+    fn default() -> Self {
+        Self {
+            max_lag_blocks: 10,
+            min_envelope_r: 0.70,
+        }
+    }
+}
+
+/// Fewer bins than this and the envelope correlation is not worth believing (the ±2 s context at the
+/// 100 ms default block yields 40–70).
+const MIN_REGISTRATION_BINS: usize = 8;
+
+/// Where the donor window actually sits relative to the nominal offset map, and what B looks like
+/// once it is put there. Provenance **and** input: when `peak_r >= min_envelope_r` the donor fraction
+/// on the verdict is the one measured at `lag_blocks`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct DonorRegistration {
+    /// Blocks B's window must move to line up with A. Positive ⇒ later in B.
+    pub lag_blocks: i64,
+    /// `lag_blocks` in milliseconds, at the level stream's own bin width.
+    pub lag_ms: f64,
+    /// Envelope correlation at `lag_blocks`, over the **shoulders only** (see
+    /// [`register_donor_window`]). Low means the two timelines do not correspond here at all — a
+    /// registration failure, not an interior difference. Observed range on the listen set:
+    /// 0.883–0.999.
+    pub peak_r: f64,
+    /// Envelope correlation at the **nominal** map (lag 0), i.e. what the un-registered gate was
+    /// implicitly assuming. `peak_r − nominal_r` is how much the misregistration cost.
+    pub nominal_r: f64,
+    /// Bins behind both correlations.
+    pub bins: usize,
+    /// A's in-gap level with one bin eroded from each edge. Erosion is **required**: without it the
+    /// 100 ms grid quantization produced +25 / −15 dB artifacts on two of the twelve.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub a_interior_db: Option<f64>,
+    /// B's level over the registered donor window, eroded the same way.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub b_interior_db: Option<f64>,
+    /// `b_interior_db − a_interior_db`. Near zero ⇒ B is as quiet as A and there is nothing to fill;
+    /// large and positive ⇒ B carries content A lost. Recorded, **not** classified on yet.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub interior_delta_db: Option<f64>,
+}
+
+/// Why a gap was not classified. `NotEvaluated` is the only variant that asserts nothing about the
+/// audio, so it always fails open — but "the gate is off" and "B does not resemble A here" are very
+/// different refusals, and a plan that keeps a gap should be able to say which one it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NotEvaluatedReason {
+    /// `params.enabled == false`.
+    GateDisabled,
+    /// A signal the classifier needs was absent (no A blocks, no donor mapped, empty window).
+    MissingSignal,
+    /// The donor envelope was correlated against A and came back below
+    /// [`DonorRegistrationParams::min_envelope_r`] — the donor window cannot be placed, so no
+    /// statement about B's occupancy is defensible.
+    DonorRegistrationUnreliable,
 }
 
 /// Vocabulary for the gate — the reason a gap does or doesn't need patching. These are the
@@ -165,6 +254,16 @@ pub struct GapEquivalenceVerdict {
     /// Provenance only; never read to classify (it *is* what classified).
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub thresholds: Option<GapEquivalenceThresholds>,
+    /// Where the donor window was placed and how well it correlated — see [`DonorRegistration`].
+    /// `None` when registration was not requested, or when the envelopes carried no variance to
+    /// align on (a flat envelope has no features; the nominal map is then as good as any other and
+    /// today's behaviour stands).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub donor_registration: Option<DonorRegistration>,
+    /// Why `class` is [`NotEvaluated`](GapEquivalenceClass::NotEvaluated). `Some` **iff** it is —
+    /// see [`NotEvaluatedReason`].
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub not_evaluated_reason: Option<NotEvaluatedReason>,
 }
 
 /// The two threshold constants one [`GapEquivalenceVerdict`] was decided against — the configured
@@ -336,7 +435,28 @@ impl GapEquivalenceVerdict {
             measurement: None,
             noise_floor_probes: Vec::new(),
             thresholds: None,
+            donor_registration: None,
+            not_evaluated_reason: None,
         }
+    }
+
+    /// Record why this verdict is `NotEvaluated`. Debug-asserts the class matches: a reason on a
+    /// decided class would describe an intent instead of a measurement, the defect already corrected
+    /// twice on the provenance fields.
+    #[must_use]
+    fn with_not_evaluated_reason(mut self, reason: NotEvaluatedReason) -> Self {
+        debug_assert_eq!(self.class, GapEquivalenceClass::NotEvaluated);
+        self.not_evaluated_reason = Some(reason);
+        self
+    }
+
+    /// Attach the donor registration. Never changes `class` or `drop` — when registration *did*
+    /// change the class it did so by moving the window the donor fraction was measured over, before
+    /// the classifier ran.
+    #[must_use]
+    pub fn with_donor_registration(mut self, reg: Option<DonorRegistration>) -> Self {
+        self.donor_registration = reg;
+        self
     }
 
     /// Record the thresholds this verdict was decided against. Never changes `class` or `drop` —
@@ -426,7 +546,8 @@ pub fn classify_gap_equivalence(
             a_gap_rms_db,
             noise_floor_db,
             donor_silence_fraction,
-        );
+        )
+        .with_not_evaluated_reason(NotEvaluatedReason::GateDisabled);
     }
     let (Some(a), Some(nf), Some(ds)) = (a_gap_rms_db, noise_floor_db, donor_silence_fraction)
     else {
@@ -435,7 +556,8 @@ pub fn classify_gap_equivalence(
             a_gap_rms_db,
             noise_floor_db,
             donor_silence_fraction,
-        );
+        )
+        .with_not_evaluated_reason(NotEvaluatedReason::MissingSignal);
     };
     let is_dropout = a < nf - params.dropout_margin_db;
     let b_occupied = ds < params.donor_silence_thresh;
@@ -476,6 +598,132 @@ pub(crate) fn aggregate_rms_db(levels: impl Iterator<Item = f64>) -> Option<f64>
         BLOCK_LEVEL_FLOOR_DB
     } else {
         20.0 * rms.log10()
+    })
+}
+
+/// Pearson correlation of two equal-length series. `None` when either side is flat — a constant
+/// envelope has no features to align, which is "cannot ask", not "does not match".
+fn pearson(x: &[f64], y: &[f64]) -> Option<f64> {
+    if x.len() != y.len() || x.is_empty() {
+        return None;
+    }
+    let n = x.len() as f64;
+    let (mx, my) = (x.iter().sum::<f64>() / n, y.iter().sum::<f64>() / n);
+    let (mut sxy, mut sxx, mut syy) = (0.0, 0.0, 0.0);
+    for (a, b) in x.iter().zip(y) {
+        let (dx, dy) = (a - mx, b - my);
+        sxy += dx * dy;
+        sxx += dx * dx;
+        syy += dy * dy;
+    }
+    (sxx > 1e-12 && syy > 1e-12).then(|| sxy / (sxx * syy).sqrt())
+}
+
+/// Half-open index range of blocks whose **centre** falls in `[lo, hi)`. Blocks are sequential, so
+/// this is a contiguous run.
+fn window_indices(levels: &[BlockLevel], lo: f64, hi: f64) -> Option<(usize, usize)> {
+    let start = levels.partition_point(|b| block_center(b) < lo);
+    let end = levels.partition_point(|b| block_center(b) < hi);
+    (end > start).then_some((start, end))
+}
+
+/// Aggregate level over `[lo, hi)` with one bin eroded from each edge. See
+/// [`DonorRegistration::a_interior_db`] for why the erosion is not optional.
+fn eroded_interior_db(levels: &[BlockLevel], lo: f64, hi: f64) -> Option<f64> {
+    let (mut start, mut end) = window_indices(levels, lo, hi)?;
+    if end - start > 2 {
+        start += 1;
+        end -= 1;
+    }
+    aggregate_rms_db(levels[start..end].iter().map(|b| b.rms_db))
+}
+
+/// Align B's level envelope to A's over the gap ± [`EQUIVALENCE_CONTEXT_SECS`], by cross-correlating
+/// the two dB envelopes over `±max_lag_blocks`. Pure, decode-free — this is exactly the data the
+/// scanner already holds, which is what makes it usable in a **pre-decode** gate where the fitted
+/// per-gap lag is not available.
+///
+/// `None` when the window is too short, falls outside either stream, or is flat on either side.
+pub fn register_donor_window(
+    a_levels: &[BlockLevel],
+    core_start_secs: f64,
+    core_end_secs: f64,
+    b_levels: &[BlockLevel],
+    b_mapped: (f64, f64),
+    params: &DonorRegistrationParams,
+) -> Option<DonorRegistration> {
+    let delta = b_mapped.0 - core_start_secs;
+    let ctx_lo = core_start_secs - EQUIVALENCE_CONTEXT_SECS;
+    let ctx_hi = core_end_secs + EQUIVALENCE_CONTEXT_SECS;
+
+    let (a0, a1) = window_indices(a_levels, ctx_lo, ctx_hi)?;
+    let (b0, _) = window_indices(b_levels, ctx_lo + delta, ctx_hi + delta)?;
+
+    // **Shoulders only** — the gap core is excluded from the correlation. It is the one stretch where
+    // A and B are *expected* to differ, and including it makes registration fail on exactly the gaps
+    // that most need placing: a deep A dropout against a live B is a run of −110 dB outliers that
+    // dominates the variance. Measured on the 12-gap listen set, excluding the core recovered the
+    // identical lag on all twelve while lifting the worst correlation from 0.447 to 0.883 — and the
+    // one gap that scored 0.447 (A at digital zero, B carrying its click bed) went to 0.970, its real
+    // signal moving to `interior_delta_db` (+35.3 dB) where it belongs. `r` then means "the two
+    // timelines correspond here", and nothing else.
+    let offsets: Vec<i64> = (a0..a1)
+        .filter(|&i| {
+            let c = block_center(&a_levels[i]);
+            !(c >= core_start_secs && c < core_end_secs)
+        })
+        .map(|i| (i - a0) as i64)
+        .collect();
+    let n = offsets.len();
+    if n < MIN_REGISTRATION_BINS {
+        return None;
+    }
+    let xs: Vec<f64> = offsets
+        .iter()
+        .map(|&o| a_levels[a0 + o as usize].rms_db)
+        .collect();
+
+    let max = params.max_lag_blocks as i64;
+    let (mut best, mut nominal_r) = (None::<(i64, f64)>, None);
+    let mut ys = vec![0.0; n];
+    'lag: for lag in -max..=max {
+        for (slot, &o) in ys.iter_mut().zip(&offsets) {
+            let Ok(j) = usize::try_from(b0 as i64 + o + lag) else {
+                continue 'lag;
+            };
+            let Some(b) = b_levels.get(j) else {
+                continue 'lag;
+            };
+            *slot = b.rms_db;
+        }
+        let Some(r) = pearson(&xs, &ys) else { continue };
+        if lag == 0 {
+            nominal_r = Some(r);
+        }
+        if best.is_none_or(|(_, br)| r > br) {
+            best = Some((lag, r));
+        }
+    }
+    let (lag_blocks, peak_r) = best?;
+
+    let bin_secs = b_levels.first().map_or(0.0, |b| b.end_secs - b.start_secs);
+    let lag_secs = lag_blocks as f64 * bin_secs;
+    let a_interior_db = eroded_interior_db(a_levels, core_start_secs, core_end_secs);
+    let b_interior_db = eroded_interior_db(b_levels, b_mapped.0 + lag_secs, b_mapped.1 + lag_secs);
+    Some(DonorRegistration {
+        lag_blocks,
+        lag_ms: lag_secs * 1000.0,
+        peak_r,
+        // A lag-0 read is always in range when the peak was (same `n`, same stream), but keep the
+        // fallback honest rather than folding the two into one number.
+        nominal_r: nominal_r.unwrap_or(peak_r),
+        bins: n,
+        a_interior_db,
+        b_interior_db,
+        interior_delta_db: match (a_interior_db, b_interior_db) {
+            (Some(a), Some(b)) => Some(b - a),
+            _ => None,
+        },
     })
 }
 
@@ -550,21 +798,42 @@ pub fn derive_gap_equivalence(
     // A's gap floor. Never re-threshold rms alone against the floor — digitally silent blocks
     // sit at BLOCK_LEVEL_FLOOR_DB and `rms < gap_floor` is false when both are −120.
     let gap_floor = gap_floor_db.is_finite().then_some(gap_floor_db);
-    let donor_blocks = match (b_levels, b_mapped) {
-        (Some(bl), Some((b_start, b_end))) => {
-            let mut total = 0usize;
-            let mut silent = 0usize;
-            for b in bl.iter().filter(|b| {
-                let c = block_center(b);
-                c >= b_start && c < b_end
-            }) {
-                total += 1;
-                if b.silent || gap_floor.is_some_and(|g| b.rms_db < g) {
-                    silent += 1;
-                }
+    let count_donor = |bl: &[BlockLevel], (b_start, b_end): (f64, f64)| {
+        let mut total = 0usize;
+        let mut silent = 0usize;
+        for b in bl.iter().filter(|b| {
+            let c = block_center(b);
+            c >= b_start && c < b_end
+        }) {
+            total += 1;
+            if b.silent || gap_floor.is_some_and(|g| b.rms_db < g) {
+                silent += 1;
             }
-            Some((silent, total))
         }
+        (silent, total)
+    };
+
+    // Register the donor window before measuring it. The nominal map is a single global constant for
+    // the whole pair and drifts locally by 80–410 ms on real material, which is enough to slide the
+    // window off B's silence and onto its content (§2.5/§6.4 of the band findings).
+    let registration = match (params.donor_registration, b_levels, b_mapped) {
+        (Some(rp), Some(bl), Some(bm)) => {
+            register_donor_window(a_levels, core_start_secs, core_end_secs, bl, bm, &rp)
+                .map(|reg| (rp, reg))
+        }
+        _ => None,
+    };
+    // Registration moves the window; it never edits the reading taken there.
+    let donor_window = match (b_mapped, registration) {
+        (Some((s, e)), Some((_, reg))) => {
+            let shift = reg.lag_ms / 1000.0;
+            Some((s + shift, e + shift))
+        }
+        (bm, _) => bm,
+    };
+
+    let donor_blocks = match (b_levels, donor_window) {
+        (Some(bl), Some(win)) => Some(count_donor(bl, win)),
         _ => None,
     };
     let donor_silence_fraction =
@@ -573,15 +842,31 @@ pub fn derive_gap_equivalence(
     // Empty `a_levels` ⇒ no A population and no measurement (do not invent `Some(0)` / a bin — that
     // would claim "zero blocks measured" about a gap where nothing was measured).
     let a_gap_blocks = (!a_levels.is_empty()).then_some((a_gap_silent_blocks, a_gap_total_blocks));
-    let mut verdict =
+    // A registration we don't believe is not a licence to fall back on the nominal map — that is the
+    // window we already know is wrong. Abstain instead: `NotEvaluated` keeps the gap (fail open) and
+    // the reason says why, so a keep here is honest rather than accidental.
+    let unreliable = registration.is_some_and(|(rp, reg)| reg.peak_r < rp.min_envelope_r);
+    let mut verdict = if unreliable && params.enabled {
+        GapEquivalenceVerdict::of(
+            GapEquivalenceClass::NotEvaluated,
+            a_gap_rms_db,
+            noise_floor_db,
+            donor_silence_fraction,
+        )
+        .with_not_evaluated_reason(NotEvaluatedReason::DonorRegistrationUnreliable)
+    } else {
         classify_gap_equivalence(a_gap_rms_db, noise_floor_db, donor_silence_fraction, params)
-            .with_scan_provenance(gap_floor, a_gap_blocks, donor_blocks);
+    }
+    .with_scan_provenance(gap_floor, a_gap_blocks, donor_blocks)
+    .with_donor_registration(registration.map(|(_, reg)| reg));
     // Record the intervals themselves, not just their kind — and hand the core to the fingerprint's
     // diagnostic path, which has no other way to see it (`GapFingerprint::geometry` carries the raw
     // span). Unconditional on `a_levels`: the window is a property of the caller's gap, known even
     // when no block fell in it.
     verdict.a_span_secs = Some((core_start_secs, core_end_secs));
-    verdict.donor_span_secs = b_mapped;
+    // The window actually measured, which is the registered one when registration ran — recording
+    // the nominal span next to a fraction read somewhere else is the exact defect §2.5 documents.
+    verdict.donor_span_secs = donor_window;
     // `bin_ms` is a property of the level stream, not the gap population — any block's width works.
     if let Some(b) = a_levels.first() {
         let bin_ms = ((b.end_secs - b.start_secs) * 1000.0).round().max(0.0) as u64;
@@ -656,6 +941,7 @@ mod tests {
             enabled: true,
             dropout_margin_db: 20.0,
             donor_silence_thresh: 0.8,
+            donor_registration: None,
         };
         let v = classify_gap_equivalence(Some(-106.0), Some(-47.0), Some(0.7), &tuned);
         let t = v.thresholds.expect("decided class records thresholds");
@@ -939,6 +1225,262 @@ mod tests {
             &GapEquivalenceParams::default(),
         );
         assert_eq!(v.class, NotEvaluated);
+    }
+
+    // --- Donor registration (§6.4 of the band findings) -----------------------------------------
+
+    fn with_registration() -> GapEquivalenceParams {
+        GapEquivalenceParams {
+            donor_registration: Some(DonorRegistrationParams::default()),
+            ..on()
+        }
+    }
+
+    /// Deterministic pseudo-random content level in −55..−25 dB. Needs to be aperiodic: a smooth
+    /// sinusoid would let the lag search lock onto a harmonic and pass for the wrong reason.
+    fn content_db(i: i64) -> f64 {
+        let h = (i as u64)
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        -55.0 + 30.0 * ((h >> 33) % 1000) as f64 / 1000.0
+    }
+
+    /// 12 s of 100 ms blocks. Blocks in `quiet` sit at `quiet_db` and are scanner-silent; the rest
+    /// carry `content_db` **shifted by `shift` blocks**, so a stream built with `shift: 5` is the
+    /// same program 500 ms late.
+    fn timeline(
+        n: usize,
+        quiet: std::ops::Range<usize>,
+        quiet_db: f64,
+        shift: i64,
+    ) -> Vec<BlockLevel> {
+        (0..n)
+            .map(|i| {
+                let silent = quiet.contains(&i);
+                BlockLevel {
+                    start_secs: i as f64 * 0.1,
+                    end_secs: i as f64 * 0.1 + 0.1,
+                    rms_db: if silent {
+                        quiet_db
+                    } else {
+                        content_db(i as i64 - shift)
+                    },
+                    silent,
+                }
+            })
+            .collect()
+    }
+
+    /// The headline case. A has a 600 ms hole at 5.0 s; B is the same program 500 ms late, so B's
+    /// matching quiet stretch is at 5.5 s. The nominal window reads B's *content* and calls the gap
+    /// repairable — a false keep that the gate-off run turned into an audible injection. Registered,
+    /// the window lands on B's silence and the gap correctly drops.
+    #[test]
+    fn registration_moves_the_donor_window_onto_bs_matching_silence() {
+        let a = timeline(120, 50..56, -110.0, 0);
+        let b = timeline(120, 55..61, -110.0, 5);
+
+        let nominal = derive_gap_equivalence(&a, 5.0, 5.6, Some(&b), Some((5.0, 5.6)), &on());
+        assert_eq!(
+            nominal.class, RepairableDropout,
+            "nominal map reads B's content"
+        );
+        assert_eq!(nominal.donor_silence_fraction, Some(1.0 / 6.0));
+        assert!(nominal.donor_registration.is_none(), "opt-in");
+
+        let v = derive_gap_equivalence(
+            &a,
+            5.0,
+            5.6,
+            Some(&b),
+            Some((5.0, 5.6)),
+            &with_registration(),
+        );
+        let reg = v.donor_registration.expect("registration ran");
+        assert_eq!(reg.lag_blocks, 5, "{reg:?}");
+        assert!((reg.lag_ms - 500.0).abs() < 1e-6, "{reg:?}");
+        assert!(reg.peak_r > 0.99, "shifted copy correlates: {reg:?}");
+        assert!(reg.nominal_r < 0.5, "nominal map does not: {reg:?}");
+        assert_eq!(v.donor_silence_fraction, Some(1.0));
+        assert_eq!(v.class, SharedSilence);
+        assert!(v.drop);
+        // The recorded span is the one measured, not the one requested.
+        let (ds, _) = v.donor_span_secs.expect("donor span");
+        assert!((ds - 5.5).abs() < 1e-6, "{:?}", v.donor_span_secs);
+    }
+
+    /// **Negative control.** A real dropout with a live donor must survive registration: B carries
+    /// content across the hole at the correct lag, so the fraction stays 0 and the gap is still
+    /// repairable. Registration must only move the window — never talk the gate out of a fill.
+    #[test]
+    fn registration_does_not_talk_the_gate_out_of_a_real_dropout() {
+        let a = timeline(120, 50..56, -110.0, 0);
+        let b = timeline(120, 0..0, -110.0, 5); // same program, 500 ms late, no hole of its own
+
+        let v = derive_gap_equivalence(
+            &a,
+            5.0,
+            5.6,
+            Some(&b),
+            Some((5.0, 5.6)),
+            &with_registration(),
+        );
+        let reg = v.donor_registration.expect("registration ran");
+        assert_eq!(reg.lag_blocks, 5, "shoulders still register: {reg:?}");
+        assert!(
+            reg.peak_r > 0.99,
+            "excluding the core keeps a dropout registrable: {reg:?}"
+        );
+        assert_eq!(v.donor_silence_fraction, Some(0.0));
+        assert_eq!(v.class, RepairableDropout);
+        assert!(!v.drop);
+        // B is tens of dB above A inside the hole — the signal that says "there is something to fill".
+        assert!(reg.interior_delta_db.unwrap() > 40.0, "{reg:?}");
+    }
+
+    /// The 33/17 shape: A hits digital zero while B keeps a quiet bed ~35 dB above it. Both are far
+    /// below A's noise floor, so the fraction alone cannot see the difference — `interior_delta_db`
+    /// can. Recorded, not yet classified on.
+    #[test]
+    fn interior_delta_separates_a_live_bed_from_matching_silence() {
+        let a = timeline(120, 50..56, -101.0, 0);
+        let live = timeline(120, 50..56, -66.0, 0);
+        let matching = timeline(120, 50..56, -101.0, 0);
+
+        let d = |b: &[BlockLevel]| {
+            derive_gap_equivalence(
+                &a,
+                5.0,
+                5.6,
+                Some(b),
+                Some((5.0, 5.6)),
+                &with_registration(),
+            )
+            .donor_registration
+            .expect("registration ran")
+            .interior_delta_db
+            .expect("both interiors present")
+        };
+        assert!((d(&live) - 35.0).abs() < 1.0, "live bed: {}", d(&live));
+        assert!(d(&matching).abs() < 0.01, "matching: {}", d(&matching));
+    }
+
+    /// **Negative control.** Unrelated timelines cannot be registered, so the gate abstains rather
+    /// than classifying against a window it cannot place — and abstaining **keeps** the gap.
+    #[test]
+    fn unregistrable_donor_abstains_and_fails_open() {
+        let a = timeline(120, 50..56, -110.0, 0);
+        // B's content is a different program (offset the pseudo-random stream far past the search).
+        let mut b = timeline(120, 50..56, -110.0, 0);
+        for (i, blk) in b.iter_mut().enumerate() {
+            if !blk.silent {
+                blk.rms_db = content_db(i as i64 + 5_000);
+            }
+        }
+
+        let v = derive_gap_equivalence(
+            &a,
+            5.0,
+            5.6,
+            Some(&b),
+            Some((5.0, 5.6)),
+            &with_registration(),
+        );
+        let reg = v.donor_registration.expect("registration was attempted");
+        assert!(reg.peak_r < 0.70, "unrelated programs: {reg:?}");
+        assert_eq!(v.class, NotEvaluated);
+        assert_eq!(
+            v.not_evaluated_reason,
+            Some(NotEvaluatedReason::DonorRegistrationUnreliable),
+            "a keep here must say why it is a keep"
+        );
+        assert!(!v.drop, "abstain fails open");
+        assert!(
+            v.thresholds.is_none(),
+            "a refusal must not carry the marks of a decision"
+        );
+    }
+
+    /// A flat envelope has no features to align. That is "cannot ask", not "does not match" — no
+    /// registration is recorded and the nominal map stands, rather than an abstain that would keep
+    /// every gap on quiet material.
+    #[test]
+    fn flat_envelopes_are_not_registrable_and_do_not_abstain() {
+        let flat: Vec<BlockLevel> = (0..120)
+            .map(|i| BlockLevel {
+                start_secs: i as f64 * 0.1,
+                end_secs: i as f64 * 0.1 + 0.1,
+                rms_db: if (50..56).contains(&i) { -110.0 } else { -40.0 },
+                silent: (50..56).contains(&i),
+            })
+            .collect();
+        let mut b = flat.clone();
+        for blk in &mut b {
+            blk.rms_db = -40.0;
+            blk.silent = false;
+        }
+
+        let v = derive_gap_equivalence(
+            &flat,
+            5.0,
+            5.6,
+            Some(&b),
+            Some((5.0, 5.6)),
+            &with_registration(),
+        );
+        assert!(v.donor_registration.is_none(), "nothing to align on");
+        assert_eq!(v.class, RepairableDropout, "nominal map still applies");
+        assert!(v.not_evaluated_reason.is_none());
+    }
+
+    /// Registration is opt-in: with the default params every input above classifies exactly as it
+    /// did before the feature existed, and no registration field is emitted.
+    #[test]
+    fn registration_is_off_by_default() {
+        let a = timeline(120, 50..56, -110.0, 0);
+        let b = timeline(120, 55..61, -110.0, 5);
+        for params in [on(), GapEquivalenceParams::default()] {
+            assert!(params.donor_registration.is_none());
+            let v = derive_gap_equivalence(&a, 5.0, 5.6, Some(&b), Some((5.0, 5.6)), &params);
+            assert!(v.donor_registration.is_none(), "{v:?}");
+            assert_eq!(v.donor_span_secs, Some((5.0, 5.6)), "nominal span unmoved");
+        }
+    }
+
+    /// `not_evaluated_reason` is present exactly when the class is `NotEvaluated` — the same
+    /// iff-property `thresholds` carries for the decided classes.
+    #[test]
+    fn not_evaluated_reason_is_present_iff_not_evaluated() {
+        let a = vec![
+            blk(9.5, -50.0),
+            blk(9.75, -50.0),
+            blk(10.0, -119.0),
+            blk(10.5, -50.0),
+        ];
+        let b = vec![blk_silent(10.0, -20.0, false)];
+
+        let decided = derive_gap_equivalence(&a, 10.0, 10.5, Some(&b), Some((10.0, 10.5)), &on());
+        assert_eq!(decided.class, RepairableDropout);
+        assert!(decided.not_evaluated_reason.is_none());
+
+        let off = derive_gap_equivalence(
+            &a,
+            10.0,
+            10.5,
+            Some(&b),
+            Some((10.0, 10.5)),
+            &GapEquivalenceParams::default(),
+        );
+        assert_eq!(
+            off.not_evaluated_reason,
+            Some(NotEvaluatedReason::GateDisabled)
+        );
+
+        let no_donor = derive_gap_equivalence(&a, 10.0, 10.5, None, None, &on());
+        assert_eq!(
+            no_donor.not_evaluated_reason,
+            Some(NotEvaluatedReason::MissingSignal)
+        );
     }
 
     // --- Scanner → levels → occupancy/donor (production recipe; not hand-built BlockLevels) -----
