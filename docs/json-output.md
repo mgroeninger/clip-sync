@@ -230,8 +230,16 @@ Gap positions in `gaps[]` use the **decoded-sample clock**. When `delta_secs` is
 | `skipped_count` | integer | always | Planned but skipped during splice |
 | `not_planned_count` | integer | always | Excluded at plan time |
 | `not_applied_count` | integer | when > 0 | **Bug indicator.** Gaps the seam gate approved whose splice then failed — A is unchanged across them. Never emitted on a healthy run; any non-zero value is a defect report, not a routine outcome |
-| `donor_relation` | string | when residual measured on ≥1 gap | `same_master` \| `mixed` \| `diff_capture` — inferred from informative-floor fraction |
+| `donor_relation` | string | when residual measured on ≥1 gap | `same_master` \| `mixed` \| `diff_capture` — inferred from informative-floor fraction. **A cancellation rate, not a provenance finding — see note below** |
 | `gaps` | array of [GapPatchOutcome](#gappatchoutcome) | always | Per-gap outcomes in scan order |
+
+> **`donor_relation` claims more than it measures.** It is derived purely from the fraction of gaps
+> whose residual floor showed cancellation at the *nominal* alignment, so it reports how often A and B
+> cancelled — not where they came from. In particular `diff_capture` does **not** establish that the
+> sources differ: a same-master pair yields it whenever it drifts beyond the ±`residual_lag_secs`
+> (default 10 ms) probe radius, or when its gaps are silent enough that no floor reference window is
+> found. Read the three values as *mostly cancelled* / *partly* / *never*, and do not branch on them as
+> a provenance decision — the field gates nothing in the repair pipeline and is emitted as a diagnostic.
 
 ### GapPatchOutcome
 

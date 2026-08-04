@@ -308,7 +308,16 @@ Prefer **facts** in automation. Treat **hints** as shorthand for the C-layer sha
 | `anchor_seam_used` | `true`, `false` | JSON + `-v` tags; editorial anchor bracket won (fit mode) |
 | `anchor_bracket_move_frames` | integer | JSON + `-v` tags; bracket displacement from scan-refined baseline |
 | `anchor_trusted` | via `patch_tier=anchor_trusted` | Fit mode: strong structure at editorial anchors, throat Pearson below `min_fill_correlation` but patch accepted | Gap table `patched (anchor …)` + ` [anchor trusted · seam]`; JSON `tags.patch_tier` |
-| `donor_relation` | `same_master`, `mixed`, `diff_capture` | Run-level: fraction of gaps with informative floors (≥70% → `same_master`) | JSON `patch.donor_relation`; patch summary header |
+| `donor_relation` | `same_master`, `mixed`, `diff_capture` | Run-level: fraction of gaps with informative floors (≥70% → `same_master`). **Cancellation rate, not provenance** — see note below | JSON `patch.donor_relation`; patch summary header |
+
+**`donor_relation` is named for a conclusion it does not reach.** Its only input is how many gaps had
+an *informative floor* — a floor that established cancellation at the nominal alignment. That is a
+cancellation rate. `diff_capture` therefore does **not** mean the sources differ; a same-master pair
+lands there whenever it drifts past the ±`residual_lag_secs` (default 10 ms) probe radius, or when its
+gaps are quiet enough that no floor reference window is found. Treat the values as *mostly cancelled* /
+*partly* / *never*. Nothing in the repair pipeline branches on this field — it is a run diagnostic
+(residual-gate wiring plan §4d), which is why the misleading names have not been changed: the strings
+are public JSON output.
 
 **Naming:** Guide **P0–P7** = plan-time gap types (Layer 1). Corpus acceptance IDs **EC-1–EC-6** in [energy-corpus-plan.md](dev/archive/energy-corpus-plan.md) are unrelated — always qualify which “P” you mean.
 

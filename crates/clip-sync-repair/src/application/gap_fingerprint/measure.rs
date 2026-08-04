@@ -1991,36 +1991,43 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
         // placement recorded by `characterize_gap_region` runs at `waveform_weight: 0.0` and is
         // blind to those terms by construction.) It costs nothing here: the gate already computed
         // it. `None` on a gate failure — there is no chosen placement to report.
-        let (structure_pre, structure_post, seam_pre, seam_post, stage, residual_margin_db, placement) =
-            match oracle_score_fit_candidate(&params, &cache, br.refined, refined, true) {
-                Ok(sc) => {
-                    any_ok = true;
-                    if br.refined == refined {
-                        throat_structure_frame = Some(sc.structure_start_frame);
-                    }
-                    (
-                        None,
-                        None,
-                        Some(sc.report_pre),
-                        Some(sc.report_post),
-                        None,
-                        None,
-                        Some(sc.alignment),
-                    )
+        let (
+            structure_pre,
+            structure_post,
+            seam_pre,
+            seam_post,
+            stage,
+            residual_margin_db,
+            placement,
+        ) = match oracle_score_fit_candidate(&params, &cache, br.refined, refined, true) {
+            Ok(sc) => {
+                any_ok = true;
+                if br.refined == refined {
+                    throat_structure_frame = Some(sc.structure_start_frame);
                 }
-                Err(f) => {
-                    let d = stage_of(&f);
-                    (
-                        d.structure_pre,
-                        d.structure_post,
-                        d.seam_pre,
-                        d.seam_post,
-                        Some(d.stage),
-                        d.residual_margin_db,
-                        None,
-                    )
-                }
-            };
+                (
+                    None,
+                    None,
+                    Some(sc.report_pre),
+                    Some(sc.report_post),
+                    None,
+                    None,
+                    Some(sc.alignment),
+                )
+            }
+            Err(f) => {
+                let d = stage_of(&f);
+                (
+                    d.structure_pre,
+                    d.structure_post,
+                    d.seam_pre,
+                    d.seam_post,
+                    Some(d.stage),
+                    d.residual_margin_db,
+                    None,
+                )
+            }
+        };
         infos.push(BracketInfo {
             pre_time_secs: br.pre.frame as f64 / rate,
             post_time_secs: br.post.frame as f64 / rate,
@@ -2198,6 +2205,9 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
             chosen_post_db: residual_db_opt(v.chosen_post_db),
             floor_pre_db: residual_db_opt(v.floor_pre_db),
             floor_post_db: residual_db_opt(v.floor_post_db),
+            // See the `project.rs` twin: the source is what disambiguates an absent `floor_*_db`.
+            floor_source_pre: Some(v.floor_source_pre),
+            floor_source_post: Some(v.floor_source_post),
             informative: v.informative,
         })
     });
@@ -3376,6 +3386,8 @@ mod tests {
                 chosen_post_db: Some(-41.0),
                 floor_pre_db: Some(-40.0),
                 floor_post_db: Some(-40.0),
+                floor_source_pre: Some(SeamFloorSource::Border),
+                floor_source_post: Some(SeamFloorSource::Border),
                 informative: true,
             }),
             lag: None,
@@ -4159,8 +4171,7 @@ mod tests {
             .as_ref()
             .expect("from-decode dump stamps the seam-gate recipe");
         assert_eq!(
-            recipe.min_fill_correlation,
-            request.min_fill_correlation,
+            recipe.min_fill_correlation, request.min_fill_correlation,
             "gate_recipe must echo the settings used to score brackets"
         );
         assert_eq!(
@@ -4186,9 +4197,7 @@ mod tests {
             assert!(g.contour.is_none());
             assert!(g.anchors.is_none());
             assert!(
-                g.outcome
-                    .as_ref()
-                    .is_some_and(|o| o.seam_shape.is_none()),
+                g.outcome.as_ref().is_some_and(|o| o.seam_shape.is_none()),
                 "seam_shape must be omitted, not hardcoded empty"
             );
             // This path threads the real sweep through `MeasuredDetail`, so the rows must NOT carry

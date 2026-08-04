@@ -105,7 +105,11 @@ where
 const SEAM_FLOOR_ENERGY_MARGIN: f64 = 4.0;
 
 /// Which side of the gap a probe was taken from / where its reference window came from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+///
+/// `Deserialize` because the gap fingerprint emits this on `ResidualInfo` and reads its own dumps
+/// back (`--check`, the corpus analysis) — the variant is what separates "no floor was found"
+/// from "a floor was measured and it happens to be weak".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SeamFloorSource {
     /// Immediate border window (just past the standoff) was energetic and usable.

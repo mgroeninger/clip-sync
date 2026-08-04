@@ -258,6 +258,20 @@ fn residual_db_side(v: Option<f64>) -> Option<f64> {
     clip_sync_repair::application::gap_fingerprint::residual_db_opt(v.unwrap_or(f64::NAN))
 }
 
+/// One side's headroom (`chosen − floor`), or `None` when that side was not measured.
+///
+/// A side contributes only when **both** of its readings survive [`residual_db_side`]. The −120
+/// sentinel means "no reference window was found", so `−120 − (−120)` is not a headroom of 0 dB —
+/// it is the difference of two absences, and folding it into the `max` below let a fabricated zero
+/// stand in for a measurement (and, on a gap with one real side, silently lose to it or beat it
+/// depending on sign). `floor_source_*` is the field that distinguishes the two cases on the wire.
+fn side_headroom_db(chosen: Option<f64>, floor: Option<f64>) -> Option<f64> {
+    match (residual_db_side(chosen), residual_db_side(floor)) {
+        (Some(c), Some(f)) => Some(c - f),
+        _ => None,
+    }
+}
+
 #[derive(Deserialize)]
 struct Geometry {
     #[serde(default)]
@@ -571,15 +585,17 @@ fn gap_row(pair: &str, source: &SourceMeta, gap: &GapEntry, eps: f64, tail_secs:
             .as_ref()
             .and_then(|w| w.post.map(|p| p.peak_lag_ms)),
         // Worst (least-cancelling) side: max of the two headrooms. `None` if any dB was null (non-finite).
+        // Worst (largest) headroom over the sides that were actually measured. Requiring both sides
+        // discarded a real pre-side reading whenever the post side found no reference window — the
+        // common shape on one-sided gaps. `None` now means "neither side was measured", not "one of
+        // the two wasn't".
         residual_headroom_db: gap.residual.as_ref().and_then(|r| {
-            match (
-                residual_db_side(r.chosen_pre_db),
-                residual_db_side(r.floor_pre_db),
-                residual_db_side(r.chosen_post_db),
-                residual_db_side(r.floor_post_db),
-            ) {
-                (Some(cp), Some(fp), Some(cq), Some(fq)) => Some((cp - fp).max(cq - fq)),
-                _ => None,
+            let pre = side_headroom_db(r.chosen_pre_db, r.floor_pre_db);
+            let post = side_headroom_db(r.chosen_post_db, r.floor_post_db);
+            match (pre, post) {
+                (Some(a), Some(b)) => Some(a.max(b)),
+                (Some(v), None) | (None, Some(v)) => Some(v),
+                (None, None) => None,
             }
         }),
         residual_informative: gap.residual.as_ref().map(|r| r.informative),

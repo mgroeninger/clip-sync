@@ -37,6 +37,18 @@ impl ResidualBand {
 }
 
 /// Run-level donor relationship inferred from informative-floor fraction (guide `donor_relation`).
+///
+/// **These names overstate what is measured.** The input is [`derive_donor_relation`]'s rate of gaps
+/// whose floor *cancelled at nominal alignment* — a cancellation rate, not a provenance finding.
+/// [`Self::DiffCapture`] in particular does **not** establish that the sources differ; a same-master
+/// pair produces it too whenever it drifts beyond the ±`residual_lag_secs` (default 10 ms) probe
+/// radius, or when its gaps are silent enough that no floor reference window is found at all. Read
+/// the variants as *mostly / partly / never cancelled*.
+///
+/// Retained under these names because this is a **diagnostic that gates nothing** (residual-gate
+/// wiring plan §4d) and the strings are public wire — `patch.donor_relation` in the JSON output and
+/// the CLI patch-summary header. Renaming is mechanically trivial (the `rename_all` below plus
+/// [`Self::as_str`]); the cost is entirely downstream compatibility.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DonorRelation {
@@ -67,6 +79,10 @@ pub fn classify_residual_band(verdict: &SeamResidualVerdict, margin_db: f64) -> 
 }
 
 /// Derive run-level donor relation from per-gap residual verdicts (≥70% informative → same_master).
+///
+/// The denominator is gaps that carry a residual verdict at all; the numerator is those whose floor
+/// established cancellation. See [`DonorRelation`] for why the resulting labels claim more than this
+/// rate supports.
 pub fn derive_donor_relation(
     gaps: &[crate::domain::patch_result::GapPatchOutcome],
 ) -> Option<DonorRelation> {

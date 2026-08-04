@@ -132,6 +132,11 @@ pub fn spec_to_fingerprint_summary(
         chosen_post_db: residual_db_opt(r.chosen_post_db),
         floor_pre_db: residual_db_opt(r.floor_pre_db),
         floor_post_db: residual_db_opt(r.floor_post_db),
+        // Always `Some` — the verdict carries a source for both sides, and it is what tells an absent
+        // `floor_*_db` ("no reference window found") apart from a suppressed one ("measured, then
+        // −120/non-finite"). Only the wire type is optional, for pre-2026-08-03 dumps.
+        floor_source_pre: Some(r.floor_source_pre),
+        floor_source_post: Some(r.floor_source_post),
         informative: r.informative,
     });
     // Real per-bracket rows when characterize supplied them (from-decode dump, 8g.4b); else synthesize just
@@ -475,8 +480,15 @@ pub(crate) fn tags_from_fields(
         chosen_post_db: r.chosen_post_db.unwrap_or(f64::NAN),
         floor_pre_db: r.floor_pre_db.unwrap_or(f64::NAN),
         floor_post_db: r.floor_post_db.unwrap_or(f64::NAN),
-        floor_source_pre: crate::domain::policies::SeamFloorSource::None,
-        floor_source_post: crate::domain::policies::SeamFloorSource::None,
+        // Read back from the dump now that `ResidualInfo` carries it. `None` here means the dump
+        // predates the field (or genuinely found no reference window) — not "we didn't bother",
+        // which is what the old unconditional `SeamFloorSource::None` asserted on every gap.
+        floor_source_pre: r
+            .floor_source_pre
+            .unwrap_or(crate::domain::policies::SeamFloorSource::None),
+        floor_source_post: r
+            .floor_source_post
+            .unwrap_or(crate::domain::policies::SeamFloorSource::None),
         informative: r.informative,
         placement_slide_frames: 0,
         max_lag_frames: 0,

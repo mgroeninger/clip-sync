@@ -5,6 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 
+pub use crate::domain::policies::SeamFloorSource;
+
 /// dBFS sentinel substituted for true-silent RMS so level vectors carry no `-inf` (the value
 /// [`LevelProfile::floor_db`] reports). Shared by the schema projection and the PCM measure path.
 pub(crate) const SILENCE_FLOOR_DB: f32 = -120.0;
@@ -820,7 +822,34 @@ pub struct ResidualInfo {
         deserialize_with = "de_residual_db_opt"
     )]
     pub floor_post_db: Option<f64>,
+    /// Where each side's floor probe found its reference window — [`SeamFloorSource::Border`] (the
+    /// immediate border window was usable), [`Walked`](SeamFloorSource::Walked) (it was quiet, so the
+    /// reference came from further out), or [`None`](SeamFloorSource::None) (no usable window at all).
+    ///
+    /// **This is the disambiguator for an absent `floor_*_db`.** The dB goes `None` on the wire for
+    /// two unrelated reasons — the probe never found a reference (`source: none`, `residual_db` is
+    /// `NaN`), or it found one and `residual_db_opt` mapped a −120 / non-finite reading away. Without
+    /// the source those are the same hole, and a reader cannot tell "we could not measure here" from
+    /// "we measured and it cancelled to silence". `informative` does not close the gap either: it is
+    /// derived from a *different channel* than these scalars (see below).
+    ///
+    /// `Option` only so dumps written before 2026-08-03 still deserialize; any path that emits a
+    /// residual at all knows the source, so a current dump always carries both.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub floor_source_pre: Option<SeamFloorSource>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub floor_source_post: Option<SeamFloorSource>,
     /// The noise floor established cancellation on every measured side — the residual is interpretable.
+    ///
+    /// **Do not try to recompute this from the four dB scalars above; on multichannel media it is not
+    /// derivable from them.** `SeamResidualVerdict::from_channel_residuals` deliberately reads two
+    /// different channels: the scalars summarize the **worst-headroom** channel
+    /// (`side_worst_headroom_summary`), while `informative` follows the **best-cancelling (min-floor)**
+    /// channel (`side_floor_informative`), so that a noisy surround cannot flip the same-master regime
+    /// off (Non-goal §2). Both are intentional and neither is wrong — but they describe different
+    /// channels, so `floor_pre_db > −15 dB` alongside `informative: true` is a consistent reading, not
+    /// a contradiction. The per-channel breakdown that would reconcile them is not in the dump; it is
+    /// only logged (`log_residual_channel_breakdown`).
     pub informative: bool,
 }
 
@@ -1054,7 +1083,9 @@ mod tests {
             not_measured: Vec::new(),
         };
         assert!(
-            !serde_json::to_string(&meta).unwrap().contains("gate_recipe"),
+            !serde_json::to_string(&meta)
+                .unwrap()
+                .contains("gate_recipe"),
             "absent gate_recipe must omit key"
         );
         let json = serde_json::to_string(&meta).unwrap();
@@ -1381,6 +1412,8 @@ mod tests {
                 chosen_post_db: Some(-38.0),
                 floor_pre_db: Some(-40.0),
                 floor_post_db: Some(-39.0),
+                floor_source_pre: Some(SeamFloorSource::Border),
+                floor_source_post: Some(SeamFloorSource::Border),
                 informative: true,
             }),
             seam_probe: Some(SeamProbeFingerprint {
@@ -1457,5 +1490,37 @@ mod tests {
         assert!(!wire.contains("-120"));
         assert!(!wire.contains("chosen_pre_db"));
         assert!(!wire.contains("chosen_post_db"));
+        // The pre-2026-08-03 payload above carries no floor source at all, and must still parse.
+        assert_eq!(r.floor_source_pre, None);
+        assert_eq!(r.floor_source_post, None);
+    }
+
+    /// The floor source reaches the wire in snake_case and survives a round trip.
+    ///
+    /// The case that motivates the field: `floor_post_db` is absent *because the probe found no
+    /// reference window*, which on the wire is indistinguishable from a suppressed −120 reading
+    /// unless `floor_source_post: "none"` is there to say so.
+    #[test]
+    fn floor_source_round_trips_and_disambiguates_an_absent_floor() {
+        let r = ResidualInfo {
+            chosen_pre_db: Some(-42.0),
+            chosen_post_db: None,
+            floor_pre_db: Some(-40.0),
+            floor_post_db: None,
+            floor_source_pre: Some(SeamFloorSource::Walked),
+            floor_source_post: Some(SeamFloorSource::None),
+            informative: true,
+        };
+        let wire = serde_json::to_string(&r).expect("serialize");
+        assert!(
+            wire.contains(r#""floor_source_pre":"walked""#),
+            "walked floor must name itself on the wire: {wire}"
+        );
+        assert!(
+            wire.contains(r#""floor_source_post":"none""#),
+            "an unmeasured side must say so rather than just omitting the dB: {wire}"
+        );
+        let back: ResidualInfo = serde_json::from_str(&wire).expect("parse");
+        assert_eq!(back, r);
     }
 }
