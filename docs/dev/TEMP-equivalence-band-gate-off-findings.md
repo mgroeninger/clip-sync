@@ -667,3 +667,97 @@ controls are answerable by script over dumps already on disk, with no listen run
   (§6.7.2–6.7.3), the dropout margin moves ≤1.9 dB under registration, abstain rate 1/20.
 - **§6.2 items 2 and 3 are untouched** — the 33/17 patch defect and the fixed 35 dB dropout margin.
   Neither is affected by any of this.
+
+### 6.8 The envelope-bearing run — replay-completeness proved, and a candidate for §6.2 item 3
+
+`2026-08-03-...-without-listen-envelope-bearing` (21:37–23:05) is the first corpus dumped by a binary
+that records `donor_registration.envelopes`. Same 16 pairs / 20 gaps, no listen WAVs, ~21 KB per gap
+(~840 KB total). It is a **measurement** run — `baseline_lag` carries `window_ms: 1000`,
+`max_lag_ms: 600` and fractional peaks, not the `window_ms: 0` projection signature that made
+`extended` unquotable (§6.7.0) — and its `lag_blocks` are identical to `extended-2`'s on all 20 gaps,
+so the scan is deterministic and dropping `--gap-listen` does not perturb it.
+
+#### 6.8.1 §6.7.4's claim, discharged on real media
+
+Every one of the 20 gaps carries envelopes, and every one replays:
+
+- **Registration: 20/20 exact.** `lag_blocks`, `peak_r`, `nominal_r` and `bins` (40 on every gap)
+  reproduce field-for-field when `register_donor_window` is re-run on levels rebuilt from the record.
+- **Donor fraction: 20/20 exact** at the nominal window, against the recorded
+  `donor_silence_fraction`.
+
+This is `equivalence-calibration --replay` (below), and it calls the production function rather than
+a second implementation of it — so "reproduces" means identical, not close. It also means the replay
+cannot silently drift from the gate the way a reimplementation would.
+
+#### 6.8.2 `Apply`, answered from the dump alone
+
+The re-count at the registered lag — the question §6.6 spent a whole corpus re-dump on — is now a
+read over a directory:
+
+| class | donor fraction @ nominal → @ registered |
+|---|---|
+| `repairable_dropout` (7) | 0.000 → 0.000, except 35/10 at 0.042 → 0.042 |
+| `shared_silence` (9) | 0.500–0.625 → 0.500–1.000 (18/49 and 25/1 reach 1.000) |
+| `ambient_quiet` (2) | 0.000 and 0.364, both unchanged |
+
+**No class flips, on any of the 20.** Registration only pushes `shared_silence` deeper into
+`shared_silence`; it never walks a dropout toward silence. That is §6.7.3's safety result again, now
+measured with the scan-block donor predicate the gate actually decides on rather than from the WAVs,
+and the abstain count is unchanged at 1/20 (36/9, `peak_r` 0.688).
+
+#### 6.8.3 A candidate for §6.2 item 3 — the fixed 35 dB margin
+
+This is what the run adds that no earlier one could. **33/17's `a_below_noise_db` is −34.4 dB: it
+missed `repairable_dropout` by 0.6 dB** and landed in `ambient_quiet`. Its registration says the
+opposite — A at −101.5 (digital zero) against a donor at −65.8, `interior_delta_db` **+35.7 dB**. The
+other `ambient_quiet`, 34/24, sits at a nearly identical −33.3 dB below floor but has interior delta
+**−0.1 dB**: genuinely quiet on both sides. The two signals disagree on exactly one gap in the set,
+and the delta separates the classes cleanly where the below-noise margin does not:
+
+| class | `interior_delta_db` |
+|---|---|
+| `repairable_dropout` (7) | +49.7 … +75.8 |
+| `shared_silence` (9) | −4.4 … +0.4 |
+| `ambient_quiet` (2) | 33/17 **+35.7**, 34/24 **−0.1** |
+
+So a dropout test that consulted the registered donor interior would classify 33/17 as
+`repairable_dropout` — which by every other measurement it is — and would touch **no other gap in
+this set**. That is a concrete candidate for item 3, not yet a proposal: it is 20 boundary-selected
+gaps, the separation has never been measured on unselected material, and it moves a gap *out* of the
+drop set, which is the direction that costs a patch attempt rather than a hole.
+
+#### 6.8.4 …which reframes §6.2 item 2, the 33/17 patch defect
+
+33/17 reads `drop: true` here and yet `outcome.tier = patch`: this run has the equivalence skip off.
+**With the gate on, production skips 33/17 and the defective patch never renders.** The defect is
+real, but it is reachable only with the gate disabled — *or* via §6.8.3, which would reclassify 33/17
+to `repairable_dropout` and hand it to the patch path for real. The two items are therefore coupled:
+fixing the margin without fixing the splice would ship the defect rather than expose it.
+
+#### 6.8.5 `equivalence-calibration --replay`
+
+```text
+cargo run --features calibration --bin equivalence-calibration -- <corpus-or-parent> --replay
+```
+
+Takes the same three input shapes as the other modes (a `corpus.json`, a directory holding one, or a
+parent of numbered pair directories). Per gap it prints the class, the recorded lag and `peak_r`, the
+donor fraction at nominal and at the registered lag, what `Apply` would decide (with `FLIP` and
+`abst` markers), and the replay status. **Exit code 1 on any mismatch** — a dump whose recorded
+inputs do not reproduce its own outputs is not evidence about anything else it says, so this is a
+gate and not a report. Gaps with no envelopes are counted and named, never assumed;
+`--replay-min-envelope-r` prices the abstain rate against a corpus.
+
+The four tests that pin it live in the bin: the registration replays, the donor re-count at the
+registered lag differs from the nominal one on a class-flipping fixture (a replay returning the same
+number twice would look healthy while measuring nothing), an abstain is a keep and is not reported as
+a rescue, and an envelope-less verdict declines rather than assumes.
+
+#### 6.8.6 Still open
+
+Unchanged by this run: **the corpus-wide rate**. These are the same 20 boundary-selected gaps —
+12 nonzero lags, 1 abstain. Nothing here estimates behaviour on unselected material, and both
+§6.8.2's "no flips" and §6.8.3's clean separation are claims about this sample. The cost of asking
+the wider question has, however, collapsed: any envelope-bearing corpus answers both by `--replay`,
+with no listen run and no re-dump.
