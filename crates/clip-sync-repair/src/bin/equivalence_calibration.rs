@@ -111,6 +111,25 @@
 //!   equivalence-calibration out_dir            # ONE corpus (dir or dir/corpus.json) → per-gap table
 //!   equivalence-calibration gap-files/equiv-coarse-vs-fine   # PARENT of numbered corpora → roll-up
 //!
+//! **`--replay`** is a third mode and a different question — it does not compare two paths at all. It
+//! re-runs `register_donor_window` on the **recorded envelopes** (`donor_registration.envelopes`,
+//! 2026-08-03) and checks that the dump reproduces itself, then re-counts the donor window at the
+//! registered lag to say what `DonorRegistrationMode::Apply` *would* have decided. Two uses:
+//!
+//!   - **A replay-completeness gate.** A dump whose recorded inputs do not reproduce its own outputs is
+//!     not evidence about anything else it says. Exit code 1 on any mismatch.
+//!   - **`Apply` without a re-dump.** The envelopes exist precisely because answering "how often would
+//!     the registered lag flip a class?" once cost a full corpus re-dump. It is now a read.
+//!
+//! The replay calls the production function on levels rebuilt from the record — it is not a
+//! reimplementation, so "reproduces" means *identical*, not *close*. The rebuild is lossless by
+//! construction: `EnvelopeSlice` stores `rms_db` at `f64` and the silent bits separately, and the
+//! spans come off the verdict's own `a_span_secs` / `donor_span_secs`.
+//!
+//! Read `apply` against `drop` and not on its own. `Apply` also *abstains* below
+//! `--replay-min-envelope-r`, which is a keep, and an abstain-driven keep is a different event from a
+//! registration-driven one.
+//!
 //! (That last path is a real on-disk corpus directory, named before the 2026-07-31 correction. The name
 //! is left alone so the invocation keeps working; it is not the vocabulary.)
 //!
@@ -126,7 +145,11 @@ use clap::Parser;
 use serde::Deserialize;
 
 use clip_sync_repair::application::gap_fingerprint::GapCorpus;
-use clip_sync_repair::domain::gap_equivalence::{GapEquivalenceClass, GapEquivalenceVerdict};
+use clip_sync_repair::domain::gap_equivalence::{
+    register_donor_window, DonorRegistrationParams, EnvelopeSlice, GapEquivalenceClass,
+    GapEquivalenceVerdict,
+};
+use clip_sync_repair::domain::policies::BlockLevel;
 
 #[derive(Parser)]
 #[command(
@@ -154,6 +177,16 @@ struct Args {
     /// natural unit here is blocks, not a fraction.
     #[arg(long, default_value_t = 1)]
     band_donor_blocks: usize,
+
+    /// Replay the recorded registration envelopes: check the dump reproduces its own registration and
+    /// donor fraction, and report what `DonorRegistrationMode::Apply` would have decided.
+    #[arg(long)]
+    replay: bool,
+
+    /// `Apply`'s abstain threshold, for the replay's `Apply` column. The default is
+    /// `DonorRegistrationParams::min_envelope_r`; vary it to price the abstain rate against a corpus.
+    #[arg(long, default_value_t = 0.70)]
+    replay_min_envelope_r: f64,
 }
 
 /// The classification rule with each boundary loosened by the band — **not** a reimplementation of
@@ -674,46 +707,55 @@ fn band_pair(label: String, corpus: &GapCorpus, args: &Args) -> BandPair {
     out
 }
 
-fn print_band(path: &Path, args: &Args) -> ExitCode {
-    // Same single-vs-rollup shape as the divergence report.
-    let corpora: Vec<(String, PathBuf)> = if path.is_file() {
-        vec![("(corpus)".to_string(), path.to_path_buf())]
-    } else if path.join("corpus.json").is_file() {
+/// The labelled corpora under `path`, accepting all three shapes the tool is pointed at: a
+/// `corpus.json`, a directory holding one, or a parent of numbered pair directories. Numeric-aware
+/// order (1, 2, …, 10) with a lexical fallback.
+fn collect_corpora(path: &Path) -> Result<Vec<(String, PathBuf)>, String> {
+    if path.is_file() {
+        return Ok(vec![("(corpus)".to_string(), path.to_path_buf())]);
+    }
+    if path.join("corpus.json").is_file() {
         let label = path
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("(corpus)")
             .to_string();
-        vec![(label, path.join("corpus.json"))]
-    } else {
-        let mut dirs: Vec<PathBuf> = match std::fs::read_dir(path) {
-            Ok(rd) => rd
-                .filter_map(|e| e.ok().map(|e| e.path()))
-                .filter(|p| p.is_dir() && p.join("corpus.json").is_file())
-                .collect(),
-            Err(e) => {
-                eprintln!("error: reading {}: {e}", path.display());
-                return ExitCode::from(2);
-            }
-        };
-        dirs.sort_by_key(|p| {
-            let name = p
+        return Ok(vec![(label, path.join("corpus.json"))]);
+    }
+    let mut dirs: Vec<PathBuf> = std::fs::read_dir(path)
+        .map_err(|e| format!("reading {}: {e}", path.display()))?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.is_dir() && p.join("corpus.json").is_file())
+        .collect();
+    dirs.sort_by_key(|p| {
+        let name = p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+        (name.parse::<u64>().unwrap_or(u64::MAX), name)
+    });
+    Ok(dirs
+        .into_iter()
+        .map(|d| {
+            let name = d
                 .file_name()
                 .and_then(|n| n.to_str())
-                .unwrap_or("")
+                .unwrap_or("?")
                 .to_string();
-            (name.parse::<u64>().unwrap_or(u64::MAX), name)
-        });
-        dirs.into_iter()
-            .map(|d| {
-                let name = d
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("?")
-                    .to_string();
-                (name, d.join("corpus.json"))
-            })
-            .collect()
+            (name, d.join("corpus.json"))
+        })
+        .collect())
+}
+
+fn print_band(path: &Path, args: &Args) -> ExitCode {
+    // Same single-vs-rollup shape as the divergence report.
+    let corpora = match collect_corpora(path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::from(2);
+        }
     };
     if corpora.is_empty() {
         eprintln!("no corpora found under {}", path.display());
@@ -779,10 +821,267 @@ fn print_band(path: &Path, args: &Args) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Rebuild a level stream from a recorded [`EnvelopeSlice`] — the whole of what a dump reader has to
+/// do, and the reason the slice stores `rms_db` at `f64` and the silent bits as indices rather than a
+/// rounded summary. Mirrors the domain's own replay helper.
+fn levels_from(slice: &EnvelopeSlice, bin_ms: f64) -> Vec<BlockLevel> {
+    let bin = bin_ms / 1000.0;
+    slice
+        .rms_db
+        .iter()
+        .enumerate()
+        .map(|(i, &db)| BlockLevel {
+            start_secs: slice.start_secs + i as f64 * bin,
+            end_secs: slice.start_secs + (i + 1) as f64 * bin,
+            rms_db: db,
+            silent: slice.silent_bins.contains(&(i as u32)),
+        })
+        .collect()
+}
+
+/// The gate's donor predicate over `[lo, hi)` by block centre: `silent || rms_db < gap_floor`.
+/// Returns `(silent, total)`; `None` when no block's centre lands in the window.
+fn donor_census(levels: &[BlockLevel], lo: f64, hi: f64, floor: f64) -> Option<(usize, usize)> {
+    let win: Vec<&BlockLevel> = levels
+        .iter()
+        .filter(|b| {
+            let c = (b.start_secs + b.end_secs) / 2.0;
+            c >= lo && c < hi
+        })
+        .collect();
+    if win.is_empty() {
+        return None;
+    }
+    let silent = win.iter().filter(|b| b.silent || b.rms_db < floor).count();
+    Some((silent, win.len()))
+}
+
+/// What one gap's recorded envelopes say when replayed.
+struct Replay {
+    /// Registration reproduced field-for-field (lag, both correlations, bin count).
+    reproduces: bool,
+    /// Why not, when it did not.
+    detail: String,
+    /// Donor fraction at the nominal window, re-counted from the record.
+    frac_nominal: f64,
+    /// …and at the registered lag — the reading `Apply` would have taken.
+    frac_registered: f64,
+    /// Whether `Apply` would drop this gap, and whether that differs from what production decided.
+    apply_drop: bool,
+    /// `Apply` declined to place the window (`peak_r` below the abstain threshold), which is a keep
+    /// for a different reason than the registration finding an occupied donor.
+    abstained: bool,
+}
+
+/// Replay one gap. `None` when the verdict carries nothing to replay — no registration, no envelopes,
+/// no spans, or a dump predating `thresholds`. Those are counted and named, never assumed.
+fn replay_gap(v: &GapEquivalenceVerdict, min_envelope_r: f64) -> Option<Replay> {
+    let reg = v.donor_registration.as_ref()?;
+    let env = reg.envelopes.as_ref()?;
+    let (core_lo, core_hi) = v.a_span_secs?;
+    let (donor_lo, donor_hi) = v.donor_span_secs?;
+    let floor = v.gap_floor_db?;
+    let t = v.thresholds?;
+    let a_below = v.a_below_noise_db?;
+
+    let a_levels = levels_from(&env.a, env.bin_ms);
+    let b_levels = levels_from(&env.b, env.bin_ms);
+
+    // The production function, on the recorded inputs. Not a reimplementation — that is the point.
+    let params = DonorRegistrationParams::default();
+    let redone = register_donor_window(
+        &a_levels,
+        core_lo,
+        core_hi,
+        &b_levels,
+        (donor_lo, donor_hi),
+        &params,
+    );
+    let (reproduces, detail) = match &redone {
+        Some(r) => {
+            let mut diffs = Vec::new();
+            if r.lag_blocks != reg.lag_blocks {
+                diffs.push(format!("lag {}→{}", reg.lag_blocks, r.lag_blocks));
+            }
+            if (r.peak_r - reg.peak_r).abs() > f64::EPSILON {
+                diffs.push(format!("peak_r {:+.6}", r.peak_r - reg.peak_r));
+            }
+            if (r.nominal_r - reg.nominal_r).abs() > f64::EPSILON {
+                diffs.push(format!("nominal_r {:+.6}", r.nominal_r - reg.nominal_r));
+            }
+            if r.bins != reg.bins {
+                diffs.push(format!("bins {}→{}", reg.bins, r.bins));
+            }
+            (diffs.is_empty(), diffs.join(" "))
+        }
+        None => (false, "registration did not run on the record".to_string()),
+    };
+
+    let lag_secs = reg.lag_ms / 1000.0;
+    let (sn, tn) = donor_census(&b_levels, donor_lo, donor_hi, floor)?;
+    let (sr, tr) = donor_census(
+        &b_levels,
+        donor_lo + lag_secs,
+        donor_hi + lag_secs,
+        floor,
+    )?;
+    let frac_nominal = sn as f64 / tn as f64;
+    let frac_registered = sr as f64 / tr as f64;
+
+    // `Apply`'s decision, from the gate's own rule: keep only a dropout over an occupied donor.
+    // Abstaining keeps too, but it is a refusal to place the window rather than a reading of it.
+    let abstained = reg.peak_r < min_envelope_r;
+    let is_dropout = a_below < -t.dropout_margin_db;
+    let b_occupied = frac_registered < t.donor_silence_thresh;
+    let apply_drop = if abstained {
+        false
+    } else {
+        !(is_dropout && b_occupied)
+    };
+
+    Some(Replay {
+        reproduces,
+        detail,
+        frac_nominal,
+        frac_registered,
+        apply_drop,
+        abstained,
+    })
+}
+
+/// Tallies for the replay mode.
+#[derive(Default)]
+struct ReplayTally {
+    gaps: usize,
+    replayed: usize,
+    mismatched: usize,
+    /// Recorded `donor_silence_fraction` not reproduced by re-counting the record at the nominal
+    /// window — a stronger failure than a registration mismatch: the verdict's own decision input.
+    frac_mismatched: usize,
+    flips: usize,
+    abstains: usize,
+    /// Gaps carrying no envelopes (dumps written before 2026-08-03) or no registration at all.
+    no_record: usize,
+}
+
+fn print_replay(path: &Path, args: &Args) -> ExitCode {
+    let corpora = match collect_corpora(path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    if corpora.is_empty() {
+        eprintln!("no corpora found under {}", path.display());
+        return ExitCode::from(2);
+    }
+
+    println!(
+        "Replaying recorded registration envelopes. `apply` is what DonorRegistrationMode::Apply \
+         would decide (abstain below peak_r {:.2}).\n",
+        args.replay_min_envelope_r
+    );
+    println!(
+        "  {:<10} {:<16} {:<5} {:<5} {:<7} {:<7} {:<7} {:<6} replay",
+        "gap", "class", "drop", "lag", "peak_r", "donor@0", "donor@ℓ", "apply"
+    );
+
+    let mut tally = ReplayTally::default();
+    let mut read_errors = 0usize;
+    for (label, file) in &corpora {
+        let corpus: GapCorpus = match load(file) {
+            Ok(c) => c,
+            Err(e) => {
+                println!("  {label:<10} (read error: {e})");
+                read_errors += 1;
+                continue;
+            }
+        };
+        for fp in &corpus.gaps {
+            let Some(v) = fp.scan_equivalence.as_ref() else {
+                continue;
+            };
+            tally.gaps += 1;
+            let Some(r) = replay_gap(v, args.replay_min_envelope_r) else {
+                tally.no_record += 1;
+                continue;
+            };
+            tally.replayed += 1;
+            if !r.reproduces {
+                tally.mismatched += 1;
+            }
+            let frac_ok = v
+                .donor_silence_fraction
+                .is_some_and(|f| (f - r.frac_nominal).abs() < 1e-9);
+            if !frac_ok {
+                tally.frac_mismatched += 1;
+            }
+            if r.abstained {
+                tally.abstains += 1;
+            }
+            let flip = r.apply_drop != v.drop;
+            if flip {
+                tally.flips += 1;
+            }
+            let reg = v.donor_registration.as_ref().expect("replayed ⇒ present");
+            let status = match (r.reproduces, frac_ok) {
+                (true, true) => "ok".to_string(),
+                (true, false) => format!(
+                    "⚠ donor fraction {:.3} ≠ recorded {:.3}",
+                    r.frac_nominal,
+                    v.donor_silence_fraction.unwrap_or(f64::NAN)
+                ),
+                (false, _) => format!("⚠ {}", r.detail),
+            };
+            println!(
+                "  {:<10} {:<16} {:<5} {:<5} {:<7.3} {:<7.3} {:<7.3} {:<6} {status}",
+                format!("{label}/{}", fp.index),
+                class_label(v.class),
+                v.drop,
+                reg.lag_blocks,
+                reg.peak_r,
+                r.frac_nominal,
+                r.frac_registered,
+                format!(
+                    "{}{}{}",
+                    r.apply_drop,
+                    if flip { " FLIP" } else { "" },
+                    if r.abstained { " abst" } else { "" }
+                ),
+            );
+        }
+    }
+
+    println!(
+        "\n{} gap(s) · {} replayed · {} registration mismatch · {} donor-fraction mismatch",
+        tally.gaps, tally.replayed, tally.mismatched, tally.frac_mismatched
+    );
+    println!(
+        "Apply: {} class flip(s), {} abstain(s) at peak_r < {:.2}",
+        tally.flips, tally.abstains, args.replay_min_envelope_r
+    );
+    if tally.no_record > 0 {
+        println!(
+            "note: {} gap(s) carry no registration envelopes — dumps written before 2026-08-03, or \
+             a donor that could not be registered. Nothing is assumed for them; re-dump to include \
+             them.",
+            tally.no_record
+        );
+    }
+    if read_errors > 0 || tally.mismatched > 0 || tally.frac_mismatched > 0 {
+        return ExitCode::FAILURE;
+    }
+    ExitCode::SUCCESS
+}
+
 fn main() -> ExitCode {
     let args = Args::parse();
     let p = &args.path;
 
+    if args.replay {
+        return print_replay(p, &args);
+    }
     if args.band {
         return print_band(p, &args);
     }
@@ -931,6 +1230,103 @@ mod tests {
     fn only_gaps_tokens_convert_zero_based_indices_to_one_based() {
         assert_eq!(only_gaps_tokens(&[0, 2, 11]), "1,3,12");
         assert_eq!(only_gaps_tokens(&[]), "");
+    }
+
+    /// A level timeline at 100 ms bins: `core` is a silent run, everything else is content whose
+    /// value depends on `i - shift`, so two timelines built with different shifts correlate at
+    /// exactly that lag.
+    fn timeline(n: usize, core: std::ops::Range<usize>, shift: i64) -> Vec<BlockLevel> {
+        (0..n)
+            .map(|i| {
+                let silent = core.contains(&i);
+                BlockLevel {
+                    start_secs: i as f64 * 0.1,
+                    end_secs: (i + 1) as f64 * 0.1,
+                    rms_db: if silent {
+                        -110.0
+                    } else {
+                        -30.0 - f64::from(((i as i64 - shift) * 7).rem_euclid(13) as u32)
+                    },
+                    silent,
+                }
+            })
+            .collect()
+    }
+
+    /// A verdict shaped like one a scan writes: registration attached, spans and floor recorded.
+    fn verdict_with_registration() -> GapEquivalenceVerdict {
+        let a = timeline(120, 50..56, 0);
+        let b = timeline(120, 55..61, 5);
+        let reg = register_donor_window(
+            &a,
+            5.0,
+            5.6,
+            &b,
+            (5.0, 5.6),
+            &DonorRegistrationParams::default(),
+        )
+        .expect("registration runs on the fixture");
+        assert_eq!(reg.lag_blocks, 5, "B trails A by 5 bins by construction");
+
+        let mut v = classify_gap_equivalence(Some(-110.0), Some(-35.0), Some(1.0 / 6.0), &on());
+        v.a_span_secs = Some((5.0, 5.6));
+        v.donor_span_secs = Some((5.0, 5.6));
+        v.gap_floor_db = Some(-100.0);
+        v.donor_registration = Some(reg);
+        v
+    }
+
+    /// **The replay-completeness contract, in the tool that gates on it.** The recorded envelopes must
+    /// reproduce the registration they came from — through the production function, so "reproduces"
+    /// means identical rather than close.
+    #[test]
+    fn replay_reproduces_the_registration_it_recorded() {
+        let v = verdict_with_registration();
+        let r = replay_gap(&v, 0.70).expect("replayable");
+        assert!(r.reproduces, "{}", r.detail);
+    }
+
+    /// The other half: re-counting the recorded B bins at the registered lag is what `Apply` would
+    /// have read. The fixture's donor is occupied at the nominal window and silent at the registered
+    /// one, so the two columns must differ — a replay that returned the same number twice would look
+    /// healthy while measuring nothing.
+    #[test]
+    fn replay_recounts_the_donor_at_the_registered_lag() {
+        let v = verdict_with_registration();
+        let r = replay_gap(&v, 0.70).expect("replayable");
+        assert!(
+            r.frac_nominal < 0.5,
+            "nominal window sits on B's content: {}",
+            r.frac_nominal
+        );
+        assert_eq!(
+            r.frac_registered, 1.0,
+            "registered window sits on B's silent run"
+        );
+        // Occupied donor + A dropout ⇒ production keeps; registered donor is silent ⇒ Apply drops.
+        assert!(!v.drop && r.apply_drop, "and that is a class flip");
+    }
+
+    /// Below the abstain threshold `Apply` declines to place the window, which is a **keep** — and a
+    /// different event from a registration that read an occupied donor. Conflating them would report
+    /// abstains as rescues.
+    #[test]
+    fn replay_abstains_below_the_envelope_threshold() {
+        let v = verdict_with_registration();
+        let r = replay_gap(&v, 1.01).expect("replayable");
+        assert!(r.abstained && !r.apply_drop);
+    }
+
+    /// A dump with no envelopes is not replayable and must say so rather than assume anything — the
+    /// pre-2026-08-03 corpora are all of this shape.
+    #[test]
+    fn replay_declines_a_verdict_with_no_envelopes() {
+        let mut v = verdict_with_registration();
+        v.donor_registration.as_mut().unwrap().envelopes = None;
+        assert!(replay_gap(&v, 0.70).is_none());
+        let mut v2 = verdict_with_registration();
+        v2.donor_registration = None;
+        assert!(replay_gap(&v2, 0.70).is_none());
     }
 
     #[test]
