@@ -7,6 +7,12 @@ threshold docs *before* this file is removed.
 **Media hygiene:** corpus pairs are referred to by index only. No filenames, titles, or paths here or
 in any artifact derived from this work. Raw dumps and logs stay under gitignored `/gap-files/`.
 
+**Citation drift (audited 2026-08-04):** every named symbol cited below was verified to exist, but
+**line numbers have drifted** — `seam_residual.rs:213/635/798`, `gap_equivalence.rs:441`,
+`gap_fill_fit.rs:216`, `patch_region.rs:1132`, `config.rs:402`, `dual_fit.rs:45` and
+`scan_gaps.rs:284` all now land near, not on, the thing they name. Grep the symbol, not the line.
+One citation was wrong about the symbol itself and is corrected in place (§3.2 item 1).
+
 ---
 
 ## 1. What ran
@@ -185,8 +191,12 @@ unchanged — the residual never influences the seam decision.
 
 Two traps when reading `residual` out of a dump:
 
-1. **`−120.0` is a sentinel, not a deep cancellation.** `finite_db()` (`measure.rs:487`) maps any
-   non-finite dB to `SILENCE_FLOOR_DB = −120`. `floor_probe_informative` also requires `is_finite()`,
+1. **`−120.0` is a sentinel, not a deep cancellation.** A silent span floors at
+   `SILENCE_FLOOR_DB = −120` rather than going to −∞ (`application/gap_equivalence.rs:57`, applied in
+   `gap_interior_rms_db`). *(Corrected 2026-08-04: this cited `finite_db()` at `measure.rs:487`;
+   there is no such function — the helper at that location maps a non-finite **correlation** to 0.0,
+   a different clamp. The point stands, the citation was wrong.)* `floor_probe_informative` also
+   requires `is_finite()`,
    so a `−120` can never count as informative *even if it got there by cancelling to −inf*. In the
    dump `−120` is ambiguous between "no probe ran" and "cancelled perfectly".
 2. **The finite floors here are −0.003 … −3.4 dB on 19 of 21** — essentially *no cancellation*. Only
@@ -375,10 +385,14 @@ predictions, since the predictions were written before the audio existed.
    cannot track 80–410 ms of local drift. Derive the lag from the block-level timelines the scanner
    already holds; see §6.4 for the validated method.
 2. **Fix the 33/17 patch defect** (§3.3): a fill 8 dB above its own surroundings, placed 36 ms off,
-   writing 380 ms past the gap end. Seam/splice path, independent of the band.
+   writing 380 ms past the gap end. Seam/splice path, independent of the band. *(Of the three
+   symptoms only the level is actionable today — §7.4 item 1. The overrun has no identified
+   mechanism: see §7.1a.)*
 3. **Re-examine the dropout margin against 33/17's mechanism** (§3.3 point 1). A fixed 35 dB margin
    below a *local* floor cannot express "A went to digital zero"; in a quiet passage the two are only
    34 dB apart. Whatever replaces it must not turn 33/17 into a keep.
+   *(Items 2 and 3 are worked through in §7; the concrete proposals and their sequencing constraint
+   are in §7.4.)*
 4. **Close the band item.** With (1) done there is no boundary-width question left to size. If the
    band is revisited it must be re-derived from post-fix dumps; the numbers in §2.3 are measured
    against the broken donor window and should not be carried forward.
@@ -526,9 +540,10 @@ Three directories landed on 2026-08-03 and none was reviewed against this file u
 confident-looking `lag0_r: 0.995` — a zero-width search window, i.e. the projection path, not a
 measurement. `beb24f93` (16:24, *"incorporate measured details"*) introduced `MeasuredDetail` and the
 `not_measured` marking for fabricated gaps; `extended` predates it by five hours and `extended-2`
-follows it by two. Field-by-field across the 20 shared gaps: `donor_interior` / `_nominal` and
-`levels` differ on all 20, `residual` on 10; `splice`, `brackets`, `geometry`, `channels`,
-`splice_dualfit` are **identical** on all 20.
+follows it by two. Field-by-field across the 20 shared gaps: `donor_interior` /
+`donor_interior_nominal` (the actual key — there is no `donor_nominal`) and `levels` differ on all
+20, `residual` on 10; `splice`, `brackets`, `geometry`, `channels`, `splice_dualfit` are **identical**
+on all 20.
 
 `extended` is still good for its WAVs — that audio is real, and it is the only listen material for
 the eight new pairs. **Do not quote its `baseline_lag` or level fields.**
@@ -559,7 +574,16 @@ fixtures covered, now measured on eight pairs the method had never seen.
 
 The `shared_silence` side moves the way §2.5 predicted: the registered donor interior fraction rises
 on 9 of 12 (18/49 0.529 → 0.929, 14/13 0.778 → 0.957, 12/7 0.765 → 0.889) and donor RMS drops 13–29 dB
-(18/49 −48.5 → −77.4). 33/17 still reports its genuine **+35.7 dB** interior delta and is not talked
+(18/49 −48.5 → −77.4).
+
+> **Which fraction this is — added 2026-08-04.** These numbers are
+> `donor_interior_nominal` → `donor_interior` `silence_fraction`: a **50 ms downmix** measurement
+> against its own `basis.floor_db`. They are **not** the `donor_silence_fraction` the gate decides on
+> (100 ms interleaved scan blocks against `gap_floor_db`), which §6.8.2 reports for the same gaps —
+> hence 18/49 reading 0.529 → 0.929 here and 0.571 → 1.000 there. Both are correct about their own
+> instrument. On the **gate's** predicate the rise is **6 of 12**, not 9 (12/7, 14/13, 18/49, 25/1,
+> 25/36, 34/1 rise; 10/11, 14/9, 25/8, 28/22, 33/17, 34/24 are unchanged) — the direction of §2.5's
+> prediction holds on both, the count does not transfer between them. 33/17 still reports its genuine **+35.7 dB** interior delta and is not talked
 into a keep. `nominal_r` shows what the misregistration was costing: 25/36 **−0.128** nominal against
 0.829 registered, 25/1 0.245, 25/8 0.339.
 
@@ -662,7 +686,7 @@ controls are answerable by script over dumps already on disk, with no listen run
 #### 6.7.5 Still open after these runs
 
 - **The rate question over unselected gaps.** Everything above is 20 boundary-selected gaps.
-- **`Apply` is still not enabled anywhere.** The evidence for promoting it is now: negative controls
+- **`Apply` is still not enabled anywhere** (now carried as §7.4 item 3). The evidence for promoting it is now: negative controls
   hold out-of-set (§6.7.1), production reproduces the offline lags on all 20 gaps within one bin
   (§6.7.2–6.7.3), the dropout margin moves ≤1.9 dB under registration, abstain rate 1/20.
 - **§6.2 items 2 and 3 are untouched** — the 33/17 patch defect and the fixed 35 dB dropout margin.
@@ -686,6 +710,10 @@ Every one of the 20 gaps carries envelopes, and every one replays:
 - **Donor fraction: 20/20 exact** at the nominal window, against the recorded
   `donor_silence_fraction`.
 
+**Re-run 2026-08-04 as part of a full audit of this file: `20 gap(s) · 20 replayed · 0 registration
+mismatch · 0 donor-fraction mismatch`, `Apply: 0 class flip(s), 1 abstain(s)`, exit 0.** §6.8.1 and
+§6.8.2 are reproduced, not just recorded.
+
 This is `equivalence-calibration --replay` (below), and it calls the production function rather than
 a second implementation of it — so "reproduces" means identical, not close. It also means the replay
 cannot silently drift from the gate the way a reimplementation would.
@@ -697,8 +725,8 @@ read over a directory:
 
 | class | donor fraction @ nominal → @ registered |
 |---|---|
-| `repairable_dropout` (7) | 0.000 → 0.000, except 35/10 at 0.042 → 0.042 |
-| `shared_silence` (9) | 0.500–0.625 → 0.500–1.000 (18/49 and 25/1 reach 1.000) |
+| `repairable_dropout` (8) | 0.000 → 0.000, except 35/10 at 0.042 → 0.042 |
+| `shared_silence` (10) | 0.500–0.625 → 0.500–1.000 (18/49 and 25/1 reach 1.000) |
 | `ambient_quiet` (2) | 0.000 and 0.364, both unchanged |
 
 **No class flips, on any of the 20.** Registration only pushes `shared_silence` deeper into
@@ -717,15 +745,57 @@ and the delta separates the classes cleanly where the below-noise margin does no
 
 | class | `interior_delta_db` |
 |---|---|
-| `repairable_dropout` (7) | +49.7 … +75.8 |
-| `shared_silence` (9) | −4.4 … +0.4 |
+| `repairable_dropout` (8) | +49.7 … +75.8 |
+| `shared_silence` (10) | −4.4 … +0.4 |
 | `ambient_quiet` (2) | 33/17 **+35.7**, 34/24 **−0.1** |
+
+**Strengthened 2026-08-04 — the margin misfires in both directions, and the delta catches both.**
+§6.8.5a resolved 14/13: quiet program material present in both masters (`interior_delta_db` +0.09,
+no ear-audible hole) that the characterize-side dropout test **flagged** as `repairable_dropout`,
+because −42.9 dB below a shoulder-set −38.1 dB floor clears the 35 dB margin. So the fixed margin
+produces a **false negative on 33/17** (a real digital-zero hole, missed by 0.6 dB) and a **false
+positive on 14/13** (quiet program, flagged) — within the same 20 gaps. `interior_delta_db` gets both
+right, +35.7 and +0.09, and it does so without a floor estimate, a codec identity, or a table.
 
 So a dropout test that consulted the registered donor interior would classify 33/17 as
 `repairable_dropout` — which by every other measurement it is — and would touch **no other gap in
 this set**. That is a concrete candidate for item 3, not yet a proposal: it is 20 boundary-selected
 gaps, the separation has never been measured on unselected material, and it moves a gap *out* of the
 drop set, which is the direction that costs a patch attempt rather than a hole.
+
+#### 6.8.3a A second, independent witness — the dual-fit trim
+
+`splice_dualfit` says the same thing from the other end of the pipeline, without consulting the
+envelopes at all. **A materially nonzero `trim_frames` picks out the 8 `repairable_dropout`s — and
+33/17.** The companion column moves with it: where dual-fit had to reconcile length,
+`post_seam_global_r` collapses away from `post_seam_r` (−0.281 … +0.474 against seams of 0.92–0.98),
+and where it did not, the two agree to three decimals (0.929 … 0.999).
+
+| gap | class | `trim_frames` | `post_seam_r` | `post_seam_global_r` |
+|---|---|---|---|---|
+| 8 × dropouts | `repairable_dropout` | −1930 … +2002, all \|trim\| ≥ 290 | 0.916–0.979 | −0.281 … +0.474 |
+| 33/17 | `ambient_quiet` | **+1461** | 0.973 | **0.030** |
+| 34/24 | `ambient_quiet` | 0 | 0.929 | 0.929 |
+| 10 × shared | `shared_silence` | 0, except 12/7 at **+2** | 0.988–1.000 | 0.989–0.999 |
+
+**Corrected 2026-08-04.** This said "`trim_frames != 0` picks out *exactly*" and "all ten other gaps
+trim zero frames"; 12/7 trims **2 frames**, so the predicate is not a clean zero test. The separation
+is by magnitude — 290–2002 frames on one side, ≤ 2 on the other — which is still three orders of
+magnitude but is a threshold, not a boolean, and would need one if it were ever used as a signal. The
+`post_seam_r` floor on the shared row was also quoted as 0.993; the true minimum is **0.988** (25/1).
+
+So two measurements that share no code and no inputs — the pre-decode envelope registration and the
+post-decode dual-fit — both class 33/17 with the dropouts, while `a_below_noise_db` misses it by
+0.6 dB. That is what makes §6.8.3 a candidate worth spending a corpus on rather than a coincidence
+of one threshold.
+
+33/17's `bridge_frames` exceed `gap_frames` by those 1461 frames — 30.4 ms at 48 kHz, ≈ the 36 ms
+misplacement measured by ear in §3.3. **This is corroboration, not the mechanism**: `splice_dualfit`
+is a diagnostic block, and 33/17's rendered patch did not come from dual-fit (`outcome.tier = patch`
+⇒ the bracket gate patched it, and `dual_fit_used` is always `false` on a bracket). §7.1 traces the
+overrun to its actual source. What the column does say is that the seam gate cannot see the problem
+— `pre_seam_r` 0.998 / `post_seam_r` 0.973 both pass — and `post_seam_global_r` is the only field
+that dissents.
 
 #### 6.8.4 …which reframes §6.2 item 2, the 33/17 patch defect
 
@@ -754,6 +824,48 @@ registered lag differs from the nominal one on a class-flipping fixture (a repla
 number twice would look healthy while measuring nothing), an abstain is a keep and is not reported as
 a rescue, and an envelope-less verdict declines rather than assumes.
 
+#### 6.8.5a 14/13's two verdicts — found, then resolved: the scan side is right
+
+Found 2026-08-04 while re-checking the tables. Every gap carries **two** equivalence blocks —
+`scan_equivalence` (the scan verdict, copied forward by `characterize_gaps`) and `equivalence`
+(characterize's own re-measurement). On 19 of 20 they agree. On **14/13 they do not**:
+
+| block | class | `drop` | donor |
+|---|---|---|---|
+| `scan_equivalence` | `shared_silence` | **true** | 4/7 = 0.571 |
+| `equivalence` | `repairable_dropout` | **false** | 3/7 = **0.429** |
+
+**Resolved the same day, by ear and by envelope: there is no hole, and `shared_silence` is correct.**
+The listener reports no drop. The envelopes agree — A's interior never approaches digital zero, and B
+reproduces its contour bin for bin at the registered lag:
+
+```
+A:  -75.4  -76.5  -44.0  -45.6  -50.1  -84.2  -85.6  -86.4  -48.2
+B:  -75.4  -78.5  -42.1  -47.9  -80.5  -84.5  -86.1  -87.2  -39.4   (registered, lag −1)
+```
+
+`a_gap_rms_db` −81.0, `gap_floor_db` −76.5, registered `a_interior_db` −48.1, `interior_delta_db`
+**+0.09**. Every genuine dropout in this corpus reads **−101.5** on all three (9/9: −101.5 / −101.4 /
+−101.5). This is mutual program quiet with internal structure, not a dropout.
+
+Two ordinary mechanisms produced the false label, and both are already named in this file:
+
+1. **The A-axis test fires on quiet-but-present content.** `a_below_noise_db` −42.9 clears the 35 dB
+   margin against a −38.1 dB floor — but that floor is set by loud shoulders (−29…−36 dB), so a
+   genuinely quiet −81 dB passage clears it without being empty.
+2. **One donor block out of seven decides it.** 3/7 vs 4/7 straddles the 0.5 threshold on the strict
+   `<` — §2.5's degeneracy verbatim. Registration moves it the right way: **0.571 → 0.714** at the
+   registered lag, so `Apply` pushes 14/13 *deeper* into `shared_silence`.
+
+§7.0 is therefore intact — no real dropout in this corpus is left unrepaired. §2.5's "the one gap the
+gate kept, at 3/7 = 0.429" describes the older gate-off run; in this run it reads 4/7 and is dropped.
+
+**What this gap is now evidence for: the fixed margin misfires in *both* directions.** 33/17 is a
+real digital-zero hole the 35 dB margin **missed** by 0.6 dB; 14/13 is quiet program material the same
+margin **flagged** as a dropout. One threshold, two opposite errors, on the same 20-gap set — and
+`interior_delta_db` separates both correctly (33/17 **+35.7**, 14/13 **+0.09**) without knowing
+anything about floors or codecs. See §7.4 item 4.
+
 #### 6.8.6 Still open
 
 Unchanged by this run: **the corpus-wide rate**. These are the same 20 boundary-selected gaps —
@@ -761,3 +873,214 @@ Unchanged by this run: **the corpus-wide rate**. These are the same 20 boundary-
 §6.8.2's "no flips" and §6.8.3's clean separation are claims about this sample. The cost of asking
 the wider question has, however, collapsed: any envelope-bearing corpus answers both by `--replay`,
 with no listen run and no re-dump.
+
+---
+
+## 7. Production-pipeline recommendations
+
+Written 2026-08-04 in answer to three questions: can anything here improve production, can 33/17 be
+identified and patched correctly, and were other gaps patched badly. **Four candidate
+recommendations were checked against source and three of them died.** The dead ones are recorded
+with their refutations, because each was plausible enough to be re-proposed.
+
+### 7.0 The corpus, read as a production question
+
+Two framing corrections first, both from re-reading the dump against the code.
+
+**`outcome.tier` is the bracket gate only.** `GapRow::dual_fit_rescue` is documented as *"would
+production's dual-fit rescue this bracket-gate skip?"* and `production_patched()` as the predicate a
+"how many holes remain?" roll-up wants (`gap_fingerprint_corpus/schema.rs:256-285`). Reading `skip`
+as "production left a hole" under-counts repairs by exactly the dual-fit rescues.
+
+| gap | class | tier | `dual_fit_rescue` | what production does |
+|---|---|---|---|---|
+| 5/4, 7/3, 16/7, 19/13, 35/10, 36/9 | `repairable_dropout` | patch | — | patches |
+| **8/4, 9/9** | `repairable_dropout` | skip | **true** | **patches via dual-fit** |
+| 14/13, 25/8, 25/36, 28/22 | `shared_silence` | skip | false | drops at the equivalence gate anyway |
+| the other 8 | `shared_silence`/`ambient_quiet` | patch | — | drops at the equivalence gate |
+
+So **no real dropout in this corpus is left unrepaired**, and 9/9 — which the ear reports the patched
+WAV fixes correctly — is a gap production repairs. (14/13's characterize-side block dissents and calls
+it `repairable_dropout`; that was checked out in §6.8.5a and the scan verdict listed here is the
+correct one — there is no hole.) (§3.5's "`dual_fit_rescue` was `false` on all 21"
+described the older 21-gap run and does not generalize.)
+
+**Only one gap is both real and badly patched.** §3.1a's eight gate-off patches look like eight
+defects but seven are `shared_silence`/`ambient_quiet` with `drop: true` — gaps production never
+renders, so they are evidence that the splice path misbehaves *when handed program silence*, not
+shipped defects. 33/17 is the only gap where the hole is real and the patch is still wrong, which is
+why §6.8.4's coupling matters: reclassifying it is what would make the defect reachable.
+
+### 7.1 The write overrun is inside a configured bound — REFUTED as "unbounded"
+
+The proposal was to bound the write extent to the gap span. Two reasons it does not stand:
+
+1. **Dual-fit already does exactly that.** `DualFitResult.fill` is *"interleaved, exactly
+   `gap_frames`"* (`dual_fit.rs:45`); `trim_frames` is the interior trim that reconciles the bridge
+   back to gap length. The bound cannot "defeat dual-fit" — dual-fit is the path that already
+   honours it.
+2. **The boundary grid is bounded too, at 500 ms.** `evaluate_seam_gate_fit_joint`
+   (`patch_region.rs:898-909`) sets `start_min = baseline.start − max_extend_frames` and
+   `end_max = baseline.end + max_extend_frames` from `gap_end_extend_max_ms`, **default 500**
+   (`config.rs:402`), step 20 ms, with `gap_start_extend_on_pre_seam_fail` /
+   `gap_end_extend_on_post_seam_fail` both defaulting true. 33/17's 380 ms overrun is *inside* that
+   allowance — a deliberate, configured extension doing what it was built to do.
+
+   **Caveat, added 2026-08-04:** that bound is the *grid's*. The anchor-bracket path has its own
+   feasibility budget, and the `brackets` array in the dump is the anchor enumeration
+   (`measure.rs:1979`, `list_feasible_anchor_brackets`), not the grid — 33/17's rows reach
+   `move_frames: 88799` (~1.85 s), well past 2 × 24 000. So "bounded at 500 ms" is true of the grid
+   and **unverified for whatever path actually rendered 33/17**; see §7.1a.
+
+The extension exists **because** the boundary is ambiguous in silence: it is the retry after a seam
+fails. Tightening the cap would break the mechanism that rescues genuinely misdetected boundaries,
+and a detector that could tell "this extension is wrong" from "this extension is a rescue" would
+have to be better than the alignment already is on mostly-silent material.
+
+~~**What survives is narrower.** … Nothing prefers a smaller extension to a larger one … Making
+extension *cost* something is a comparator change.~~ **RETRACTED 2026-08-04 — see §7.1a. Extension is
+already priced, heavily, and the mechanism this described is not the one that produced 33/17.**
+
+### 7.1a The comparator already prices extension — the "make it cost something" proposal is dead
+
+Three independent checks, each fatal on its own.
+
+**1. The penalty exists.** `fit_candidate_ranking_score(min_waveform, boundary_move_frames)` is
+`min_waveform − BOUNDARY_MOVE_PENALTY_PER_FRAME × boundary_move_frames`, the constant `2e-4`
+(`gap_fill_fit.rs:232,247`), and `boundary_move` is start-move + end-move against the baseline
+(`patch_region.rs:415,1700`). Anchor brackets pay that *plus*
+`ANCHOR_CENTER_DRIFT_PENALTY_PER_FRAME` (`1.5e-4`) on center drift (`gap_fill_fit.rs:263,272`). The
+tie-break is there too: `winner_cmp` orders by score then **smaller** `boundary_move`
+(`fit_routing.rs:95`), pinned by `fit_candidate_ranking_prefers_less_boundary_move_at_equal_waveform`.
+On the scale that matters, 33/17's 16 799-frame move costs **3.36** against a Pearson range of
+[0, 1] — extension is not underpriced, it is priced so hard that no candidate carrying one can win
+against *any* baseline that scores at all.
+
+**2. The grid does not run in default production.** `RepairProfile::Default` sets
+`fit_boundary_search: BaselineOnly` (`repair_profile.rs:132`; only `Full` sets `FullGrid`, `:144`),
+and E5 returns the pool winner before the grid is ever enumerated (`patch_region.rs:1023`). A
+grid-comparator change is a **no-op outside `--full`**.
+
+**3. It would not have changed 33/17.** Its own bracket table says the small extensions were
+*rejected*, not out-ranked:
+
+| move_frames | end offset | `seam_pre` / `seam_post` | outcome |
+|---|---|---|---|
+| 0 (baseline) | — | 0.214 / 0.210 | `failure_stage: waveform_floor` |
+| 7 200 | −150 ms start | 0.256 / 0.253 | `failure_stage: waveform_floor` |
+| **16 799** | **+350 ms end** | **0.420 / 0.431** | placement produced |
+
+The +350 ms bracket is the *smallest* move that scored at all. "Prefer the smallest |extension| among
+candidates within noise" has nothing to choose from here — the candidates it would have preferred are
+below the waveform floor. Whatever admitted this bracket, it was the **acceptance floor**, not the
+comparator.
+
+**What is not known, and blocks re-proposing anything here.** The rendered patch's seams (§3.3:
+`pre_seam_r` 0.998 / `post_seam_r` 0.973) match **no row** in that table, whose scores top out at
+0.43. The dump records the oracle enumeration, not the candidate production selected, so *which path
+placed 33/17's fill is unrecorded*. Until that is instrumented, any proposal aimed at "the path that
+over-extended" is aimed at a path that has not been identified. That is why §7.4 item 3 is an
+investigation and not a change.
+
+### 7.2 "The 35 dB margin was unreachable" — true, but not measurable without a codec table
+
+33/17's context floor is −67.2 dB, 15 dB quieter than anything else in the corpus; the dropout test
+asks for −102.2 dB and AAC bottoms out near −101.5 (already documented at
+`application/gap_equivalence.rs:249`). The test was **arithmetically impossible** for that gap — not
+0.6 dB too tight. That is the honest description of the failure and it belongs in §6.2 item 3's
+framing.
+
+It does **not** yield a usable rule without knowing the achievable floor, and measuring that floor
+from the gap's own ±2 s context does not work. Taking each gap's context minimum as the measured
+floor and asking whether `noise_floor_db − 35` falls below it:
+
+| | shortfall below the observed context minimum |
+|---|---|
+| `shared_silence` / `ambient_quiet` | 0.8 (34/1), 0.9 (25/36), 3.2 (25/1), 4.6 (10/11), 7.4 (34/24) — five fire |
+| `repairable_dropout` | 8.2 (35/10) … 31.6 (19/13); 16/7 does not fire at all |
+| 33/17 | 28.3 |
+
+Separation between the groups is **0.8 dB**, and it needs a new threshold — the thing the framing was
+supposed to avoid. It only looks clean against a constant −101.5 codec floor, i.e. against a
+per-codec table that would have to be threaded through the gap system.
+
+The reason it fails is that shoulders are program material, not floor: 12/7 and 28/22 have context
+minima near −100 dB while 33/17's never get below −73.9. **A local context cannot tell you what the
+decode is capable of.** `interior_delta_db` remains the recommendation, and on this criterion it is
+the better instrument anyway: it needs no floor knowledge, no codec identity, and no table — only
+whether B's interior sits above A's at the registered lag.
+
+### 7.3 The residual probe's nominal anchor is deliberate — REFUTED as an oversight
+
+The proposal was to re-centre the residual floor probe on the placement actually used, and to widen
+its ±10 ms reach. Both die, for different reasons, and the archived ledger has both:
+
+- **Widening.** `residual-gate-wiring-plan.md:206` states the sizing rationale explicitly: *"Must
+  exceed residual alignment error after the aligner; larger = O(lag·window) cost."* It is a
+  **post-aligner** budget and correct as one. Widening to 600 ms is 60×: ~28 800 lags × ~12 000-frame
+  windows × 2 sides per gap, seconds per gap, on a pipeline where gate search already dominates.
+- **Re-centring.** The *chosen* probe is already lag-centred — `residual-gate-findings.md` **M5**,
+  *"Real-codec reach false-veto. Lag-centered probe + `beyond_lag_reach()` abstention."* The
+  **floor** is anchored at nominal on purpose, and **M6** records the degenerate case being hit and
+  accepted: *"Production anchors the floor at nominal; bool lands on the decoy (nominal ≡ decoy) →
+  headroom ≈ 0 → abstain, not veto."* Headroom is chosen-vs-floor; if the floor follows the chosen
+  placement the two coincide and headroom is ≈ 0 by construction. **Anchoring at nominal is what
+  makes headroom a measurement rather than a tautology.**
+
+So 33/17's `informative: false` with `floor_source_pre`/`_post: "none"` is a *designed* abstention —
+`beyond_lag_reach()` firing, the safety valve M5 added to stop real-codec false vetoes — not a probe
+that failed. §3.2's reading ("uncorrelated at the lags tried, not uncorrelated") was right and
+remains right.
+
+**What survives is the reporting half — but less of it than first written.** The dump already
+disambiguates: 33/17 carries `{"floor_source_pre":"none","floor_source_post":"none",
+"informative":false}`, and `floor_source` exists precisely so an absent floor is not read as a
+measured one (`gap_fingerprint/schema.rs:839-841`, pinned by
+`floor_source_round_trips_and_disambiguates_an_absent_floor`). So "abstained" vs "measured and found
+nothing" is **already answerable from a dump**.
+
+Two things are still missing, and they are what the recommendation is now scoped to:
+
+- **The abstention is unnamed.** `floor_source: "none"` says no floor was anchored; it does not say
+  whether that was `beyond_lag_reach()` firing, no energetic window inside `max_walk_frames`, or a
+  non-finite probe. Those are different events and one of them is a warning.
+- **It never reaches production output.** The disambiguation is a fingerprint-schema field; the
+  repair path's own reporting still surfaces the bare `informative: false`.
+
+### 7.4 The recommendations
+
+Ordered by confidence, with what each addresses. **Revised 2026-08-04** after the §7.1a source check:
+former item 3 (price the extension) is downgraded from a change to an investigation, item 2 is
+re-scoped to what is actually missing, and the `Apply` promotion — the largest production change in
+this file — is lifted out of §6.7.5's prose and given a row.
+
+| # | recommendation | addresses | risk |
+|---|---|---|---|
+| 1 | **Fill-level sanity check against the A shoulders.** RMS in dB over the assembled fill vs the border windows the seam gate already extracted. | 33/17's fill sits ~8 dB above the −69 dB bed it replaces (§3.3 point 2); §3.1a's eight patches raise level by 9–46 dB. Pearson is scale-invariant by construction, and there is **no level or loudness term anywhere in the fill path** (`patch_region.rs`, `gap_fill_fit.rs`), so no existing gate can see this. | Low. O(n) over `gap_frames + 2 × 250 ms` on buffers already in memory — no search, no second Pearson pass. Must compare against the **shoulders**, not the gap interior: on a true dropout the interior is silent and an interior comparison would flag every correct repair. |
+| 2 | **Name the residual abstention, and surface it in production output.** Not "distinguish abstained from clean" — `floor_source` already does that in the dump (§7.3). Record *which* abstention fired (`beyond_lag_reach` vs no energetic window vs non-finite probe), and carry the distinction into the repair path's own reporting. | 33/17 and 19 of the 21 in §3.2 read `informative: false`; a reader outside the fingerprint schema still cannot tell an abstention from a clean bill of health. | Low — a reporting change, no decision moves. Does not touch M5's abstention, which stays. |
+| 3 | **Promote `DonorRegistrationMode::Apply`** — measure the donor window at the registered lag and abstain below `min_envelope_r` (§6.4, §6.6). | §6.2 item 1, the file's primary finding: the donor fraction is measured 80–410 ms off (§2.5). `Observe` has shipped and is default; `Apply` is enabled nowhere. | Medium, and **gated on one thing only**: §6.8.6's rate question over unselected material, now answerable by `--replay` over any envelope-bearing corpus with no listen run and no re-dump. Everything else it needed is discharged — negative controls hold out-of-set (§6.7.1), production reproduces the offline lags within one bin on all 20 (§6.7.2–3), abstain rate 1/20. |
+| 4 | **`interior_delta_db` in the dropout test.** A's interior at digital zero *and* a registered donor interior well above it. | §6.2 item 3. The fixed 35 dB margin is now shown to misfire in **both** directions on this set: it **misses** 33/17 by 0.6 dB (a real digital-zero hole, §7.2 — the test was arithmetically unreachable there) and it **falsely flags** 14/13 (quiet program material present in both masters, §6.8.5a). The delta reads +35.7 and +0.09 respectively — correct on both — separates the classes on all 20 gaps, and corroborates independently (§6.8.3a). | **Highest — sequence-critical.** It moves a gap *out* of the drop set, so per §6.8.4 it hands 33/17 to the patch path for real. **Do not ship before 1**, or it converts a gate-off-only defect into a production one. Formerly "before 1 and 3"; with the old item 3 downgraded, item 1 is the only shipped protection standing between this and a rendered defect — which makes 1 a hard prerequisite rather than one of two. Also needs the same §6.8.6 rate answer as item 3. |
+
+**Downgraded to an investigation — no longer a recommendation**
+
+- **Bound or price the boundary extension.** Both shapes are dead as proposed. The comparator
+  **already** penalises boundary move at `2e-4`/frame and tie-breaks toward the smaller move; the
+  grid does not run under the default profile at all; and on 33/17 the smaller extensions failed the
+  waveform floor rather than losing on score, so a "prefer the smallest within noise" rule would have
+  changed nothing (§7.1a). What remains is a question, not a fix: **which path placed 33/17's fill?**
+  The rendered seams (0.998 / 0.973) appear in no bracket row, so the dump does not say. Instrument
+  the selected candidate first; only then is there a target. If anything is tuned afterwards the
+  likely site is the **acceptance floor**, not the comparator.
+
+Dropped, and why, so they are not re-proposed:
+
+- **Bound the write to the gap span** — dual-fit already returns exactly `gap_frames`, and the
+  boundary grid is bounded at 500 ms by configuration (§7.1; note the caveat there — that bound is
+  the grid's, and the anchor enumeration in the dump exceeds it).
+- **Gate on `post_seam_global_r`** — on a real dropout the shift it detects is legitimate, so it
+  cannot discriminate without already trusting the classification it is meant to inform. Keep it as
+  corroborating evidence (§6.8.3a), not as a gate.
+- **Widen or re-centre the residual probe** — the reach is a deliberate post-aligner budget and the
+  nominal anchor is what makes headroom meaningful (§7.3).
+- **Derive the achievable floor from the gap's local context** — 0.8 dB of separation, and it needs a
+  new threshold (§7.2).
