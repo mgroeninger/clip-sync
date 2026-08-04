@@ -125,7 +125,7 @@ const MIN_REGISTRATION_BINS: usize = 8;
 /// Where the donor window actually sits relative to the nominal offset map, and what B looks like
 /// once it is put there. Provenance **and** input: when `peak_r >= min_envelope_r` the donor fraction
 /// on the verdict is the one measured at `lag_blocks`.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DonorRegistration {
     /// Blocks B's window must move to line up with A. Positive ⇒ later in B.
     pub lag_blocks: i64,
@@ -152,6 +152,84 @@ pub struct DonorRegistration {
     /// large and positive ⇒ B carries content A lost. Recorded, **not** classified on yet.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub interior_delta_db: Option<f64>,
+    /// The two envelopes the numbers above were derived from — see [`RegistrationEnvelopes`].
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub envelopes: Option<RegistrationEnvelopes>,
+}
+
+/// The dB envelopes [`register_donor_window`] correlated, recorded so that **every question which
+/// moves the donor window can be re-asked from a dump alone**.
+///
+/// **Why the summary numbers were not enough.** Everything else on [`DonorRegistration`] is an
+/// *output*: one lag, two correlations, two interior levels. That is enough to read what the
+/// registration decided and not enough to ask it anything else — a different `max_lag_blocks`, a
+/// different `min_envelope_r`, the correlation with the core left in, or the donor fraction at the
+/// lag the gate *didn't* use. [`GapEquivalenceVerdict::donor_blocks`] has the same limit in the other
+/// direction: it reproduces the fraction exactly, but only at the one window that was measured. So
+/// answering "how often would `Apply` have flipped a class" cost a full corpus re-dump (2026-08-03)
+/// instead of a script over the corpus already on disk. With both envelopes recorded it is a script.
+///
+/// The slices are the raw scanner bins, not a re-derivation: replaying `register_donor_window` over
+/// them reproduces `lag_blocks` / `peak_r` / `nominal_r` exactly, and re-running the donor count
+/// (`silent || rms_db < gap_floor_db`) over B reproduces
+/// [`GapEquivalenceVerdict::donor_silence_fraction`] at any lag in range. Both are pinned by tests.
+///
+/// Size is ~40–70 bins for A and that plus `2 * max_lag_blocks` for B — about 1 KB of JSON against
+/// an ~18 KB gap dump.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RegistrationEnvelopes {
+    /// Bin width in ms. One scan recipe per pair, so both sides share it. The streams are the
+    /// scanner's fixed-duration blocks, so bin `i` of a slice starts at `start_secs + i * bin_ms`.
+    pub bin_ms: f64,
+    /// A's bins over the gap ± [`EQUIVALENCE_CONTEXT_SECS`], **core included** — the core is excluded
+    /// from the correlation by `core_bins`, not by being left out of the record, so the exclusion is
+    /// a policy a replay can vary rather than a hole in the data.
+    pub a: EnvelopeSlice,
+    /// B's bins over the same window, padded by [`DonorRegistrationParams::max_lag_blocks`] on each
+    /// side so that every lag the search tried can be replayed. Shorter than that when the stream
+    /// ends first; `b_nominal_bin` says where the nominal map actually landed.
+    pub b: EnvelopeSlice,
+    /// Index into `b` that the **nominal** map aligns with `a[0]`, i.e. lag 0. Bin `i` of `a` pairs
+    /// with bin `b_nominal_bin + i + lag` of `b`.
+    pub b_nominal_bin: usize,
+    /// `[start, end)` bins of `a` falling in the gap core — the range the correlation excluded.
+    pub core_bins: (usize, usize),
+}
+
+/// One side's bins, as recorded by [`RegistrationEnvelopes`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EnvelopeSlice {
+    /// Seconds at which bin `0` starts, on this side's own timeline.
+    pub start_secs: f64,
+    /// Per-bin [`BlockLevel::rms_db`], at the stream's own `f64`. `f32` was tried and reverted: it
+    /// is far below audible resolution but *not* below decision resolution — the donor count is
+    /// `rms_db < gap_floor_db`, so a bin sitting on the floor can flip under rounding, and that is
+    /// precisely the comparison a replay exists to re-ask. The extra ~1 KB per gap buys an exact
+    /// replay instead of an almost-exact one.
+    pub rms_db: Vec<f64>,
+    /// Bins whose scanner [`BlockLevel::silent`] flag fired, by index. Sparse rather than a parallel
+    /// `Vec<bool>` — the flag is the level-blind half of the donor count and is usually a minority of
+    /// the window, so indices are both smaller and easier to read.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub silent_bins: Vec<u32>,
+}
+
+impl EnvelopeSlice {
+    /// Capture `levels[start..end]`. Empty ranges are recorded as empty rather than refused — the
+    /// caller has already decided the window is worth keeping.
+    fn capture(levels: &[BlockLevel], start: usize, end: usize) -> Self {
+        let bins = &levels[start..end];
+        Self {
+            start_secs: bins.first().map_or(0.0, |b| b.start_secs),
+            rms_db: bins.iter().map(|b| b.rms_db).collect(),
+            silent_bins: bins
+                .iter()
+                .enumerate()
+                .filter(|(_, b)| b.silent)
+                .map(|(i, _)| i as u32)
+                .collect(),
+        }
+    }
 }
 
 /// Why a gap was not classified. `NotEvaluated` is the only variant that asserts nothing about the
@@ -778,6 +856,18 @@ pub fn register_donor_window(
     let lag_secs = lag_blocks as f64 * bin_secs;
     let a_interior_db = eroded_interior_db(a_levels, core_start_secs, core_end_secs);
     let b_interior_db = eroded_interior_db(b_levels, b_mapped.0 + lag_secs, b_mapped.1 + lag_secs);
+    // Record the inputs next to the outputs. B is padded by `max` on each side — the same reach the
+    // search had — so a replay can ask about lags this run rejected, not only the one it chose.
+    let b_lo = b0.saturating_sub(params.max_lag_blocks);
+    let b_hi = (b0 + (a1 - a0) + params.max_lag_blocks).min(b_levels.len());
+    let core = core_bins(a_levels, a0, a1, core_start_secs, core_end_secs);
+    let envelopes = (b_hi > b_lo).then(|| RegistrationEnvelopes {
+        bin_ms: bin_secs * 1000.0,
+        a: EnvelopeSlice::capture(a_levels, a0, a1),
+        b: EnvelopeSlice::capture(b_levels, b_lo, b_hi),
+        b_nominal_bin: b0 - b_lo,
+        core_bins: core,
+    });
     Some(DonorRegistration {
         lag_blocks,
         lag_ms: lag_secs * 1000.0,
@@ -792,7 +882,28 @@ pub fn register_donor_window(
             (Some(a), Some(b)) => Some(b - a),
             _ => None,
         },
+        envelopes,
     })
+}
+
+/// The `[start, end)` bins of `a_levels[a0..a1]` whose centres fall in the gap core, as offsets into
+/// that slice. The core is contiguous by construction (the bins are ordered and the core is an
+/// interval), so the first and last matching offsets bound it; `(0, 0)` when none match.
+fn core_bins(
+    a_levels: &[BlockLevel],
+    a0: usize,
+    a1: usize,
+    core_start_secs: f64,
+    core_end_secs: f64,
+) -> (usize, usize) {
+    let in_core = |i: usize| {
+        let c = block_center(&a_levels[i]);
+        c >= core_start_secs && c < core_end_secs
+    };
+    match (a0..a1).find(|&i| in_core(i)) {
+        Some(first) => (first - a0, (a0..a1).rev().find(|&i| in_core(i)).unwrap_or(first) - a0 + 1),
+        None => (0, 0),
+    }
 }
 
 /// Median of a set of dB values (used for A's local noise floor). `None` when empty.
@@ -903,7 +1014,7 @@ pub fn derive_gap_equivalence(
     // Registration moves the window; it never edits the reading taken there. Under `Observe` it does
     // not even do that — the lag is recorded and the nominal window measured, so the dump can report
     // how far off the map was without any verdict depending on the answer.
-    let donor_window = match (b_mapped, registration) {
+    let donor_window = match (b_mapped, registration.as_ref()) {
         (Some((s, e)), Some((rp, reg))) if rp.mode.applies() => {
             let shift = reg.lag_ms / 1000.0;
             Some((s + shift, e + shift))
@@ -930,8 +1041,9 @@ pub fn derive_gap_equivalence(
     // A registration we don't believe is not a licence to fall back on the nominal map — that is the
     // window we already know is wrong. Abstain instead: `NotEvaluated` keeps the gap (fail open) and
     // the reason says why, so a keep here is honest rather than accidental.
-    let unreliable =
-        registration.is_some_and(|(rp, reg)| rp.mode.applies() && reg.peak_r < rp.min_envelope_r);
+    let unreliable = registration
+        .as_ref()
+        .is_some_and(|(rp, reg)| rp.mode.applies() && reg.peak_r < rp.min_envelope_r);
     let mut verdict = if unreliable && params.enabled {
         GapEquivalenceVerdict::of(
             GapEquivalenceClass::NotEvaluated,
@@ -1511,6 +1623,138 @@ mod tests {
         assert_eq!(nominal.class, RepairableDropout, "the un-registered call");
     }
 
+    /// Rebuild a level stream from a recorded [`EnvelopeSlice`] — the operation a dump reader
+    /// performs, expressed once so the replay tests below exercise the same path a script would.
+    fn replay(slice: &EnvelopeSlice, bin_ms: f64) -> Vec<BlockLevel> {
+        let bin = bin_ms / 1000.0;
+        slice
+            .rms_db
+            .iter()
+            .enumerate()
+            .map(|(i, &db)| BlockLevel {
+                start_secs: slice.start_secs + i as f64 * bin,
+                end_secs: slice.start_secs + (i + 1) as f64 * bin,
+                rms_db: db,
+                silent: slice.silent_bins.contains(&(i as u32)),
+            })
+            .collect()
+    }
+
+    /// **The replay contract, half one.** The recorded envelopes must reproduce the registration
+    /// they came from — same lag, same both correlations, same interiors — because that is what
+    /// makes a *different* `max_lag_blocks` or core policy answerable offline. Nothing else on the
+    /// dump can be re-derived if the inputs are a lossy copy of what the gate actually saw.
+    #[test]
+    fn recorded_envelopes_replay_the_registration() {
+        let a = timeline(120, 50..56, -110.0, 0);
+        let b = timeline(120, 55..61, -110.0, 5);
+        let params = DonorRegistrationParams::default();
+        let reg = register_donor_window(&a, 5.0, 5.6, &b, (5.0, 5.6), &params)
+            .expect("registration ran");
+        let env = reg.envelopes.clone().expect("envelopes recorded");
+
+        let replayed = register_donor_window(
+            &replay(&env.a, env.bin_ms),
+            5.0,
+            5.6,
+            &replay(&env.b, env.bin_ms),
+            (5.0, 5.6),
+            &params,
+        )
+        .expect("replays from the record alone");
+
+        // Exact on every decision-bearing field — the envelopes are the input, not a summary of it.
+        assert_eq!(
+            DonorRegistration {
+                lag_ms: reg.lag_ms,
+                envelopes: None,
+                ..replayed
+            },
+            DonorRegistration {
+                envelopes: None,
+                ..reg.clone()
+            },
+            "the record is the input, not a summary of it"
+        );
+        // `lag_ms` alone is derived from a bin width re-formed by subtraction, so it lands within a
+        // float epsilon rather than on it. `lag_blocks` — the field anything downstream acts on — is
+        // exact, and is covered by the assert above.
+        assert!((replayed.lag_ms - reg.lag_ms).abs() < 1e-6, "{replayed:?}");
+        // The core is marked, not omitted: bins 50..56 of A sit at ctx start 3.0 s ⇒ offsets 20..26.
+        assert_eq!(env.core_bins, (20, 26), "{env:?}");
+        assert_eq!(
+            env.a.rms_db.len(),
+            reg.bins + (env.core_bins.1 - env.core_bins.0),
+            "`bins` counts the shoulders; the slice carries the core too"
+        );
+    }
+
+    /// **The replay contract, half two — the question the 2026-08-03 re-dump was spent on.** With B's
+    /// envelope recorded, "what would the donor fraction have been at the *other* lag" is a script
+    /// over an existing dump. Under `Observe` the verdict carries the nominal reading; re-counting
+    /// the recorded bins at `lag_blocks` must produce the `Apply` answer exactly, so a corpus can be
+    /// asked how often `Apply` would flip a class without re-running the scan.
+    #[test]
+    fn recorded_envelopes_replay_the_donor_fraction_at_either_lag() {
+        let a = timeline(120, 50..56, -110.0, 0);
+        let b = timeline(120, 55..61, -110.0, 5);
+        let observed = derive_gap_equivalence(
+            &a,
+            5.0,
+            5.6,
+            Some(&b),
+            Some((5.0, 5.6)),
+            &observing_registration(),
+        );
+        let reg = observed
+            .donor_registration
+            .as_ref()
+            .expect("registration ran");
+        let env = reg.envelopes.as_ref().expect("envelopes recorded");
+        let bins = replay(&env.b, env.bin_ms);
+        let floor = observed.gap_floor_db.expect("a finite gap floor");
+
+        // The gate's own predicate, re-expressed against the record: `silent || rms_db < gap_floor`.
+        let fraction_at = |shift_secs: f64| {
+            let (lo, hi) = (5.0 + shift_secs, 5.6 + shift_secs);
+            let win: Vec<_> = bins
+                .iter()
+                .filter(|bl| {
+                    let c = block_center(bl);
+                    c >= lo && c < hi
+                })
+                .collect();
+            let silent = win
+                .iter()
+                .filter(|bl| bl.silent || bl.rms_db < floor)
+                .count();
+            silent as f64 / win.len() as f64
+        };
+
+        assert_eq!(
+            Some(fraction_at(0.0)),
+            observed.donor_silence_fraction,
+            "the nominal reading the verdict was decided on"
+        );
+        let applied = derive_gap_equivalence(
+            &a,
+            5.0,
+            5.6,
+            Some(&b),
+            Some((5.0, 5.6)),
+            &with_registration(),
+        );
+        assert_eq!(
+            Some(fraction_at(reg.lag_ms / 1000.0)),
+            applied.donor_silence_fraction,
+            "and the reading `Apply` would have taken, from the same record"
+        );
+        assert_ne!(
+            observed.class, applied.class,
+            "the fixture is class-flipping, so this is a claim with teeth"
+        );
+    }
+
     /// **Negative control for `Observe`.** A donor that cannot be registered is recorded as such and
     /// nothing else happens — no abstain. The abstain is a verdict change, so it belongs to `Apply`
     /// alone; a corpus run that started keeping gaps because of a mode change would answer a
@@ -1533,7 +1777,10 @@ mod tests {
             Some((5.0, 5.6)),
             &observing_registration(),
         );
-        let reg = v.donor_registration.expect("registration was attempted");
+        let reg = v
+            .donor_registration
+            .as_ref()
+            .expect("registration was attempted");
         assert!(reg.peak_r < 0.70, "same unregistrable donor: {reg:?}");
         assert_eq!(v.class, SharedSilence, "classified at the nominal map");
         assert!(

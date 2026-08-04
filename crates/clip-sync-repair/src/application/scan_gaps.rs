@@ -1548,6 +1548,7 @@ mod tests {
 
         let reg = v
             .donor_registration
+            .as_ref()
             .expect("scan must record the registration");
         assert_eq!(reg.lag_blocks, 5, "B is 500 ms late: {reg:?}");
         // `lag_ms` is `lag_blocks` × the level stream's **own** bin width, which is the block in
