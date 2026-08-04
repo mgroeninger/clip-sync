@@ -25,6 +25,14 @@ name = "equivalence-calibration"
 path = "src/bin/equivalence_calibration.rs"
 required-features = ["calibration"]
 
+# Calibration/dev tool: check the in-engine donor registration against the --gap-listen WAVs, by
+# full-waveform Pearson on the pre-gap shoulder. Independent instrument, no shared code with the
+# envelope registration it checks.
+[[bin]]
+name = "listen-registration"
+path = "src/bin/listen_registration.rs"
+required-features = ["calibration"]
+
 [features]
 default = []
 ffmpeg-mux = []

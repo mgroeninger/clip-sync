@@ -466,10 +466,12 @@ The negative controls that matter are the 132 `repairable_dropout` gaps in the 3
 (against 229 `shared_silence`, 30 `ambient_quiet`, 14 unclassified): those are the gaps a
 registration change must **not** flip. Two routes, neither blocking the prototype:
 
-1. **A small second `--gap-listen` run** over a handful of `repairable_dropout` gaps drawn from
-   pairs *not* among the eight already listened to. This is the real test — it is the only thing
-   that produces both timelines for material the method has not seen. Still open.
+1. ~~**A small second `--gap-listen` run**~~ — **DONE 2026-08-03**, see §6.7. Eight new pairs, all
+   `repairable_dropout`, none previously listened to.
 2. ~~**Emit the registration on the next corpus dump**~~ — **DONE 2026-08-03**, see §6.6.
+
+The second bullet above is also now stale: the dumps **do** carry both level timelines as of the
+2026-08-03 envelope-capture change (§6.7.4), so the correlation is replayable from a dump.
 
 ### 6.6 Route 2 shipped: registration observed on the scan path
 
@@ -505,3 +507,163 @@ The end-to-end wiring is pinned by
 `scan_gaps.rs::scan_records_donor_registration_without_moving_the_verdict`, on a fixture whose
 registration is deliberately class-flipping (nominal reads B's content ⇒ `repairable_dropout`;
 registered lands on B's hole ⇒ would be `shared_silence`), so "unchanged" is a claim with teeth.
+
+### 6.7 The 2026-08-03 extended runs — what §6.6 was turned on to ask
+
+Three directories landed on 2026-08-03 and none was reviewed against this file until now. Same
+16 pairs / 20 gaps throughout: the 12 already listened to, **plus 8 pairs never seen before**
+(5, 7, 8, 9, 16, 19, 35, 36), every one of them a `repairable_dropout` — the §6.5 negative controls.
+
+| dir | ran | WAVs | `donor_registration` | what it is |
+|---|---|---|---|---|
+| `2026-08-03-...-extended` | 11:05 | **yes** (3/gap) | **no** | the §6.5 route-1 listen materials |
+| `2026-08-03-...-extended-2` | 18:12 | no | **yes** | the §6.6 `Observe` run — **the corpus of record** |
+| `2026-08-03-...-extended-3` | 20:34 | — | — | aborted; one empty pair directory |
+
+#### 6.7.0 Read `extended-2`, not `extended` — the first run's detail fields are projected
+
+`extended`'s `baseline_lag` records `window_ms: 0`, `max_lag_ms: 0`, `peak_lag_samples: 0` against a
+confident-looking `lag0_r: 0.995` — a zero-width search window, i.e. the projection path, not a
+measurement. `beb24f93` (16:24, *"incorporate measured details"*) introduced `MeasuredDetail` and the
+`not_measured` marking for fabricated gaps; `extended` predates it by five hours and `extended-2`
+follows it by two. Field-by-field across the 20 shared gaps: `donor_interior` / `_nominal` and
+`levels` differ on all 20, `residual` on 10; `splice`, `brackets`, `geometry`, `channels`,
+`splice_dualfit` are **identical** on all 20.
+
+`extended` is still good for its WAVs — that audio is real, and it is the only listen material for
+the eight new pairs. **Do not quote its `baseline_lag` or level fields.**
+
+#### 6.7.1 The three §6.6 questions, answered
+
+**1. How often is `lag_blocks != 0`? — 12 of 20 (60 %).** Mostly ±100 ms; pair 25 is +400 ms on all
+three of its gaps, in-engine, confirming §2.4/§2.5's "one registration problem counted nine times".
+
+**2. How often would `Apply` have flipped a class? — none of the 20, and the negative controls hold.**
+All eight new `repairable_dropout` gaps read `a_interior_db` −101.5 (digital zero) against
+`b_interior_db` −25.7…−49.1, so `interior_delta_db` **+49.7…+75.8 dB**, and the donor interior
+`silence_fraction` is **0.0 at the nominal window and 0.0 at the registered one**:
+
+| gap | lag | `peak_r` | `nominal_r` | A int. | B int. | Δ | nom. frac → reg. frac |
+|---|---|---|---|---|---|---|---|
+| 5/4 | +0 ms | 0.948 | 0.948 | −101.5 | −34.3 | +67.2 | 0.0 → 0.0 |
+| 7/3 | +0 | 0.954 | 0.954 | −101.5 | −38.6 | +62.9 | 0.0 → 0.0 |
+| 8/4 | −100 | 0.932 | 0.620 | −101.5 | −49.1 | +52.4 | 0.0 → 0.0 |
+| 9/9 | +0 | 0.881 | 0.881 | −101.5 | −31.8 | +69.7 | 0.0 → 0.0 |
+| 16/7 | +100 | 0.989 | 0.863 | −101.5 | −41.5 | +60.0 | 0.0 → 0.0 |
+| 19/13 | +100 | 0.822 | 0.732 | −101.5 | −51.8 | +49.7 | 0.0 → 0.0 |
+| 35/10 | +100 | 0.924 | 0.789 | −101.5 | −39.6 | +61.8 | 0.0 → 0.0 |
+| 36/9 | +0 | **0.688** | 0.688 | −101.5 | −25.7 | +75.8 | 0.0 → 0.0 |
+
+Registration moves the window and still says *fill it*. That is the property §6.4 said only synthetic
+fixtures covered, now measured on eight pairs the method had never seen.
+
+The `shared_silence` side moves the way §2.5 predicted: the registered donor interior fraction rises
+on 9 of 12 (18/49 0.529 → 0.929, 14/13 0.778 → 0.957, 12/7 0.765 → 0.889) and donor RMS drops 13–29 dB
+(18/49 −48.5 → −77.4). 33/17 still reports its genuine **+35.7 dB** interior delta and is not talked
+into a keep. `nominal_r` shows what the misregistration was costing: 25/36 **−0.128** nominal against
+0.829 registered, 25/1 0.245, 25/8 0.339.
+
+**3. What is the `Apply` abstain rate? — 1 of 20 (36/9, `peak_r` 0.688).** It is a
+`repairable_dropout`, so the abstain keeps a gap that was being kept anyway. Cost nil on this sample.
+
+**Caveat that has not moved:** these 20 were selected for sitting near a boundary. This bounds the
+mechanism and the negative controls; it still does not estimate the corpus-wide rate.
+
+#### 6.7.2 The production path reproduces the offline lags
+
+§6.3 required this before `Apply` could ship: *"if the production fit lands elsewhere on these gaps,
+(1) needs rethinking."* The §2.5 lags were derived by hand from the listen WAVs (1 ms Pearson) and
+§6.4's by an offline prototype; `extended-2`'s come from the shipped scan path. No shared code.
+
+| gap | §2.5 offline, WAV | §6.4 offline envelope | `extended-2` in-engine | |
+|---|---|---|---|---|
+| 10/11 | +28 ms | +0 | **+0** | ✓ |
+| 12/7 | −81 | −100 | **−100** | ✓ |
+| 14/9 | −119 | −100 | **−100** | ✓ |
+| 14/13 | −122 | −100 | **−100** | ✓ |
+| 18/49 | +341 | +300 | **+300** | ✓ |
+| 25/1 | +332 | +300 | **+400** | one bin |
+| 25/8 | +410 | +400 | **+400** | ✓ |
+| 25/36 | +347 | +300 | **+400** | one bin |
+| 28/22 | +47 | +100 | **+0** | one bin |
+| 33/17 | −19 | +0 | **+0** | ✓ |
+| 34/1 | −115 | −100 | **−100** | ✓ |
+| 34/24 | −7 | +0 | **+0** | ✓ |
+
+**9 of 12 exact; the other 3 differ by exactly one bin, and all three sit within ~50 ms of a bin
+boundary** (+332, +347, +47). That is grid quantization, not disagreement — every in-engine lag is
+within one bin of the WAV-derived truth. §6.3's first failure condition is discharged.
+
+It is worth being clear about what the quantization costs, because it is the same arithmetic that
+sank the ±1-block band: one bin is 8–25 % of a 4–12 bin donor window (§2.5), so a one-bin lag error
+is decision-relevant at the boundary. The registration is not therefore fuzzy — the three disagreeing
+gaps are `shared_silence` by a wide margin at either lag — but "within one bin" is the accuracy
+claim, not "exact".
+
+#### 6.7.3 `listen-registration` — the cross-check, extended to all 20 gaps and made repeatable
+
+The table above stops at the 12 gaps §2.5 had measured by hand. The eight new pairs had listen WAVs
+too (in `extended`), so the same question was askable of them — and the hand method is now a dev
+binary, `crates/clip-sync-repair/src/bin/listen_registration.rs`, `[[bin]] listen-registration` under
+`required-features = ["calibration"]`:
+
+```text
+cargo run --features calibration --bin listen-registration -- \
+    gap-files/<listen-run> --observe-dir gap-files/<observe-run>
+```
+
+`--observe-dir` exists because of the split in §6.7.0: the WAVs are in `extended` and the
+`donor_registration` is in `extended-2`, matched by pair directory and file stem. It reads nothing
+from the dump but the gap's geometry, so a corpus whose detail fields came from the projection path
+is still cross-checkable. It recovers the export context from the clip length rather than assuming
+3.0 s, then Pearsons the 2 s pre-gap A shoulder against B at 1 ms steps over ±1 s — lag 0 being the
+nominal map, by the cut geometry in §6.7.2.
+
+It reproduces all 12 rows above exactly, which is the evidence that it is the same instrument. Over
+all 20 gaps:
+
+- **Every gap agrees with the engine within one 100 ms bin.** Worst is 9/9 at 0.83 bins (+83 ms WAV
+  vs +0 engine) — and that row carries the weakest waveform correlation in the set, r = 0.251, so it
+  is a statement about the WAV estimate on a quiet shoulder, not about the registration. 9/9 is a
+  hard gap that the patched WAV **fixes correctly** by ear; nothing here is outstanding on it. The
+  eight new pairs land at −8 / −18 / −138 / +83 / +73 / +54 / +47 / +4 ms.
+- **The independently measured interiors match the engine's to ~3 dB**, so §6.7.1's table is not an
+  artifact of the level path it was measured with.
+- **The safety result, from the `B−A` column.** On the dropout class B sits 49.8–79.0 dB above A, and
+  moving B from nominal to the registered lag changes that by **≤1.9 dB**. No lag error the search can
+  reach moves a dropout toward `shared_silence`. On `shared_silence` the same column stays within
+  ±0.9 dB of zero at either lag — including 18/49, where B at nominal reads −49.0 dB and B registered
+  −86.0, i.e. the nominal window was measuring the wrong content by 37 dB.
+
+What is *not* cross-checkable: `extended` against `extended-2` on the registration field itself, which
+is **absent on all 20 of `extended`'s gaps** — the `scan_gaps` wiring landed at 12:53 (`9e7aa1f6`),
+after that run. The check above is the stronger one anyway; it compares against an independent
+derivation rather than a second run of the same code.
+
+#### 6.7.4 Envelope capture: the dumps are now replay-complete
+
+Answering §6.6's question 2 above required a full corpus re-dump, because the dump recorded the
+registration's *outputs* and not its *inputs* — and `donor_blocks` reproduces the fraction only at the
+one window that was measured. `DonorRegistration.envelopes` now records both dB envelopes: A's over
+the gap ± context with the core marked (not omitted, so the exclusion is a policy a replay can vary),
+B's padded by `±max_lag_blocks` so every lag the search tried can be re-asked, plus `bin_ms`,
+`b_nominal_bin` and per-side `silent_bins`. With `gap_floor_db` already on the verdict, the donor
+count at *any* lag falls out — no second block vector needed.
+
+Two tests pin it: the recorded envelopes reproduce the registration exactly, and re-counting them at
+`lag_blocks` reproduces `Apply`'s fraction on a class-flipping fixture. The first one earned its
+keep — the bins were `f32` on the first cut and the replay test failed. The reason generalizes: the
+donor count is `rms_db < gap_floor_db`, so a bin sitting *on* the floor can flip under rounding, and
+that is precisely the comparison a replay exists to re-ask. `f64`, ~2 KB per gap.
+
+The consequence for §6.5: from the next corpus dump on, the 132 `repairable_dropout` negative
+controls are answerable by script over dumps already on disk, with no listen run and no re-dump.
+
+#### 6.7.5 Still open after these runs
+
+- **The rate question over unselected gaps.** Everything above is 20 boundary-selected gaps.
+- **`Apply` is still not enabled anywhere.** The evidence for promoting it is now: negative controls
+  hold out-of-set (§6.7.1), production reproduces the offline lags on all 20 gaps within one bin
+  (§6.7.2–6.7.3), the dropout margin moves ≤1.9 dB under registration, abstain rate 1/20.
+- **§6.2 items 2 and 3 are untouched** — the 33/17 patch defect and the fixed 35 dB dropout margin.
+  Neither is affected by any of this.
