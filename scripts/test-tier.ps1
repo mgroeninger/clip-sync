@@ -228,7 +228,7 @@ try {
         )
         # `--gap-listen` against a gate-refused gap (slow: ~350 s, of which ~99.8% is the Full-tier
         # fingerprint per-bracket anchor oracle, not the refusal the test asserts — see
-        # docs/dev/TEMP-gap-listen-wav-plan.md §12.2). Release-only for the same reason as above.
+        # docs/dev/archive/TEMP-gap-listen-wav-plan.md §12.2). Release-only for the same reason as above.
         Invoke-CargoTest @(
             '-p', 'clip-sync-repair',
             '--release',

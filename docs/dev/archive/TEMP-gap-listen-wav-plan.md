@@ -1,12 +1,19 @@
-# TEMP — Gap listen WAVs (one-decode reassembly)
+# TEMP — Gap listen WAVs (one-decode reassembly) (ARCHIVED)
 
-**Status:** draft plan, 2026-08-02; single-decode design **code-verified** against the repair crate
-(see § 2.1 — assumptions, file:line, and what breaks if each flips). Working plan for calibration `--gap-listen [DIR]`
-alongside `--gap-fingerprints DIR`: select gap(s) → write fingerprint JSON → export A/B
-surround WAVs → **production** patch → export patched-region WAV — all from the same decode.
+**Status:** **Shipped and closed 2026-08-04.** `--gap-listen [DIR]` landed as a WAV side channel on
+`--gap-fingerprints`: one decode → fingerprint JSON → A/B surround WAVs → **production** patch →
+patched-region WAV. Single-decode design was code-verified before implement (§2.1); §10 open items
+all resolved at implement time; §11 tests landed (including the ignored gate-refusal case in the
+diagnostic tier). Declines and later options (`--gap-listen-wide-b`, seeking decode, B for
+unplanned gaps, dump-oracle cost on refused gaps) stay recorded below — they were out of v1, not
+unfinished work.
 
-Companion: [gap-fingerprint.md](gap-fingerprint.md), [BACKLOG.md](../../BACKLOG.md) § *Equivalence
-margin band* (“listen before believing”), seam/patch docs under `docs/`.
+Durable behaviour lives in [../gap-fingerprint.md](../gap-fingerprint.md) (§ *`--gap-listen`*).
+This file is kept for **rationale** — plan geometry vs refined edges, why no `PendingAfterScan`
+arm, selector via `--fingerprint-gap`, and the §12.2 dump-cost finding.
+
+Companion at ship time: [gap-fingerprint.md](../gap-fingerprint.md), [BACKLOG.md](../../../BACKLOG.md)
+§ *Equivalence margin band* (“listen before believing”), seam/patch docs under `docs/`.
 
 **Media hygiene:** WAVs of real media stay gitignored (`gap-files/` / temp). Fingerprint JSON stays
 sample-free. No titles/paths in committed artifacts.
@@ -434,7 +441,7 @@ live data is a handful of seconds-long window buffers.
 
 ## 9. Fit to current backlog
 
-For the equivalence-band “listen before trusting” experiment ([BACKLOG.md](../../BACKLOG.md)):
+For the equivalence-band “listen before trusting” experiment ([BACKLOG.md](../../../BACKLOG.md)):
 `--gap-fingerprints … --gap-listen` with `--no-skip-equivalent-gaps` and the banded gap tokens
 gives A/B context + the **production** patched surround without a full-movie listen or a second
 fingerprint pass.

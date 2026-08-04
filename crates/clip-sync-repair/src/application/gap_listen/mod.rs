@@ -17,7 +17,8 @@
 //! → move the decode into the patch (mutable). Anything exported after the splice reads patched
 //! audio while claiming to be the "before".
 //!
-//! See `docs/dev/TEMP-gap-listen-wav-plan.md`.
+//! See `docs/dev/gap-fingerprint.md` (§ `--gap-listen`); design record:
+//! `docs/dev/archive/TEMP-gap-listen-wav-plan.md`.
 
 mod export;
 

@@ -362,7 +362,7 @@ lossless alternative, e.g. `use --flac (or --mux) for long surround outputs inst
 
 ## 8. Follow-ups (not this plan)
 
-- Gap-listen mode ([TEMP-gap-listen-wav-plan.md](TEMP-gap-listen-wav-plan.md)) switching
+- Gap-listen mode ([gap-fingerprint.md](gap-fingerprint.md) § *`--gap-listen`*) switching
   surround exports to FLAC by default or via a flag.
 - Chunked patch PCM so neither WAV nor FLAC needs the full timeline resident
   (BACKLOG R6 “Streaming / chunked WAV encode” — broaden to lossless writers).

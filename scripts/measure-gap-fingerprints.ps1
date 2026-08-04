@@ -41,7 +41,7 @@
 # The `clips` summary column counts what landed; `patched` counts the third clip, so `clips` without
 # `patched` is a gap the production gate declined. Sharing the corpus dir is safe for -Check: both
 # the analyzer and the checker filter on a `.json` extension, so stray WAVs are ignored.
-# See docs/dev/TEMP-gap-listen-wav-plan.md.
+# See docs/dev/gap-fingerprint.md § `--gap-listen` (design record: archive/TEMP-gap-listen-wav-plan.md).
 #
 # MEDIA HYGIENE: nothing this script produces may be committed, and the two outputs are protected by
 # different mechanisms — know which is which before you move either.
