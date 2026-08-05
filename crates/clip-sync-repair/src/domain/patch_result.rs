@@ -1,5 +1,6 @@
 use serde::Serialize;
 
+use crate::domain::fill_level::FillLevelCheck;
 use crate::domain::fill_mode::FillMode;
 use crate::domain::gap_fill_fit::FillConfidence;
 use crate::domain::gap_tags::{derive_gap_tags_from_status, FillTierThresholds, GapTags};
@@ -312,6 +313,12 @@ pub struct GapPatchOutcome {
     /// (`measure_residual` or debug logging) and the gap reached the fit waveform tier.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub residual: Option<SeamResidualVerdict>,
+    /// Fill-level check (record-only): the fill's loudest bin against the A shoulders it sits
+    /// between. Present only for gaps that were actually spliced, and only when
+    /// `measure_fill_level` is on. Never affects the verdict — see
+    /// [`crate::domain::fill_level`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fill_level: Option<FillLevelCheck>,
 }
 
 impl GapPatchOutcome {
@@ -322,12 +329,19 @@ impl GapPatchOutcome {
             status,
             tags,
             residual: None,
+            fill_level: None,
         }
     }
 
     /// Attach a residual/floor verdict (P1 report-only); no-op when `None`.
     pub fn with_residual(mut self, residual: Option<SeamResidualVerdict>) -> Self {
         self.residual = residual;
+        self
+    }
+
+    /// Attach the fill-level check (record-only); no-op when `None`.
+    pub fn with_fill_level(mut self, fill_level: Option<FillLevelCheck>) -> Self {
+        self.fill_level = fill_level;
         self
     }
 

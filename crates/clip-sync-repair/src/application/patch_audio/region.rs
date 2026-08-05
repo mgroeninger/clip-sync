@@ -167,6 +167,9 @@ pub(super) struct RegionPatchOpts<'a> {
 /// `not_applied` overrides the region outcome for gaps whose splice failed after the gate approved
 /// them: those report [`GapPatchStatus::NotApplied`], never `Patched`. Callers that do not splice
 /// (empty plan, preview) pass an empty slice.
+///
+/// `fill_level` is the record-only measurement of the PCM that was actually written, so it too is
+/// empty for callers that do not splice.
 pub(super) fn outcomes_in_report_order(
     gaps: &[Gap],
     plan: &GapFillPlan,
@@ -174,7 +177,10 @@ pub(super) fn outcomes_in_report_order(
     fill_mode: FillMode,
     thresholds: FillTierThresholds,
     not_applied: &[(usize, GapPatchNotAppliedReason)],
+    fill_level: &[(usize, crate::domain::FillLevelCheck)],
 ) -> Vec<GapPatchOutcome> {
+    let mut fill_level_by_gap: HashMap<usize, crate::domain::FillLevelCheck> =
+        fill_level.iter().copied().collect();
     let mut status_by_gap: HashMap<usize, GapPatchStatus> = HashMap::new();
     let mut tags_by_gap: HashMap<usize, GapTags> = HashMap::new();
     let mut residual_by_gap: HashMap<usize, policies::SeamResidualVerdict> = HashMap::new();
@@ -264,6 +270,7 @@ pub(super) fn outcomes_in_report_order(
                 .unwrap_or_else(|| derive_gap_tags_from_status(&status, fill_mode, thresholds));
             GapPatchOutcome::new(gap.video_a_start_secs, gap.video_a_end_secs, status, tags)
                 .with_residual(residual_by_gap.remove(&key))
+                .with_fill_level(fill_level_by_gap.remove(&key))
         })
         .collect()
 }
@@ -2938,8 +2945,15 @@ mod tests {
             (1, patched, tags_for(&placeholder)),
         ];
 
-        let outcomes =
-            outcomes_in_report_order(&gaps, &plan, &region_results, fill_mode, thresholds, &[]);
+        let outcomes = outcomes_in_report_order(
+            &gaps,
+            &plan,
+            &region_results,
+            fill_mode,
+            thresholds,
+            &[],
+            &[],
+        );
 
         assert_eq!(outcomes.len(), gaps.len(), "one outcome per reported gap");
         for (i, (outcome, g)) in outcomes.iter().zip(gaps.iter()).enumerate() {
@@ -3052,6 +3066,7 @@ mod tests {
             fill_mode,
             thresholds,
             &[(0, reason.clone())],
+            &[],
         );
 
         assert_eq!(

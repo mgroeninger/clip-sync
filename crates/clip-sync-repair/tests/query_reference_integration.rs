@@ -118,6 +118,7 @@ fn scan_request(path_a: PathBuf, path_b: PathBuf) -> ScanGapsRequest {
         scan_both: false,
         gap_offset_tolerance_secs: 0.5,
         limit_fill_to_mapped_region: true,
+        apply_donor_registration: true,
     }
 }
 

@@ -48,6 +48,60 @@ fn corpus_scan_patch_smoke() {
     );
 }
 
+/// The fill-level check reaches the outcome of a gap that was actually spliced, and honors its
+/// switch. Record-only, so the assertions are about presence and sanity, not about a threshold —
+/// there is deliberately no threshold to assert (§7.4 item 1).
+#[test]
+fn patched_gap_records_a_fill_level_unless_switched_off() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fixture = build_f1_production_at(16_000, 1, 32.0, 3.0);
+    let mut repair = production_repair_config(GapSignatureMode::Energy, 3.0);
+
+    let patch = PatchAudio::new(&SymphoniaMediaReader, &FakeProgressReporter);
+    let report = scan_gaps_for_fixture(&fixture, temp.path());
+    let result = patch
+        .execute(
+            patch_request_from_repair(report, &repair),
+            RepairConfig::default().crossfade_ms,
+        )
+        .expect("scan→patch");
+    let check = result.summary.gaps[0]
+        .fill_level
+        .expect("a spliced gap records its fill level");
+    assert!(
+        check.peak_delta_db.is_finite() && check.peak_bin_db.is_finite(),
+        "{check:?}"
+    );
+    assert!(check.bins > 0, "{check:?}");
+    assert!(
+        check.peak_bin_index < check.bins,
+        "the peak is one of the bins measured: {check:?}"
+    );
+    assert!(
+        check.reference_db
+            == check
+                .pre_shoulder_db
+                .into_iter()
+                .chain(check.post_shoulder_db)
+                .fold(f64::NEG_INFINITY, f64::max),
+        "the reference is the louder shoulder: {check:?}"
+    );
+
+    repair.measure_fill_level = false;
+    let report = scan_gaps_for_fixture(&fixture, temp.path());
+    let off = patch
+        .execute(
+            patch_request_from_repair(report, &repair),
+            RepairConfig::default().crossfade_ms,
+        )
+        .expect("scan→patch");
+    assert!(
+        off.summary.gaps[0].fill_level.is_none(),
+        "--no-measure-fill-level skips the pass: {:?}",
+        off.summary.gaps[0].fill_level
+    );
+}
+
 #[test]
 fn scan_detects_f1_production_gap() {
     let temp = tempfile::tempdir().expect("tempdir");

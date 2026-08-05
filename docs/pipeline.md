@@ -81,8 +81,14 @@ Gaps are also tagged `plan_kind` (`fillable` / `unfillable` / `not_planned`). Se
 
 **Equivalence drop (`skip_equivalent_gaps`, on by default).** After the fillable/coverage gates, a gap whose scan-time silence-character verdict `drops()` (mutual/ambient silence — nothing to repair) is removed from the plan as `already_matches_reference`, so it never reaches decode/patch. Lowest precedence (`not_fillable`, coverage, and track blocks win). Disable with `--no-skip-equivalent-gaps`. See [gap-vocabulary.md](dev/gap-vocabulary.md) § Silence-character pre-gate for the classification and [gap-scan.md](gap-scan.md) for how the signals are measured.
 
-- **Config:** `fill_offset_mode`, `fill_anchor_*`, `limit_fill_to_mapped_region`, `skip_equivalent_gaps`.
-- **Code:** `application/patch_audio.rs`, `domain/gap_fill.rs`.
+**Donor registration (`apply_donor_registration`, on by default since 2026-08-04).** The donor half of that verdict is measured on B's envelope registered against A's, not at the nominal offset map. A misregistered window reads B's content against the wrong part of A and can synthesise a dropout signature out of ordinary quiet material; registering first removes that class. The registration is always computed and emitted either way — `--no-apply-donor-registration` keeps it inert and classifies at the nominal map (the pre-2026-08-04 behaviour).
+
+When the envelope correlation is below `min_envelope_r` (or there are too few bins to register on), registration **abstains**: the class is `not_evaluated` / `donor_registration_unreliable`, which **keeps** the gap (fail open — a patch attempt, never a hole). It does **not** fall back to measuring at the nominal map; that is the window already known to be wrong. See [gap-scan.md](gap-scan.md).
+
+**Not shipped with `Apply`:** the §6.10.3 head/tail exclusion (skip or special-case first/last gaps of a pair, where clipped single-shoulder registrations live). Clipped head/tail registrations abstain more often than mid-media ones; without the exclusion those abstains still fail open. Recorded as deferred in `docs/dev/TEMP-equivalence-band-gate-off-findings.md` §7.4a.
+
+- **Config:** `fill_offset_mode`, `fill_anchor_*`, `limit_fill_to_mapped_region`, `skip_equivalent_gaps`, `apply_donor_registration`.
+- **Code:** `application/scan_gaps.rs`, `domain/gap_equivalence.rs`.
 
 ## 4. Per-gap patch
 
@@ -98,6 +104,8 @@ Gaps are also tagged `plan_kind` (`fillable` / `unfillable` / `not_planned`). Se
 5. Splice              apply RegionPatches into A PCM
 6. Summarize           PatchSummary
 ```
+
+**Fill-level check (`measure_fill_level`, on by default).** Between steps 4 and 5 — final patches chosen, A not yet mutated — each fill's loudest 100 ms bin is measured against the A shoulders either side of its gap and recorded on the outcome as `fill_level`. It is **report-only**: no threshold, no veto. It exists because a fill placed into quiet A at a level the surrounding program never reaches is audible as damage even when every seam score is clean, and because a veto here would trade that for unrepaired holes — so the number is collected and calibrated first. See [json-output.md](json-output.md) § FillLevelCheck.
 
 ### Per gap (`prepare_region_patch`)
 

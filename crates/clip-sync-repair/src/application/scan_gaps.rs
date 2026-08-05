@@ -37,6 +37,13 @@ pub struct ScanGapsRequest {
     pub gap_offset_tolerance_secs: f64,
     /// When query-reference alignment is used, only gaps inside the mapped clip coverage are fillable.
     pub limit_fill_to_mapped_region: bool,
+    /// Classify the donor window at the registered lag ([`DonorRegistrationMode::Apply`]) rather than
+    /// the nominal offset map ([`Observe`](DonorRegistrationMode::Observe)). Production default is
+    /// `true` since 2026-08-04; see [`RepairConfig::apply_donor_registration`].
+    ///
+    /// [`DonorRegistrationMode::Apply`]: crate::domain::gap_equivalence::DonorRegistrationMode::Apply
+    /// [`RepairConfig::apply_donor_registration`]: crate::infrastructure::config::RepairConfig::apply_donor_registration
+    pub apply_donor_registration: bool,
 }
 
 /// Gap scan product: domain report plus the full aligner DTO for CLI/JSON output.
@@ -242,21 +249,35 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         // dropout to `ambient-quiet`. B's donor-silence window is the same core offset-mapped so it
         // matches A. Always computed and reported; the `skip_equivalent_gaps` drop happens later in
         // `build_gap_fill_plan`.
-        // `donor_registration` is **Observe**: the donor envelope is registered against A's and the
-        // result recorded on every verdict, but the classification still runs at the nominal offset
-        // map, so this changes no class, no fraction and no span — it only adds a field.
+        // `donor_registration` is **Apply** by default since 2026-08-04: the donor envelope is
+        // registered against A's and the classification runs at the registered lag, abstaining below
+        // `min_envelope_r`. `--no-apply-donor-registration` restores `Observe`, which records the
+        // registration but classifies at the nominal map, changing no class, fraction or span.
+        // Abstention under Apply is NotEvaluated (keep) — never a fallback to the nominal window.
+        // The §6.10.3 head/tail exclusion recommended alongside Apply is not implemented (§7.4a).
         //
-        // The point is the rate. `docs/dev/TEMP-equivalence-band-gate-off-findings.md` §6.4 validated
-        // the registration on twelve gaps that were listened to, where the nominal map was off by
-        // 80–410 ms; what nobody can say yet is how often that happens corpus-wide, or how often it
-        // would be large enough to flip a class. Observing it costs ~21 dot products over 40–70 bins
-        // per gap (no decode) and answers that from the next dump. Switching to
-        // `DonorRegistrationMode::Apply` is the fix, and is a separate, evidence-led decision.
+        // The rate question that kept this on `Observe` is answered:
+        // `docs/dev/TEMP-equivalence-band-gate-off-findings.md` §6.10 ran 39 pairs / 829 gaps / 782
+        // registrations. Nonzero lag is 67.8 % but systematic per pair (23/39 have a modal lag ≠ 0;
+        // residual scatter about own mode 13.0 %), abstention is 4.3 %, and `Apply` moves 16 gaps
+        // (2.05 %) while touching none of the 236 dropouts at the digital-zero rail. Three patches
+        // stop being applied; all three were listened to (§6.10.11) and all three were audible
+        // degradations of undamaged periodic material — drum beats, clock ticks and speech pauses
+        // where one 100 ms bin of map error puts B's loud bin over A's silent bin.
+        //
+        // What this does NOT fix: gaps that register correctly and still misclassify, because the
+        // donor test asks "is B non-silent?" rather than "is B non-silent *where A is silent*?"
+        // (§6.10.12). Registration cannot reach those; the fill-level check does.
         let equivalence_params = crate::domain::gap_equivalence::GapEquivalenceParams {
             enabled: true,
-            donor_registration: Some(
-                crate::domain::gap_equivalence::DonorRegistrationParams::default(),
-            ),
+            donor_registration: Some(crate::domain::gap_equivalence::DonorRegistrationParams {
+                mode: if request.apply_donor_registration {
+                    crate::domain::gap_equivalence::DonorRegistrationMode::Apply
+                } else {
+                    crate::domain::gap_equivalence::DonorRegistrationMode::Observe
+                },
+                ..Default::default()
+            }),
             ..Default::default()
         };
         let b_levels_for_eq = (!b_scan.levels.is_empty()).then_some(b_scan.levels.as_slice());
@@ -932,6 +953,7 @@ mod tests {
             scan_both: false,
             gap_offset_tolerance_secs: 0.5,
             limit_fill_to_mapped_region: true,
+            apply_donor_registration: true,
         }
     }
 
@@ -1367,6 +1389,7 @@ mod tests {
             scan_both: true,
             gap_offset_tolerance_secs: 0.5,
             limit_fill_to_mapped_region: false,
+            apply_donor_registration: true,
         };
         let line = format_scan_summary(&request, 30);
         assert!(line.contains("30 silent run(s)"));
@@ -1402,6 +1425,7 @@ mod tests {
             scan_both: false,
             gap_offset_tolerance_secs: 0.5,
             limit_fill_to_mapped_region: true,
+            apply_donor_registration: true,
         };
 
         let report = scan
@@ -1499,18 +1523,14 @@ mod tests {
         );
     }
 
-    /// End-to-end proof that scan **computes and emits** the donor registration — decoded PCM →
-    /// block levels → verdict — and that `Observe` keeps it inert.
+    /// The class-flipping geometry both halves of the `Observe`/`Apply` split are pinned on.
     ///
-    /// The geometry is chosen so the two halves are separable. A holes 20.0–20.6 s; B is the same
-    /// program 500 ms late, so B's own hole is 20.5–21.1 s. At the nominal offset (0.0) the donor
-    /// window reads five content blocks and one silent one — B looks occupied and the gap is a
-    /// repairable dropout. Move the window the 500 ms registration finds and it lands on B's hole,
-    /// reads 6/6 silent, and the gap would drop as `shared_silence` instead. So the registration on
-    /// offer here is class-flipping, and "the verdict is unchanged" is a claim with teeth: it is
-    /// exactly the `Observe`/`Apply` split, on the shape §6.4 found on real media.
-    #[test]
-    fn scan_records_donor_registration_without_moving_the_verdict() {
+    /// A holes 20.0–20.6 s; B is the same program 500 ms late, so B's own hole is 20.5–21.1 s. At
+    /// the nominal offset (0.0) the donor window reads five content blocks and one silent one — B
+    /// looks occupied and the gap is a repairable dropout. Move the window the 500 ms registration
+    /// finds and it lands on B's hole, reads 6/6 silent, and the gap drops as `shared_silence`.
+    /// This is the shape §6.4 found on real media, in miniature.
+    fn registration_flip_report(apply_donor_registration: bool) -> ScanGapsOutcome {
         let dur = Duration::from_secs(60);
         let reader = FixedReader::new()
             .with(
@@ -1538,14 +1558,17 @@ mod tests {
         // 100 ms blocks so the 500 ms shift is a whole number of them, no hold bridging.
         request.recipe = crate::domain::ScanRecipe::with_hold_blocks(500, 0, 100, 0.01, 0.0);
         request.scan_both = true;
+        request.apply_donor_registration = apply_donor_registration;
 
-        let report = scan
-            .scan_after_alignment(request, aligned_result(Some(0.0)))
-            .expect("scan should succeed");
+        scan.scan_after_alignment(request, aligned_result(Some(0.0)))
+            .expect("scan should succeed")
+    }
 
-        assert_eq!(report.gaps.len(), 1, "only the hole is silent");
-        let v = &report.gap_equivalence[0];
-
+    /// Asserts the registration itself — computed and emitted end-to-end, decoded PCM → block
+    /// levels → verdict — independently of which mode consumes it.
+    fn assert_registration_found_the_shift(
+        v: &crate::domain::gap_equivalence::GapEquivalenceVerdict,
+    ) {
         let reg = v
             .donor_registration
             .as_ref()
@@ -1559,8 +1582,50 @@ mod tests {
             reg.peak_r > reg.nominal_r,
             "the registered lag beats the nominal map: {reg:?}"
         );
+    }
 
-        // ...and the verdict is the nominal one, unmoved.
+    /// Shipped default (2026-08-04): the donor window is classified at the **registered** lag, so
+    /// the registration is allowed to move the verdict. Here it moves it the whole way — off a
+    /// `repairable_dropout` the nominal map only sees because the window is misregistered.
+    #[test]
+    fn scan_classifies_the_donor_window_at_the_registered_lag() {
+        let report = registration_flip_report(true);
+
+        assert_eq!(report.gaps.len(), 1, "only the hole is silent");
+        let v = &report.gap_equivalence[0];
+        assert_registration_found_the_shift(v);
+
+        assert_eq!(
+            v.class,
+            crate::domain::gap_equivalence::GapEquivalenceClass::SharedSilence
+        );
+        assert!(v.drop, "nothing to fill from: {v:?}");
+        assert!(v.not_evaluated_reason.is_none());
+        assert!(
+            v.donor_silence_fraction.is_some_and(|f| f >= 0.5),
+            "measured at the registered window, which is B's own hole: {:?}",
+            v.donor_silence_fraction
+        );
+        // The offset is 0.0, so an *unshifted* donor window would be the A core itself. Comparing
+        // the two spans rather than a literal keeps this about the registration and not about
+        // where block quantization happens to put the core.
+        assert_ne!(
+            v.donor_span_secs, v.a_span_secs,
+            "the window measured is the registered one, not the nominal one"
+        );
+        assert_occupancy_agrees_with_donor(&report);
+    }
+
+    /// `--no-apply-donor-registration` restores the pre-2026-08-04 behaviour: the registration is
+    /// still computed and emitted, but it is inert — the verdict is the nominal map's.
+    #[test]
+    fn scan_with_registration_not_applied_keeps_the_nominal_map_verdict() {
+        let report = registration_flip_report(false);
+
+        assert_eq!(report.gaps.len(), 1, "only the hole is silent");
+        let v = &report.gap_equivalence[0];
+        assert_registration_found_the_shift(v);
+
         assert_eq!(
             v.class,
             crate::domain::gap_equivalence::GapEquivalenceClass::RepairableDropout
@@ -1572,9 +1637,6 @@ mod tests {
             "measured at the nominal window, where B has content: {:?}",
             v.donor_silence_fraction
         );
-        // The offset is 0.0, so an unshifted donor window is the A core itself. Comparing the two
-        // spans rather than a literal keeps this about the registration and not about where block
-        // quantization happens to put the core.
         assert_eq!(
             v.donor_span_secs, v.a_span_secs,
             "the window measured is the nominal one, not the registered one"

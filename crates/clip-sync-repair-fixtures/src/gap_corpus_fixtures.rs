@@ -709,6 +709,9 @@ fn build_scan_request(
         scan_both: false,
         gap_offset_tolerance_secs: 0.5,
         limit_fill_to_mapped_region: true,
+        // Fixtures mirror production, so this tracks the shipped default rather than pinning a mode.
+        apply_donor_registration: clip_sync_repair::infrastructure::config::RepairConfig::default()
+            .apply_donor_registration,
     }
 }
 

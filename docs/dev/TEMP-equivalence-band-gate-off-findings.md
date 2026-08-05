@@ -13,6 +13,46 @@ in any artifact derived from this work. Raw dumps and logs stay under gitignored
 `scan_gaps.rs:284` all now land near, not on, the thing they name. Grep the symbol, not the line.
 One citation was wrong about the symbol itself and is corrected in place (§3.2 item 1).
 
+### TL;DR — decision ledger (2026-08-04)
+
+This file is a lab notebook. Read this block for the decision; promote it, then delete the rest.
+
+**Band decision.** Do **not** ship a ±1.0 dB / ±1-block (or any revised) equivalence margin band.
+The donor boundary is not fuzzy — it is fed a window measured at the wrong place (nominal map
+off by 80–410 ms on the listen set; §2.5). No width fixes a misregistered measurement.
+
+**Do not ship (killed with evidence).**
+- `<=` donor tie-break — flips 6/12 listened correct drops to false keeps (§6.1).
+- `interior_delta_db` as a dropout *classifier* — classes overlap by 58 dB over 39 pairs (§6.10.5).
+- Widen / re-centre the residual floor probe — deliberate post-aligner design, not an oversight (§7.3).
+- Local-context codec floor for the 35 dB margin — ~0.8 dB separation; needs a new threshold (§7.2).
+- Bound / price the write overrun — already bounded / already priced; 33/17's placement path is unrecorded (§7.1, §7.1a).
+
+**Shipped.** `DonorRegistrationMode::Observe` remains the enum/`DonorRegistrationParams` default
+(callers that opt into registration without choosing a mode cannot silently move a decision).
+**Items 1 and 3 built 2026-08-04 — see §7.4a.** Production scan sets `apply_donor_registration`
+on by default (classifies the donor at the registered lag) and `measure_fill_level` records the
+fill-vs-shoulder level on every patched gap. The §6.10.3 head/tail exclusion that was paired with
+`Apply` in the recommendation is **not** implemented (§7.4a).
+
+**Ship next (§7.4), ordered.**
+1. **Fill-level sanity check** vs A shoulders — no level term in the fill path; ear damage tracks
+   substitution magnitude (§6.10.11, §3.1a). **BUILT** (§7.4a).
+2. **Name residual abstentions** and surface them in production output (`beyond_lag_reach` vs no
+   energetic window vs non-finite) — dump already has `floor_source`; repair reporting does not (§7.3).
+3. **Promote `DonorRegistrationMode::Apply`.** 39 pairs / 829 gaps / 782 registrations: 67.8 %
+   nonzero lag (systematic per pair), 4.3 % abstain, **16 flips = 2.05 %**; touches none of the
+   236 digital-zero-rail dropouts; net production effect is **3 patches stop** (12/8, 14/20, 38/4).
+   All three heard: no hole, current patches are audible degradations — `Apply` removes real defects
+   (§6.10.4, §6.10.11). Caveat: 2.05 % is a reconstruction (`--replay` cannot read `GapScanJson` yet).
+   **BUILT** (§7.4a).
+4. **`interior_delta_db` as recall widener only** — low risk, **zero measured benefit** on this corpus;
+   do not ship before (1) (§6.10.6–§6.10.7a).
+
+**Promote this ledger** into `BACKLOG.md` / `gap-fingerprint.md` / threshold docs, then delete this
+file when the band item closes. Do not carry §2.3 band-yield numbers forward — they were measured
+against the broken donor window.
+
 ---
 
 ## 1. What ran
@@ -1034,6 +1074,7 @@ are bimodal rather than uniformly degraded — the fits are either very good or 
 what a single surviving shoulder predicts. **And all 31 are head (12) or tail (19) gaps, none
 mid-media**, which makes §6.9.5's proposed "bins floor" equivalent to a head/tail exclusion. Prefer
 the latter: it is the actual condition, and it is checkable without reading the registration.
+**(2026-08-04 ship note:** `Apply` landed without this exclusion — §7.4a.)
 
 #### 6.10.4 What `Apply` would change: 2.05 %, and only 3 gaps that render
 
@@ -1073,8 +1114,8 @@ Two of the three were examined bin by bin and are not dropouts. **12/8**: three 
 `silence_hold_ms: 500` — with B reproducing the contour at core r = 0.9987 and delta −0.095.
 **14/20**: quietest bin −85.8 dB, 16 dB above its pair's rail; B's quietest −86.0, core r = 0.932,
 delta +0.016. Core bins are excluded from the registration fit, so those core correlations are
-independent of the lag that produced them. **This remains an envelope argument; none of the three has
-been heard** (§6.10.7).
+independent of the lag that produced them. **Heard 2026-08-04 (§6.10.11):** none is a dropout;
+all three current patches are audible degradations.
 
 #### 6.10.5 `interior_delta_db`: §6.8.3's separation does **not** survive off-sample — REFUTED
 
@@ -1176,6 +1217,7 @@ widener, strictly after item 1 ships.** Two things stay true regardless — its 
 this corpus is **zero** (all nine candidates have `b_interior_db ≤ −43 dB`, so even a successful fill
 imports inaudible material, and seven are head-trim differences between masters), and it should be
 paired with the head/tail exclusion of §6.10.3, which removes seven of the nine for free.
+**(That exclusion did not ship with `Apply` — §7.4a; item 4 would still need it if revived.)**
 
 #### 6.10.8 …and the anchor that would fix it is not available
 
@@ -1208,6 +1250,23 @@ on a gap labelled `repairable_dropout` is a reliable "there is no hole here" sig
 anchor at all, because it compares A against B rather than against an absolute level. That
 scale-freedom is the property §7.2 praised; item 4 spent it by using the field as a level test.
 
+**Qualified 2026-08-04 — do not upgrade this to "A and B carry the same content."** The field is a
+difference of **power means** over the eroded interior, so it goes to zero whenever both sides carry
+the same total energy, however distributed across bins. The "no hole" reading is an aggregate-level
+claim and is supported as one (12/8 and 14/20 both have delta ≈ 0 and were heard hole-free,
+§6.10.11); the content-identity reading does not follow from this field and needs a direct core
+comparison. Note also that the converse fails: **14/20's core r is 0.372 and it has no hole** — four
+quiet bins make the correlation meaningless — so neither statistic decides a gap on its own.
+
+> **Numbers retracted 2026-08-04 (§6.10.12).** This paragraph originally cited a bin-by-bin core
+> comparison of the 6 residual gaps — core r 0.667–0.938, mean deviations 2.5–11.5 dB, "14/14 reads
+> delta +0.01 with a mean bin deviation of 11.5 dB and one bin off by 35 dB" — as evidence that the
+> aggregate overstates the match. **Those deviations were a lag-quantization artifact of the 100 ms
+> scan grid**, not a property of the content. Measured on the WAVs at 10 ms with the waveform-derived
+> lag, the same five gaps run **envelope r = 1.000, mean deviation 0.1–0.3 dB, max ≤ 2.0 dB**. The
+> qualification above stands on its own logic — a difference of power means genuinely cannot establish content
+> identity — but it is not supported by these gaps, which turned out to be as well matched as 12/8.
+
 All 17 such gaps (delta < 5 dB on a labelled dropout), with A far above the rail and B within a
 decibel of it:
 
@@ -1238,17 +1297,165 @@ one. The zeroed correlations are the tell.
 This is a write-only-placeholder problem in the same family as §7.4 item 2, fixable by threading the
 real reason through `compute_region_measurements`, and independent of any media.
 
-#### 6.10.11 Still open after this scan
+#### 6.10.11 The three flips, heard — and the mechanism behind them
 
-- **Audio for 12/8, 14/20 and 38/4.** The three gaps `Apply` would stop patching have no WAV in any
-  corpus (checked: 20 gaps across 17 pairs have audio, none of these three). §6.10.4's conclusion that
-  they are stutters and quiet passages rather than holes rests on envelopes and core correlations,
-  never on a listener. A three-row `--gap-listen` run closes it.
+**Listened 2026-08-04, and the result is unambiguous: none of the three has a detectable hole.** What
+they actually are:
+
+| gap | what the listener heard | patch |
+|---|---|---|
+| 12/8 | a drum beat moving into music — periodic, slower than a stutter | **noticeably poor** |
+| 14/20 | a quiet word spoken slowly, pause, loud exclamation, pause, another exclamation | barely noticeable — *"I likely wouldn't have noticed if I didn't know"* |
+| 38/4 | a loud noise, pause, a clock ticking, pause, someone speaking | barely noticeable; the ticking is **slightly louder, dirty** |
+
+So §6.10.4's envelope reading was right in substance and wrong in one detail: 12/8 is not a stutter,
+it is a slower periodic beat. Nothing else changes.
+
+**All three are the same failure, and the envelopes show it directly.** At the registered lag A and B
+carry identical content bin for bin:
+
+| | A core | B at registered lag |
+|---|---|---|
+| 12/8 | −99 −100 −35 −52 −100 | −99 −100 −35 −49 −100 |
+| 14/20 | −84 −82 −73 −86 | −86 −73 −79 −86 |
+| 38/4 | −84 −57 −89 −54 −90 −56 −89 −55 −91 −57 −89 −55 −90 −57 −91 −54 −91 −58 −80 | −81 −57 −89 −54 −90 −56 −87 −55 −90 −57 −88 −55 −91 −57 −90 −54 −91 −58 −91 |
+
+38/4's 19 bins of −55/−90 alternation *are* the clock, matching between masters to 1–2 dB. There is
+nothing missing from A in any of the three.
+
+**Name the class: the periodic-transient false dropout.** At the *nominal* offset, 12/8's donor reads
+−100 −35 −49 −100 −39 — B's loud bin lands on A's silent bin. That is exactly the dropout signature
+("B has content where A has none"), and it is manufactured by **one 100 ms bin of registration error
+on content that alternates loud/silent every 100 ms**. Drum beats, clock ticks and speech pauses all
+have that structure. This is a third, ear-confirmed instance of §6.8.5a's mechanism, and the sharpest:
+the misregistration does not merely mismeasure the donor, it *synthesises* the defect it then repairs.
+
+**The patch damage is the size of the substitution**, which is why the three ranked as they did:
+
+| gap | content | what the splice substitutes | heard |
+|---|---|---|---|
+| 12/8 | drum beats | −35 dB beat over −99 dB silence, **≈65 dB** | noticeably poor |
+| 38/4 | clock ticks | −55 over −90, **≈35 dB** | slightly louder, dirty |
+| 14/20 | speech pauses | −73 over −86, **≈13 dB** | barely noticeable |
+
+Monotone in the substitution magnitude — and that magnitude is precisely what §7.4 item 1 measures.
+
+**Consequence for item 3: `Apply` is not a cleanup, it is a fix.** §6.10.4 framed the three flips as
+"three patches that stop being applied", the implication being three harmless no-ops removed. The ear
+says otherwise: **all three current patches are audible degradations of undamaged audio**, one of them
+plainly so. Promoting `Apply` removes three real defects. The last open risk on item 3 is discharged.
+
+Extension, **verified 2026-08-04 for 5 of 6** — see §6.10.12: the low-delta dropouts `Apply` does
+**not** catch (§6.10.9 — 10/12, 14/8, 14/14, 14/17, 14/24, 16/23) are the same class, reached by a
+different route. 16/23 remains unmeasured (pair 16 was never run).
+
+#### 6.10.12 The 6 residual gaps, measured at sample level — the donor test's *formulation* is the defect
+
+The `--gap-listen` run for the six §6.10.9 residuals had already completed for pairs 10 and 14 (5 of
+the 6; pair 16 was never run), so this needed no new media pass — only a read of WAVs already on
+disk. It is the first sample-level A-vs-B interior evidence in this file, and it changes what §6.10.9
+and §6.10.11's closing paragraph claim.
+
+**Validation first, because it makes every number below comparable to the gate's own.** The
+`_a_surround` WAV reproduces the scan envelope **exactly — all 49 bins of 10/12 to 0.1 dB** — when
+read with interleaved reduction. The clip's frame 0 is `a_start_secs − gap_signature_context_secs`,
+the mapping is confirmed, and mono downmix reads 3–8 dB quieter than the scan's interleaved reduction
+exactly as `DonorInteriorBasis` documents. A WAV-side measurement can therefore be quoted against a
+scan-side threshold without a basis caveat, provided the reduction matches.
+
+**There is no hole, and nothing is near the digital-zero rail.** Over the silent core
+(`a_span_secs`, eroded one 100 ms block per edge), counting frames where *every* channel is exactly
+zero in the 16-bit clip:
+
+| gap | A longest zero run | A zero frac | B longest zero run | B zero frac | quietest 10 ms bin A / B |
+|---|---|---|---|---|---|
+| 10/12 | 0.0 ms | 0.001 | 0.1 ms | 0.001 | −95.3 / −95.0 |
+| 14/8 | 0.1 ms | 0.008 | 0.1 ms | 0.008 | −100.1 / −100.3 |
+| 14/14 | 0.1 ms | 0.001 | 0.0 ms | 0.000 | −89.1 / −89.0 |
+| 14/17 | 0.1 ms | 0.004 | 0.1 ms | 0.004 | −93.3 / −93.0 |
+| 14/24 | 0.0 ms | 0.000 | 0.0 ms | 0.000 | −90.6 / −90.1 |
+
+The longest all-channel-zero run anywhere is a single sample crossing. This closes the hedge recorded
+against §6.10.9 — 100 ms RMS could not rule digital zero out, and at sample level it is ruled out.
+
+**A and B carry the same content, at 10 ms.** Envelope Pearson is **+1.000 on all five**, mean bin
+deviation **0.1–0.3 dB**, max deviation ≤ 2.0 dB, and the core level difference at the registered lag
+is within ±0.1 dB. Waveform Pearson runs 0.51–0.89, which is the expected signature of two
+independent encodes of one master — high enough to confirm the clips are not duplicates, low enough
+to confirm they are not the same file.
+
+**This retracts the deviation figures §6.10.9 carried.** Those came from the 100 ms scan grid at the
+engine's bin-quantized lag. `listen-registration` puts the true lag at **−118 to −122 ms** on the four
+pair-14 gaps where the engine registered −100 or −200 — 0.18 to 0.78 bins off, all within the
+estimator's stated tolerance. At 10 ms with the true lag the deviations collapse to 0.1–0.3 dB. The
+apparent mismatch was the sub-bin residual, the same quantity behind §6.10.11's mechanism, showing up
+as inflated deviation instead of a class flip.
+
+**The mechanism, and it is not misregistration.** These five are *correctly* registered and still
+classified `repairable_dropout`:
+
+| gap | class | A silent blocks | donor silent blocks | donor frac | `a_below_noise_db` | production |
+|---|---|---|---|---|---|---|
+| 10/12 | `repairable_dropout` | **4/9** | **4/9** | 0.444 | −40.0 | `tier: patch` |
+| 14/8 | `repairable_dropout` | 3/8 | 2/8 | 0.250 | −36.9 | `tier: skip` |
+| 14/14 | `repairable_dropout` | 3/8 | 2/8 | 0.250 | −45.7 | `tier: skip` |
+| 14/17 | `repairable_dropout` | 3/8 | 1/8 | 0.125 | −44.1 | `tier: skip` |
+| 14/24 | `repairable_dropout` | 2/6 | 0/6 | 0.000 | −42.7 | `tier: skip` |
+
+**10/12 has identical silent-block counts on both sides — 4 of 9 and 4 of 9 — and the gate still calls
+it a dropout.** It reads "A sits 40 dB below its noise floor ⇒ hole" and "the donor is only 44 %
+silent ⇒ occupied" off the *same* alternating pattern present in *both* masters. Nothing is
+mismeasured and nothing is misplaced; the two tests are simply asked independently. **The donor test
+asks "is B non-silent?", never "is B non-silent *where A is silent*?"** — so any quiet periodic
+passage satisfies both halves of the dropout definition in both files at once.
+
+That is why `Apply` does not reach this set: it corrects *where* the donor is measured, and the
+placement here is already right. Item 3's scope genuinely does not cover it, which §6.10.11's
+extension paragraph had guessed at and this measures.
+
+**Production blast radius is 1 of 5**, and the bracket gate is doing most of the work: only 10/12
+reaches `tier: patch`; the four pair-14 gaps are `tier: skip` with `dual_fit_rescue: false`.
+
+**10/12's patch, measured against A and then heard.** The write is bounded (1.0 s, ~0.1 s outside the
+core each side — inside the §7.1 allowance), and every modified block is louder:
+
+| clip time | A | patched | Δ |
+|---|---|---|---|
+| 6502.07 | −76.8 | −65.5 | **+11.3** |
+| 6502.17 | −52.7 | −40.5 | **+12.1** |
+| 6502.37 | −81.1 | −69.1 | **+12.0** |
+| 6502.57 | −82.5 | −70.7 | **+11.8** |
+| 6502.67 | −77.3 | −42.1 | **+35.2** |
+| 6502.87 | −82.6 | −70.1 | **+12.4** |
+
++11 to +35 dB injected into material that already matched B to 0.1 dB. §6.10.11's substitution-magnitude
+rule predicted "audible but mild — the 38/4 register" from the ≈35 dB peak. **Listened 2026-08-04: the
+patch sounds worse than A.** Fourth ear-confirmed instance of a patch degrading undamaged audio, and
+the first prediction this file made *before* the listening rather than after.
+
+**What this adds that §6.10.11 did not.** The three flips were misregistration — a placement bug with
+a placement fix. These five are the same *outcome* with correct placement, so the class survives item
+3 entirely. Item 1 is the only recommendation on the table that catches them: a fill 11–35 dB above
+the shoulders it replaces is exactly what a level check against the A shoulders sees, and it needs no
+opinion about whether the gap was real.
+
+#### 6.10.13 Still open after this scan
 - **27 head/tail gaps carry no `outcome`** in the fingerprint corpus (summary tier), so their
   production disposition is unknown. They are disproportionately §6.10.6's candidates.
 - **One corpus, one codec family.** Everything above is AAC-family material from a single collection.
 - `--replay` still cannot read `GapScanJson` (§6.9.2), so the 16 flips are a reconstruction, not a
   production number.
+- **16/23 is unmeasured** — pair 16 was never run for the §6.10.12 listen set. It is the one residual
+  gap whose membership in the class is inferred rather than measured, and it is the only one of the
+  six whose core minimum sits close to its pair's digital-zero rail (6.8 dB above, against 11.7–20.5
+  for the other five). Cheapest remaining check in this file.
+- **No dump can answer §6.10.12's question.** `b_levels`, `seam_probe`, `wide_envelope` and `lag` are
+  all gated on `--fingerprint-diagnostics` and no corpus on disk used it; A's `levels.profile_db` is
+  never emitted on the decode path at all (`project.rs:334-347` rebuilds the struct with an empty
+  vector, pinned by a test at `measure.rs:4191-4195`), and `seam_probe` covers the seam *border*
+  window rather than the interior. Sample-level A-vs-B interior comparison currently requires
+  `--gap-listen` WAVs. Threading the already-computed `levels` into `FingerprintXSet` beside
+  `b_levels`, under the same gate, would put both sides in one file on one basis.
 
 ---
 
@@ -1432,14 +1639,89 @@ this file — is lifted out of §6.7.5's prose and given a row.
 
 | # | recommendation | addresses | risk |
 |---|---|---|---|
-| 1 | **Fill-level sanity check against the A shoulders.** RMS in dB over the assembled fill vs the border windows the seam gate already extracted. | 33/17's fill sits ~8 dB above the −69 dB bed it replaces (§3.3 point 2); §3.1a's eight patches raise level by 9–46 dB. Pearson is scale-invariant by construction, and there is **no level or loudness term anywhere in the fill path** (`patch_region.rs`, `gap_fill_fit.rs`), so no existing gate can see this. | Low. O(n) over `gap_frames + 2 × 250 ms` on buffers already in memory — no search, no second Pearson pass. Must compare against the **shoulders**, not the gap interior: on a true dropout the interior is silent and an interior comparison would flag every correct repair. |
+| 1 | **Fill-level sanity check against the A shoulders.** RMS in dB over the assembled fill vs the border windows the seam gate already extracted. | 33/17's fill sits ~8 dB above the −69 dB bed it replaces (§3.3 point 2); §3.1a's eight patches raise level by 9–46 dB. **Strengthened 2026-08-04 by a graded ear result (§6.10.11):** three further patches, and the audible damage is **monotone in the substitution magnitude** — ≈65 dB → "noticeably poor" (12/8), ≈35 dB → "slightly louder, dirty" (38/4), ≈13 dB → "barely noticeable" (14/20). That is this check's own quantity predicting listener response across three gaps, which is the closest thing in this file to a calibration for its threshold. **Promoted to the top of the list 2026-08-04 by §6.10.12**, which supplies both a fourth confirming case and the first *prospective* use of the rule: 10/12's patch injects +11 to +35 dB into material already matching B to 0.1 dB, the ≈35 dB peak predicted "audible but mild", and the listener confirmed the patch sounds worse than A. More importantly, §6.10.12's five gaps are **correctly registered** — item 3 does not reach them — so this is now the *only* recommendation that addresses that class, and it does so without needing an opinion about whether the gap was real. Pearson is scale-invariant by construction, and there is **no level or loudness term anywhere in the fill path** (`patch_region.rs`, `gap_fill_fit.rs`), so no existing gate can see this. | Low. O(n) over `gap_frames + 2 × 250 ms` on buffers already in memory — no search, no second Pearson pass. Must compare against the **shoulders**, not the gap interior: on a true dropout the interior is silent and an interior comparison would flag every correct repair. |
 | 2 | **Name the residual abstention, and surface it in production output.** Not "distinguish abstained from clean" — `floor_source` already does that in the dump (§7.3). Record *which* abstention fired (`beyond_lag_reach` vs no energetic window vs non-finite probe), and carry the distinction into the repair path's own reporting. | 33/17 and 19 of the 21 in §3.2 read `informative: false`; a reader outside the fingerprint schema still cannot tell an abstention from a clean bill of health. | Low — a reporting change, no decision moves. Does not touch M5's abstention, which stays. |
 **Revised again 2026-08-04** after the 39-pair scan (§6.10): item 3's rate question is **answered and
 the answer supports it**; item 4 is demoted from a classifier to a recall widener (§6.10.7a) and
 reordered below 3.
 
-| 3 | **Promote `DonorRegistrationMode::Apply`** — measure the donor window at the registered lag and abstain below `min_envelope_r` (§6.4, §6.6). | §6.2 item 1, the file's primary finding: the donor fraction is measured 80–410 ms off (§2.5). `Observe` has shipped and is default; `Apply` is enabled nowhere. | **Low–medium; the blocking question is answered.** §6.10 ran the scan-only route over 39 pairs / 829 gaps / 782 registrations and every number lands in favour: **67.8 % nonzero lag, systematic per pair** (23/39 pairs have a modal lag ≠ 0; residual scatter about own mode only 13.0 %), abstain **4.3 %**, and `Apply` moves **16 gaps = 2.05 %**. It touches **none of the 236 dropouts at the digital-zero rail** — every keep→drop flip is a gap where A sits 40–80 dB above the rail and B reads within 1 dB of A (§6.10.4). Net production effect over 39 pairs: **3 patches stop being applied**. Remaining risk is narrow: those 3 (12/8, 14/20, 38/4) have **never been heard** — the envelope case that they are stutters and quiet passages is strong but inferential — and the 5 drop→keep flips are abstentions, which cost a patch attempt, never a hole. Pair with the head/tail exclusion of §6.10.3. `--replay` still cannot read `GapScanJson` (§6.9.2), so 2.05 % is a reconstruction, not a production number. |
-| 4 | **`interior_delta_db` as a recall widener — NOT as a classifier.** Forward gaps with A's interior at digital zero and a registered donor interior well above it to the repair path, and let the repair path arbitrate (§6.10.7a). **Demoted 2026-08-04**; the original form ("put the delta in the dropout test", i.e. trust it to classify) is **refuted** — see below. | §6.2 item 3, but the evidence that motivated it did not survive the corpus. §6.8.3's clean separation was a small-sample artifact: over 39 pairs the classes **overlap by 58 dB** (dropouts from −0.51, non-dropouts to +57.59) and no threshold separates them (§6.10.5). Of the 9 gaps it would rescue, **7 are head-of-media trim differences** between masters and **all 9 have `b_interior_db` ≤ −43 dB** (§6.10.6). The one that renders, 33/17, was **listened to and is inaudible** — patch indistinguishable from A and B (§6.10.7, which also records a conflict with §3.1a). The field is a ratio with no absolute anchor, and §6.10.8 shows no anchor is obtainable: §7.2 already dropped local-context floors at 0.8 dB separation, and the scan retains no whole-file level statistic to anchor against. What survives *positively* is the **opposite** direction — delta ≈ 0 on a labelled dropout is a reliable "no hole here" (§6.10.9) — and item 3 already catches 11 of those 17. | **Low risk, but zero measured benefit.** As a recall widener the failure mode is a wasted patch attempt, and 9 gaps over 39 pairs is negligible. **Still do not ship before 1**, and the reason is now measured rather than assumed: 33/17 is the only candidate that reached the repair path with brackets and the repair path **accepted** it (0 of 1 rejected, not 8 of 11) — because there is no level term anywhere in the fill path. Item 1 *is* the granularity this recommendation delegates to. Pair with §6.10.3's head/tail exclusion, which removes 7 of the 9 for free. Benefit on this corpus is **zero**: every candidate's donor is ≤ −43 dB, so even a successful fill imports inaudible material. |
+| 3 | **Promote `DonorRegistrationMode::Apply`** — measure the donor window at the registered lag and abstain below `min_envelope_r` (§6.4, §6.6). | §6.2 item 1, the file's primary finding: the donor fraction is measured 80–410 ms off (§2.5). `Observe` shipped first; `Apply` is now the production default (`apply_donor_registration`, built 2026-08-04, §7.4a). | **Low–medium; the blocking question is answered.** §6.10 ran the scan-only route over 39 pairs / 829 gaps / 782 registrations and every number lands in favour: **67.8 % nonzero lag, systematic per pair** (23/39 pairs have a modal lag ≠ 0; residual scatter about own mode only 13.0 %), abstain **4.3 %**, and `Apply` moves **16 gaps = 2.05 %**. It touches **none of the 236 dropouts at the digital-zero rail** — every keep→drop flip is a gap where A sits 40–80 dB above the rail and B reads within 1 dB of A (§6.10.4). Net production effect over 39 pairs: **3 patches stop being applied**. The 5 drop→keep flips are abstentions, which cost a patch attempt, never a hole. The recommendation paired this with the head/tail exclusion of §6.10.3; **that exclusion is not implemented** (§7.4a). `--replay` still cannot read `GapScanJson` (§6.9.2), so 2.05 % is a reconstruction, not a production number. **The audio risk is discharged 2026-08-04 (§6.10.11) and it resolved in item 3's favour, more strongly than expected**: all three gaps (12/8, 14/20, 38/4) are periodic program material (drum beats, clock ticks, speech pauses) with no detectable hole, A and B matching bin for bin at the registered lag, and **all three current patches are audible degradations** — 12/8 "noticeably poor". `Apply` removes three real defects rather than three no-ops. **Scope bounded 2026-08-04 (§6.10.12):** `Apply` corrects *where* the donor is measured, so it reaches only the misregistered cases. The five measured residuals are registered correctly (WAV lag within 0.78 bins of the engine's) and still classify as dropouts, because the donor test asks "is B non-silent?" rather than "is B non-silent *where A is silent*?" — 10/12 has **4/9 silent blocks on both sides** and is still `repairable_dropout`. Promote `Apply` on its own merits; do not expect it to close that class. |
+| 4 | **`interior_delta_db` as a recall widener — NOT as a classifier.** Forward gaps with A's interior at digital zero and a registered donor interior well above it to the repair path, and let the repair path arbitrate (§6.10.7a). **Demoted 2026-08-04**; the original form ("put the delta in the dropout test", i.e. trust it to classify) is **refuted** — see below. | §6.2 item 3, but the evidence that motivated it did not survive the corpus. §6.8.3's clean separation was a small-sample artifact: over 39 pairs the classes **overlap by 58 dB** (dropouts from −0.51, non-dropouts to +57.59) and no threshold separates them (§6.10.5). Of the 9 gaps it would rescue, **7 are head-of-media trim differences** between masters and **all 9 have `b_interior_db` ≤ −43 dB** (§6.10.6). The one that renders, 33/17, was **listened to and is inaudible** — patch indistinguishable from A and B (§6.10.7, which also records a conflict with §3.1a). The field is a ratio with no absolute anchor, and §6.10.8 shows no anchor is obtainable: §7.2 already dropped local-context floors at 0.8 dB separation, and the scan retains no whole-file level statistic to anchor against. What survives *positively* is the **opposite** direction — delta ≈ 0 on a labelled dropout is a reliable "no hole here" (§6.10.9) — and item 3 already catches 11 of those 17. | **Low risk, but zero measured benefit.** As a recall widener the failure mode is a wasted patch attempt, and 9 gaps over 39 pairs is negligible. **Still do not ship before 1**, and the reason is now measured rather than assumed: 33/17 is the only candidate that reached the repair path with brackets and the repair path **accepted** it (0 of 1 rejected, not 8 of 11) — because there is no level term anywhere in the fill path. Item 1 *is* the granularity this recommendation delegates to. Pair with §6.10.3's head/tail exclusion, which removes 7 of the 9 for free (**not implemented** — §7.4a). Benefit on this corpus is **zero**: every candidate's donor is ≤ −43 dB, so even a successful fill imports inaudible material. |
+
+### 7.4a Items 1 and 3, as built (2026-08-04)
+
+Both shipped on by default, each with its own off switch, and neither invents a threshold.
+
+**Item 3 — `apply_donor_registration` (on).** `RepairConfig::apply_donor_registration` drives
+`DonorRegistrationMode` at the single production construction site (`scan_gaps.rs`), so the enum's
+`#[default] Observe` is untouched: a caller that asks for registration without saying what for still
+cannot silently move a decision. `--no-apply-donor-registration` classifies at the nominal map.
+Both sides of the split are pinned by unit tests over one class-flipping fixture (B is the same
+program 500 ms late, so the nominal window reads content and the registered window reads B's own
+hole).
+
+Abstention under `Apply` is **not** a fallback to the nominal window: `peak_r < min_envelope_r`
+(or too few bins) yields `NotEvaluated` / `donor_registration_unreliable`, which keeps the gap.
+Re-measuring at the nominal map would re-use the window already known to be wrong
+(`gap_equivalence.rs`).
+
+**Not implemented — head/tail exclusion (§6.10.3).** The recommendation said to pair `Apply` with
+excluding first/last gaps of a pair (all 31 clipped `bins == 20` registrations in the 39-pair scan
+were head or tail; they abstain at roughly twice the mid-media rate). That exclusion did **not**
+ship with `apply_donor_registration`. Cost of leaving it out: more abstentions on head/tail gaps →
+more patch attempts, never holes (fail open). A bins-floor would be equivalent on this corpus but
+worse as a rule; prefer an explicit head/tail check if it is added later.
+
+*Unlooked-for corroboration from the fixtures.* The F-series energy fixtures fail under `Apply`, and
+the reason is the finding restated in test code. They build B as A delayed by half a gap **including
+A's dropout**, so at the registered lag the donor window lands on B's own hole — and they only ever
+satisfied the equivalence gate because of `ensure_nominal_b_occupied`, a helper whose comment reads
+"F1 shifts the true donor so the nominal span can be mostly silent; add low-level occupant energy
+without changing true_fill." That helper is a nominal-window artefact, written well before this
+file measured the same artefact on media. Those fixtures exercise signature search and fit, not the
+gate, so `scan_gaps_for_fixture` now pins the nominal-map donor and says why.
+
+**Item 1 — `measure_fill_level` (on).** `domain/fill_level.rs`: interleaved RMS of the written fill
+in 100 ms bins, the **loudest** bin against the **louder** of the two 1 s A shoulders (100 ms
+standoff from each gap edge). Emitted as `fill_level` on `GapPatchOutcome` (JSON: §FillLevelCheck in
+`docs/json-output.md`).
+
+Four decisions worth recording, because each is a place the measurement could have been made
+useless:
+
+- **Per-bin peak, not a whole-fill aggregate.** The calibration points are peaks: ≈65 dB → poor,
+  ≈35 dB → dirty, ≈13 dB → barely noticeable, and 10/12's single +35 dB bin inside an otherwise
+  +11–12 dB fill. An average over the fill hides exactly the bin that does the damage.
+- **Interleaved, not a mono downmix** — the two differ by 3–8 dB on 5.1 (§6.10.12).
+- **The reference is the louder shoulder**, so a fill only looks bad if it beats *both* sides of its
+  own neighbourhood. Conservative in the direction that matters for anything that later reads this
+  as a threshold.
+- **Measured after the anchored-retry pass and before the splice**, on the final patches with the
+  gain applied and A still pristine. A shoulder read after a neighbouring splice would describe the
+  repair rather than the program it is judged against.
+
+**No threshold ships.** The four ear results bracket it at 15–30 dB, which is a bracket and not a
+calibration; a veto's false positive is an unrepaired hole, which is worse than what is being
+measured. Next step is the corpus sweep of `peak_delta_db` over patched gaps, against which a
+threshold can be argued rather than asserted.
+
+**New investigation, opened 2026-08-04 (§6.10.12) — make the donor test conditional**
+
+- **Ask "is B non-silent *where A is silent*?" instead of "is B non-silent?"** The two halves of the
+  dropout definition are currently evaluated independently — A's level against its own noise floor,
+  the donor's occupancy against the gap floor — so quiet periodic material satisfies both in both
+  masters at once. 10/12 carries **4/9 silent blocks on each side** and is still `repairable_dropout`.
+  The conditional form (count donor occupancy only over the blocks A reports silent, at the registered
+  lag) is a small change to `derive_gap_equivalence` and needs no new input: both block vectors are
+  already in hand, and §6.10.12 shows they agree bin-for-bin once the lag is right.
+  **Not yet a recommendation, for two reasons.** The rate is unmeasured — the corpus-wide count of
+  gaps whose A-silent and donor-silent block sets *coincide* has never been computed, and the answer
+  decides whether this is a 5-gap curiosity or a systematic reclassification. And it moves gaps out of
+  `repairable_dropout`, which is the **dangerous** direction (§6.10.4's framing, and the reason the
+  band died): a conditional test that is too eager drops real dropouts. Measure the rate on the
+  existing 39-pair scan JSON first — it needs no media and no re-dump, the same route §6.10 used.
+  Item 1 catches the observed damage regardless and does not carry this risk, so it ships first
+  either way.
 
 **Downgraded to an investigation — no longer a recommendation**
 

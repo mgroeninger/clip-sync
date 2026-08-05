@@ -297,6 +297,7 @@ pub fn repair_run_input(
         scan_both: config.repair.scan_both,
         gap_offset_tolerance_secs: config.repair.gap_offset_tolerance_secs,
         limit_fill_to_mapped_region: config.repair.limit_fill_to_mapped_region,
+        apply_donor_registration: config.repair.apply_donor_registration,
     };
 
     let after_scan = pending_after_scan(config, video_a)?;

@@ -3,6 +3,7 @@ pub mod cross_check;
 pub mod diagnostics;
 pub mod donor;
 pub mod dual_fit;
+pub mod fill_level;
 pub mod fill_mode;
 pub mod fill_offset;
 pub mod gap;
@@ -30,6 +31,10 @@ pub mod track_match;
 
 pub use align::{AlignedClip, AudioTimelineSkew, ClipRole, ScanAlignment, TimelineOverlap};
 
+pub use fill_level::{
+    measure_fill_level, FillLevelCheck, FillLevelParams, DEFAULT_FILL_LEVEL_BIN_MS,
+    DEFAULT_FILL_LEVEL_SHOULDER_SECS, DEFAULT_FILL_LEVEL_STANDOFF_MS, FILL_LEVEL_FLOOR_DB,
+};
 pub use fill_mode::FillMode;
 pub use fill_offset::{
     fill_offset_secs, resolve_gap_offset_secs, AnchoredRetryPass, FillOffsetMode,

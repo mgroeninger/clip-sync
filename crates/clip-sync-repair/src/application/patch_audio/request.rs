@@ -54,6 +54,9 @@ pub struct PatchRequestSettings {
     /// Drop already-equivalent gaps (mutual/ambient silence) from the fill plan before decode/patch
     /// (`docs/dev/gap-vocabulary.md` § Silence-character pre-gate). Off by default.
     pub skip_equivalent_gaps: bool,
+    /// Measure the written fill's loudest bin against its A shoulders and record it on the outcome
+    /// (`crate::domain::fill_level`). Record-only; never changes a verdict.
+    pub measure_fill_level: bool,
     /// Unresolved `--only-gaps` / `--skip-gaps` intent; resolved in `run_repair` once the report exists.
     pub gap_selection: GapSelectionMode,
     pub normalize_fill: bool,

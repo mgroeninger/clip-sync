@@ -1238,6 +1238,7 @@ fn scan_then_patch_fills_detected_gap() {
             scan_both: false,
             gap_offset_tolerance_secs: 0.5,
             limit_fill_to_mapped_region: true,
+            apply_donor_registration: true,
         })
         .expect("scan should succeed");
 

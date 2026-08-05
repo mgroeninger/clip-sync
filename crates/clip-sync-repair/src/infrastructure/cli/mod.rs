@@ -49,6 +49,16 @@ pub fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     } else if args.no_skip_equivalent_gaps {
         config.repair.skip_equivalent_gaps = false;
     }
+    if args.apply_donor_registration {
+        config.repair.apply_donor_registration = true;
+    } else if args.no_apply_donor_registration {
+        config.repair.apply_donor_registration = false;
+    }
+    if args.measure_fill_level {
+        config.repair.measure_fill_level = true;
+    } else if args.no_measure_fill_level {
+        config.repair.measure_fill_level = false;
+    }
     if let Some(tokens) = &args.only_gaps {
         config.repair.only_gaps = Some(tokens.clone());
         config.repair.skip_gaps = None;

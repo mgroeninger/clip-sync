@@ -126,6 +126,7 @@ fn empty_plan_result(
             fill_absolute_floor: request.fill_absolute_floor,
         },
         &[],
+        &[],
     ));
     PatchAudioResult {
         pcm: None,
@@ -327,7 +328,9 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                 &region_results,
                 request.fill_mode,
                 thresholds,
-                // Preview never splices, so no splice can fail.
+                // Preview never splices, so no splice can fail — and nothing is written to
+                // measure a fill level on.
+                &[],
                 &[],
             ));
             return Ok(PatchAudioResult {
@@ -443,6 +446,36 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             }
         }
 
+        // Record-only fill-level check (§7.4 item 1), measured HERE for two reasons: these are the
+        // final patches (the anchored-retry pass has already rewritten them), and A is still
+        // pristine — the splice loop below mutates `a_pcm.samples`, and a shoulder read after a
+        // neighbouring splice would describe the repair rather than the program it is judged
+        // against. The gain is applied because that is what gets written.
+        let fill_level_by_slot: Vec<Option<crate::domain::FillLevelCheck>> =
+            if request.measure_fill_level {
+                patches
+                    .iter()
+                    .map(|patch| {
+                        let gained: Vec<f32> = patch
+                            .b_samples
+                            .iter()
+                            .map(|&s| (s * patch.gain).clamp(-1.0, 1.0))
+                            .collect();
+                        crate::domain::measure_fill_level(
+                            &gained,
+                            &a_pcm.samples,
+                            channels,
+                            patch.a_start_frame,
+                            patch.a_end_frame,
+                            sample_rate,
+                            crate::domain::FillLevelParams::default(),
+                        )
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
         let mut not_applied: Vec<(usize, GapPatchNotAppliedReason)> = Vec::new();
         if patch_count > 0 {
             let _splice_span = tracing::info_span!("patch_splice", patch_count).entered();
@@ -479,6 +512,16 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             }
         }
 
+        // A failed splice left A untouched, so there is no written fill to report a level for.
+        let fill_level: Vec<(usize, crate::domain::FillLevelCheck)> = fill_level_by_slot
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, check)| {
+                Some((gap_index_by_slot.get(slot).copied().flatten()?, (*check)?))
+            })
+            .filter(|(gap_index, _)| !not_applied.iter().any(|(failed, _)| failed == gap_index))
+            .collect();
+
         let mut summary = PatchSummary::from_outcomes(outcomes_in_report_order(
             &request.report.gaps,
             &plan,
@@ -486,6 +529,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             request.fill_mode,
             thresholds,
             &not_applied,
+            &fill_level,
         ));
         if let Some(anchors) = patch_anchors_used {
             summary = summary.with_patch_anchors(anchors);

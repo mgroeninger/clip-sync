@@ -108,6 +108,25 @@ pub struct Args {
     #[arg(long, overrides_with = "skip_equivalent_gaps")]
     pub no_skip_equivalent_gaps: bool,
 
+    /// Classify the equivalence gate's donor window at the registered lag rather than the nominal
+    /// offset map [default: enabled].
+    #[arg(long, overrides_with = "no_apply_donor_registration")]
+    pub apply_donor_registration: bool,
+
+    /// Classify the donor window at the nominal offset map (pre-2026-08-04 behaviour). The
+    /// registration is still computed and reported; it just cannot change a class.
+    #[arg(long, overrides_with = "apply_donor_registration")]
+    pub no_apply_donor_registration: bool,
+
+    /// Record each written fill's loudest bin against the A shoulders around the gap
+    /// (`fill_level` in the JSON) [default: enabled]. Report-only; never changes a verdict.
+    #[arg(long, overrides_with = "no_measure_fill_level")]
+    pub measure_fill_level: bool,
+
+    /// Skip the fill-level measurement pass.
+    #[arg(long, overrides_with = "measure_fill_level")]
+    pub no_measure_fill_level: bool,
+
     /// Patch only these gaps (1-based gap numbers and/or time ranges from the scan table;
     /// comma-separated). Range forms: `START-END` (one gap by edges) or `START..END` (all gaps
     /// fully inside). Times are seconds or `H:MM:SS[.mmm]`. Mutually exclusive with `--skip-gaps`.

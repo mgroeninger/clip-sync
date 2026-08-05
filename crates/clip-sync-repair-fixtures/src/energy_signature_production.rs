@@ -217,6 +217,15 @@ pub fn production_weight_sweep_config(
 }
 
 /// Scan A/B WAVs written from a synthetic fixture (production scan defaults).
+///
+/// **Donor registration is deliberately not applied here** (unlike production, which classifies
+/// the equivalence gate's donor window at the registered lag since 2026-08-04). The F-series
+/// geometry builds B as A delayed by half a gap — *including A's dropout* — so at the registered
+/// lag the donor window lands on B's own hole and the gate reads shared silence. These fixtures
+/// exist to exercise signature search and fit, and they only ever satisfied the gate through the
+/// G5/D11 patch (`ensure_nominal_b_occupied`, low-level energy written into the **nominal** span).
+/// Pinning the nominal-map donor keeps that premise intact instead of dropping every gap under
+/// test. The `Observe`/`Apply` split itself is pinned in `scan_gaps`' unit tests.
 pub fn scan_gaps_for_fixture(fixture: &EnergySignatureFixture, temp: &Path) -> GapReport {
     let (path_a, path_b) = write_fixture_wavs(temp, fixture);
     let (_, _, _, _, total_secs) = gap_report_times(fixture);
@@ -236,6 +245,7 @@ pub fn scan_gaps_for_fixture(fixture: &EnergySignatureFixture, temp: &Path) -> G
         scan_both: false,
         gap_offset_tolerance_secs: repair.gap_offset_tolerance_secs,
         limit_fill_to_mapped_region: true,
+        apply_donor_registration: false,
     };
     let media_reader = SymphoniaMediaReader;
     let progress = NoOpProgressReporter;

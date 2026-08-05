@@ -85,6 +85,7 @@ With `scan_both` (default on), B is also scanned for silence so the two timeline
 | `silence_hold_ms` | 500 | Configured hold (pre-quantization). The JSON / scan-summary echo is the **effective** hold (`silence_hold_blocks × scan_block_ms`) |
 | `scan_both` | true | Scan B too for the mutual-silence cross-check |
 | `skip_equivalent_gaps` | true | Drop mutual/ambient-silence gaps from the fill plan (`--no-skip-equivalent-gaps` to disable) |
+| `apply_donor_registration` | true | Measure the gate's donor window at the **registered** lag rather than the nominal offset map (`--no-apply-donor-registration` to classify at the nominal map). Below `min_envelope_r` the gate **abstains** as `not_evaluated` / `donor_registration_unreliable` (keeps the gap) — it does **not** fall back to the nominal window. The §6.10.3 head/tail exclusion for clipped first/last-gap registrations is **not** implemented; see `docs/dev/TEMP-equivalence-band-gate-off-findings.md` §7.4a |
 | `gap_offset_tolerance_secs` | 0.5 | Tolerance for A↔B silence agreement |
 | `limit_fill_to_mapped_region` | true | Gaps outside B coverage are unfillable |
 | `decode_chunk_secs` | 10 | A decode chunk size |

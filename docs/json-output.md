@@ -249,6 +249,30 @@ Gap positions in `gaps[]` use the **decoded-sample clock**. When `delta_secs` is
 | `status` | [GapPatchStatus](#gappatchstatus) | always | Outcome (externally tagged enum) |
 | `tags` | [GapTags](#gaptags) | always | Vocabulary tags derived at patch time (see [gap-repair-guide.md](gap-repair-guide.md) § Vocabulary) |
 | `residual` | object | when measured | Full [`SeamResidualVerdict`](#seamresidualverdict) (gate active or `measure_residual`) |
+| `fill_level` | object | spliced gaps, when `measure_fill_level` | [FillLevelCheck](#filllevelcheck) — how loud the written fill is against the A around it |
+
+### FillLevelCheck
+
+Record-only: the written fill's loudest bin measured against the A shoulders either side of the
+gap. Never changes a verdict, and there is deliberately no threshold — a veto's false positive is
+an unrepaired hole, so the number is collected for calibration first. Present only on gaps whose
+fill was actually spliced (a failed splice reports nothing) and only when `measure_fill_level` is
+on (the default; `--no-measure-fill-level` skips the pass).
+
+| Field | Type | Presence | Meaning |
+|-------|------|----------|---------|
+| `pre_shoulder_db` | number | when there is A before the gap | Interleaved RMS of the pre-gap A shoulder, dBFS |
+| `post_shoulder_db` | number | when there is A after the gap | Interleaved RMS of the post-gap A shoulder, dBFS |
+| `reference_db` | number | always | The **louder** shoulder — what the fill is judged against |
+| `peak_bin_db` | number | always | Level of the fill's loudest bin, dBFS |
+| `peak_delta_db` | number | always | `peak_bin_db - reference_db`; positive means the fill is louder than its neighbourhood |
+| `peak_bin_index` | integer | always | Which bin that was, from the start of the fill |
+| `bins` | integer | always | Bins measured (a trailing partial bin under half width is dropped) |
+| `bin_ms` | number | always | Bin width the peak was taken over (100 ms) |
+
+The statistic is a per-bin **peak**, not a whole-fill aggregate: on the gaps this was calibrated
+against, a single 100 ms bin well above the surrounding program was what made a patch sound worse
+than the unrepaired A, and an average over the fill hides exactly that.
 
 ### GapTags
 

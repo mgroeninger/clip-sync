@@ -66,6 +66,36 @@ pub struct RepairConfig {
     /// with `--no-skip-equivalent-gaps` to patch every scanned gap regardless of silence character.
     #[serde(default = "default_true")]
     pub skip_equivalent_gaps: bool,
+    /// Classify the equivalence gate's donor window at the **registered** lag rather than at the
+    /// nominal offset map (`DonorRegistrationMode::Apply` vs `Observe`).
+    ///
+    /// **On by default (2026-08-04)** after the 39-pair scan and three ear checks
+    /// (`docs/dev/TEMP-equivalence-band-gate-off-findings.md` §6.10, §7.4 item 3). The nominal map
+    /// cannot track local drift: it was off by 80–410 ms on the listen set, and on periodic material
+    /// one 100 ms bin of that error puts B's loud bin over A's silent bin — the dropout signature,
+    /// manufactured. Over 39 pairs / 782 registrations this moves 16 gaps (2.05 %), touches none of
+    /// the 236 dropouts at the digital-zero rail, and stops 3 patches; all three were listened to and
+    /// all three were degrading undamaged audio.
+    ///
+    /// Registration still **abstains** below `min_envelope_r` (`NotEvaluated` /
+    /// `donor_registration_unreliable`), which costs a patch attempt, never a hole. Abstention does
+    /// **not** fall back to the nominal map. The §6.10.3 head/tail exclusion recommended alongside
+    /// this flag is **not** implemented — see
+    /// `docs/dev/TEMP-equivalence-band-gate-off-findings.md` §7.4a. Disable with
+    /// `--no-apply-donor-registration` to classify at the nominal map.
+    #[serde(default = "default_true")]
+    pub apply_donor_registration: bool,
+    /// Measure each written fill's loudest bin against the A shoulders it sits between, and record
+    /// it on the gap outcome (`fill_level` in the JSON).
+    ///
+    /// **Record-only** — it never changes a verdict. The audible failure it exists to catch is
+    /// substitution magnitude: on the gaps of §6.10.12 the fill ran 11–35 dB over what it replaced,
+    /// and audibility tracked the peak, not the average. A threshold is deliberately *not* shipped:
+    /// a veto's false positive is an unrepaired hole, so the number is collected first and
+    /// calibrated against the corpus (`docs/dev/TEMP-equivalence-band-gate-off-findings.md` §7.4
+    /// item 1). On by default; `--no-measure-fill-level` skips the pass.
+    #[serde(default = "default_true")]
+    pub measure_fill_level: bool,
     /// Patch only these gaps (1-based gap numbers and/or time-range tokens as strings).
     /// Mutually exclusive with [`Self::skip_gaps`].
     #[serde(default)]
@@ -506,6 +536,8 @@ impl Default for RepairConfig {
             absolute_silence_rms: default_absolute_silence_rms(),
             scan_both: default_true(),
             skip_equivalent_gaps: true,
+            apply_donor_registration: true,
+            measure_fill_level: true,
             only_gaps: None,
             skip_gaps: None,
             gap_offset_tolerance_secs: default_gap_offset_tolerance_secs(),
@@ -649,6 +681,7 @@ impl RepairConfig {
     pub fn patch_settings(&self) -> PatchRequestSettings {
         PatchRequestSettings {
             skip_equivalent_gaps: self.skip_equivalent_gaps,
+            measure_fill_level: self.measure_fill_level,
             gap_selection: self.gap_selection_mode(),
             normalize_fill: self.normalize_fill,
             dual_fit: self.dual_fit,

@@ -174,6 +174,10 @@ clip-sync-repair [OPTIONS] <VIDEO_A> <VIDEO_B>
 | `--no-scan-both` | — | Disable bidirectional silence scan |
 | `--skip-equivalent-gaps` | on | Drop already-equivalent gaps (mutual/ambient silence — nothing to repair) from the fill plan before patch |
 | `--no-skip-equivalent-gaps` | — | Patch every scanned gap regardless of silence character |
+| `--apply-donor-registration` | on | Classify the equivalence gate's donor window at the registered lag (envelope-registered against A) instead of the nominal offset map. Low correlation abstains as `not_evaluated` (keeps the gap); does not fall back to the nominal map |
+| `--no-apply-donor-registration` | — | Classify the donor window at the nominal offset map (registration still recorded) |
+| `--measure-fill-level` | on | Record each written fill's loudest bin against the A shoulders around the gap (`fill_level` in the JSON); report-only |
+| `--no-measure-fill-level` | — | Skip the fill-level measurement pass |
 | `--wav <PATH>` | — | Write patched multi-channel WAV (implies write mode) |
 | `--mux <PATH>` | — | Mux patched audio into video A via ffmpeg (implies write mode; requires build with `--features ffmpeg-mux` and `ffmpeg` on `PATH`). AAC is re-encoded; bitrate defaults to the lower measured rate of A and B (see `mux_audio_bitrate` below) |
 | `--no-normalize` | — | Disable loudness normalization of fill segments |
@@ -522,6 +526,8 @@ silence_hold_ms = 500
 absolute_silence_rms = 33.0
 scan_both = true
 skip_equivalent_gaps = true          # drop mutual/ambient-silence gaps (false or --no-skip-equivalent-gaps to patch all)
+apply_donor_registration = true      # classify at registered lag; abstain keeps gap (no nominal fallback). Head/tail exclusion not shipped. false / --no-apply-donor-registration → nominal map
+measure_fill_level = true            # record fill-vs-shoulder level per patched gap (report-only; false or --no-measure-fill-level)
 gap_offset_tolerance_secs = 0.5
 min_fill_correlation = 0.35
 disable_structure_trust = false   # gate only: true or --no-structure-trust
