@@ -2,7 +2,9 @@
 
 **Status:** draft plan, 2026-08-05; self-review folded in the same day (§1.1 threshold note, §1.3
 contract, §1.4 channel consistency, §3 promoted to required, §4/§4.1 fixture + golden mechanics,
-§5 effort and churn counts). Implements the **residual-abstention reporting** row in
+§5 effort and churn counts); the two open decisions settled the same day against source (§1.1 record
+the threshold on `CorpusGateRecipe`; §3 carry the real placement values). **No open decisions
+remain.** Implements the **residual-abstention reporting** row in
 [BACKLOG.md](../../BACKLOG.md) § *Donor registration leftovers*.
 
 **Source:** [TEMP-equivalence-band/08-production-recommendations.md](TEMP-equivalence-band/08-production-recommendations.md)
@@ -88,10 +90,22 @@ deep. Read it as "no cancellation evidence here", never as a provenance finding.
 both TOML- and CLI-settable (`--residual-floor-ok-db`); `-15.0` is only the default, and
 [gap-fill-modes.md](../gap-fill-modes.md) documents a `-50.0` variant. A stored `FloorAboveOkDb`
 therefore means nothing to a later reader who does not know which threshold produced it — the same
-class of defect this plan exists to fix. Resolve at execution time: either the fingerprint dump
-records `residual_floor_ok_db` alongside the reason (check whether the provenance block already
-carries it before adding a field), or the docstring states plainly that the variant is only
-interpretable against the run's own settings. Do not ship the reason with neither.
+class of defect this plan exists to fix.
+
+**Settled 2026-08-05: record it.** `CorpusGateRecipe` — the dump's gate-provenance block, which
+exists precisely to say what the `failure_stage` values were decided against — already carries
+`residual_headroom_margin_db` and `residual_gate`, and does **not** carry `residual_floor_ok_db`.
+The setting appears nowhere in the fingerprint schema, so today the threshold is unrecoverable from
+a dump. Add it there, not per-gap on `ResidualInfo`: it is one value per run, exactly like the
+margin beside it, and `PatchRequestSettings` already holds it so `from_settings` is a one-line
+change.
+
+Type it `Option<f64>` with `#[serde(default)]`, **not** a bare `f64` with a default-value function.
+`CorpusGateRecipe`'s fields have no serde defaults today, so a bare field breaks every existing dump
+that has a recipe — and defaulting to `-15.0` would silently assert the default was in force on runs
+that may have used `-50.0`. `None` means "unrecorded, pre-dates this plan", which is the honest
+reading and the same convention `floor_source_*` uses. The docstring still carries the caveat; the
+recipe is what makes it checkable.
 
 `Deserialize` is needed **only for `ResidualInfo`** (§3) — `SeamResidualVerdict` derives `Serialize`
 alone. Deriving both on the enum is harmless and matches `SeamFloorSource`; it is called out here so
@@ -277,10 +291,23 @@ exactly where §7.3 wants to read *why this abstained* after the fact. Two conse
   also make `classify_residual_band` disagree between production and replay for beyond-reach gaps
   (production `NoFloor`; replay `Cancels` / `CorrelatesOnly` whenever `informative` is `true`).
   Naming it here rather than leaving it unsaid is the point — silence about exactly this kind of
-  reconstruction gap is what let the §0.2 collapse survive. **Decide explicitly at execution time:**
-  either carry the real placement values into `ResidualInfo`, or record the divergence in
-  `gap-fingerprint.md` as a known replay limitation. This plan defers the *fix* and requires the
-  *decision*.
+  reconstruction gap is what let the §0.2 collapse survive.
+
+**Settled 2026-08-05: carry the real placement values.** The zeros are not a measurement that was
+never made — production has both values (`max_lag_frames` comes from
+`params.derived.residual_max_lag_frames` where the verdict is built in `patch_region.rs`, and the
+slide alongside it). They are dropped at the `ResidualInfo` boundary, because the write mapping in
+`project.rs` never carried them. So this is a plumbing gap, not a reconstruction limit, and
+documenting it as a known replay limitation would be documenting something we can simply fix.
+
+**Copy the `floor_source_*` precedent exactly.** Those two fields were added to `ResidualInfo` on
+2026-08-03 for the identical reason — the replay path was asserting a fixed value (`SeamFloorSource::None`)
+on every gap because the dump didn't carry the real one — as `Option` + `default`, read back with
+`unwrap_or(<old fixed value>)`, and commented at both ends to say `None` means the dump predates the
+field. Add `placement_slide_frames: Option<i64>` and `max_lag_frames: Option<i64>` the same way,
+with `unwrap_or(0)` on replay. Old dumps then behave exactly as they do today; new dumps replay
+correctly. That also makes `beyond_lag_reach()` true on replay where it was true in production,
+which is what combine-rule step 1 needs.
 
 §3 stays a separate commit from §1–§2, and still lands after them.
 
@@ -336,7 +363,9 @@ what was supposed to prove the fix. A wholesale re-bless would rubber-stamp §1.
 Fill `file:line` in at execution time, not before (dev README rule).
 
 **Effort:** roughly a day for Phase 1 (most of it the two new multichannel fixtures, §4), half a day
-for Phase 2, half a day for Phase 3 plus the placement-divergence decision it forces (§3).
+for Phase 2, and about a day for Phase 3 — it now carries three schema additions (the reason, the
+two placement fields, the recipe threshold), each needing a back-compat deserialize test, though all
+three follow the `floor_source_*` pattern already in the file.
 
 **Mechanical churn — small and bounded**, counted while reviewing this plan. Struct literals needing
 a new field: **~6** `GapTags` sites (three in `domain/gap_tags.rs`, one in the anchor-retry path, two
@@ -358,7 +387,7 @@ it, which is the opposite of how the original draft ordered the risk.
 - [ ] **Fix `side_worst_headroom_summary` per §1.4** — fall back to a sourced-floor channel's `(floor_db, source)` when no channel has finite headroom.
 - [ ] Add the two fields to `SeamResidualVerdict`; populate in `from_parts_with_placement` and `from_channel_residuals`; extend the hand-written `PartialEq`.
 - [ ] Add `uninformative_reason()` with §1.3's combine rule, and the doc comment that says it mirrors the **gate guard**, not `!informative` (§1.3).
-- [ ] Docstring `FloorAboveOkDb` with the §1.1 caveat (mirror `DonorRelation::DiffCapture`'s wording) **and** the threshold-relativity note; settle whether `residual_floor_ok_db` is recorded next to the reason (§1.1).
+- [ ] Docstring `FloorAboveOkDb` with the §1.1 caveat (mirror `DonorRelation::DiffCapture`'s wording) **and** the threshold-relativity note.
 - [ ] Unit tests per §4 rows 1–5; `worst_headroom_db()` invariance.
 
 **Phase 2 — production output**
@@ -373,7 +402,9 @@ it, which is the opposite of how the original draft ordered the risk.
 
 - [ ] `ResidualInfo` fields as `Option` + `default`; back-compat deserialize test against a pre-2026-08-05 fixture.
 - [ ] Carry the reason through `project.rs`'s **write** mapping (verdict → `ResidualInfo`) **and** its **replay** mapping (`ResidualInfo` → `SeamResidualVerdict`) — read the stored value, never recompute it (§3).
-- [ ] Decide the `placement_slide_frames` / `max_lag_frames` hardcoded zeros: carry the real values, or record the replay divergence in [gap-fingerprint.md](gap-fingerprint.md). Do not leave it undecided (§3).
+- [ ] `ResidualInfo.placement_slide_frames` / `max_lag_frames` as `Option<i64>` + `default`; populate from the verdict in the write mapping; `unwrap_or(0)` on replay, replacing the hardcoded zeros (§3). Mirror the `floor_source_*` comments at both ends.
+- [ ] Replay test: a from-decode dump whose production verdict was beyond-reach round-trips to `beyond_lag_reach() == true` (fails today), and a pre-field fixture still lands on `0` / today's behaviour.
+- [ ] `CorpusGateRecipe.residual_floor_ok_db: Option<f64>` + `#[serde(default)]`, populated in `from_settings`; back-compat test that an existing recipe without the key still deserializes to `None` (§1.1).
 
 **Close-out**
 
@@ -392,7 +423,7 @@ it, which is the opposite of how the original draft ordered the risk.
 | `FloorAboveOkDb` read as a provenance finding | Docstring carries the `DiffCapture` caveat (§1.1): it means the regime was not established, not that B is a different master |
 | Reason, `floor_source`, and `informative` disagree on multichannel | §1.2 / §1.4 pin all three to the min-floor channel; one test pins it |
 | `uninformative_reason()` read as `!informative` | §1.3 fixes the contract in the doc comment (it mirrors the gate guard); the name may change to `abstain_reason()` |
-| Replay reports the wrong reason | §3: the reason is **stored**, never recomputed on a path where `beyond_lag_reach()` is structurally `false` |
-| `FloorAboveOkDb` unreadable later | §1.1: the threshold is a setting, so either record it with the reason or say so in the docstring |
+| Replay reports the wrong reason | §3: the reason is **stored**, never recomputed; and the placement fields it depends on are now carried instead of hardcoded to `0` |
+| `FloorAboveOkDb` unreadable later | §1.1: `CorpusGateRecipe` gains `residual_floor_ok_db` as `Option<f64>`, so the threshold travels with the dump; `None` reads as "unrecorded", never as "the default was used" |
 | Golden re-bless rubber-stamps §1.4 | §4.1: each moved `floor_source` is checked against the sourced-floor rule by hand, not accepted wholesale |
 | Scope creep into the probe | §0.1 lists the three killed changes; none of them is touched here |

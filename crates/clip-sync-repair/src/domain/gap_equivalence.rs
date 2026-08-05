@@ -53,16 +53,14 @@ impl Default for GapEquivalenceParams {
     }
 }
 
-/// Tunables for **local donor registration** — the fix for the defect in
-/// `docs/dev/TEMP-equivalence-band/` §2.5 / §6.4 (`06-donor-registration.md`).
-///
-/// The gate runs pre-decode with a single global `offset_secs` for the whole pair, and one constant
-/// cannot track local drift: on the 12-gap listen set the donor window was misplaced by 80–410 ms,
-/// which is what clustered `donor_silence_fraction` at exactly 0.500 and made the margin band look
-/// like a threshold problem. Re-registering B against A's own block envelope — no decode, ~21 dot
-/// products over 40–70 bins — recovered the lag on all 12 and brought the in-gap levels to within
-/// 0.7 dB on 11 of them. The twelfth is a real dropout A rides at digital zero while B keeps its
-/// −68 dB bed; it registers cleanly (r = 0.970) and separates on `interior_delta_db` (+35.3 dB)
+/// Tunables for **local donor registration** — see [gap-scan.md](docs/gap-scan.md) § Donor
+/// registration. The gate runs pre-decode with a single global `offset_secs` for the whole pair, and
+/// one constant cannot track local drift: on the 12-gap listen set the donor window was misplaced by
+/// 80–410 ms, which is what clustered `donor_silence_fraction` at exactly 0.500 and made the margin
+/// band look like a threshold problem. Re-registering B against A's own block envelope — no decode,
+/// ~21 dot products over 40–70 bins — recovered the lag on all 12 and brought the in-gap levels to
+/// within 0.7 dB on 11 of them. The twelfth is a real dropout A rides at digital zero while B keeps
+/// its −68 dB bed; it registers cleanly (r = 0.970) and separates on `interior_delta_db` (+35.3 dB)
 /// instead. Registration is still allowed to **abstain** — see [`Self::min_envelope_r`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DonorRegistrationParams {

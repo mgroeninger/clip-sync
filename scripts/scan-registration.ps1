@@ -329,7 +329,7 @@ Write-Host ''
 # classifier, which lives in the replay.
 Write-Host "Nonzero registration lag on $tLag of $tReg registered gap(s); peak_r < 0.70 on $tLow." -ForegroundColor DarkGray
 Write-Host "These are counts, not the decision — run the replay for what Apply would do." -ForegroundColor DarkGray
-Write-Host "Docs:    docs/dev/TEMP-equivalence-band/06-donor-registration.md §6.8.6" -ForegroundColor DarkGray
+Write-Host "Docs:    docs/gap-scan.md § Donor registration; equivalence-calibration --replay (docs/dev/development.md)" -ForegroundColor DarkGray
 
 $failed = @($results | Where-Object { $_.ExitCode -ne 0 })
 if ($failed.Count -gt 0) {

@@ -64,6 +64,31 @@ its own local noise floor (`dropout_margin_db`) and `donor_silence_fraction` ove
 - `missing_signal` — a needed signal was absent (no A blocks, no donor mapped, empty window).
 - `donor_registration_unreliable` — the donor envelope correlated below `min_envelope_r`, so the donor window can't be placed and no statement about B's occupancy is defensible (see `apply_donor_registration` in [§ Config](#config)).
 
+### Donor registration (`apply_donor_registration`)
+
+The donor window is placed by `register_donor_window` (`domain/gap_equivalence.rs`) on the
+scanner's existing 100 ms `BlockLevel.rms_db` envelopes — no decode, no seam fit:
+
+1. **Correlate on the shoulders.** Cross-correlate A's and B's dB envelopes over the gap ± context
+   (`EQUIVALENCE_CONTEXT_SECS`), searching ±`max_lag_blocks` (default 10 ⇒ ±1.0 s). The **gap core
+   is excluded** from the correlation: including it makes registration fail on deep A dropouts
+   against live B (the core is exactly where the timelines are expected to differ).
+2. **Erode one bin at each gap edge** when reading interior levels (`a_interior_db` /
+   `b_interior_db` / `interior_delta_db`). Without erosion, 100 ms grid quantization produces large
+   spurious deltas.
+3. **`peak_r` is a registration test, not an equivalence test.** Under **Apply** (production
+   default via `apply_donor_registration`), `peak_r < min_envelope_r` (default 0.70) abstains as
+   `donor_registration_unreliable` and **keeps** the gap — it does **not** fall back to the nominal
+   map. Flat / too-short envelopes are "cannot ask": no registration is recorded and the nominal
+   map stands (not an abstain that would keep every quiet gap).
+
+`DonorRegistrationMode::Observe` remains the enum default so a caller that opts into registration
+without choosing a mode cannot silently move a decision; production selects **Apply** from config.
+`--no-apply-donor-registration` computes and records registration but classifies at the nominal map.
+Registration (and recorded envelopes, when present) is always emitted either way. See
+[pipeline.md](pipeline.md) §3 and [gap-vocabulary.md](dev/gap-vocabulary.md) § Silence-character
+pre-gate.
+
 **Precedence at plan time** (`domain/gap_fill.rs`): fillability and coverage decide first, then the
 equivalence gate, then gap selection. So the gate only ever *drops gaps that were otherwise
 fillable* — it can never rescue an unfillable one. A dropped gap is reported as

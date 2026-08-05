@@ -198,20 +198,21 @@ repairing?** It reads one **new axis** crossed with an existing one:
 | Axis | Question | Placement |
 |------|----------|-----------|
 | A silence character | Did A's signal **die** (gap RMS ≥ `dropout_margin_db` below A's *own* noise floor), or is it room tone **at** the floor? | A gap interior vs A context (scan blocks; size = the `scan_block_ms` knob) |
-| Donor — nominal | Is B occupied at the same program time? | nominal `b_mapped`, no lag (**reuses** the Donor—nominal axis) |
+| Donor occupancy | Is B occupied at the same program time? | **Registered** lag by default (`apply_donor_registration`); nominal `b_mapped` only under `--no-apply-donor-registration`. Registration correlates A/B dB envelopes on the **shoulders** (gap core excluded); see [gap-scan.md](../gap-scan.md) § Donor registration |
 
 **Cells (`GapEquivalenceClass`, emitted on the scan report + `--gap-fingerprints`):**
 
 - **`repairable_dropout`** — A died ∧ B occupied → **keep**. *Not a skip cell*: the gap proceeds into the
   seam/donor cells above (Bracket-patch / Silence-splice / Program-quiet / …) exactly as it does today.
-- **`shared_silence`** — B silent at nominal → **drop**. This is the **plan-time detection of the
-  Program-quiet cell** — same disposition, same Donor—nominal read — surfaced *before decode* as
+- **`shared_silence`** — B silent over the donor window → **drop**. This is the **plan-time detection of the
+  Program-quiet cell** — same disposition, same donor-occupancy read — surfaced *before decode* as
   `GapFillSkipReason::AlreadyMatchesReference` rather than *after characterize* as
   `GapPatchSkipReason::ProgramQuiet`. Both "A dropped out but B is also dead" and "quiet in both" land here.
 - **`ambient_quiet`** — B occupied but A is only room tone (not a dropout) → **drop**. A **new cell** with no
   seam/donor counterpart: the scan false-positived an intentional quiet passage as a gap, so there is nothing
   to repair even though B has content. Decided on A's own character, not B's donor state.
-- **`not_evaluated`** — the gate is off or a signal is missing → **keep** (no decision made).
+- **`not_evaluated`** — the gate is off, a signal is missing, or (under Apply) donor registration is
+  unreliable → **keep** (no decision made).
 
 Only `shared_silence` and `ambient_quiet` drop (`GapEquivalenceClass::drops()`), and the drop is applied at
 plan time **only** when `--skip-equivalent-gaps` is set, at **lowest precedence** — `NotFillable`, coverage,
