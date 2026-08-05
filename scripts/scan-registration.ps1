@@ -9,6 +9,7 @@
 # (`composition.rs` `is_scan_only_run`), which stops at the scan report. That is the whole point —
 # donor registration is computed during the scan from block levels alone, so the per-bracket anchor
 # oracle (the dominant cost of a fingerprint dump) is pure waste for registration questions.
+# For Item 1 fill_level calibration (write-mode JSON) use `measure-fill-level.ps1` instead.
 #
 # Usage:
 #   ./scripts/scan-registration.ps1 -Manifest pairs.csv

@@ -1705,6 +1705,12 @@ calibration; a veto's false positive is an unrepaired hole, which is worse than 
 measured. Next step is the corpus sweep of `peak_delta_db` over patched gaps, against which a
 threshold can be argued rather than asserted.
 
+**Sweep helper:** `scripts/measure-fill-level.ps1 -Manifest pairs.csv` — same pair manifest as
+`scan-registration.ps1` / `measure-gap-fingerprints.ps1`. Write-mode repair with throwaway `--wav`
+(deleted unless `-KeepWav`), `--format json` to `<label>.json`, stdout/stderr split so the report
+stays parseable, and `fill-level-rollup.csv` sorted by `peak_delta_db` descending. `-RollupOnly`
+rebuilds the CSV from existing reports. Preview / scan-only cannot produce this field.
+
 **New investigation, opened 2026-08-04 (§6.10.12) — make the donor test conditional**
 
 - **Ask "is B non-silent *where A is silent*?" instead of "is B non-silent?"** The two halves of the
