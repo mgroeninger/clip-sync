@@ -743,6 +743,13 @@ other `ambient_quiet`, 34/24, sits at a nearly identical −33.3 dB below floor 
 **−0.1 dB**: genuinely quiet on both sides. The two signals disagree on exactly one gap in the set,
 and the delta separates the classes cleanly where the below-noise margin does not:
 
+> **SUPERSEDED 2026-08-04 — this table does not generalize.** Over 39 pairs the two populations
+> overlap by 58 dB (dropouts from **−0.51**, non-dropouts to **+57.59**) and no threshold separates
+> them. The clean air below is a property of a 20-gap boundary-selected sample. See §6.10.5, and
+> §6.10.7 for the ear check that refutes the 33/17 reading. The paragraph that follows — "the delta
+> separates the classes cleanly where the below-noise margin does not" — is **false corpus-wide**;
+> what survives is the delta's *negative* direction (§6.10.9).
+
 | class | `interior_delta_db` |
 |---|---|
 | `repairable_dropout` (8) | +49.7 … +75.8 |
@@ -866,13 +873,382 @@ margin **flagged** as a dropout. One threshold, two opposite errors, on the same
 `interior_delta_db` separates both correctly (33/17 **+35.7**, 14/13 **+0.09**) without knowing
 anything about floors or codecs. See §7.4 item 4.
 
+**Qualified 2026-08-04.** The 14/13 half stands and is the durable part: delta ≈ 0 on a gap the
+margin labelled a dropout is a reliable "no hole here", and §6.10.9 finds 17 such gaps corpus-wide.
+The 33/17 half does **not**: the ear check found the gap inaudible and the patch indistinguishable
+(§6.10.7), so the delta's high reading there was not a rescue the margin missed. "Separates both
+correctly" should be read as *"is correct in the negative direction"* — see §6.10.5.
+
 #### 6.8.6 Still open
+
+**ANSWERED 2026-08-04 — see §6.10.** 39 pairs, 829 gaps: `Apply` moves 2.05 % and touches none of the
+236 rail-level dropouts (supports item 3); §6.8.3's separation does not survive (refutes item 4 as a
+classifier). The paragraph below stands as the statement of what was open.
 
 Unchanged by this run: **the corpus-wide rate**. These are the same 20 boundary-selected gaps —
 12 nonzero lags, 1 abstain. Nothing here estimates behaviour on unselected material, and both
 §6.8.2's "no flips" and §6.8.3's clean separation are claims about this sample. The cost of asking
 the wider question has, however, collapsed: any envelope-bearing corpus answers both by `--replay`,
 with no listen run and no re-dump.
+
+### 6.9 The rate question is cheaper than §6.8.6 says (2026-08-04)
+
+#### 6.9.1 It does not need a fingerprint corpus at all
+
+§6.8.6 and §7.4 item 3 both scope the answer to "any envelope-bearing corpus … by `--replay`". That
+means a **fingerprint** corpus — the expensive artifact. It is over-scoped.
+
+Registration is computed at **scan** time, not during characterization. `scan_gaps.rs:245-261` builds
+`GapEquivalenceParams` with `donor_registration: Some(DonorRegistrationParams::default())`
+unconditionally, and `output.rs:740-796` serializes the resulting `gap_equivalence: Vec<…>` — verdict,
+`donor_registration`, `envelopes`, `interior_delta_db` — on `GapScanJson` for **every** gap of a plain
+`--format json` run. No decode, no per-bracket anchor oracle (~4.3–5.0 s/bracket × ~300 brackets/pair,
+see `anchor-search-perf-baseline`), ~1 KB/gap of envelope.
+
+So the rate question is answerable by a **scan-only run** — none of `--wav` / `--mux` /
+`--repair-preview` / `--gap-fingerprints` set, so `PendingAfterScan::None`
+(`composition.rs:352`). `scripts/scan-registration.ps1` drives this from the same manifest as
+`measure-gap-fingerprints.ps1`, writing one JSON per pair to `gap-files/` with progress on stderr.
+
+Corollary for anyone re-reading §6.6: the three read-offs (lag rate, would-flip rate, abstain rate) do
+not require the dump either. They only ever needed the verdict.
+
+#### 6.9.2 …but `--replay` cannot read that JSON yet
+
+`equivalence_calibration.rs::collect_corpora` (`:717-746`) accepts only `corpus.json`, or a directory
+containing one, and `replay_gap` reads `fp.scan_equivalence` off a loaded `GapCorpus`. The scan JSON
+carries the same six fields `replay_gap` needs (`:876-951`) in a different envelope.
+
+So today the cheap route answers items 1 and 3 by hand-parsing, **not** by the tool §7.4 item 3 names.
+Teaching `--replay` the `GapScanJson` shape is a reader change with no measurement in it — the
+`Apply` decision would then come from the production classifier rather than from a script. That is the
+work item; it is small, and it is a prerequisite for quoting item 3's flip count as a *production*
+number rather than a reconstructed one.
+
+#### 6.9.3 `interior_delta_db` is written and read by nothing
+
+§6.8.5a and §7.4 item 4 both reason from `interior_delta_db` as if it were available evidence. It is
+available to a *reader of a dump*. In the code it is write-only: `measure.rs` records it, no decision
+path consumes it, and §7.4 item 4 is the proposal to give it a first reader. Stated here because
+"the delta separates the classes" is easy to misread as "the delta is doing work".
+
+#### 6.9.4 First unselected-material data — one pair
+
+The first pair scanned with `scan-registration.ps1` (corpus index 1; raw JSON in
+`gap-files/2026-08-04-registration-rate/`, gitignored per `licensed-media-names-never-recorded`).
+17 gaps, 17 verdicts, 16 registered with envelopes and `interior_delta_db`; gap 16 is
+`not_evaluated` / `missing_signal`.
+
+| quantity | this pair | the 20-gap set (§6.8) |
+|---|---|---|
+| nonzero `lag_blocks` | **16 / 16** (+1×9, +2×5, +4×1, −1×1) | 12 / 20 |
+| `peak_r < 0.70` (abstain) | **2 / 16** (0.656, 0.350) | 1 / 20 |
+| `interior_delta_db`, dropouts | +45.5 … +76.5 | +35.7 (33/17) |
+| `interior_delta_db`, non-dropouts | −0.64 … +3.20 | +0.09 (14/13) |
+
+Read carefully, because one pair is not a rate:
+
+- ~~**The separation holds off-sample.**~~ ~~42 dB of clear air between the two populations on
+  material nobody selected. This is the first evidence for §7.4 item 4 that is not from the boundary
+  set.~~ **RETRACTED 2026-08-04.** One pair was not enough either: over 39 pairs the populations
+  overlap by 58 dB (§6.10.5). The 42 dB read on this pair was luck of the draw, and it is exactly the
+  error this bullet's own preamble warned about — "one pair is not a rate" applies to the separation
+  as much as to the lag count.
+- **The abstain rate is 2/16, not 1/20.** Still small, still a cost; the point is that §6.7.5's
+  "1/20" is a boundary-set number and the wider figure is not yet known.
+- **16/16 nonzero lag is not 16 independent registration failures.** §2.4 already makes this point
+  about pair 25 — nine gaps, one systematic problem. Nine of these sixteen sit at exactly +1 bin.
+  **The statistic that separates systematic offset from per-gap error is the per-pair modal lag and
+  the spread about it, not the nonzero count**, and §6.6 item 1 asks for the flat count. Report both
+  from the full scan.
+
+#### 6.9.5 New: clipped, single-shoulder registrations
+
+Gap 0 of this pair registered on `bins: 20` against a 99-bin A slice, with `core_bins: [0, 79]` and
+`b_nominal_bin: 0` — the context window is clipped at the start of the media, so essentially one
+shoulder survived. `MIN_REGISTRATION_BINS` is 8, so this registers and reports a `peak_r` like any
+other gap.
+
+Nothing in this file bounds how far `peak_r` can be trusted on a fifth of the intended window, and a
+single-shoulder correlation cannot distinguish a genuine lag from a lag that only fits the material
+on the side that survived. **Before `Apply` ships, the full scan should report the `bins` distribution
+and the abstain rate conditioned on it.** If clipped registrations cluster near the `min_envelope_r`
+boundary, the answer is a bins floor rather than a lower `r`.
+
+**Answered in §6.10.3 — and the framing above was wrong about the cause.** Clipping is not a
+start-of-media special case: `bins < 40` occurs on **31 gaps and is head-or-tail in 31/31**. The
+condition to test is "first or last gap", not "clipped window".
+
+### 6.10 The 39-pair scan — §6.8.6's rate question, answered (2026-08-04)
+
+The scan-only route of §6.9.1, run to completion over the corpus: **39 pairs, 829 gap verdicts, 782
+registered.** Replay per §6.8.5's `replay_gap` logic (reconstructed in a script, not the tool — §6.9.2
+still stands). Pairs are named by corpus index only and the raw JSON is gitignored and **disposable**:
+everything load-bearing is transcribed here, so the corpus can be deleted without losing the argument.
+Nothing below requires re-reading it.
+
+#### 6.10.1 Coverage
+
+| class | n |
+|---|---|
+| `shared_silence` | 448 |
+| `repairable_dropout` | 254 |
+| `ambient_quiet` | 80 |
+| `not_evaluated` | 47 |
+
+All 47 unevaluated are `missing_signal`, and **all 47 are a pair's first (27) or last (20) gap** —
+context windows that run off the end of scanned material. Zero occur mid-media. Every one of the
+remaining 782 replayed successfully, so the flip counts below are complete, not sampled.
+
+#### 6.10.2 Lag: the flat rate is misleading, the modal decomposition is not
+
+**530 / 782 = 67.8 %** of registrations sit at a nonzero lag — far above the 20-gap set's 12/20, and
+on unselected material. But §6.9.4's third bullet was right to ask for the decomposition:
+
+- **23 of 39 pairs have a modal lag ≠ 0.** The offset is a property of the *pair* — a master-to-master
+  timing difference — not a per-gap measurement failure.
+- **Residual scatter about each pair's own mode is 102 / 782 = 13.0 %.**
+
+Pair 25 is the archetype §2.4 described: 48 gaps, every one at +3 or +4 blocks (mean ≈ +371 ms),
+matching §2.5's measured +332 / +410 / +347 ms. Counting those as 48 failures would be counting one
+problem 48 times.
+
+**This is the strongest support in the file for item 3.** Two thirds of all gaps are measured at the
+wrong place, and the misregistration is systematic per pair rather than noise.
+
+#### 6.10.3 Abstain rate, and §6.9.5 resolved
+
+**34 / 782 = 4.3 %** fall below `min_envelope_r` 0.70 (`peak_r` min 0.200, p05 0.733, median 0.978).
+By class: 29 `repairable_dropout`, 5 `shared_silence`. Abstain ⇒ keep ⇒ repair path, so these cost a
+patch attempt, never a hole.
+
+The `bins` distribution is bimodal with nothing between: **751 at 40, 31 at 20.** Conditioned:
+
+| window | n | abstain | median `peak_r` |
+|---|---|---|---|
+| 40 (full) | 751 | 31 (4.1 %) | 0.976 |
+| 20 (clipped) | 31 | 3 (9.7 %) | 0.995 |
+
+Clipped registrations abstain at roughly twice the rate but their median `peak_r` is *higher*, so they
+are bimodal rather than uniformly degraded — the fits are either very good or fail outright, which is
+what a single surviving shoulder predicts. **And all 31 are head (12) or tail (19) gaps, none
+mid-media**, which makes §6.9.5's proposed "bins floor" equivalent to a head/tail exclusion. Prefer
+the latter: it is the actual condition, and it is checkable without reading the registration.
+
+#### 6.10.4 What `Apply` would change: 2.05 %, and only 3 gaps that render
+
+**16 flips / 782 = 2.05 %.** Drop set 528 → 534.
+
+| direction | n | class | character |
+|---|---|---|---|
+| keep → drop | 11 | all `repairable_dropout` | all `\|interior_delta_db\| < 1` |
+| drop → keep | 5 | all `shared_silence` | **all 5 are abstentions** |
+
+The five drop→keep are `Apply` declining to decide, not `Apply` disagreeing. They cost a patch attempt.
+
+The keep→drop eleven are the ones that matter, and they are far narrower than "11 dropouts stop being
+repaired". Nested:
+
+| | n |
+|---|---|
+| `repairable_dropout` | 254 |
+| …with `a_interior_db` at the digital-zero rail (≤ −100 dB) | **236** |
+| …not at the rail | 18 |
+| …of those, `interior_delta_db < 5` (A and B carry the same content) | 17 |
+| …of those, flipped by `Apply` | **11** |
+
+**`Apply` touches none of the 236 genuine holes.** Every gap it would stop repairing is one where A is
+40–80 dB above the rail and B reads within 1 dB of A at the registered lag — i.e. both masters carry
+the same quiet material and there is nothing to fill.
+
+Joining against the 2026-07-31 fingerprint corpus (829/829 keys matched, class agreed 802/802;
+corpus-wide patch rate 372/802 = **46.4 %**, being 291 `tier: patch` plus 81 `dual_fit_rescue`):
+**only 3 of the 16 flips reach a rendered patch at all** — 12/8, 14/20 and 38/4. The other 8 keep→drop
+gaps are already declined downstream by the seam gate, and the 5 abstentions render nothing by
+construction. So the entire production effect of promoting `Apply`, over 39 pairs, is **three patches
+that stop being applied**.
+
+Two of the three were examined bin by bin and are not dropouts. **12/8**: three ~−99 dB bins
+*alternating* with −34.8 / −52.4 / −36.7 dB program — a stutter merged into one span by
+`silence_hold_ms: 500` — with B reproducing the contour at core r = 0.9987 and delta −0.095.
+**14/20**: quietest bin −85.8 dB, 16 dB above its pair's rail; B's quietest −86.0, core r = 0.932,
+delta +0.016. Core bins are excluded from the registration fit, so those core correlations are
+independent of the lag that produced them. **This remains an envelope argument; none of the three has
+been heard** (§6.10.7).
+
+#### 6.10.5 `interior_delta_db`: §6.8.3's separation does **not** survive off-sample — REFUTED
+
+This is the finding that changes a recommendation. §6.8.3 tabulated clean separation on 20 gaps
+(dropouts +49.7…+75.8, non-dropouts −4.4…+0.4) and §6.9.4 reported ~42 dB of clear air on one
+unselected pair. Over 39 pairs the two populations **overlap by 58 dB**:
+
+| class | n | min | median | max |
+|---|---|---|---|---|
+| `repairable_dropout` | 254 | **−0.51** | +62.62 | +78.32 |
+| `shared_silence` | 448 | −7.13 | +0.00 | **+57.59** |
+| `ambient_quiet` | 80 | −4.55 | +0.00 | +35.66 |
+
+At a 5 dB threshold: 17 dropouts fall below it and 9 non-dropouts sit above it. There is no threshold
+that separates them — 30 dB still leaves 18 below and 4 above. The clean tables in §6.8.3 and §6.9.4
+were a property of samples too small to contain the overlap region, and both should now be read as
+superseded.
+
+#### 6.10.6 The rescue candidates are head-trim differences and room tone
+
+All 9 non-dropouts with `interior_delta_db ≥ 5` — the set item 4 would reclassify as
+`repairable_dropout`:
+
+| pair/gap | delta | `a_interior_db` | `b_interior_db` | position |
+|---|---|---|---|---|
+| 26/0 | +57.59 | −101.02 | −43.43 | head |
+| 3/0 | +44.90 | −101.52 | −56.62 | head |
+| 33/17 | +35.66 | −101.46 | −65.80 | **interior** |
+| 6/0 | +35.10 | −101.24 | −66.14 | head |
+| 13/0 | +29.99 | −95.90 | −65.91 | head |
+| 21/0 | +29.92 | −94.12 | −64.21 | head |
+| 33/2 | +24.26 | −87.41 | −63.15 | **interior** |
+| 32/0 | +22.83 | −100.86 | −78.03 | head |
+| 34/0 | +14.27 | −101.47 | −87.20 | head |
+
+**Seven of nine are the pair's first gap** (`a_span_secs` starting at 0.000) — head-trim differences
+between masters, where one master begins with digital silence and the other with room tone. Those are
+not defects and repairing them is not a repair.
+
+**And every one of the nine has `b_interior_db` ≤ −43 dB.** Not one has a donor carrying anything near
+program level. Whatever these gaps are, the material the rescue would import is inaudible.
+
+#### 6.10.7 33/17 heard: the one rendering candidate is inaudible — item 4's supporting set is empty
+
+33/17 is the only delta candidate that reaches a rendered patch, and the gate-off listen corpus
+already contains its full triple (`_a_surround`, `_b_surround`, `_a_patched`) — the counterfactual
+audio for exactly this recommendation, since production drops the gap and the WAV shows what item 4
+would ship instead.
+
+**Listened 2026-08-04: no dropout audible in A, and the patch is indistinguishable from both A and B.**
+
+**This conflicts with §3.1a and the conflict is left open.** The 2026-08-03 ear check on the *same
+WAV* reported *"on close listening the patch on 33/17 is audibly wrong"*, alongside a measurement of
+A in gap −100.6 dB → patched −54.2 dB (**+46.3 dB**, the largest in that table) with the splice
+rewriting −0.01…+0.98 s of surrounding A. The two reports split cleanly on one half: both agree there
+is **no dropout in A**. They disagree only on whether the *patch* is audible. The +46.3 dB is
+objective and not in dispute; what is in dispute is whether −54 dB material in a −69 dB bed is
+noticeable, which is marginal and playback-level dependent. Recorded rather than resolved — it bears
+on §7.4 item 1's motivation, though not on item 1's other evidence (12/7 rewrites **3.43 s** of
+surrounding A, which is a correctness problem regardless of audibility).
+
+The measurement was not wrong — `a_interior_db` −101.46 is genuine digital silence in A's interior.
+What the ear adds is that the thing A is missing is B's −65.80 dB room tone, inside a passage already
+classed `ambient_quiet`. A +35.66 dB delta between digital zero and *very faint* is perceptually
+nothing.
+
+**This is the flaw in the field as a positive test: `interior_delta_db` is a ratio with no absolute
+anchor.** The same +35.66 dB between −60 and −24 dB would be a glaring hole. A bare delta threshold
+cannot tell those apart, and §6.10.6 shows the corpus contains only the inaudible kind.
+
+So item 4's supporting set is now empty: 7 head-trim artifacts, 1 interior case that never renders
+(33/2), and 1 interior case refuted by ear. **The recommendation is dead *as a classifier*.** See
+§6.10.7a, which rescues a weaker form of it.
+
+#### 6.10.7a Forward-anyway: the gate is a cost filter, not a correctness gate
+
+Raised 2026-08-04, and it survives scrutiny: the classification does not have to be right if it errs
+toward *forwarding*, because the repair path has finer granularity than the gate and can decline.
+`skip_equivalent_gaps` shipped to save scan work, not to protect audio, so its errors should be
+biased toward the patch path. §6.10.6's nine candidates would then be a cheap **recall widener**
+rather than a classification claim, and the ratio problem of §6.10.7 stops mattering — a false
+positive costs a patch attempt, not a hole.
+
+The corpus supports the premise. The repair path declines **511 of 802 gaps (64 %)** and
+independently declined **8 of the 11** keep→drop flips (§6.10.4). Cost is negligible: 9 candidates
+over 39 pairs, 7 of them head-of-media gaps that produce **zero brackets**.
+
+**One measured counterexample, and it is the whole risk.** 33/17 is the only delta candidate that
+reaches the repair path with brackets, and the repair path **accepted** it (`tier: patch`). The
+empirical rejection rate for delta candidates is therefore **0 of 1**, not 8 of 11 — and the patch it
+produced is §3.1a's +46.3 dB one. The reason is named in §7.4 item 1: Pearson is scale-invariant by
+construction and there is **no level or loudness term anywhere in the fill path** (`patch_region.rs`,
+`gap_fill_fit.rs`). The downstream can arbitrate on correlation and residual; it cannot see "this
+fill is 46 dB louder than what it replaced." The granularity the argument relies on does not exist
+yet — item 1 *is* that granularity.
+
+So the forward-anyway framing is sound and item 4 becomes: **use `interior_delta_db` as a recall
+widener, strictly after item 1 ships.** Two things stay true regardless — its measured benefit on
+this corpus is **zero** (all nine candidates have `b_interior_db ≤ −43 dB`, so even a successful fill
+imports inaudible material, and seven are head-trim differences between masters), and it should be
+paired with the head/tail exclusion of §6.10.3, which removes seven of the nine for free.
+
+#### 6.10.8 …and the anchor that would fix it is not available
+
+The obvious repair is to add an absolute floor on `b_interior_db` — "B has real program here", not
+merely "B is louder than A". **That route is closed, and this file already closed it.**
+
+- §7.2 measured exactly this and dropped it: deriving an achievable floor from the gap's own ±2 s
+  context yields **0.8 dB of separation**, because shoulders are program material, not floor. It is in
+  the Dropped list as *"Derive the achievable floor from the gap's local context"*.
+- The scan retains no whole-file level statistic to anchor against. `scan_gaps.rs` streams and keeps
+  only silence spans and `scanned_end_secs`; `GapScanJson` carries no global level, loudness, or
+  program-reference field. There is nothing to read.
+- An absolute dBFS number is not portable across masters anyway — −65 dB means different things in a
+  quiet film and a loud one, so the anchor would have to be *relative to that title's own program
+  level*.
+
+The only way to get one is to **compute it dynamically from a much larger sample of the video** — an
+integrated program level over the whole scan envelope, a new scan-side statistic with its own cost,
+serialization and calibration. That is a project, not a threshold tweak, and there is no evidence here
+that it would pay: §6.10.6's nine candidates would need it to reject all nine, which is the same as
+not having the rule.
+
+**So no anchored variant of item 4 is on the table.** Anyone re-proposing one is proposing the
+program-level statistic first.
+
+#### 6.10.9 What survives: the delta as a *negative* test
+
+The field is not useless — its useful direction is the opposite of item 4's. **`interior_delta_db ≈ 0`
+on a gap labelled `repairable_dropout` is a reliable "there is no hole here" signal**, and it needs no
+anchor at all, because it compares A against B rather than against an absolute level. That
+scale-freedom is the property §7.2 praised; item 4 spent it by using the field as a level test.
+
+All 17 such gaps (delta < 5 dB on a labelled dropout), with A far above the rail and B within a
+decibel of it:
+
+| | |
+|---|---|
+| n | 17 of 254 dropouts |
+| `a_interior_db` range | −39.46 … −82.16 (**none at the rail**) |
+| `\|delta\|` | ≤ 0.84 dB |
+| already flipped by `Apply` (item 3) | **11** |
+| residual, caught by neither | **6** — 10/12, 14/8, 14/14, 14/17, 14/24, 16/23 |
+
+Item 3 does most of this work already, via a different mechanism (the donor census at the registered
+lag). The 6 residual gaps are the only thing a negative-delta test would add, and whether they render
+is unmeasured. **Recorded as an observation, not proposed as a change** — it is the same corpus and
+would need the same ear check the flips still need.
+
+#### 6.10.10 `skip_reason` is a hardcoded placeholder, not a corpus defect
+
+Every skip in every corpus on disk reads `correlation_below_threshold` — 511 in the large corpus, and
+also 19 in the 2026-08-04 runs from the current binary, so this is not a fixed bug and **re-running
+the corpus would return the same single value**. The source says so directly:
+`measure.rs:2465-2474` constructs `GapPatchSkipReason::CorrelationBelowThreshold` with
+`pre/post/min_correlation` all `0.0` on *every* skip, under a comment stating *"A placeholder
+strategy/reason carries only the `patch`/`skip` distinction the reader's `tier` axis needs."*
+`project.rs:350-358` can serialize all seven variants; the fingerprint measurement path constructs
+one. The zeroed correlations are the tell.
+
+This is a write-only-placeholder problem in the same family as §7.4 item 2, fixable by threading the
+real reason through `compute_region_measurements`, and independent of any media.
+
+#### 6.10.11 Still open after this scan
+
+- **Audio for 12/8, 14/20 and 38/4.** The three gaps `Apply` would stop patching have no WAV in any
+  corpus (checked: 20 gaps across 17 pairs have audio, none of these three). §6.10.4's conclusion that
+  they are stutters and quiet passages rather than holes rests on envelopes and core correlations,
+  never on a listener. A three-row `--gap-listen` run closes it.
+- **27 head/tail gaps carry no `outcome`** in the fingerprint corpus (summary tier), so their
+  production disposition is unknown. They are disproportionately §6.10.6's candidates.
+- **One corpus, one codec family.** Everything above is AAC-family material from a single collection.
+- `--replay` still cannot read `GapScanJson` (§6.9.2), so the 16 flips are a reconstruction, not a
+  production number.
 
 ---
 
@@ -1058,8 +1434,12 @@ this file — is lifted out of §6.7.5's prose and given a row.
 |---|---|---|---|
 | 1 | **Fill-level sanity check against the A shoulders.** RMS in dB over the assembled fill vs the border windows the seam gate already extracted. | 33/17's fill sits ~8 dB above the −69 dB bed it replaces (§3.3 point 2); §3.1a's eight patches raise level by 9–46 dB. Pearson is scale-invariant by construction, and there is **no level or loudness term anywhere in the fill path** (`patch_region.rs`, `gap_fill_fit.rs`), so no existing gate can see this. | Low. O(n) over `gap_frames + 2 × 250 ms` on buffers already in memory — no search, no second Pearson pass. Must compare against the **shoulders**, not the gap interior: on a true dropout the interior is silent and an interior comparison would flag every correct repair. |
 | 2 | **Name the residual abstention, and surface it in production output.** Not "distinguish abstained from clean" — `floor_source` already does that in the dump (§7.3). Record *which* abstention fired (`beyond_lag_reach` vs no energetic window vs non-finite probe), and carry the distinction into the repair path's own reporting. | 33/17 and 19 of the 21 in §3.2 read `informative: false`; a reader outside the fingerprint schema still cannot tell an abstention from a clean bill of health. | Low — a reporting change, no decision moves. Does not touch M5's abstention, which stays. |
-| 3 | **Promote `DonorRegistrationMode::Apply`** — measure the donor window at the registered lag and abstain below `min_envelope_r` (§6.4, §6.6). | §6.2 item 1, the file's primary finding: the donor fraction is measured 80–410 ms off (§2.5). `Observe` has shipped and is default; `Apply` is enabled nowhere. | Medium, and **gated on one thing only**: §6.8.6's rate question over unselected material, now answerable by `--replay` over any envelope-bearing corpus with no listen run and no re-dump. Everything else it needed is discharged — negative controls hold out-of-set (§6.7.1), production reproduces the offline lags within one bin on all 20 (§6.7.2–3), abstain rate 1/20. |
-| 4 | **`interior_delta_db` in the dropout test.** A's interior at digital zero *and* a registered donor interior well above it. | §6.2 item 3. The fixed 35 dB margin is now shown to misfire in **both** directions on this set: it **misses** 33/17 by 0.6 dB (a real digital-zero hole, §7.2 — the test was arithmetically unreachable there) and it **falsely flags** 14/13 (quiet program material present in both masters, §6.8.5a). The delta reads +35.7 and +0.09 respectively — correct on both — separates the classes on all 20 gaps, and corroborates independently (§6.8.3a). | **Highest — sequence-critical.** It moves a gap *out* of the drop set, so per §6.8.4 it hands 33/17 to the patch path for real. **Do not ship before 1**, or it converts a gate-off-only defect into a production one. Formerly "before 1 and 3"; with the old item 3 downgraded, item 1 is the only shipped protection standing between this and a rendered defect — which makes 1 a hard prerequisite rather than one of two. Also needs the same §6.8.6 rate answer as item 3. |
+**Revised again 2026-08-04** after the 39-pair scan (§6.10): item 3's rate question is **answered and
+the answer supports it**; item 4 is demoted from a classifier to a recall widener (§6.10.7a) and
+reordered below 3.
+
+| 3 | **Promote `DonorRegistrationMode::Apply`** — measure the donor window at the registered lag and abstain below `min_envelope_r` (§6.4, §6.6). | §6.2 item 1, the file's primary finding: the donor fraction is measured 80–410 ms off (§2.5). `Observe` has shipped and is default; `Apply` is enabled nowhere. | **Low–medium; the blocking question is answered.** §6.10 ran the scan-only route over 39 pairs / 829 gaps / 782 registrations and every number lands in favour: **67.8 % nonzero lag, systematic per pair** (23/39 pairs have a modal lag ≠ 0; residual scatter about own mode only 13.0 %), abstain **4.3 %**, and `Apply` moves **16 gaps = 2.05 %**. It touches **none of the 236 dropouts at the digital-zero rail** — every keep→drop flip is a gap where A sits 40–80 dB above the rail and B reads within 1 dB of A (§6.10.4). Net production effect over 39 pairs: **3 patches stop being applied**. Remaining risk is narrow: those 3 (12/8, 14/20, 38/4) have **never been heard** — the envelope case that they are stutters and quiet passages is strong but inferential — and the 5 drop→keep flips are abstentions, which cost a patch attempt, never a hole. Pair with the head/tail exclusion of §6.10.3. `--replay` still cannot read `GapScanJson` (§6.9.2), so 2.05 % is a reconstruction, not a production number. |
+| 4 | **`interior_delta_db` as a recall widener — NOT as a classifier.** Forward gaps with A's interior at digital zero and a registered donor interior well above it to the repair path, and let the repair path arbitrate (§6.10.7a). **Demoted 2026-08-04**; the original form ("put the delta in the dropout test", i.e. trust it to classify) is **refuted** — see below. | §6.2 item 3, but the evidence that motivated it did not survive the corpus. §6.8.3's clean separation was a small-sample artifact: over 39 pairs the classes **overlap by 58 dB** (dropouts from −0.51, non-dropouts to +57.59) and no threshold separates them (§6.10.5). Of the 9 gaps it would rescue, **7 are head-of-media trim differences** between masters and **all 9 have `b_interior_db` ≤ −43 dB** (§6.10.6). The one that renders, 33/17, was **listened to and is inaudible** — patch indistinguishable from A and B (§6.10.7, which also records a conflict with §3.1a). The field is a ratio with no absolute anchor, and §6.10.8 shows no anchor is obtainable: §7.2 already dropped local-context floors at 0.8 dB separation, and the scan retains no whole-file level statistic to anchor against. What survives *positively* is the **opposite** direction — delta ≈ 0 on a labelled dropout is a reliable "no hole here" (§6.10.9) — and item 3 already catches 11 of those 17. | **Low risk, but zero measured benefit.** As a recall widener the failure mode is a wasted patch attempt, and 9 gaps over 39 pairs is negligible. **Still do not ship before 1**, and the reason is now measured rather than assumed: 33/17 is the only candidate that reached the repair path with brackets and the repair path **accepted** it (0 of 1 rejected, not 8 of 11) — because there is no level term anywhere in the fill path. Item 1 *is* the granularity this recommendation delegates to. Pair with §6.10.3's head/tail exclusion, which removes 7 of the 9 for free. Benefit on this corpus is **zero**: every candidate's donor is ≤ −43 dB, so even a successful fill imports inaudible material. |
 
 **Downgraded to an investigation — no longer a recommendation**
 
@@ -1084,3 +1464,15 @@ Dropped, and why, so they are not re-proposed:
   nominal anchor is what makes headroom meaningful (§7.3).
 - **Derive the achievable floor from the gap's local context** — 0.8 dB of separation, and it needs a
   new threshold (§7.2).
+- **Give `interior_delta_db` an absolute floor on `b_interior_db`** ("B has real program here", not
+  merely "B is louder than A") — the natural fix for §6.10.7's ratio problem, and it is not
+  obtainable. Local context yields 0.8 dB of separation (§7.2, above); the scan retains no whole-file
+  level statistic to anchor against (`scan_gaps.rs` keeps only silence spans and `scanned_end_secs`;
+  `GapScanJson` carries no global level or loudness field); and a bare dBFS number is not portable
+  across masters anyway. The only route is an integrated program level computed dynamically from a
+  much larger sample of the video — a new scan-side statistic with its own cost, serialization and
+  calibration, and §6.10.6 gives no evidence it would pay, since it would have to reject all nine
+  candidates, which is the same as not having the rule (§6.10.8). Re-proposing the anchored variant
+  means proposing the program-level statistic first.
+- **`interior_delta_db` as a dropout *classifier*** — §6.8.3's separation is a 20-gap artifact; the
+  populations overlap by 58 dB over 39 pairs (§6.10.5). The recall-widener form survives as item 4.
