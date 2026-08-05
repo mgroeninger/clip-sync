@@ -83,22 +83,33 @@ pub struct DonorRegistrationParams {
 
 /// What a computed [`DonorRegistration`] is allowed to do.
 ///
-/// The two are deliberately separate because the open question is a **rate**, not a mechanism: the
-/// registration is validated on twelve gaps that were listened to, and nobody knows yet how often it
-/// abstains, or how often it moves the window far enough to flip a class, across the whole corpus.
-/// [`Observe`](Self::Observe) answers that from a dump without putting a single verdict at risk;
-/// [`Apply`](Self::Apply) is the shipped behaviour once the rate is known.
+/// The two are separate because the open question was a **rate**, not a mechanism: the registration
+/// was validated on twelve gaps that were listened to, and nobody could say how often it abstained,
+/// or how often it moved the window far enough to flip a class, across the whole corpus.
+/// [`Observe`](Self::Observe) answered that from a dump without putting a single verdict at risk.
+///
+/// **The rate is now measured and [`Apply`](Self::Apply) is the production default**
+/// (`RepairConfig::apply_donor_registration`, 2026-08-04): over 39 pairs / 782 registrations it
+/// abstains on 4.3 %, moves 16 gaps (2.05 %), touches none of the 236 dropouts at the digital-zero
+/// rail, and the three patches it stops were all listened to and were all degrading undamaged
+/// material (`docs/dev/TEMP-equivalence-band-gate-off-findings.md` §6.10, §7.4a). `Observe` remains
+/// the enum's `#[default]` — the mode is chosen from config at the one production construction
+/// site, so a caller that asks for registration without saying what for still cannot silently move
+/// a decision — and it is what `--no-apply-donor-registration` selects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DonorRegistrationMode {
     /// Compute the registration and record it on the verdict, then classify at the **nominal** map
     /// exactly as an un-registered gate would. Provenance only — byte-identical verdicts, plus one
-    /// `donor_registration` block per gap. The default, so a caller that asks for registration
-    /// without saying what for cannot silently move a decision.
+    /// `donor_registration` block per gap. The enum's default, so a caller that asks for
+    /// registration without saying what for cannot silently move a decision — but *not* what the
+    /// repair binary runs: production selects `Apply` from config. Chosen by
+    /// `--no-apply-donor-registration`.
     #[default]
     Observe,
     /// Measure the donor window at the registered lag, and **abstain**
-    /// ([`NotEvaluatedReason::DonorRegistrationUnreliable`]) when `peak_r < min_envelope_r`. This is
-    /// the fix; it changes classes by construction.
+    /// ([`NotEvaluatedReason::DonorRegistrationUnreliable`]) when `peak_r < min_envelope_r`. The
+    /// fix, and the shipped production behaviour since 2026-08-04; it changes classes by
+    /// construction.
     Apply,
 }
 
@@ -901,7 +912,10 @@ fn core_bins(
         c >= core_start_secs && c < core_end_secs
     };
     match (a0..a1).find(|&i| in_core(i)) {
-        Some(first) => (first - a0, (a0..a1).rev().find(|&i| in_core(i)).unwrap_or(first) - a0 + 1),
+        Some(first) => (
+            first - a0,
+            (a0..a1).rev().find(|&i| in_core(i)).unwrap_or(first) - a0 + 1,
+        ),
         None => (0, 0),
     }
 }
@@ -1649,8 +1663,8 @@ mod tests {
         let a = timeline(120, 50..56, -110.0, 0);
         let b = timeline(120, 55..61, -110.0, 5);
         let params = DonorRegistrationParams::default();
-        let reg = register_donor_window(&a, 5.0, 5.6, &b, (5.0, 5.6), &params)
-            .expect("registration ran");
+        let reg =
+            register_donor_window(&a, 5.0, 5.6, &b, (5.0, 5.6), &params).expect("registration ran");
         let env = reg.envelopes.clone().expect("envelopes recorded");
 
         let replayed = register_donor_window(

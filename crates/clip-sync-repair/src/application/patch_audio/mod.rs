@@ -138,6 +138,27 @@ fn empty_plan_result(
     }
 }
 
+/// Join the per-slot fill-level measurements onto gap indices, dropping any gap whose splice failed.
+///
+/// A failed splice left A byte-identical across the gap (`splice_into_a`'s contract), so there is
+/// no written fill to report a level for — reporting one would describe a buffer that never reached
+/// the timeline. Slots with no gap attribution are dropped for the same reason the splice loop only
+/// warns about them: nothing can be said about a gap that cannot be named.
+fn fill_level_by_gap(
+    fill_level_by_slot: &[Option<crate::domain::FillLevelCheck>],
+    gap_index_by_slot: &[Option<usize>],
+    not_applied: &[(usize, GapPatchNotAppliedReason)],
+) -> Vec<(usize, crate::domain::FillLevelCheck)> {
+    fill_level_by_slot
+        .iter()
+        .enumerate()
+        .filter_map(|(slot, check)| {
+            Some((gap_index_by_slot.get(slot).copied().flatten()?, (*check)?))
+        })
+        .filter(|(gap_index, _)| !not_applied.iter().any(|(failed, _)| failed == gap_index))
+        .collect()
+}
+
 pub struct PatchAudio<'r, MR: MediaReader> {
     media_reader: &'r MR,
     progress: &'r dyn ProgressReporter,
@@ -456,13 +477,8 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                 patches
                     .iter()
                     .map(|patch| {
-                        let gained: Vec<f32> = patch
-                            .b_samples
-                            .iter()
-                            .map(|&s| (s * patch.gain).clamp(-1.0, 1.0))
-                            .collect();
                         crate::domain::measure_fill_level(
-                            &gained,
+                            &region::gained_fill(patch, channels),
                             &a_pcm.samples,
                             channels,
                             patch.a_start_frame,
@@ -482,11 +498,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             for (index, patch) in patches.iter().enumerate() {
                 self.progress
                     .progress("patch-splice", index as u64 + 1, patch_count);
-                let b_gained: Vec<f32> = patch
-                    .b_samples
-                    .iter()
-                    .map(|&s| (s * patch.gain).clamp(-1.0, 1.0))
-                    .collect();
+                let b_gained = region::gained_fill(patch, channels);
 
                 if let Err(reason) = splice_into_a(
                     &mut a_pcm.samples,
@@ -512,15 +524,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             }
         }
 
-        // A failed splice left A untouched, so there is no written fill to report a level for.
-        let fill_level: Vec<(usize, crate::domain::FillLevelCheck)> = fill_level_by_slot
-            .iter()
-            .enumerate()
-            .filter_map(|(slot, check)| {
-                Some((gap_index_by_slot.get(slot).copied().flatten()?, (*check)?))
-            })
-            .filter(|(gap_index, _)| !not_applied.iter().any(|(failed, _)| failed == gap_index))
-            .collect();
+        let fill_level = fill_level_by_gap(&fill_level_by_slot, &gap_index_by_slot, &not_applied);
 
         let mut summary = PatchSummary::from_outcomes(outcomes_in_report_order(
             &request.report.gaps,
@@ -560,5 +564,77 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             source_audio_bitrate_b_bps,
             pcm_container_skew,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn check(peak_delta_db: f64) -> crate::domain::FillLevelCheck {
+        crate::domain::FillLevelCheck {
+            pre_shoulder_db: Some(-40.0),
+            post_shoulder_db: Some(-40.0),
+            reference_db: -40.0,
+            peak_bin_db: -40.0 + peak_delta_db,
+            peak_delta_db,
+            reference_at_floor: false,
+            peak_bin_index: 0,
+            bins: 5,
+            bin_ms: 100.0,
+        }
+    }
+
+    /// The measurement is taken before the splice loop, so a gap whose splice then failed has a
+    /// level in hand for audio that never reached A. It must not be reported: `NotApplied` means
+    /// A is byte-identical across that gap, and a `fill_level` beside it would be a measurement of
+    /// nothing.
+    #[test]
+    fn a_failed_splice_reports_no_fill_level() {
+        let levels = vec![Some(check(3.0)), Some(check(21.0))];
+        let slots = vec![Some(7), Some(9)];
+        let not_applied = vec![(
+            9,
+            GapPatchNotAppliedReason::DestinationEmptyOrInverted {
+                gap_start_frame: 10,
+                gap_end_frame: 10,
+            },
+        )];
+
+        let joined = fill_level_by_gap(&levels, &slots, &not_applied);
+
+        assert_eq!(joined.len(), 1, "{joined:?}");
+        assert_eq!(
+            joined[0].0, 7,
+            "the spliced gap keeps its level: {joined:?}"
+        );
+    }
+
+    #[test]
+    fn every_spliced_gap_keeps_its_own_level() {
+        let levels = vec![Some(check(3.0)), None, Some(check(21.0))];
+        let slots = vec![Some(7), Some(8), Some(9)];
+
+        let joined = fill_level_by_gap(&levels, &slots, &[]);
+
+        assert_eq!(joined.len(), 2, "the unmeasured slot drops out: {joined:?}");
+        assert_eq!(joined[0].0, 7);
+        assert_eq!(joined[1].0, 9);
+        assert_eq!(joined[1].1.peak_delta_db, 21.0, "levels are not transposed");
+    }
+
+    /// Slot → gap is built after the anchored-retry pass; a slot it cannot attribute is dropped
+    /// rather than guessed at, matching how the splice loop treats the same case.
+    #[test]
+    fn an_unattributed_slot_is_dropped() {
+        let joined = fill_level_by_gap(&[Some(check(3.0))], &[None], &[]);
+        assert!(joined.is_empty(), "{joined:?}");
+    }
+
+    /// `measure_fill_level` off leaves the per-slot vector empty; the join must survive the length
+    /// mismatch against a populated slot table rather than indexing past it.
+    #[test]
+    fn no_measurements_joins_to_nothing() {
+        assert!(fill_level_by_gap(&[], &[Some(7), Some(9)], &[]).is_empty());
     }
 }

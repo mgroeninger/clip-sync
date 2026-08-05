@@ -1705,6 +1705,19 @@ calibration; a veto's false positive is an unrepaired hole, which is worse than 
 measured. Next step is the corpus sweep of `peak_delta_db` over patched gaps, against which a
 threshold can be argued rather than asserted.
 
+**Review hardening, 2026-08-05.** A read-through of both items after they landed turned up three
+ways the recorded number could describe something other than the written audio, all now closed:
+the measurement took the whole fill buffer where the splice writes only the destination span (the
+gain-and-clamp expression existed twice, so the two could drift — both now go through one
+`gained_fill`); a shoulder saturated to a sliver at the head or tail of the media was measured with
+full authority, and is now declined below half its requested width; and a shoulder that is itself a
+dropout floors the reference, which reports the fill's absolute level plus 120 dB — now flagged as
+`reference_at_floor` and held out of the sweep's listen candidates, because sorted by delta those
+rows would otherwise *be* the top of the table. The crossfade remains deliberately unaccounted
+(edge bins are measured as pure fill; the offset is 10 ms against 100 ms bins at the default) and
+that is now written down rather than merely true. Also pinned by tests: `Apply`'s abstain arm
+end-to-end through scan on an unregistrable donor, and that a failed splice reports no `fill_level`.
+
 **Sweep helper:** `scripts/measure-fill-level.ps1 -Manifest pairs.csv` — same pair manifest as
 `scan-registration.ps1` / `measure-gap-fingerprints.ps1`. Write-mode repair with throwaway `--wav`
 (deleted unless `-KeepWav`), `--format json` to `<label>.json`, stdout/stderr split so the report

@@ -53,6 +53,29 @@ pub(super) struct RegionPatch {
     pub(super) a_end_frame: usize,
     pub(super) crossfade_secs: f64,
 }
+
+/// The PCM this patch actually puts into A: gain applied, clamped, and cut to the destination span.
+///
+/// Single source of truth for "what gets written", used by both the splice and the record-only
+/// fill-level measurement (`super::measure_fill_level`). They were two copies of the same
+/// expression, which is how a diagnostic quietly starts describing something other than the audio.
+///
+/// The truncation is the reason this cuts rather than just gains: `splice_into_a` needs
+/// `len >= gap_frames * channels` and writes exactly that many, so any surplus tail is never heard
+/// and must not reach a measurement. Every fill goes through `fit_fill_to_gap_frames` and arrives
+/// exactly the right length today; this keeps that from being load-bearing. A *short* fill is left
+/// short, so the splice can still reject it as `FillShorterThanGap` rather than being handed a
+/// silently padded buffer.
+pub(super) fn gained_fill(patch: &RegionPatch, channels: usize) -> Vec<f32> {
+    let destination = patch.a_end_frame.saturating_sub(patch.a_start_frame) * channels.max(1);
+    patch
+        .b_samples
+        .iter()
+        .take(destination)
+        .map(|&s| (s * patch.gain).clamp(-1.0, 1.0))
+        .collect()
+}
+
 #[derive(Debug, PartialEq)]
 pub(super) enum RegionPatchOutcome {
     Patched {

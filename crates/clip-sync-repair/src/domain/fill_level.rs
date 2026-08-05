@@ -14,6 +14,15 @@
 //!
 //! **Reduction is interleaved**, not a mono downmix: the two differ by 3–8 dB on 5.1 content, and
 //! interleaved is what the scan envelope and the WAV analysis both used.
+//!
+//! **The crossfade is ignored.** `apply_seam_crossfade` writes the fill offset by the crossfade
+//! width and blends that many frames into A at each seam, so the fill's first and last bins are
+//! measured as pure fill while what lands in A is a blend, and the bin grid sits one crossfade
+//! width off A's timeline. At the 10 ms default against 100 ms bins that is under a tenth of one
+//! edge bin; it scales with `--crossfade-ms`, so a run at a large crossfade should not have its
+//! edge bins read as gospel. Excluding the seam frames was considered and rejected: it would make
+//! the statistic depend on splice geometry the caller would then have to thread through, to move a
+//! number that the peak bin is almost never in.
 
 use serde::{Deserialize, Serialize};
 
@@ -27,6 +36,13 @@ pub const DEFAULT_FILL_LEVEL_BIN_MS: f64 = 100.0;
 
 /// How much A on each side of the gap defines "what the neighbourhood sounds like".
 pub const DEFAULT_FILL_LEVEL_SHOULDER_SECS: f64 = 1.0;
+
+/// A shoulder shorter than this fraction of the requested width is declined rather than measured.
+/// Near the head or tail of the media the available room saturates to whatever is left, and a
+/// 20 ms sliver would otherwise carry the same authority as a full second while being far noisier
+/// — the same reasoning that drops the fill's trailing part-bin, applied to the other side of the
+/// comparison. Head-of-media gaps are not hypothetical: 7 of the 9 candidates in §6.10.6 are.
+const MIN_SHOULDER_FRACTION: f64 = 0.5;
 
 /// Skipped at each shoulder's gap-facing edge. The gap edges carry the dropout's own ramp, and a
 /// scan-detected edge is only accurate to a block; measuring right up to it reads the ramp instead
@@ -57,10 +73,12 @@ impl Default for FillLevelParams {
 /// What the fill's loudest bin costs relative to its A neighbourhood. Report-only.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct FillLevelCheck {
-    /// Interleaved RMS of the pre-gap A shoulder, dBFS. `None` when there is no room for one.
+    /// Interleaved RMS of the pre-gap A shoulder, dBFS. `None` when there is not enough room for
+    /// one (see [`MIN_SHOULDER_FRACTION`]).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pre_shoulder_db: Option<f64>,
-    /// Interleaved RMS of the post-gap A shoulder, dBFS. `None` when there is no room for one.
+    /// Interleaved RMS of the post-gap A shoulder, dBFS. `None` when there is not enough room for
+    /// one (see [`MIN_SHOULDER_FRACTION`]).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub post_shoulder_db: Option<f64>,
     /// The **louder** shoulder — the level the fill is judged against. Taking the louder side is
@@ -71,6 +89,12 @@ pub struct FillLevelCheck {
     pub peak_bin_db: f64,
     /// `peak_bin_db - reference_db`. Positive means the fill is louder than the A around it.
     pub peak_delta_db: f64,
+    /// The reference itself bottomed out at [`FillLevelParams::floor_db`] — every shoulder that
+    /// was measurable is digital silence. Usually a **neighbouring dropout** inside the shoulder
+    /// window, not a judgement about the fill: the delta then reports the fill's absolute level
+    /// plus 120 dB and means nothing about substitution magnitude. Calibration must exclude these
+    /// rows or the histogram grows a tail made entirely of artifact.
+    pub reference_at_floor: bool,
     /// Which bin that was, from the start of the fill.
     pub peak_bin_index: usize,
     /// Bins measured (a trailing partial bin under half width is dropped).
@@ -93,8 +117,9 @@ fn rms_db(samples: &[f32], floor_db: f64) -> f64 {
 
 /// Measure the assembled fill against the A shoulders either side of the gap it replaces.
 ///
-/// `fill` is the interleaved PCM **as it will be written** — apply the patch gain before calling,
-/// or the number describes something the listener never hears. `a_samples` is A's interleaved PCM
+/// `fill` is the interleaved PCM **as it will be written** — gain applied and truncated to the
+/// destination span, or the number describes something the listener never hears. In the repair
+/// path that is exactly what `gained_fill` returns. `a_samples` is A's interleaved PCM
 /// and `gap_start_frame`/`gap_end_frame` are the refined gap on that same timeline.
 ///
 /// Returns `None` when there is nothing to compare: an empty fill, a zero channel count or sample
@@ -119,10 +144,17 @@ pub fn measure_fill_level(
         return None;
     }
 
+    // A shoulder is used only if it is at least half the requested width; a saturated sliver at the
+    // head or tail of the media is declined rather than measured.
+    let min_shoulder_frames =
+        ((shoulder_frames as f64 * MIN_SHOULDER_FRACTION).ceil() as usize).max(1);
+
     // Pre shoulder: [start - standoff - shoulder, start - standoff). Post: mirrored past the end.
-    let pre_end = gap_start_frame.saturating_sub(standoff_frames);
+    let pre_end = gap_start_frame
+        .min(a_frames)
+        .saturating_sub(standoff_frames);
     let pre_start = pre_end.saturating_sub(shoulder_frames);
-    let pre_shoulder_db = (pre_end > pre_start && pre_end <= a_frames).then(|| {
+    let pre_shoulder_db = (pre_end - pre_start >= min_shoulder_frames).then(|| {
         rms_db(
             &a_samples[pre_start * channels..pre_end * channels],
             params.floor_db,
@@ -131,7 +163,7 @@ pub fn measure_fill_level(
 
     let post_start = (gap_end_frame + standoff_frames).min(a_frames);
     let post_end = (post_start + shoulder_frames).min(a_frames);
-    let post_shoulder_db = (post_end > post_start).then(|| {
+    let post_shoulder_db = (post_end - post_start >= min_shoulder_frames).then(|| {
         rms_db(
             &a_samples[post_start * channels..post_end * channels],
             params.floor_db,
@@ -172,6 +204,7 @@ pub fn measure_fill_level(
         reference_db,
         peak_bin_db,
         peak_delta_db: peak_bin_db - reference_db,
+        reference_at_floor: reference_db <= params.floor_db,
         peak_bin_index,
         bins,
         bin_ms: params.bin_ms,
@@ -333,6 +366,74 @@ mod tests {
         )
         .expect("shoulders exist either side");
         assert_eq!(check.bins, 5, "{check:?}");
+    }
+
+    /// A shoulder saturated to a sliver by the head of the media is declined, not measured — and
+    /// the other side carries the comparison alone.
+    #[test]
+    fn a_shoulder_shorter_than_half_the_requested_width_is_declined() {
+        // Gap at frame 300 of a 1 kHz file: the pre shoulder has 200 frames of room against a
+        // requested 1000, well under the 500-frame floor.
+        let a = a_with_hole(4000, 1, 0.1, 300..800);
+        let check = measure_fill_level(
+            &tone(500, 1, 0.1),
+            &a,
+            1,
+            300,
+            800,
+            RATE,
+            FillLevelParams::default(),
+        )
+        .expect("the post shoulder is full width");
+        assert!(
+            check.pre_shoulder_db.is_none(),
+            "200 frames is under half of 1000: {check:?}"
+        );
+        assert_eq!(
+            check.reference_db,
+            check.post_shoulder_db.expect("post shoulder"),
+            "{check:?}"
+        );
+    }
+
+    /// A shoulder that is itself a dropout floors the reference. The delta is then meaningless, so
+    /// the flag exists to let calibration drop the row instead of reading a +120 dB outlier.
+    #[test]
+    fn a_reference_at_the_floor_is_flagged() {
+        // A is silent everywhere: both shoulders read the floor.
+        let a = vec![0.0f32; 4000];
+        let check = measure_fill_level(
+            &tone(500, 1, 0.1),
+            &a,
+            1,
+            2000,
+            2500,
+            RATE,
+            FillLevelParams::default(),
+        )
+        .expect("shoulders exist either side, they are just silent");
+        assert!(check.reference_at_floor, "{check:?}");
+        assert_eq!(check.reference_db, FILL_LEVEL_FLOOR_DB, "{check:?}");
+        assert!(
+            check.peak_delta_db > 100.0,
+            "the artifact this flags: {check:?}"
+        );
+    }
+
+    #[test]
+    fn a_normal_reference_is_not_flagged() {
+        let a = a_with_hole(4000, 1, 0.1, 2000..2500);
+        let check = measure_fill_level(
+            &tone(500, 1, 0.1),
+            &a,
+            1,
+            2000,
+            2500,
+            RATE,
+            FillLevelParams::default(),
+        )
+        .expect("shoulders exist either side");
+        assert!(!check.reference_at_floor, "{check:?}");
     }
 
     #[test]

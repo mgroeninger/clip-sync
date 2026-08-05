@@ -669,10 +669,15 @@ mod tests {
         /// what donor registration correlates on — a constant tone has a flat envelope and nothing to
         /// align. `shift_secs` delays the envelope, so a B built with a shift is the same program
         /// arriving late: the local drift the registration exists to find.
+        /// `envelope_salt` picks *which* program. Two sessions sharing a salt are the same material
+        /// (optionally shifted, which is what the registration searches for); two with different
+        /// salts are unrelated programs whose envelopes do not correlate at any lag, which is the
+        /// only way to reach `Apply`'s abstain arm from here.
         Program {
             hole_start_secs: f64,
             hole_end_secs: f64,
             shift_secs: f64,
+            envelope_salt: u64,
         },
     }
 
@@ -704,6 +709,7 @@ mod tests {
         duration: Duration,
         hole: std::ops::Range<f64>,
         shift_secs: f64,
+        envelope_salt: u64,
     }
 
     impl ProgramSession {
@@ -711,9 +717,12 @@ mod tests {
         /// scan block. Aperiodic: a smooth sweep would let the lag search lock onto a harmonic and
         /// peak at the wrong offset for the right-looking reason. The `0.15` floor keeps every
         /// content block well clear of the silence predicate, so the only silence is the hole.
-        fn envelope(secs: f64) -> f32 {
+        fn envelope(secs: f64, salt: u64) -> f32 {
             let bucket = (secs * 10.0).floor() as i64;
-            let h = (bucket as u64)
+            // XOR with a scrambled salt, not an addition: adding would make salt `n` the same
+            // sequence `n` buckets over, which is precisely a shift — and the registration would
+            // find it. The two programs have to be unrelated, not offset.
+            let h = ((bucket as u64) ^ salt.wrapping_mul(0x9E37_79B9_7F4A_7C15))
                 .wrapping_mul(6_364_136_223_846_793_005)
                 .wrapping_add(1_442_695_040_888_963_407);
             0.15 + 0.85 * ((h >> 33) % 1000) as f32 / 1000.0
@@ -744,7 +753,7 @@ mod tests {
                     if t >= self.hole.start && t < self.hole.end {
                         return 0;
                     }
-                    let amp = Self::envelope(t - self.shift_secs);
+                    let amp = Self::envelope(t - self.shift_secs, self.envelope_salt);
                     let phase = (t as f32) * 2.0 * std::f32::consts::PI * 440.0;
                     (phase.sin() * amp * 8_000.0) as i16
                 })
@@ -876,10 +885,12 @@ mod tests {
                     hole_start_secs,
                     hole_end_secs,
                     shift_secs,
+                    envelope_salt,
                 } => DispatchSession::Program(ProgramSession {
                     duration: *dur,
                     hole: *hole_start_secs..*hole_end_secs,
                     shift_secs: *shift_secs,
+                    envelope_salt: *envelope_salt,
                 }),
             })
         }
@@ -1531,6 +1542,15 @@ mod tests {
     /// finds and it lands on B's hole, reads 6/6 silent, and the gap drops as `shared_silence`.
     /// This is the shape §6.4 found on real media, in miniature.
     fn registration_flip_report(apply_donor_registration: bool) -> ScanGapsOutcome {
+        registration_report(apply_donor_registration, 0)
+    }
+
+    /// `b_envelope_salt` of `0` makes B the same program as A, 500 ms late — the flip geometry
+    /// above. Any other salt makes B an unrelated program, which is how the abstain arm is reached.
+    fn registration_report(
+        apply_donor_registration: bool,
+        b_envelope_salt: u64,
+    ) -> ScanGapsOutcome {
         let dur = Duration::from_secs(60);
         let reader = FixedReader::new()
             .with(
@@ -1539,6 +1559,7 @@ mod tests {
                     hole_start_secs: 20.0,
                     hole_end_secs: 20.6,
                     shift_secs: 0.0,
+                    envelope_salt: 0,
                 },
                 dur,
             )
@@ -1548,6 +1569,7 @@ mod tests {
                     hole_start_secs: 20.5,
                     hole_end_secs: 21.1,
                     shift_secs: 0.5,
+                    envelope_salt: b_envelope_salt,
                 },
                 dur,
             );
@@ -1642,5 +1664,43 @@ mod tests {
             "the window measured is the nominal one, not the registered one"
         );
         assert_occupancy_agrees_with_donor(&report);
+    }
+
+    /// `Apply`'s third arm, and the only one that can cost anything: when the donor envelope will
+    /// not register against A's, no statement about B's occupancy is defensible, so the gate
+    /// **abstains** instead of classifying — 4.3 % of the corpus (§6.10).
+    ///
+    /// The cost is bounded in the safe direction, which is what this pins: an abstention is
+    /// `not_evaluated` and does **not** drop, so the gap goes on to the repair path and the worst
+    /// case is a patch attempt on material that did not need one. It can never be a hole.
+    #[test]
+    fn scan_abstains_when_the_donor_will_not_register() {
+        // B is an unrelated program: same tone, same silence floor, uncorrelated envelope.
+        let report = registration_report(true, 0x5EED);
+
+        assert_eq!(report.gaps.len(), 1, "only A's hole is silent");
+        let v = &report.gap_equivalence[0];
+        let reg = v
+            .donor_registration
+            .as_ref()
+            .expect("the registration is still computed and recorded");
+        assert!(
+            reg.peak_r
+                < crate::domain::gap_equivalence::DonorRegistrationParams::default().min_envelope_r,
+            "unrelated programs must not register: {reg:?}"
+        );
+
+        assert_eq!(
+            v.class,
+            crate::domain::gap_equivalence::GapEquivalenceClass::NotEvaluated
+        );
+        assert_eq!(
+            v.not_evaluated_reason,
+            Some(crate::domain::gap_equivalence::NotEvaluatedReason::DonorRegistrationUnreliable)
+        );
+        assert!(
+            !v.drop,
+            "an abstention costs a patch attempt, never a hole: {v:?}"
+        );
     }
 }

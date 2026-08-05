@@ -114,12 +114,19 @@
 //! **`--replay`** is a third mode and a different question — it does not compare two paths at all. It
 //! re-runs `register_donor_window` on the **recorded envelopes** (`donor_registration.envelopes`,
 //! 2026-08-03) and checks that the dump reproduces itself, then re-counts the donor window at the
-//! registered lag to say what `DonorRegistrationMode::Apply` *would* have decided. Two uses:
+//! registered lag to say what `DonorRegistrationMode::Apply` decides. Two uses:
 //!
 //!   - **A replay-completeness gate.** A dump whose recorded inputs do not reproduce its own outputs is
 //!     not evidence about anything else it says. Exit code 1 on any mismatch.
-//!   - **`Apply` without a re-dump.** The envelopes exist precisely because answering "how often would
-//!     the registered lag flip a class?" once cost a full corpus re-dump. It is now a read.
+//!   - **Re-deciding a dump without re-running it.** The envelopes exist precisely because answering
+//!     "how often would the registered lag flip a class?" once cost a full corpus re-dump. It is now
+//!     a read.
+//!
+//! **Tense note (2026-08-04).** `Apply` is now the production default
+//! (`RepairConfig::apply_donor_registration`), so on a dump taken since then the `apply` column is
+//! what the gate *did*, not a hypothetical. On an older dump — or one taken with
+//! `--no-apply-donor-registration` — it is still the counterfactual it was written to answer. The
+//! dump records no mode, so the reader has to know which it is holding.
 //!
 //! The replay calls the production function on levels rebuilt from the record — it is not a
 //! reimplementation, so "reproduces" means *identical*, not *close*. The rebuild is lossless by
@@ -179,7 +186,8 @@ struct Args {
     band_donor_blocks: usize,
 
     /// Replay the recorded registration envelopes: check the dump reproduces its own registration and
-    /// donor fraction, and report what `DonorRegistrationMode::Apply` would have decided.
+    /// donor fraction, and report what `DonorRegistrationMode::Apply` decides (what the gate *did*,
+    /// on a dump taken with the 2026-08-04 default; the counterfactual on an older one).
     #[arg(long)]
     replay: bool,
 
@@ -919,12 +927,7 @@ fn replay_gap(v: &GapEquivalenceVerdict, min_envelope_r: f64) -> Option<Replay> 
 
     let lag_secs = reg.lag_ms / 1000.0;
     let (sn, tn) = donor_census(&b_levels, donor_lo, donor_hi, floor)?;
-    let (sr, tr) = donor_census(
-        &b_levels,
-        donor_lo + lag_secs,
-        donor_hi + lag_secs,
-        floor,
-    )?;
+    let (sr, tr) = donor_census(&b_levels, donor_lo + lag_secs, donor_hi + lag_secs, floor)?;
     let frac_nominal = sn as f64 / tn as f64;
     let frac_registered = sr as f64 / tr as f64;
 
@@ -979,7 +982,8 @@ fn print_replay(path: &Path, args: &Args) -> ExitCode {
 
     println!(
         "Replaying recorded registration envelopes. `apply` is what DonorRegistrationMode::Apply \
-         would decide (abstain below peak_r {:.2}).\n",
+         decides (abstain below peak_r {:.2}) — the shipped default since 2026-08-04, so on a \
+         current dump this is the gate's own decision.\n",
         args.replay_min_envelope_r
     );
     println!(

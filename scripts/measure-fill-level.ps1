@@ -173,6 +173,11 @@ function Get-FillLevelRows {
                     PeakBinIndex   = [int]$fl.peak_bin_index
                     Bins           = [int]$fl.bins
                     BinMs          = [double]$fl.bin_ms
+                    # True when every measurable shoulder was digital silence — usually a
+                    # neighbouring dropout inside the shoulder window. The delta is then the fill's
+                    # absolute level plus 120 dB and says nothing about substitution magnitude, so
+                    # these rows are excluded from the listen candidates below (kept in the CSV).
+                    RefAtFloor     = [bool]$fl.reference_at_floor
                     DualFitUsed    = Get-DualFitUsed -Outcome $g
                     Report         = $JsonPath
                 })
@@ -229,13 +234,38 @@ function Write-FillLevelRollup {
     $sorted = @($all | Sort-Object -Property PeakDeltaDb -Descending)
     $csv = Join-Path $Directory 'fill-level-rollup.csv'
     $sorted | Select-Object Label, Gap1Based, Gap0Based, AStartSecs, AEndSecs, PeakDeltaDb,
-    PeakBinDb, ReferenceDb, PreShoulderDb, PostShoulderDb, PeakBinIndex, Bins, BinMs, DualFitUsed,
-    Report |
+    PeakBinDb, ReferenceDb, RefAtFloor, PreShoulderDb, PostShoulderDb, PeakBinIndex, Bins, BinMs,
+    DualFitUsed, Report |
         Export-Csv -LiteralPath $csv -NoTypeInformation -Encoding utf8
+    # Ranking keeps every row in the CSV but drops floored references from the listen candidates:
+    # sorted by delta they would otherwise occupy the whole top of the table with an artifact.
+    $ranked = @($sorted | Where-Object { -not $_.RefAtFloor })
     return [pscustomobject]@{
-        Path  = $csv
-        Count = $sorted.Count
-        Rows  = $sorted
+        Path    = $csv
+        Count   = $sorted.Count
+        Rows    = $sorted
+        Ranked  = $ranked
+        Floored = ($sorted.Count - $ranked.Count)
+    }
+}
+
+# Top deltas, floored references held out (they sort to the top and mean nothing there).
+function Write-FillLevelCandidates {
+    param([object]$Rollup)
+    if ($Rollup.Count -le 0) { return }
+    Write-Host ''
+    Write-Host 'Top peak_delta_db (listen candidates)' -ForegroundColor Cyan
+    '{0,-12} {1,5} {2,10} {3,10} {4,10}' -f 'pair', 'gap#', 'delta_db', 'peak_db', 'ref_db'
+    Write-Host ('-' * 52)
+    foreach ($r in @($Rollup.Ranked | Select-Object -First 15)) {
+        '{0,-12} {1,5} {2,10:N2} {3,10:N2} {4,10:N2}' -f $r.Label, $r.Gap1Based,
+        $r.PeakDeltaDb, $r.PeakBinDb, $r.ReferenceDb
+    }
+    if ($Rollup.Floored -gt 0) {
+        Write-Host ''
+        Write-Host ("$($Rollup.Floored) row(s) excluded: reference_at_floor — every shoulder was " +
+            'digital silence (neighbouring dropout), so the delta is an artifact. In the CSV as ' +
+            'RefAtFloor=True.') -ForegroundColor DarkYellow
     }
 }
 
@@ -258,16 +288,7 @@ foreach ($row in $rows) {
 if ($RollupOnly) {
     $rollup = Write-FillLevelRollup -Directory $OutDir -PairLabels @($labels)
     Write-Host "Rollup: $($rollup.Count) fill_level row(s) → $($rollup.Path)" -ForegroundColor Green
-    if ($rollup.Count -gt 0) {
-        Write-Host ''
-        Write-Host 'Top peak_delta_db (listen candidates)' -ForegroundColor Cyan
-        '{0,-12} {1,5} {2,10} {3,10} {4,10}' -f 'pair', 'gap#', 'delta_db', 'peak_db', 'ref_db'
-        Write-Host ('-' * 52)
-        foreach ($r in @($rollup.Rows | Select-Object -First 15)) {
-            '{0,-12} {1,5} {2,10:N2} {3,10:N2} {4,10:N2}' -f $r.Label, $r.Gap1Based,
-            $r.PeakDeltaDb, $r.PeakBinDb, $r.ReferenceDb
-        }
-    }
+    Write-FillLevelCandidates -Rollup $rollup
     Write-Host ''
     Write-Host "Docs: docs/dev/TEMP-equivalence-band-gate-off-findings.md §7.4a" -ForegroundColor DarkGray
     return
@@ -434,16 +455,7 @@ Write-Host "Logs:    $LogDir" -ForegroundColor DarkGray
 if ($KeepWav) { Write-Host "WAVs:    $WavDir" -ForegroundColor DarkGray }
 Write-Host "Rollup:  $($rollup.Path) ($($rollup.Count) row(s), sorted by peak_delta_db desc)" -ForegroundColor DarkGray
 
-if ($rollup.Count -gt 0) {
-    Write-Host ''
-    Write-Host 'Top peak_delta_db (listen candidates)' -ForegroundColor Cyan
-    '{0,-12} {1,5} {2,10} {3,10} {4,10}' -f 'pair', 'gap#', 'delta_db', 'peak_db', 'ref_db'
-    Write-Host ('-' * 52)
-    foreach ($r in @($rollup.Rows | Select-Object -First 15)) {
-        '{0,-12} {1,5} {2,10:N2} {3,10:N2} {4,10:N2}' -f $r.Label, $r.Gap1Based,
-        $r.PeakDeltaDb, $r.PeakBinDb, $r.ReferenceDb
-    }
-}
+Write-FillLevelCandidates -Rollup $rollup
 
 Write-Host ''
 Write-Host "Ear-check high deltas with --gap-listen / fingerprint-gap; threshold is still open." -ForegroundColor DarkGray

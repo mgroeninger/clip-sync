@@ -261,11 +261,12 @@ on (the default; `--no-measure-fill-level` skips the pass).
 
 | Field | Type | Presence | Meaning |
 |-------|------|----------|---------|
-| `pre_shoulder_db` | number | when there is A before the gap | Interleaved RMS of the pre-gap A shoulder, dBFS |
-| `post_shoulder_db` | number | when there is A after the gap | Interleaved RMS of the post-gap A shoulder, dBFS |
+| `pre_shoulder_db` | number | when there is A before the gap | Interleaved RMS of the pre-gap A shoulder, dBFS. Absent when the available room is under half the shoulder width (head of media) — a sliver is declined, not measured |
+| `post_shoulder_db` | number | when there is A after the gap | Interleaved RMS of the post-gap A shoulder, dBFS. Same half-width rule at the tail |
 | `reference_db` | number | always | The **louder** shoulder — what the fill is judged against |
 | `peak_bin_db` | number | always | Level of the fill's loudest bin, dBFS |
 | `peak_delta_db` | number | always | `peak_bin_db - reference_db`; positive means the fill is louder than its neighbourhood |
+| `reference_at_floor` | bool | always | The reference bottomed out at the −120 dB floor: every measurable shoulder is digital silence, usually a neighbouring dropout inside the shoulder window. `peak_delta_db` is then an artifact — **exclude these rows from calibration** |
 | `peak_bin_index` | integer | always | Which bin that was, from the start of the fill |
 | `bins` | integer | always | Bins measured (a trailing partial bin under half width is dropped) |
 | `bin_ms` | number | always | Bin width the peak was taken over (100 ms) |
@@ -273,6 +274,11 @@ on (the default; `--no-measure-fill-level` skips the pass).
 The statistic is a per-bin **peak**, not a whole-fill aggregate: on the gaps this was calibrated
 against, a single 100 ms bin well above the surrounding program was what made a patch sound worse
 than the unrepaired A, and an average over the fill hides exactly that.
+
+Two limits worth knowing before reading a number: the seam **crossfade is ignored** (the fill's
+edge bins are measured as pure fill, while what lands in A is a blend over `--crossfade-ms` —
+negligible at the 10 ms default, growing with it), and `reference_at_floor` rows must be dropped
+before any histogram of `peak_delta_db`.
 
 ### GapTags
 
