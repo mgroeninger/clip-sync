@@ -467,7 +467,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             }
         }
 
-        // Record-only fill-level check (§7.4 item 1), measured HERE for two reasons: these are the
+        // Record-only fill-level check (`measure_fill_level`), measured HERE for two reasons: these are the
         // final patches (the anchored-retry pass has already rewritten them), and A is still
         // pristine — the splice loop below mutates `a_pcm.samples`, and a shoulder read after a
         // neighbouring splice would describe the repair rather than the program it is judged

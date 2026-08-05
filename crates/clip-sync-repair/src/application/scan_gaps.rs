@@ -257,7 +257,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         // The §6.10.3 head/tail exclusion recommended alongside Apply is not implemented (§7.4a).
         //
         // The rate question that kept this on `Observe` is answered:
-        // `docs/dev/TEMP-equivalence-band-gate-off-findings.md` §6.10 ran 39 pairs / 829 gaps / 782
+        // `docs/dev/TEMP-equivalence-band/07-corpus-rates.md` §6.10 ran 39 pairs / 829 gaps / 782
         // registrations. Nonzero lag is 67.8 % but systematic per pair (23/39 have a modal lag ≠ 0;
         // residual scatter about own mode 13.0 %), abstention is 4.3 %, and `Apply` moves 16 gaps
         // (2.05 %) while touching none of the 236 dropouts at the digital-zero rail. Three patches

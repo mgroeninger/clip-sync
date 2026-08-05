@@ -9,7 +9,7 @@
 # (`composition.rs` `is_scan_only_run`), which stops at the scan report. That is the whole point —
 # donor registration is computed during the scan from block levels alone, so the per-bracket anchor
 # oracle (the dominant cost of a fingerprint dump) is pure waste for registration questions.
-# For Item 1 fill_level calibration (write-mode JSON) use `measure-fill-level.ps1` instead.
+# For fill-level check calibration (write-mode JSON) use `measure-fill-level.ps1` instead.
 #
 # Usage:
 #   ./scripts/scan-registration.ps1 -Manifest pairs.csv
@@ -329,7 +329,7 @@ Write-Host ''
 # classifier, which lives in the replay.
 Write-Host "Nonzero registration lag on $tLag of $tReg registered gap(s); peak_r < 0.70 on $tLow." -ForegroundColor DarkGray
 Write-Host "These are counts, not the decision — run the replay for what Apply would do." -ForegroundColor DarkGray
-Write-Host "Docs:    docs/dev/TEMP-equivalence-band-gate-off-findings.md §6.8.6" -ForegroundColor DarkGray
+Write-Host "Docs:    docs/dev/TEMP-equivalence-band/06-donor-registration.md §6.8.6" -ForegroundColor DarkGray
 
 $failed = @($results | Where-Object { $_.ExitCode -ne 0 })
 if ($failed.Count -gt 0) {

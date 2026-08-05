@@ -3,7 +3,7 @@
 //! **Record-only.** Nothing here vetoes a patch. A false positive on a veto costs an unrepaired
 //! hole, which is worse than the thing being measured, so the number is recorded first and the
 //! threshold is a calibration question for the corpus (see
-//! `docs/dev/TEMP-equivalence-band-gate-off-findings.md` §7.4 item 1).
+//! `docs/dev/TEMP-equivalence-band/08-production-recommendations.md` — fill-level check).
 //!
 //! **What it measures.** The audible failure this exists to catch is *substitution magnitude*: a
 //! fill placed into quiet A material at a level the surrounding program never reaches. On the four

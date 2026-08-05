@@ -54,7 +54,7 @@ impl Default for GapEquivalenceParams {
 }
 
 /// Tunables for **local donor registration** — the fix for the defect in
-/// `docs/dev/TEMP-equivalence-band-gate-off-findings.md` §2.5/§6.4.
+/// `docs/dev/TEMP-equivalence-band/` §2.5 / §6.4 (`06-donor-registration.md`).
 ///
 /// The gate runs pre-decode with a single global `offset_secs` for the whole pair, and one constant
 /// cannot track local drift: on the 12-gap listen set the donor window was misplaced by 80–410 ms,
@@ -92,7 +92,7 @@ pub struct DonorRegistrationParams {
 /// (`RepairConfig::apply_donor_registration`, 2026-08-04): over 39 pairs / 782 registrations it
 /// abstains on 4.3 %, moves 16 gaps (2.05 %), touches none of the 236 dropouts at the digital-zero
 /// rail, and the three patches it stops were all listened to and were all degrading undamaged
-/// material (`docs/dev/TEMP-equivalence-band-gate-off-findings.md` §6.10, §7.4a). `Observe` remains
+/// material (`docs/dev/TEMP-equivalence-band/` §6.10, §7.4a). `Observe` remains
 /// the enum's `#[default]` — the mode is chosen from config at the one production construction
 /// site, so a caller that asks for registration without saying what for still cannot silently move
 /// a decision — and it is what `--no-apply-donor-registration` selects.

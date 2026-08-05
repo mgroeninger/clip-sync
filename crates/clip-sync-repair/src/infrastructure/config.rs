@@ -70,7 +70,7 @@ pub struct RepairConfig {
     /// nominal offset map (`DonorRegistrationMode::Apply` vs `Observe`).
     ///
     /// **On by default (2026-08-04)** after the 39-pair scan and three ear checks
-    /// (`docs/dev/TEMP-equivalence-band-gate-off-findings.md` §6.10, §7.4 item 3). The nominal map
+    /// (`docs/dev/TEMP-equivalence-band/` §6.10, donor Apply). The nominal map
     /// cannot track local drift: it was off by 80–410 ms on the listen set, and on periodic material
     /// one 100 ms bin of that error puts B's loud bin over A's silent bin — the dropout signature,
     /// manufactured. Over 39 pairs / 782 registrations this moves 16 gaps (2.05 %), touches none of
@@ -81,7 +81,7 @@ pub struct RepairConfig {
     /// `donor_registration_unreliable`), which costs a patch attempt, never a hole. Abstention does
     /// **not** fall back to the nominal map. The §6.10.3 head/tail exclusion recommended alongside
     /// this flag is **not** implemented — see
-    /// `docs/dev/TEMP-equivalence-band-gate-off-findings.md` §7.4a. Disable with
+    /// `docs/dev/TEMP-equivalence-band/08-production-recommendations.md` §7.4a. Disable with
     /// `--no-apply-donor-registration` to classify at the nominal map.
     #[serde(default = "default_true")]
     pub apply_donor_registration: bool,
@@ -92,8 +92,8 @@ pub struct RepairConfig {
     /// substitution magnitude: on the gaps of §6.10.12 the fill ran 11–35 dB over what it replaced,
     /// and audibility tracked the peak, not the average. A threshold is deliberately *not* shipped:
     /// a veto's false positive is an unrepaired hole, so the number is collected first and
-    /// calibrated against the corpus (`docs/dev/TEMP-equivalence-band-gate-off-findings.md` §7.4
-    /// item 1). On by default; `--no-measure-fill-level` skips the pass.
+    /// calibrated against the corpus (`docs/dev/TEMP-equivalence-band/08-production-recommendations.md`,
+    /// fill-level check). On by default; `--no-measure-fill-level` skips the pass.
     #[serde(default = "default_true")]
     pub measure_fill_level: bool,
     /// Patch only these gaps (1-based gap numbers and/or time-range tokens as strings).

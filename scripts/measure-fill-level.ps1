@@ -1,11 +1,11 @@
 #!/usr/bin/env pwsh
-# Write-mode repair over a pair manifest, capturing `fill_level` (Item 1) as parseable JSON.
+# Write-mode repair over a pair manifest, capturing `fill_level` (fill-level check) as parseable JSON.
 #
 # Sibling of `scan-registration.ps1` (same manifest format, same stdout/stderr split) but runs the
 # **full patch path**: throwaway `--wav` so splice + `measure_fill_level` execute, `--format json`
 # so each pair lands as `<label>.json` with `patch.gaps[*].fill_level`. Preview / scan-only cannot
 # produce this field — see docs/pipeline.md § Fill-level check and
-# docs/dev/TEMP-equivalence-band-gate-off-findings.md §7.4a.
+# docs/dev/TEMP-equivalence-band/08-production-recommendations.md §7.4a.
 #
 # Usage:
 #   ./scripts/measure-fill-level.ps1 -Manifest pairs.csv
@@ -24,7 +24,7 @@
 # -KeepWav. There is no first-class "fill without encode" mode; this is the supported workaround.
 #
 # PRECHECK: the first pair with patched_count > 0 must carry at least one `fill_level`. A binary
-# built before Item 1, or `--no-measure-fill-level`, produces healthy JSON with the field silently
+# built before the fill-level check, or `--no-measure-fill-level`, produces healthy JSON with the field silently
 # absent — stop before the rest of the manifest pays full repair cost. Bypass with -SkipPrecheck.
 #
 # MEDIA HYGIENE: reports and the manifest carry absolute media paths. -OutDir defaults under
@@ -290,7 +290,7 @@ if ($RollupOnly) {
     Write-Host "Rollup: $($rollup.Count) fill_level row(s) → $($rollup.Path)" -ForegroundColor Green
     Write-FillLevelCandidates -Rollup $rollup
     Write-Host ''
-    Write-Host "Docs: docs/dev/TEMP-equivalence-band-gate-off-findings.md §7.4a" -ForegroundColor DarkGray
+    Write-Host "Docs: docs/dev/TEMP-equivalence-band/08-production-recommendations.md §7.4a" -ForegroundColor DarkGray
     return
 }
 
@@ -407,7 +407,7 @@ foreach ($row in $rows) {
             throw @"
 [$label] patched $($summary.Patched) gap(s) but recorded 0 fill_level measurement(s).
 Stopping before the rest of the manifest repairs. Usual causes:
-  * binary predates Item 1 (measure_fill_level) — rebuild with current sources
+  * binary predates the fill-level check (`measure_fill_level`) — rebuild with current sources
   * measure_fill_level disabled in config / TOML (this script forbids --no-measure-fill-level in -RepairArgs)
   * every splice failed after the gate approved (not_applied) — check $log
 Re-run with -SkipPrecheck to proceed anyway.
@@ -459,7 +459,7 @@ Write-FillLevelCandidates -Rollup $rollup
 
 Write-Host ''
 Write-Host "Ear-check high deltas with --gap-listen / fingerprint-gap; threshold is still open." -ForegroundColor DarkGray
-Write-Host "Docs: docs/dev/TEMP-equivalence-band-gate-off-findings.md §7.4a" -ForegroundColor DarkGray
+Write-Host "Docs: docs/dev/TEMP-equivalence-band/08-production-recommendations.md §7.4a" -ForegroundColor DarkGray
 
 $failed = @($results | Where-Object { $_.ExitCode -ne 0 })
 if ($failed.Count -gt 0) {
