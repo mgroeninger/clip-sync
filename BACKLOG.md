@@ -19,7 +19,6 @@ Last updated: 2026-08-05.
 |------|--------|
 | [TEMP-nway-donor-alignment-plan.md](docs/dev/TEMP-nway-donor-alignment-plan.md) | N-way donor alignment: repair one damaged copy from multiple donors — draft, not started |
 | [TEMP-flac-output-plan.md](docs/dev/TEMP-flac-output-plan.md) | In-process `--flac` lossless output (peer of `--wav`, no ffmpeg) — draft, not started |
-| [TEMP-donor-apply-edge-exclusion-plan.md](docs/dev/TEMP-donor-apply-edge-exclusion-plan.md) | Head/tail exclusion for donor Apply: nominal classify when A-core touches scanned A extent — draft |
 | [TEMP-residual-abstention-reporting-plan.md](/docs/dev/TEMP-residual-abstention-reporting-plan.md) | a residual verdict that names *why* it carries no usable headroom reading, carried into the repair path's own output|
 
 ## Open work
@@ -49,18 +48,6 @@ trigger — none is a known defect. Shipped behaviour: [gap-fingerprint.md](docs
 | `bit_depth` string → `BitDepth` parser | Deferred: the forward pin (`bit_depth_tokens_are_pinned`) is what protects corpora already on disk; a parser is dead code until a consumer reads the token, and none does. `bit_depth` is stored-for-later by design |
 
 
-### Equivalence margin band — **CLOSED 2026-08-05**
-
-Gate-off experiment ran. **Do not ship** a ±1.0 dB / ±1-block (or any revised-width) equivalence
-margin band as a production rule: the donor boundary was fed a misregistered window, so no band
-width is the right width. `--band` remains a fingerprint *report* only
-([gap-fingerprint.md](docs/dev/gap-fingerprint.md) § *The margin band*). Thresholds provenance
-(`GapEquivalenceThresholds`) stays as shipped 2026-08-01. Do not re-open from pre-registration
-yield numbers.
-
-Donor Apply (`apply_donor_registration`) and the fill-level check (`measure_fill_level`) shipped
-2026-08-04. Leftovers in [Donor registration leftovers](#donor-registration-leftovers).
-
 ### Donor registration leftovers
 
 From the 2026-08 equivalence-band / donor-registration review. Donor Apply and fill-level
@@ -68,7 +55,6 @@ check shipped; these remain.
 
 | Item | Direction |
 |------|-----------|
-| **Head/tail exclusion for donor Apply** | When Apply is on, gaps whose A silent core touches the scanned A extent classify at the **nominal** map (Observe semantics) while still recording registration. Prefer geometry over gap index / `bins` floor. Optional noise reduction (clipped regs abstain ~2× mid-media). Plan: [TEMP-donor-apply-edge-exclusion-plan.md](docs/dev/TEMP-donor-apply-edge-exclusion-plan.md) |
 | **Residual-abstention reporting** | Name *why* a residual reading is unusable (`beyond_lag_reach` vs no energetic window vs non-finite) and surface it in repair output — reporting only, no gate change. Plan: [TEMP-residual-abstention-reporting-plan.md](docs/dev/TEMP-residual-abstention-reporting-plan.md) |
 | **`equivalence-calibration --replay` reads `GapScanJson`** | Today `--replay` only loads fingerprint `corpus.json` / `GapCorpus`; plain scan JSON already carries the same registration + envelope fields on every gap (`scripts/scan-registration.ps1`). Teach the reader the scan shape so Apply flip/abstain counts come from the production classifier, not a hand reconstruction. Small reader change; no new measurement |
 | **Fingerprint `skip_reason` is a placeholder** | Every skip in every dump is `correlation_below_threshold` with zeroed correlations — `measure.rs` invents one variant for the `tier` axis only; `project.rs` can serialize all seven. Thread the real `GapPatchSkipReason` through `compute_region_measurements` (or document the lie until then). Independent of media; same family as residual-abstention reporting |
@@ -98,37 +84,7 @@ From [archive/repair-write-path-plan.md](docs/dev/archive/repair-write-path-plan
 | Scratch-buffer regression test | Dedicated unit test for patch PCM path |
 | Streaming / chunked WAV encode | Large multi-gap fills without holding full PCM |
 | Adaptive gap-signature context (low priority) | Widen `gap_signature_context_secs` per-gap only when the score at the nominal map is below floor, instead of decoding wide B context for every gap. From [energy-signature-plan.md](docs/dev/archive/energy-signature-plan.md) Phase 4; low value since mode-coupled `nominal_bias` already handles drift at the 3 s default |
-| `fill_repeat_correlations` channel alignment | **Done 2026-07-31:** multichannel repeat uses `seam_score_channel_indices` (same ~20 dB set as seam/residual), drops mono from the max, unscoreable → `0.0`; band twin kept in lockstep. |
 | Dual-fit oracle: unpin pre-shoulder lag from 0 (optional hardening) | `validate_dual_fit_oracle.rs` (gated `validation-tests`, needs ffmpeg + fetched corpus) only steps the **post**-shoulder (`step_ms`); the pre-shoulder is always sourced from B at lag 0 by construction (`dual_fit_oracle.rs`). The 2026-07-03/05 production bug (dual-fit's re-validation gate wrongly applying the single-rigid-lag crossfade branch, fixed via `SpliceSeamContext::single_lag_alignment`) is now covered end-to-end by a synthetic unit test (`dual_fit_result_passes_the_production_revalidation_gate`, `domain/dual_fit.rs`), so this isn't blocking. Direction if picked up: add an optional `pre_step_ms` field to `DualFitOracleCase` (default `0.0`, mirroring `step_ms`) that shifts the pre-gap portion the same way the post-gap portion is shifted, plus a manifest case with both nonzero — proving the real-codec path too, not just the synthetic gate. Not yet implemented or run (needs ffmpeg + real media, which wasn't fetched here per the licensed-media partition) |
-
----
-
-### Patch verdict integrity — `Patched` does not mean spliced — **FIXED**
-
-`splice_into_a` used to return `()` with three early returns, while the `Patched` verdict was
-decided *upstream* of it and the summary was built from that same pre-splice list. A bailed splice
-was reported as a repair: the gap table said repaired, the audio was unchanged, and the
-inverted/empty case emitted no signal at all. Worst for `--gap-listen`, where `_a_patched.wav` came
-back byte-identical to `_a.wav` — you hear an unrepaired gap and conclude *the repair sounds bad*,
-inverting the finding on exactly the gaps a margin-band experiment selects.
-
-Fixed by making the splice's outcome part of the verdict rather than something a consumer could
-overlook. `splice_into_a` returns `Result<(), GapPatchNotAppliedReason>`; a failure becomes
-`GapPatchStatus::NotApplied`, a **new variant** rather than a flag on `Patched`. That choice is the
-substance of the fix: ~15 consumers match `Patched { .. }` tolerantly, so a boolean field would
-have left every one of them still reporting a repair. The variant broke each exhaustive match
-instead and forced a decision — `patched_count` excludes it, `has_patches()` (which gates the
-`--wav`/`--mux` write) returns false, the gap table prints `NOT APPLIED (bug)`, and `--gap-listen`
-writes no `_a_patched.wav`. Each reason carries its frame counts, since the first real occurrence
-is expected on media that cannot be re-run.
-
-**No observed real-media occurrence** — and none is expected: every fill path terminates in
-`fit_fill_to_gap_frames`, which returns exactly `target_frames * channels`. That is a construction
-argument, not evidence, so it is enforced by a `debug_assert!` at the splice boundary (loud in
-debug, degraded to `NotApplied` in release) rather than by sampling a corpus that could never be
-large enough to rule the condition out. The `--gap-listen` before/after digest check stays as a
-bytes-level backstop that does not depend on the engine noticing. Uncovered by, but not introduced
-by, the gap-listen work.
 
 ---
 

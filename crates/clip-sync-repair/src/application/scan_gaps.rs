@@ -254,8 +254,9 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         // `min_envelope_r`. `--no-apply-donor-registration` restores `Observe`, which records the
         // registration but classifies at the nominal map, changing no class, fraction or span.
         // Abstention under Apply is NotEvaluated (keep) — never a fallback to the nominal window.
-        // The §6.10.3 head/tail exclusion recommended alongside Apply is not implemented
-        // (BACKLOG § Donor registration leftovers / TEMP-donor-apply-edge-exclusion-plan).
+        // Head/tail exclusion: when Apply is on, cores that touch the scanned A extent still use
+        // Observe for classification (registration recorded either way) — clipped single-shoulder
+        // regs live at the media edges (`a_span_touches_media_edge`).
         //
         // The rate question that kept this on `Observe` is answered (39-pair scan, 2026-08-04):
         // 829 gaps / 782 registrations. Nonzero lag is 67.8 % but systematic per pair (23/39 have
@@ -269,14 +270,14 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         // donor test asks "is B non-silent?" rather than "is B non-silent *where A is silent*?".
         // Registration cannot reach those; the fill-level check does (BACKLOG: conditional donor
         // investigation).
-        let equivalence_params = crate::domain::gap_equivalence::GapEquivalenceParams {
+        let a_edge = crate::domain::gap_equivalence::a_scanned_extent_for_edge(
+            &a_levels,
+            request.recipe.scan_block_secs(),
+        );
+        let equivalence_params_shell = crate::domain::gap_equivalence::GapEquivalenceParams {
             enabled: true,
             donor_registration: Some(crate::domain::gap_equivalence::DonorRegistrationParams {
-                mode: if request.apply_donor_registration {
-                    crate::domain::gap_equivalence::DonorRegistrationMode::Apply
-                } else {
-                    crate::domain::gap_equivalence::DonorRegistrationMode::Observe
-                },
+                mode: crate::domain::gap_equivalence::DonorRegistrationMode::Observe,
                 ..Default::default()
             }),
             ..Default::default()
@@ -316,6 +317,23 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
                     b_levels_for_eq.is_some()
                         && b_range_fully_scanned(b_start, b_end, b_scan.scanned_end_secs)
                 });
+            let at_edge = a_edge.is_some_and(|(extent, eps)| {
+                crate::domain::gap_equivalence::a_span_touches_media_edge(
+                    run.core_start_secs,
+                    run.core_end_secs,
+                    extent,
+                    eps,
+                )
+            });
+            let mode = if request.apply_donor_registration && !at_edge {
+                crate::domain::gap_equivalence::DonorRegistrationMode::Apply
+            } else {
+                crate::domain::gap_equivalence::DonorRegistrationMode::Observe
+            };
+            let mut equivalence_params = equivalence_params_shell;
+            if let Some(ref mut rp) = equivalence_params.donor_registration {
+                rp.mode = mode;
+            }
             let verdict = crate::domain::gap_equivalence::derive_gap_equivalence(
                 &a_levels,
                 run.core_start_secs,
@@ -1552,13 +1570,35 @@ mod tests {
         apply_donor_registration: bool,
         b_envelope_salt: u64,
     ) -> ScanGapsOutcome {
+        registration_report_at(
+            apply_donor_registration,
+            b_envelope_salt,
+            20.0,
+            20.6,
+            20.5,
+            21.1,
+            0.5,
+        )
+    }
+
+    /// Same registrable Program geometry as [`registration_report`], with caller-chosen hole
+    /// placement (used for the head-edge Observe pin).
+    fn registration_report_at(
+        apply_donor_registration: bool,
+        b_envelope_salt: u64,
+        a_hole_start: f64,
+        a_hole_end: f64,
+        b_hole_start: f64,
+        b_hole_end: f64,
+        b_shift_secs: f64,
+    ) -> ScanGapsOutcome {
         let dur = Duration::from_secs(60);
         let reader = FixedReader::new()
             .with(
                 "a.wav",
                 SessionKind::Program {
-                    hole_start_secs: 20.0,
-                    hole_end_secs: 20.6,
+                    hole_start_secs: a_hole_start,
+                    hole_end_secs: a_hole_end,
                     shift_secs: 0.0,
                     envelope_salt: 0,
                 },
@@ -1567,9 +1607,9 @@ mod tests {
             .with(
                 "b.wav",
                 SessionKind::Program {
-                    hole_start_secs: 20.5,
-                    hole_end_secs: 21.1,
-                    shift_secs: 0.5,
+                    hole_start_secs: b_hole_start,
+                    hole_end_secs: b_hole_end,
+                    shift_secs: b_shift_secs,
                     envelope_salt: b_envelope_salt,
                 },
                 dur,
@@ -1637,6 +1677,61 @@ mod tests {
             "the window measured is the registered one, not the nominal one"
         );
         assert_occupancy_agrees_with_donor(&report);
+    }
+
+    /// Head-of-media core under production Apply: classify at the nominal map (Observe), still
+    /// record registration. Mid-media Apply is unchanged — see
+    /// `scan_classifies_the_donor_window_at_the_registered_lag`.
+    #[test]
+    fn scan_edge_core_under_apply_matches_observe_class() {
+        let apply = registration_report_at(
+            true,
+            0,
+            0.0,
+            0.6,
+            0.5,
+            1.1,
+            0.5,
+        );
+        let observe = registration_report_at(
+            false,
+            0,
+            0.0,
+            0.6,
+            0.5,
+            1.1,
+            0.5,
+        );
+
+        assert_eq!(apply.gaps.len(), 1, "only the head hole is silent");
+        assert_eq!(observe.gaps.len(), 1);
+        let va = &apply.gap_equivalence[0];
+        let vo = &observe.gap_equivalence[0];
+        let (core_s, core_e) = va.a_span_secs.expect("core span recorded");
+        assert!(
+            core_s <= 0.1,
+            "fixture must put the silent core at media head: {core_s}..{core_e}"
+        );
+        assert_eq!(
+            va.class, vo.class,
+            "edge under Apply must match Observe class: apply={va:?} observe={vo:?}"
+        );
+        assert_eq!(va.drop, vo.drop);
+        assert_eq!(va.not_evaluated_reason, vo.not_evaluated_reason);
+        assert_eq!(
+            va.donor_silence_fraction, vo.donor_silence_fraction,
+            "nominal-map reading: apply={:?} observe={:?}",
+            va.donor_silence_fraction, vo.donor_silence_fraction
+        );
+        assert_eq!(
+            va.donor_span_secs, va.a_span_secs,
+            "edge uses the nominal window, not the registered lag"
+        );
+        assert!(
+            va.donor_registration.is_some(),
+            "registration is still computed and recorded: {va:?}"
+        );
+        assert_occupancy_agrees_with_donor(&apply);
     }
 
     /// `--no-apply-donor-registration` restores the pre-2026-08-04 behaviour: the registration is

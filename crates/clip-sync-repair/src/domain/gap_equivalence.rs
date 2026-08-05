@@ -107,7 +107,10 @@ pub enum DonorRegistrationMode {
     /// Measure the donor window at the registered lag, and **abstain**
     /// ([`NotEvaluatedReason::DonorRegistrationUnreliable`]) when `peak_r < min_envelope_r`. The
     /// fix, and the shipped production behaviour since 2026-08-04; it changes classes by
-    /// construction.
+    /// construction. Production still selects this from config when `apply_donor_registration` is
+    /// on, except for gaps whose A silent core touches the scanned A extent — those keep this
+    /// mode off (Observe classify) while still recording registration
+    /// ([`a_span_touches_media_edge`]).
     Apply,
 }
 
@@ -793,6 +796,50 @@ fn eroded_interior_db(levels: &[BlockLevel], lo: f64, hi: f64) -> Option<f64> {
     aggregate_rms_db(levels[start..end].iter().map(|b| b.rms_db))
 }
 
+/// Whether a silent core touches the scanned A media extent (head or tail).
+///
+/// Used when `apply_donor_registration` is on: edge-touching cores classify at the **nominal** map
+/// ([`DonorRegistrationMode::Observe`]) while still recording registration — clipped single-shoulder
+/// regs live at the media edges. Predicate is A-span geometry, not gap index 0 / n−1 and not a
+/// `bins` floor. See `docs/dev/archive/TEMP-donor-apply-edge-exclusion-plan.md` and
+/// [gap-scan.md](docs/gap-scan.md) § Donor registration.
+///
+/// `a_extent` is `(first BlockLevel::start_secs, last BlockLevel::end_secs)` on A's level stream;
+/// `eps` is one scan-block width (typically the first block's duration) so block rounding does not
+/// miss an edge core. Callers with an empty `a_levels` treat every gap as non-edge.
+pub fn a_span_touches_media_edge(
+    core_start_secs: f64,
+    core_end_secs: f64,
+    a_extent: (f64, f64),
+    eps: f64,
+) -> bool {
+    core_start_secs <= a_extent.0 + eps || core_end_secs >= a_extent.1 - eps
+}
+
+/// Scanned A extent and one-block `ε` for [`a_span_touches_media_edge`].
+///
+/// Returns `None` when `a_levels` is empty (call site: non-edge). When the first block has no
+/// positive width, uses `fallback_eps` (recipe `scan_block_secs`); still `None` if that is not
+/// positive either.
+pub fn a_scanned_extent_for_edge(
+    a_levels: &[BlockLevel],
+    fallback_eps: f64,
+) -> Option<((f64, f64), f64)> {
+    let first = a_levels.first()?;
+    let last = a_levels.last()?;
+    let eps = {
+        let w = first.end_secs - first.start_secs;
+        if w > 0.0 {
+            w
+        } else if fallback_eps > 0.0 {
+            fallback_eps
+        } else {
+            return None;
+        }
+    };
+    Some(((first.start_secs, last.end_secs), eps))
+}
+
 /// Align B's level envelope to A's over the gap ± [`EQUIVALENCE_CONTEXT_SECS`], by cross-correlating
 /// the two dB envelopes over `±max_lag_blocks`. Pure, decode-free — this is exactly the data the
 /// scanner already holds, which is what makes it usable in a **pre-decode** gate where the fitted
@@ -1239,6 +1286,61 @@ mod tests {
         // Pre-F1 E1 shape: absolute silent + donor_silence 0.0.
         assert!(!occupancy_agrees_with_donor_silence(false, Some(0.0), 0.5));
         assert!(!occupancy_agrees_with_donor_silence(false, Some(0.49), 0.5));
+    }
+
+    // --- a_span_touches_media_edge (head/tail Apply → Observe) ------------------------------------
+
+    #[test]
+    fn edge_helper_flags_head_and_tail_cores() {
+        let extent = (0.0, 60.0);
+        let eps = 0.1;
+        assert!(a_span_touches_media_edge(0.0, 0.6, extent, eps));
+        assert!(a_span_touches_media_edge(0.05, 0.65, extent, eps)); // within ε of head
+        assert!(a_span_touches_media_edge(59.4, 60.0, extent, eps));
+        assert!(a_span_touches_media_edge(59.35, 59.95, extent, eps)); // within ε of tail
+        assert!(!a_span_touches_media_edge(20.0, 20.6, extent, eps));
+    }
+
+    #[test]
+    fn edge_helper_eps_boundary_is_inclusive_on_the_touch_side() {
+        let extent = (1.0, 10.0);
+        let eps = 0.1;
+        // Just inside / on the bound.
+        assert!(a_span_touches_media_edge(1.1, 1.7, extent, eps));
+        assert!(a_span_touches_media_edge(9.3, 9.9, extent, eps));
+        // Just outside.
+        assert!(!a_span_touches_media_edge(1.1 + 1e-9, 1.7, extent, eps));
+        assert!(!a_span_touches_media_edge(9.3, 9.9 - 1e-9, extent, eps));
+    }
+
+    #[test]
+    fn edge_helper_index_zero_mid_extent_is_not_an_edge() {
+        // Corpus proxy was gap index 0 / n−1; geometry must not treat a mid-media first run as edge.
+        let extent = (0.0, 60.0);
+        assert!(!a_span_touches_media_edge(10.0, 10.6, extent, 0.1));
+    }
+
+    #[test]
+    fn a_scanned_extent_uses_first_and_last_block() {
+        let levels = [
+            BlockLevel {
+                start_secs: 0.5,
+                end_secs: 0.6,
+                rms_db: -20.0,
+                silent: false,
+            },
+            BlockLevel {
+                start_secs: 9.9,
+                end_secs: 10.0,
+                rms_db: -20.0,
+                silent: false,
+            },
+        ];
+        let ((lo, hi), eps) = a_scanned_extent_for_edge(&levels, 0.1).expect("levels present");
+        assert!((lo - 0.5).abs() < f64::EPSILON);
+        assert!((hi - 10.0).abs() < f64::EPSILON);
+        assert!((eps - 0.1).abs() < f64::EPSILON);
+        assert!(a_scanned_extent_for_edge(&[], 0.1).is_none());
     }
 
     // --- derive_gap_equivalence (scan-block timelines → signals → classification) --------------------

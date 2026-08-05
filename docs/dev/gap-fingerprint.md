@@ -474,6 +474,11 @@ The band asks which gaps production **drops** sit close enough to a class bounda
 instrument error would have changed the verdict. It exists because the two failure directions are not
 symmetric: a false drop ships an unrepaired hole, a false keep costs one declined patch attempt.
 
+**Report only — do not ship as a production rule.** A 2026-08 gate-off experiment showed the donor
+boundary was fed a misregistered window, so no band width is the right width; do not re-open from
+pre-registration yield numbers. Thresholds provenance (`GapEquivalenceThresholds`) stays as shipped
+2026-08-01.
+
 It is computed, never stored. `equivalence-calibration --band DIR` re-runs the classification rule
 with each boundary loosened — `--band-dropout-db` (default 1.0) and `--band-donor-blocks` (default 1,
 the measured donor-lattice disagreement) — and at width zero it reduces to the production rule

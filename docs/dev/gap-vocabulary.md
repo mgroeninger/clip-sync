@@ -198,7 +198,7 @@ repairing?** It reads one **new axis** crossed with an existing one:
 | Axis | Question | Placement |
 |------|----------|-----------|
 | A silence character | Did A's signal **die** (gap RMS ≥ `dropout_margin_db` below A's *own* noise floor), or is it room tone **at** the floor? | A gap interior vs A context (scan blocks; size = the `scan_block_ms` knob) |
-| Donor occupancy | Is B occupied at the same program time? | **Registered** lag by default (`apply_donor_registration`); nominal `b_mapped` only under `--no-apply-donor-registration`. Registration correlates A/B dB envelopes on the **shoulders** (gap core excluded); see [gap-scan.md](../gap-scan.md) § Donor registration |
+| Donor occupancy | Is B occupied at the same program time? | **Registered** lag by default (`apply_donor_registration`); nominal `b_mapped` under `--no-apply-donor-registration`, and also for cores that touch the scanned A extent (head/tail exclusion). Registration correlates A/B dB envelopes on the **shoulders** (gap core excluded); see [gap-scan.md](../gap-scan.md) § Donor registration |
 
 **Cells (`GapEquivalenceClass`, emitted on the scan report + `--gap-fingerprints`):**
 

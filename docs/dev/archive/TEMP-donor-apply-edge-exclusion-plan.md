@@ -1,13 +1,16 @@
 # TEMP — Head/tail exclusion for donor Apply
 
-**Status:** draft plan, 2026-08-05 (revised after implementation review). Implements the
-**Head/tail exclusion for donor Apply** row in [BACKLOG.md](../../BACKLOG.md) § *Donor registration
-leftovers*.
+**Status:** shipped 2026-08-05 (archived). Implements the **Head/tail exclusion for donor Apply**
+row formerly in [BACKLOG.md](../../../BACKLOG.md) § *Donor registration leftovers*.
+
+**Durable behaviour:** [gap-scan.md](../../gap-scan.md) § Donor registration,
+[pipeline.md](../../pipeline.md) §3. Code: `a_span_touches_media_edge` /
+`a_scanned_extent_for_edge` in `domain/gap_equivalence.rs`; per-gap mode in
+`application/scan_gaps.rs`.
 
 **Source:** 39-pair scan (2026-08-04): all clipped registrations (`bins == 20`) were head or tail;
-prefer an explicit edge check over a `bins` floor. Apply shipped without that exclusion — see
-[BACKLOG.md](../../BACKLOG.md) § *Donor registration leftovers*. The plan restates the load-bearing
-numbers below.
+prefer an explicit edge check over a `bins` floor. Apply shipped without that exclusion — this plan
+added it. The plan restates the load-bearing numbers below.
 
 **Deliverable:** when `apply_donor_registration` is on, gaps whose **A silent core touches the scanned
 A extent** classify at the **nominal** map (Observe semantics) while still recording registration.
@@ -165,7 +168,7 @@ non-edge gaps if the branch were ever widened.
 | `domain/gap_equivalence.rs` (or small sibling) | `a_span_touches_media_edge` + unit tests |
 | `application/scan_gaps.rs` | Per-gap `mode` from the helper; drop the “§6.10.3 not implemented” comment |
 | Config / CLI | **No new flag for v1.** Optional later escape hatch only if operators need Apply on edges |
-| Docs | [gap-scan.md](../gap-scan.md), [pipeline.md](../pipeline.md) when shipped |
+| Docs | [gap-scan.md](../../gap-scan.md), [pipeline.md](../../pipeline.md) when shipped |
 
 Params are today shared across the gap loop; make them **per gap** (cheap `Copy` struct). The shared
 `GapEquivalenceParams` shell can stay; only `donor_registration.mode` varies. Production wiring is
@@ -206,22 +209,22 @@ No corpus re-scan required for DoD; §6.10.3 is evidence, not a gate. Optional f
 
 ## 3. Docs when shipped
 
-- [gap-scan.md](../gap-scan.md) — `apply_donor_registration` row: edge **cores** classify at nominal;
+- [gap-scan.md](../../gap-scan.md) — `apply_donor_registration` row: edge **cores** classify at nominal;
   registration still recorded; predicate is A-extent geometry (not index, not `bins`); note core vs
   refined gap bounds.
-- [pipeline.md](../pipeline.md) — replace the “Not shipped with Apply” note with the shipped rule.
+- [pipeline.md](../../pipeline.md) — replace the “Not shipped with Apply” note with the shipped rule.
 - BACKLOG row → done / remove; archive this TEMP.
 
 ---
 
 ## 4. Checklist
 
-1. [ ] Add `a_span_touches_media_edge` (+ rustdoc citing §6.10.3 / this plan).
-2. [ ] Wire per-gap `DonorRegistrationMode` in `scan_gaps.rs` from `run.core_*` +
+1. [x] Add `a_span_touches_media_edge` (+ rustdoc citing this plan).
+2. [x] Wire per-gap `DonorRegistrationMode` in `scan_gaps.rs` from `run.core_*` +
    `(first.start, last.end)` / first-block `ε`.
-3. [ ] Helper unit tests; mid Apply-flip regression; edge Observe-class scan pin (head- or
+3. [x] Helper unit tests; mid Apply-flip regression; edge Observe-class scan pin (head- or
    tail-only fixture).
-4. [ ] Update `gap-scan.md` / `pipeline.md`; clear BACKLOG row; archive this plan.
+4. [x] Update `gap-scan.md` / `pipeline.md`; clear BACKLOG row; archive this plan.
 
 ---
 

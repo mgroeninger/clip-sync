@@ -85,9 +85,15 @@ scanner's existing 100 ms `BlockLevel.rms_db` envelopes — no decode, no seam f
 `DonorRegistrationMode::Observe` remains the enum default so a caller that opts into registration
 without choosing a mode cannot silently move a decision; production selects **Apply** from config.
 `--no-apply-donor-registration` computes and records registration but classifies at the nominal map.
-Registration (and recorded envelopes, when present) is always emitted either way. See
-[pipeline.md](pipeline.md) §3 and [gap-vocabulary.md](dev/gap-vocabulary.md) § Silence-character
-pre-gate.
+Registration (and recorded envelopes, when present) is always emitted either way.
+
+**Head/tail exclusion:** when Apply is on, a gap whose **block-confirmed silent core**
+(`a_span_secs` / `SilentRun::core_*`) touches the scanned A extent — first/last `BlockLevel` on A's
+level stream, within one scan-block `ε` — still classifies at the **nominal** map (Observe
+semantics) while recording registration. Predicate is A-span geometry, not gap index 0 / n−1 and
+not a `bins` floor. Do not eyeball refined `Gap` A bounds for this rule (sub-block edge refine can
+widen them). Mid-extent cores keep Apply unchanged. See [pipeline.md](pipeline.md) §3 and
+[gap-vocabulary.md](dev/gap-vocabulary.md) § Silence-character pre-gate.
 
 **Precedence at plan time** (`domain/gap_fill.rs`): fillability and coverage decide first, then the
 equivalence gate, then gap selection. So the gate only ever *drops gaps that were otherwise
@@ -142,7 +148,7 @@ With `scan_both` (default on), B is also scanned for silence so the two timeline
 | `silence_hold_ms` | 500 | Configured hold (pre-quantization). The JSON / scan-summary echo is the **effective** hold (`silence_hold_blocks × scan_block_ms`) |
 | `scan_both` | true | Scan B too for the mutual-silence cross-check |
 | `skip_equivalent_gaps` | true | Act on the equivalence verdict — drop `shared_silence` / `ambient_quiet` gaps from the fill plan (`--no-skip-equivalent-gaps` makes it advisory only) |
-| `apply_donor_registration` | true | Measure the gate's donor window at the **registered** lag rather than the nominal offset map (`--no-apply-donor-registration` to classify at the nominal map). Below `min_envelope_r` the gate **abstains** as `not_evaluated` / `donor_registration_unreliable` (keeps the gap) — it does **not** fall back to the nominal window. Head/tail exclusion for clipped first/last-gap registrations is **not** implemented; see [BACKLOG.md](../BACKLOG.md) § Donor registration leftovers and [TEMP-donor-apply-edge-exclusion-plan.md](dev/TEMP-donor-apply-edge-exclusion-plan.md) |
+| `apply_donor_registration` | true | Measure the gate's donor window at the **registered** lag rather than the nominal offset map (`--no-apply-donor-registration` to classify at the nominal map). Below `min_envelope_r` the gate **abstains** as `not_evaluated` / `donor_registration_unreliable` (keeps the gap) — it does **not** fall back to the nominal window. Cores that touch the scanned A extent still classify at the nominal map while recording registration (head/tail exclusion; geometry on the silent core, not gap index / `bins`) |
 | `gap_offset_tolerance_secs` | 0.5 | Tolerance for A↔B silence agreement |
 | `limit_fill_to_mapped_region` | true | Gaps outside B coverage are unfillable |
 | `decode_chunk_secs` | 10 | A decode chunk size |
