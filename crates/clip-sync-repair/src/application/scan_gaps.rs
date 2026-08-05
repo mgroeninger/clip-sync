@@ -254,21 +254,21 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         // `min_envelope_r`. `--no-apply-donor-registration` restores `Observe`, which records the
         // registration but classifies at the nominal map, changing no class, fraction or span.
         // Abstention under Apply is NotEvaluated (keep) — never a fallback to the nominal window.
-        // The §6.10.3 head/tail exclusion recommended alongside Apply is not implemented (§7.4a).
+        // The §6.10.3 head/tail exclusion recommended alongside Apply is not implemented
+        // (BACKLOG § Donor registration leftovers / TEMP-donor-apply-edge-exclusion-plan).
         //
-        // The rate question that kept this on `Observe` is answered (39-pair scan, formerly
-        // TEMP-equivalence-band/07 §6.10; numbers in BACKLOG § Donor registration leftovers /
-        // TEMP-equivalence-band/08 §7.4): 829 gaps / 782 registrations. Nonzero lag is 67.8 % but
-        // systematic per pair (23/39 have a modal lag ≠ 0; residual scatter about own mode 13.0 %),
-        // abstention is 4.3 %, and `Apply` moves 16 gaps (2.05 %) while touching none of the 236
-        // dropouts at the digital-zero rail. Three patches stop being applied; all three were
-        // listened to and all three were audible degradations of undamaged periodic material —
-        // drum beats, clock ticks and speech pauses where one 100 ms bin of map error puts B's
-        // loud bin over A's silent bin.
+        // The rate question that kept this on `Observe` is answered (39-pair scan, 2026-08-04):
+        // 829 gaps / 782 registrations. Nonzero lag is 67.8 % but systematic per pair (23/39 have
+        // a modal lag ≠ 0; residual scatter about own mode 13.0 %), abstention is 4.3 %, and
+        // `Apply` moves 16 gaps (2.05 %) while touching none of the 236 dropouts at the
+        // digital-zero rail. Three patches stop being applied; all three were listened to and all
+        // three were audible degradations of undamaged periodic material — drum beats, clock ticks
+        // and speech pauses where one 100 ms bin of map error puts B's loud bin over A's silent bin.
         //
         // What this does NOT fix: gaps that register correctly and still misclassify, because the
-        // donor test asks "is B non-silent?" rather than "is B non-silent *where A is silent*?"
-        // (§6.10.12). Registration cannot reach those; the fill-level check does.
+        // donor test asks "is B non-silent?" rather than "is B non-silent *where A is silent*?".
+        // Registration cannot reach those; the fill-level check does (BACKLOG: conditional donor
+        // investigation).
         let equivalence_params = crate::domain::gap_equivalence::GapEquivalenceParams {
             enabled: true,
             donor_registration: Some(crate::domain::gap_equivalence::DonorRegistrationParams {

@@ -2,15 +2,15 @@
 //!
 //! **Record-only.** Nothing here vetoes a patch. A false positive on a veto costs an unrepaired
 //! hole, which is worse than the thing being measured, so the number is recorded first and the
-//! threshold is a calibration question for the corpus (see
-//! `docs/dev/TEMP-equivalence-band/08-production-recommendations.md` — fill-level check).
+//! threshold is a calibration question for the corpus (see [docs/pipeline.md](docs/pipeline.md)
+//! § Fill-level check / [docs/json-output.md](docs/json-output.md) § FillLevelCheck).
 //!
 //! **What it measures.** The audible failure this exists to catch is *substitution magnitude*: a
-//! fill placed into quiet A material at a level the surrounding program never reaches. On the four
-//! gaps measured by ear (§6.10.12) the fill ran 11–35 dB above what it replaced, and audibility
-//! tracked the peak — one 100 ms bin at +35 dB was enough to make the patch sound worse than the
-//! unpatched A. So the statistic is a **per-bin peak**, not a whole-fill aggregate: averaging over
-//! the fill is exactly what hides a single loud bin.
+//! fill placed into quiet A material at a level the surrounding program never reaches. On ear-checked
+//! cases the fill ran 11–35 dB above what it replaced, and audibility tracked the peak — one 100 ms
+//! bin at +35 dB was enough to make the patch sound worse than the unpatched A. So the statistic is
+//! a **per-bin peak**, not a whole-fill aggregate: averaging over the fill is exactly what hides a
+//! single loud bin.
 //!
 //! **Reduction is interleaved**, not a mono downmix: the two differ by 3–8 dB on 5.1 content, and
 //! interleaved is what the scan envelope and the WAV analysis both used.

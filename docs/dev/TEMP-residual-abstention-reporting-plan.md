@@ -7,8 +7,10 @@ the threshold on `CorpusGateRecipe`; §3 carry the real placement values). **No 
 remain.** Implements the **residual-abstention reporting** row in
 [BACKLOG.md](../../BACKLOG.md) § *Donor registration leftovers*.
 
-**Source:** [TEMP-equivalence-band/08-production-recommendations.md](TEMP-equivalence-band/08-production-recommendations.md)
-§7.3 (why the probe itself is not the problem) and §7.4 (the row's scope).
+**Source:** residual probe reach / nominal floor anchor are deliberate (archived residual-gate
+plans: post-aligner budget; headroom is chosen-vs-nominal). Reporting scope: name *which*
+abstention fired and surface it outside the fingerprint schema — dump `floor_source` already
+disambiguates absent vs measured floor.
 
 **Deliverable:** a residual verdict that names *why* it carries no usable headroom reading, carried
 into the repair path's own output — plus the `floor_source` correction that reporting depends on

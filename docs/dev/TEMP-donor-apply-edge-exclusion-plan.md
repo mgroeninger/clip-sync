@@ -4,11 +4,10 @@
 **Head/tail exclusion for donor Apply** row in [BACKLOG.md](../../BACKLOG.md) § *Donor registration
 leftovers*.
 
-**Source:** 39-pair scan evidence formerly in `TEMP-equivalence-band/07-corpus-rates.md` §6.10.3
-(clipped regs are head/tail; prefer explicit edge check over a `bins` floor) — rates summarized in
-[BACKLOG.md](../../BACKLOG.md) § *Donor registration leftovers* and
-[TEMP-equivalence-band/08-production-recommendations.md](TEMP-equivalence-band/08-production-recommendations.md)
-§7.4a (shipped Apply without the exclusion). The plan restates the load-bearing numbers below.
+**Source:** 39-pair scan (2026-08-04): all clipped registrations (`bins == 20`) were head or tail;
+prefer an explicit edge check over a `bins` floor. Apply shipped without that exclusion — see
+[BACKLOG.md](../../BACKLOG.md) § *Donor registration leftovers*. The plan restates the load-bearing
+numbers below.
 
 **Deliverable:** when `apply_donor_registration` is on, gaps whose **A silent core touches the scanned
 A extent** classify at the **nominal** map (Observe semantics) while still recording registration.

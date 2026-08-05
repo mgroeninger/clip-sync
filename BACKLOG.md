@@ -59,7 +59,21 @@ width is the right width. `--band` remains a fingerprint *report* only
 yield numbers.
 
 Donor Apply (`apply_donor_registration`) and the fill-level check (`measure_fill_level`) shipped
-2026-08-04. Leftovers below.
+2026-08-04. Leftovers in [Donor registration leftovers](#donor-registration-leftovers).
+
+### Donor registration leftovers
+
+From the 2026-08 equivalence-band / donor-registration review. Donor Apply and fill-level
+check shipped; these remain.
+
+| Item | Direction |
+|------|-----------|
+| **Head/tail exclusion for donor Apply** | When Apply is on, gaps whose A silent core touches the scanned A extent classify at the **nominal** map (Observe semantics) while still recording registration. Prefer geometry over gap index / `bins` floor. Optional noise reduction (clipped regs abstain ~2× mid-media). Plan: [TEMP-donor-apply-edge-exclusion-plan.md](docs/dev/TEMP-donor-apply-edge-exclusion-plan.md) |
+| **Residual-abstention reporting** | Name *why* a residual reading is unusable (`beyond_lag_reach` vs no energetic window vs non-finite) and surface it in repair output — reporting only, no gate change. Plan: [TEMP-residual-abstention-reporting-plan.md](docs/dev/TEMP-residual-abstention-reporting-plan.md) |
+| **`equivalence-calibration --replay` reads `GapScanJson`** | Today `--replay` only loads fingerprint `corpus.json` / `GapCorpus`; plain scan JSON already carries the same registration + envelope fields on every gap (`scripts/scan-registration.ps1`). Teach the reader the scan shape so Apply flip/abstain counts come from the production classifier, not a hand reconstruction. Small reader change; no new measurement |
+| **Fingerprint `skip_reason` is a placeholder** | Every skip in every dump is `correlation_below_threshold` with zeroed correlations — `measure.rs` invents one variant for the `tier` axis only; `project.rs` can serialize all seven. Thread the real `GapPatchSkipReason` through `compute_region_measurements` (or document the lie until then). Independent of media; same family as residual-abstention reporting |
+| **Conditional donor test — investigation only** | Ask “is B non-silent *where A is silent*?” (at the registered lag) instead of independent A-floor + donor-occupancy halves — quiet periodic material can satisfy both in both masters (e.g. 10/12: 4/9 silent on each side, still `repairable_dropout`). **Do not change the gate yet.** First: count A-silent∩donor-silent coincidence on existing 39-pair scan JSON (no re-dump). That rate decides curiosity vs systematic; a wrong threshold drops real dropouts (dangerous direction). Fill-level already catches the observed damage. No TEMP plan until the count says it is worth designing |
+| **33/17 placement-path investigation** | Which path placed 33/17’s fill is **unrecorded**. The dump’s `brackets` array is the oracle enumeration (`list_feasible_anchor_brackets`), not the candidate production selected; rendered seams (`pre_seam_r` 0.998 / `post_seam_r` 0.973) match **no** bracket row (scores top out ~0.43). Bound-/price-extension proposals are dead (comparator already prices move hard; default profile never runs the grid; smaller moves failed the waveform floor). **Next:** instrument the selected candidate / fit path so a later “overrun” proposal has a target; likely site if anything is tuned is the **acceptance floor**, not the comparator |
 
 ### Dual-fit confidence axis
 

@@ -4,8 +4,7 @@
 # Sibling of `scan-registration.ps1` (same manifest format, same stdout/stderr split) but runs the
 # **full patch path**: throwaway `--wav` so splice + `measure_fill_level` execute, `--format json`
 # so each pair lands as `<label>.json` with `patch.gaps[*].fill_level`. Preview / scan-only cannot
-# produce this field — see docs/pipeline.md § Fill-level check and
-# docs/dev/TEMP-equivalence-band/08-production-recommendations.md §7.4a.
+# produce this field — see docs/pipeline.md § Fill-level check / docs/json-output.md § FillLevelCheck.
 #
 # Usage:
 #   ./scripts/measure-fill-level.ps1 -Manifest pairs.csv
@@ -290,7 +289,7 @@ if ($RollupOnly) {
     Write-Host "Rollup: $($rollup.Count) fill_level row(s) → $($rollup.Path)" -ForegroundColor Green
     Write-FillLevelCandidates -Rollup $rollup
     Write-Host ''
-    Write-Host "Docs: docs/dev/TEMP-equivalence-band/08-production-recommendations.md §7.4a" -ForegroundColor DarkGray
+    Write-Host "Docs: docs/pipeline.md § Fill-level check; docs/json-output.md § FillLevelCheck" -ForegroundColor DarkGray
     return
 }
 
@@ -459,7 +458,7 @@ Write-FillLevelCandidates -Rollup $rollup
 
 Write-Host ''
 Write-Host "Ear-check high deltas with --gap-listen / fingerprint-gap; threshold is still open." -ForegroundColor DarkGray
-Write-Host "Docs: docs/dev/TEMP-equivalence-band/08-production-recommendations.md §7.4a" -ForegroundColor DarkGray
+Write-Host "Docs: docs/pipeline.md § Fill-level check; docs/json-output.md § FillLevelCheck" -ForegroundColor DarkGray
 
 $failed = @($results | Where-Object { $_.ExitCode -ne 0 })
 if ($failed.Count -gt 0) {

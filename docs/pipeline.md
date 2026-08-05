@@ -85,7 +85,7 @@ Gaps are also tagged `plan_kind` (`fillable` / `unfillable` / `not_planned`). Se
 
 When the envelope correlation is below `min_envelope_r` (or there are too few bins to register on), registration **abstains**: the class is `not_evaluated` / `donor_registration_unreliable`, which **keeps** the gap (fail open — a patch attempt, never a hole). It does **not** fall back to measuring at the nominal map; that is the window already known to be wrong.
 
-**Not shipped with `Apply`:** the §6.10.3 head/tail exclusion (skip or special-case first/last gaps of a pair, where clipped single-shoulder registrations live). Clipped head/tail registrations abstain more often than mid-media ones; without the exclusion those abstains still fail open. Recorded as deferred in [TEMP-equivalence-band/08-production-recommendations.md](dev/TEMP-equivalence-band/08-production-recommendations.md) §7.4a.
+**Not shipped with `Apply`:** head/tail exclusion (gaps whose A silent core touches the scanned A extent classify at nominal while still recording registration). Clipped head/tail registrations abstain more often than mid-media ones; without the exclusion those abstains still fail open. Deferred: [BACKLOG.md](../BACKLOG.md) § Donor registration leftovers / [TEMP-donor-apply-edge-exclusion-plan.md](dev/TEMP-donor-apply-edge-exclusion-plan.md).
 
 - **Config:** `fill_offset_mode`, `fill_anchor_*`, `limit_fill_to_mapped_region`, `skip_equivalent_gaps`, `apply_donor_registration`.
 - **Code:** `application/scan_gaps.rs`, `domain/gap_equivalence.rs`.

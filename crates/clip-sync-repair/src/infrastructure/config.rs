@@ -69,19 +69,18 @@ pub struct RepairConfig {
     /// Classify the equivalence gate's donor window at the **registered** lag rather than at the
     /// nominal offset map (`DonorRegistrationMode::Apply` vs `Observe`).
     ///
-    /// **On by default (2026-08-04)** after the 39-pair scan and three ear checks
-    /// (`docs/dev/TEMP-equivalence-band/` §6.10, donor Apply). The nominal map
+    /// **On by default (2026-08-04)** after a 39-pair scan and three ear checks. The nominal map
     /// cannot track local drift: it was off by 80–410 ms on the listen set, and on periodic material
     /// one 100 ms bin of that error puts B's loud bin over A's silent bin — the dropout signature,
     /// manufactured. Over 39 pairs / 782 registrations this moves 16 gaps (2.05 %), touches none of
     /// the 236 dropouts at the digital-zero rail, and stops 3 patches; all three were listened to and
-    /// all three were degrading undamaged audio.
+    /// all three were degrading undamaged audio. See also [docs/gap-scan.md](docs/gap-scan.md)
+    /// § Donor registration.
     ///
     /// Registration still **abstains** below `min_envelope_r` (`NotEvaluated` /
     /// `donor_registration_unreliable`), which costs a patch attempt, never a hole. Abstention does
-    /// **not** fall back to the nominal map. The §6.10.3 head/tail exclusion recommended alongside
-    /// this flag is **not** implemented — see
-    /// `docs/dev/TEMP-equivalence-band/08-production-recommendations.md` §7.4a. Disable with
+    /// **not** fall back to the nominal map. Head/tail exclusion for clipped edge registrations is
+    /// **not** implemented (optional; see BACKLOG § Donor registration leftovers). Disable with
     /// `--no-apply-donor-registration` to classify at the nominal map.
     #[serde(default = "default_true")]
     pub apply_donor_registration: bool,
@@ -89,11 +88,12 @@ pub struct RepairConfig {
     /// it on the gap outcome (`fill_level` in the JSON).
     ///
     /// **Record-only** — it never changes a verdict. The audible failure it exists to catch is
-    /// substitution magnitude: on the gaps of §6.10.12 the fill ran 11–35 dB over what it replaced,
-    /// and audibility tracked the peak, not the average. A threshold is deliberately *not* shipped:
-    /// a veto's false positive is an unrepaired hole, so the number is collected first and
-    /// calibrated against the corpus (`docs/dev/TEMP-equivalence-band/08-production-recommendations.md`,
-    /// fill-level check). On by default; `--no-measure-fill-level` skips the pass.
+    /// substitution magnitude: fills 11–35 dB over the surrounding program were audible as damage
+    /// even with clean seam scores, and audibility tracked the peak, not the average. A threshold
+    /// is deliberately *not* shipped: a veto's false positive is an unrepaired hole, so the number
+    /// is collected first and calibrated against the corpus (see [docs/pipeline.md](docs/pipeline.md)
+    /// § Fill-level check / [docs/json-output.md](docs/json-output.md) § FillLevelCheck). On by
+    /// default; `--no-measure-fill-level` skips the pass.
     #[serde(default = "default_true")]
     pub measure_fill_level: bool,
     /// Patch only these gaps (1-based gap numbers and/or time-range tokens as strings).
