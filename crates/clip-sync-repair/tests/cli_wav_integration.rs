@@ -210,7 +210,13 @@ scan_both = false
 fn dir_entries(dir: &Path) -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(dir)
         .expect("read dir")
-        .map(|entry| entry.expect("dir entry").file_name().to_string_lossy().into())
+        .map(|entry| {
+            entry
+                .expect("dir entry")
+                .file_name()
+                .to_string_lossy()
+                .into()
+        })
         .collect();
     names.sort();
     names

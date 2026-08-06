@@ -165,6 +165,15 @@ function Get-FillLevelRows {
                     PreShoulderDb  = $(if ($null -ne $fl.pre_shoulder_db) { [double]$fl.pre_shoulder_db } else { $null })
                     PostShoulderDb = $(if ($null -ne $fl.post_shoulder_db) { [double]$fl.post_shoulder_db } else { $null })
                     PeakBinIndex   = [int]$fl.peak_bin_index
+                    # Shape fields. `peak_delta_db` alone was refuted as an audibility order by the
+                    # 2026-08-06 ear labels; EdgeDeltaDb says whether the fill's excess reaches its
+                    # seams (uniformly hot) or sits inside it (a loud event in a quiet gap), and
+                    # ReferenceSpreadDb says whether the neighbourhood it is judged against is
+                    # uniform or sparse. Absent from reports produced before those fields shipped.
+                    HeadBinDb      = $(if ($null -ne $fl.head_bin_db) { [double]$fl.head_bin_db } else { $null })
+                    TailBinDb      = $(if ($null -ne $fl.tail_bin_db) { [double]$fl.tail_bin_db } else { $null })
+                    EdgeDeltaDb    = $(if ($null -ne $fl.edge_delta_db) { [double]$fl.edge_delta_db } else { $null })
+                    RefSpreadDb    = $(if ($null -ne $fl.reference_spread_db) { [double]$fl.reference_spread_db } else { $null })
                     Bins           = [int]$fl.bins
                     BinMs          = [double]$fl.bin_ms
                     # True when every measurable shoulder was digital silence — usually a
@@ -187,12 +196,14 @@ function Get-FillLevelSummary {
     $gaps = if ($null -ne $doc.scan.gaps) { @($doc.scan.gaps).Count } else { 0 }
     $patched = 0
     $withLevel = 0
+    $withShape = 0
     $maxDelta = $null
     if ($null -ne $doc.patch) {
         $patched = [int]$doc.patch.patched_count
         foreach ($g in @($doc.patch.gaps)) {
             if ($null -ne $g.fill_level) {
                 $withLevel++
+                if ($null -ne $g.fill_level.edge_delta_db) { $withShape++ }
                 $d = [double]$g.fill_level.peak_delta_db
                 if ($null -eq $maxDelta -or $d -gt $maxDelta) { $maxDelta = $d }
             }
@@ -202,6 +213,7 @@ function Get-FillLevelSummary {
         Gaps      = $gaps
         Patched   = $patched
         WithLevel = $withLevel
+        WithShape = $withShape
         MaxDelta  = $maxDelta
         HasPatch  = ($null -ne $doc.patch)
     }
@@ -227,8 +239,11 @@ function Write-FillLevelRollup {
     }
     $sorted = @($all | Sort-Object -Property PeakDeltaDb -Descending)
     $csv = Join-Path $Directory 'fill-level-rollup.csv'
+    # Keep this list in sync with Get-FillLevelRows — a field added there but not here is silently
+    # absent from the CSV even though the reports carry it (cost the 2026-08-06 edge-delta rollup).
     $sorted | Select-Object Label, Gap1Based, Gap0Based, AStartSecs, AEndSecs, PeakDeltaDb,
-    PeakBinDb, ReferenceDb, RefAtFloor, PreShoulderDb, PostShoulderDb, PeakBinIndex, Bins, BinMs,
+    PeakBinDb, ReferenceDb, RefAtFloor, PreShoulderDb, PostShoulderDb, PeakBinIndex,
+    HeadBinDb, TailBinDb, EdgeDeltaDb, RefSpreadDb, Bins, BinMs,
     DualFitUsed, Report |
         Export-Csv -LiteralPath $csv -NoTypeInformation -Encoding utf8
     # Ranking keeps every row in the CSV but drops floored references from the listen candidates:
@@ -403,7 +418,17 @@ Stopping before the rest of the manifest repairs. Usual causes:
 Re-run with -SkipPrecheck to proceed anyway.
 "@
         }
-        Write-Host "[$label] precheck ok — fill_level on $($summary.WithLevel)/$($summary.Patched) patched gap(s)" -ForegroundColor Green
+        # A binary predating the shape fields writes healthy fill_level objects without
+        # edge_delta_db — the check above passes and the whole corpus lands with no shape data.
+        if ($summary.WithShape -eq 0) {
+            throw @"
+[$label] recorded $($summary.WithLevel) fill_level measurement(s) but none carry edge_delta_db.
+The binary at $exe predates the shape fields (2026-08-06). Rebuild — drop -SkipBuild, or
+`cargo build --release --features $Features -p clip-sync-repair`. Re-run with -SkipPrecheck to
+collect peak_delta_db only.
+"@
+        }
+        Write-Host "[$label] precheck ok — fill_level on $($summary.WithLevel)/$($summary.Patched) patched gap(s), shape on $($summary.WithShape)" -ForegroundColor Green
         $prechecked = $true
     }
 

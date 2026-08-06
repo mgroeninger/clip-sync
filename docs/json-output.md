@@ -310,6 +310,9 @@ away should not be able to fail on the output.
 | `peak_delta_db` | number | always | `peak_bin_db - reference_db`; positive means the fill is louder than its neighbourhood |
 | `reference_at_floor` | bool | always | The reference bottomed out at the −120 dB floor: every measurable shoulder is digital silence, usually a neighbouring dropout inside the shoulder window. `peak_delta_db` is then an artifact — **exclude these rows from calibration** |
 | `peak_bin_index` | integer | always | Which bin that was, from the start of the fill |
+| `head_bin_db` / `tail_bin_db` | number | always | Level of the fill's first / last measured bin, dBFS — what meets A at each seam |
+| `edge_delta_db` | number | always | `min(head_bin_db, tail_bin_db) - reference_db`: how far the fill sits above its neighbourhood **at both seams**. Read against `peak_delta_db` (see below) |
+| `reference_spread_db` | number | when the reference shoulder is at least one bin wide | The reference shoulder's loudest bin minus its median bin, in dB. Near zero is a uniform neighbourhood; large is a quiet pocket whose level was set by one occasional event |
 | `bins` | integer | always | Bins measured (a trailing partial bin under half width is dropped) |
 | `bin_ms` | number | always | Bin width the peak was taken over (100 ms) |
 
@@ -317,10 +320,26 @@ The statistic is a per-bin **peak**, not a whole-fill aggregate: on the gaps thi
 against, a single 100 ms bin well above the surrounding program was what made a patch sound worse
 than the unrepaired A, and an average over the fill hides exactly that.
 
-Two limits worth knowing before reading a number: the seam **crossfade is ignored** (the fill's
+**`peak_delta_db` does not, by itself, order audibility.** Ear labels over the 39-pair corpus
+(2026-08-06) put the corpus maximum at +24.34 dB in the *clean* group, while the one fill heard as
+too loud read +15.93 dB — 0.6 dB from a clean one matching it on every other field. What separated
+them was where the excess lived, which is what `edge_delta_db` reports:
+
+| shape | reading | what it was |
+|-------|---------|-------------|
+| uniformly hot fill | `edge_delta_db` ≈ `peak_delta_db`, both large | the +15.93 dB clip heard as too loud — above A's ongoing material at the seams too, so the ear has a direct comparison |
+| loud event inside a quiet gap | `peak_delta_db` large, `edge_delta_db` ≈ 0 | the +24.34 dB corpus maximum, heard as clean — meets A at both seams, loud only in its middle, which is what the missing content was |
+
+`edge_delta_db` takes the **quieter** seam, so it takes both seams sitting high to read as hot — the
+same conservatism as `reference_db` taking the louder shoulder. On a one-bin fill the head, tail and
+peak are the same bin and it degenerates to `peak_delta_db`.
+
+Three limits worth knowing before reading a number. The seam **crossfade is ignored** (the fill's
 edge bins are measured as pure fill, while what lands in A is a blend over `--crossfade-ms` —
-negligible at the 10 ms default, growing with it), and `reference_at_floor` rows must be dropped
-before any histogram of `peak_delta_db`.
+negligible at the 10 ms default, growing with it), and `edge_delta_db` is built on exactly those
+bins, so it is the more crossfade-sensitive of the two deltas. `reference_at_floor` rows must be
+dropped before any histogram. And all of this is still **record-only**: `edge_delta_db` and
+`reference_spread_db` are hypotheses the corpus has not yet confirmed, not gates.
 
 ### GapTags
 

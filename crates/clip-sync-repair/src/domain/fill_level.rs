@@ -12,6 +12,17 @@
 //! a **per-bin peak**, not a whole-fill aggregate: averaging over the fill is exactly what hides a
 //! single loud bin.
 //!
+//! **`peak_delta_db` alone does not order audibility** — 2026-08-06 ear labels over the 39-pair
+//! corpus refuted it. The corpus maximum (+24.34 dB) is clean; the one clip heard as too loud
+//! (+15.93 dB) sits 0.6 dB from a clean one whose every emitted field matched it. What separated
+//! them was *where* the fill's excess lived. The audible one was uniformly above its neighbourhood,
+//! seams included, so the ear had A's own ongoing material either side to compare against. The clean
+//! +24 dB one was a drop inside silence: quiet at both seams with a loud event in its middle, which
+//! is what the missing content actually was. So the peak is kept and two shape fields are recorded
+//! beside it — [`FillLevelCheck::edge_delta_db`], which asks whether the fill is hot *at its seams*
+//! rather than somewhere inside, and [`FillLevelCheck::reference_spread_db`], which asks whether the
+//! neighbourhood being compared against is uniform or sparse. Both are record-only, like the peak.
+//!
 //! **Reduction is interleaved**, not a mono downmix: the two differ by 3–8 dB on 5.1 content, and
 //! interleaved is what the scan envelope and the WAV analysis both used.
 //!
@@ -97,6 +108,37 @@ pub struct FillLevelCheck {
     pub reference_at_floor: bool,
     /// Which bin that was, from the start of the fill.
     pub peak_bin_index: usize,
+    /// Level of the fill's first measured bin, dBFS — what lands against A at the head seam.
+    pub head_bin_db: f64,
+    /// Level of the fill's last measured bin, dBFS — what lands against A at the tail seam.
+    pub tail_bin_db: f64,
+    /// `min(head_bin_db, tail_bin_db) - reference_db`: how far the fill sits above its neighbourhood
+    /// **at both seams**, where the ear has A's own material directly either side to compare with.
+    ///
+    /// Read against `peak_delta_db`, this says where the fill's excess lives. Both large together
+    /// is a fill that is uniformly hot — the shape of the one clip in the 2026-08-06 labels heard as
+    /// too loud. A large `peak_delta_db` with `edge_delta_db` near zero is a fill that meets A at
+    /// both seams and contains a loud event in its middle, which is what a dropout inside silence
+    /// looks like when it has been repaired *correctly* — the +24.34 dB corpus maximum has this
+    /// shape and was heard as clean.
+    ///
+    /// Taking the quieter seam means it takes both seams sitting high to look bad, the same
+    /// conservatism as `reference_db` taking the louder shoulder. Two caveats. The seam bins are the
+    /// ones the crossfade actually blends (see the module note), so this field is more sensitive to
+    /// `--crossfade-ms` than the peak is. And on a fill of one bin the head, tail, and peak are all
+    /// the same bin, so `edge_delta_db == peak_delta_db` says nothing.
+    pub edge_delta_db: f64,
+    /// Spread of the reference shoulder's own bins: its loudest bin minus its median bin, in dB, on
+    /// the same grid as the fill. `None` when the shoulder is under one bin wide.
+    ///
+    /// Conditions how much the comparison is worth. Near zero is a uniform neighbourhood — room
+    /// tone, or steady program — where `reference_db` genuinely predicts what belongs in the gap. A
+    /// large spread is a sparse one, a quiet pocket with something occasional in it, where the
+    /// shoulder's level is an artifact of whether that something happened to fall inside the window
+    /// and predicts the gap's contents much more weakly. It is recorded rather than applied because
+    /// which way it cuts is exactly what the corpus has not yet shown.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reference_spread_db: Option<f64>,
     /// Bins measured (a trailing partial bin under half width is dropped).
     pub bins: usize,
     pub bin_ms: f64,
@@ -113,6 +155,36 @@ fn rms_db(samples: &[f32], floor_db: f64) -> f64 {
         return floor_db;
     }
     (20.0 * rms.log10()).max(floor_db)
+}
+
+/// Per-bin interleaved RMS in dBFS, on the grid the fill's peak is taken on. A trailing part-bin
+/// under half width is dropped for the same reason it is dropped from the fill: an RMS over a
+/// handful of samples is noise, and every statistic built on these bins is an extremum.
+fn bin_levels(samples: &[f32], bin_samples: usize, floor_db: f64) -> Vec<f64> {
+    if bin_samples == 0 {
+        return Vec::new();
+    }
+    samples
+        .chunks(bin_samples)
+        .take_while(|chunk| chunk.len() * 2 >= bin_samples)
+        .map(|chunk| rms_db(chunk, floor_db))
+        .collect()
+}
+
+/// Median of already-collected bin levels. Median rather than mean because the thing it is used to
+/// characterize — a quiet pocket with one loud event in it — is exactly the shape a mean smears.
+fn median_db(levels: &[f64]) -> Option<f64> {
+    if levels.is_empty() {
+        return None;
+    }
+    let mut sorted = levels.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).expect("bin levels are finite"));
+    let mid = sorted.len() / 2;
+    Some(if sorted.len().is_multiple_of(2) {
+        (sorted[mid - 1] + sorted[mid]) / 2.0
+    } else {
+        sorted[mid]
+    })
 }
 
 /// Measure the assembled fill against the A shoulders either side of the gap it replaces.
@@ -170,33 +242,51 @@ pub fn measure_fill_level(
         )
     });
 
-    let reference_db = match (pre_shoulder_db, post_shoulder_db) {
-        (Some(pre), Some(post)) => pre.max(post),
-        (Some(one), None) | (None, Some(one)) => one,
-        (None, None) => return None,
-    };
+    // The reference shoulder's *range* is carried, not just its level: `reference_spread_db`
+    // characterizes the same shoulder the fill is being judged against, not the other one.
+    let mut shoulders: Vec<(f64, std::ops::Range<usize>)> = Vec::new();
+    if let Some(db) = pre_shoulder_db {
+        shoulders.push((db, pre_start..pre_end));
+    }
+    if let Some(db) = post_shoulder_db {
+        shoulders.push((db, post_start..post_end));
+    }
+    // `max_by` keeps the *last* maximum; reversing makes a tie resolve to the pre shoulder, matching
+    // the `pre.max(post)` this replaced.
+    let (reference_db, reference_range) = shoulders
+        .into_iter()
+        .rev()
+        .max_by(|(a, _), (b, _)| a.partial_cmp(b).expect("shoulder levels are finite"))?;
 
     let bin_frames = ((params.bin_ms / 1000.0) * rate).round().max(1.0) as usize;
     let bin_samples = bin_frames * channels;
-    let mut bins = 0usize;
-    let mut peak_bin_db = params.floor_db;
-    let mut peak_bin_index = 0usize;
-    for (index, chunk) in fill.chunks(bin_samples).enumerate() {
-        // A trailing sliver is dropped: an RMS over a handful of samples is noise, and this
-        // statistic is a peak, so noise on the tail would be the value that gets reported.
-        if chunk.len() * 2 < bin_samples {
-            break;
-        }
-        let db = rms_db(chunk, params.floor_db);
-        if bins == 0 || db > peak_bin_db {
-            peak_bin_db = db;
-            peak_bin_index = index;
-        }
-        bins += 1;
-    }
-    if bins == 0 {
-        return None;
-    }
+
+    let fill_bins = bin_levels(fill, bin_samples, params.floor_db);
+    let (&head_bin_db, &tail_bin_db) = fill_bins.first().zip(fill_bins.last())?;
+    // First maximum wins, so the reported index is the earliest loudest bin.
+    let (peak_bin_index, peak_bin_db) = fill_bins.iter().enumerate().fold(
+        (0usize, params.floor_db),
+        |(best_index, best_db), (index, &db)| {
+            if index == 0 || db > best_db {
+                (index, db)
+            } else {
+                (best_index, best_db)
+            }
+        },
+    );
+
+    let reference_bins = bin_levels(
+        &a_samples[reference_range.start * channels..reference_range.end * channels],
+        bin_samples,
+        params.floor_db,
+    );
+    let reference_spread_db = median_db(&reference_bins).map(|median| {
+        let loudest = reference_bins
+            .iter()
+            .copied()
+            .fold(f64::NEG_INFINITY, f64::max);
+        loudest - median
+    });
 
     Some(FillLevelCheck {
         pre_shoulder_db,
@@ -206,7 +296,11 @@ pub fn measure_fill_level(
         peak_delta_db: peak_bin_db - reference_db,
         reference_at_floor: reference_db <= params.floor_db,
         peak_bin_index,
-        bins,
+        head_bin_db,
+        tail_bin_db,
+        edge_delta_db: head_bin_db.min(tail_bin_db) - reference_db,
+        reference_spread_db,
+        bins: fill_bins.len(),
         bin_ms: params.bin_ms,
     })
 }
@@ -434,6 +528,118 @@ mod tests {
         )
         .expect("shoulders exist either side");
         assert!(!check.reference_at_floor, "{check:?}");
+    }
+
+    /// The shape of the one clip the 2026-08-06 labels heard as too loud: the fill sits above its
+    /// neighbourhood everywhere, seams included. Both deltas large together is what says so.
+    #[test]
+    fn a_uniformly_hot_fill_shows_the_excess_at_its_seams_too() {
+        let a = a_with_hole(4000, 1, 0.01, 2000..2500);
+        let check = measure_fill_level(
+            &tone(500, 1, 0.1),
+            &a,
+            1,
+            2000,
+            2500,
+            RATE,
+            FillLevelParams::default(),
+        )
+        .expect("shoulders exist either side");
+        assert!((check.peak_delta_db - 20.0).abs() < 0.01, "{check:?}");
+        assert!(
+            (check.edge_delta_db - 20.0).abs() < 0.01,
+            "hot at both seams, not just inside: {check:?}"
+        );
+    }
+
+    /// The shape of the +24.34 dB corpus maximum, which was heard as clean: a dropout inside quiet
+    /// material, repaired with content that meets A at both seams and is loud only in its middle.
+    /// `peak_delta_db` cannot tell this from the case above; `edge_delta_db` is the field that can.
+    #[test]
+    fn a_fill_loud_only_in_its_middle_meets_a_at_both_seams() {
+        let a = a_with_hole(4000, 1, 0.01, 2000..2500);
+        let mut fill = tone(500, 1, 0.01);
+        for sample in fill[200..300].iter_mut() {
+            *sample = 0.1;
+        }
+        let check = measure_fill_level(&fill, &a, 1, 2000, 2500, RATE, FillLevelParams::default())
+            .expect("shoulders exist either side");
+        assert!(
+            (check.peak_delta_db - 20.0).abs() < 0.01,
+            "the interior event is still reported: {check:?}"
+        );
+        assert!(
+            check.edge_delta_db.abs() < 0.01,
+            "but the seams match A: {check:?}"
+        );
+        assert_eq!(check.peak_bin_index, 2, "{check:?}");
+    }
+
+    /// The quieter seam decides, so one hot seam alone does not read as a uniformly hot fill — the
+    /// same conservatism as the reference taking the louder shoulder.
+    #[test]
+    fn the_edge_delta_takes_the_quieter_seam() {
+        let a = a_with_hole(4000, 1, 0.01, 2000..2500);
+        let mut fill = tone(500, 1, 0.01);
+        for sample in fill[..100].iter_mut() {
+            *sample = 0.1;
+        }
+        let check = measure_fill_level(&fill, &a, 1, 2000, 2500, RATE, FillLevelParams::default())
+            .expect("shoulders exist either side");
+        assert!((check.head_bin_db - check.tail_bin_db) > 15.0, "{check:?}");
+        assert!(
+            check.edge_delta_db.abs() < 0.01,
+            "the quiet tail decides: {check:?}"
+        );
+    }
+
+    /// A uniform neighbourhood spreads by nothing; the shoulder level then genuinely predicts what
+    /// belongs in the gap.
+    #[test]
+    fn a_steady_shoulder_has_no_spread() {
+        let a = a_with_hole(4000, 1, 0.1, 2000..2500);
+        let check = measure_fill_level(
+            &tone(500, 1, 0.1),
+            &a,
+            1,
+            2000,
+            2500,
+            RATE,
+            FillLevelParams::default(),
+        )
+        .expect("shoulders exist either side");
+        assert!(
+            check.reference_spread_db.expect("shoulder is bins wide") < 0.01,
+            "{check:?}"
+        );
+    }
+
+    /// A quiet pocket with one loud event in it reads the event as `reference_db` while most of the
+    /// neighbourhood sits far below — the case where the comparison is worth least.
+    #[test]
+    fn a_sparse_shoulder_spreads_by_the_event_that_set_its_level() {
+        let mut a = a_with_hole(4000, 1, 0.01, 2000..2500);
+        // One loud 100 ms bin inside the post shoulder (which starts 100 ms past the gap).
+        for sample in a[2700..2800].iter_mut() {
+            *sample = 0.1;
+        }
+        let check = measure_fill_level(
+            &tone(500, 1, 0.01),
+            &a,
+            1,
+            2000,
+            2500,
+            RATE,
+            FillLevelParams::default(),
+        )
+        .expect("shoulders exist either side");
+        let spread = check.reference_spread_db.expect("shoulder is bins wide");
+        assert!(spread > 15.0, "one loud bin over a quiet median: {check:?}");
+        assert_eq!(
+            check.reference_db,
+            check.post_shoulder_db.expect("post shoulder"),
+            "the spread describes the shoulder that set the reference: {check:?}"
+        );
     }
 
     #[test]
