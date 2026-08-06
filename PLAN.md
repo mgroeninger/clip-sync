@@ -144,7 +144,7 @@ Full design: [docs/dev/archive/query-reference-alignment-plan.md](docs/dev/archi
 4. Map each gap to video **B** using `recommended_offset_secs` (`b = a + offset`). In query-reference mode, `GapReport.overlap` comes from `alignment.start_overlap` (mapped region); gaps outside the region may be reported but not fillable when `limit_fill_to_mapped_region` is true (default).
 5. For each candidate gap: report whether B has energy; apply fill gates (structure match, correlation, mapped-region coverage). The `fit`-path structure tier matches a gated log-RMS **energy envelope** over `gap_signature_context_secs` of context (`gap_signature_mode = auto` default: energy when both context halves have contour, else bool fallback for flat/near-silent envelopes); see [docs/dev/archive/energy-signature-plan.md](docs/dev/archive/energy-signature-plan.md).
 6. Output gap table (human + JSON). Exit **0** when analysis completes.
-7. **Write path (when not dry-run):** `PatchAudio` splices donor PCM into gaps → multi-channel **WAV** (R4); optional `RepairVideos` ffmpeg mux (R5, `ffmpeg-mux` feature). Mux re-encodes audio; default `mux_audio_bitrate = "match_min"` sets ffmpeg `-b:a` from the lower measured compressed bitrate of A and B (counted during patch decode). Write mode today: `--wav` / `--mux` or TOML `dry_run = false` (explicit `--dry-run` / `--write` flags deferred — see BACKLOG R6).
+7. **Write path (when not dry-run):** `PatchAudio` splices donor PCM into gaps → multi-channel **WAV** (R4); optional `RepairVideos` ffmpeg mux (R5, `ffmpeg-mux` feature). Mux re-encodes audio; default `mux_audio_bitrate = "match_min"` sets ffmpeg `-b:a` from the lower measured compressed bitrate of A and B (counted during patch decode). Write mode today: `--wav` / `--mux` or TOML `dry_run = false` (explicit `--dry-run` / `--write` flags deferred — see BACKLOG R6). `--patch-only` takes this same arm with every sink absent: the splice runs and step 7's encode is skipped, which is how splice-time measurements such as `fill_level` are collected without producing a file — see [docs/pipeline.md](docs/pipeline.md#orchestration-scan-only-vs-preview-vs-patch-only-vs-write-mode).
 
 Repair always aligns in-process; it does not require piping JSON from a prior `clip-sync` run.
 
@@ -878,6 +878,7 @@ Options:
   -c, --config <FILE>
       --wav                     Write patched multi-channel WAV (R4)
       --mux                     Mux patched audio into video via ffmpeg (R5, feature)
+      --patch-only              Run the full patch (splice included), write no audio file
   -o, --output <PATH>             Output path (required when writing)
       --format <human|json>
       --limit-fill-to-mapped-region   Default on in query mode; use --no-limit-fill-region to disable
@@ -887,7 +888,7 @@ Options:
   -h, --help
 ```
 
-Write mode today: `--wav` / `--mux` or TOML `dry_run = false`. Explicit `--dry-run` / `--write` flags deferred (R6).
+Write mode today: `--wav` / `--mux` or TOML `dry_run = false`. `--patch-only` runs the same path with no sink (splice included, nothing written). Explicit `--dry-run` / `--write` flags deferred (R6).
 
 ---
 

@@ -91,6 +91,13 @@ pub fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
         config.repair.repair_preview = true;
         config.repair.dry_run = true;
     }
+    // Patch-only keeps `dry_run` for the same reason preview does — nothing is written — and is
+    // rejected alongside `--wav` / `--mux` / `--repair-preview` by `RepairConfig::validate`. The
+    // patch still runs: `runs_patch_pass` reads this flag ahead of `dry_run`.
+    if args.patch_only {
+        config.repair.patch_only = true;
+        config.repair.dry_run = true;
+    }
     if args.no_normalize {
         config.repair.normalize_fill = false;
     }
@@ -304,11 +311,12 @@ pub(crate) fn validate_fingerprint_flags(args: &Args) -> Result<(), String> {
     Ok(())
 }
 
-/// Run modes `--gap-listen` refuses, each because it cannot deliver the patched WAV that is the
-/// point of the flag. Every rejection is explicit: silently degrading a multi-hour diagnostic run
-/// to two-thirds of its output is the misleading-diagnostics failure this feature exists to avoid,
-/// and is why this deliberately diverges from the warn-and-ignore `--mux` / `--gap-fingerprints`
-/// precedent.
+/// Run modes `--gap-listen` refuses: the first three because they cannot deliver the patched WAV
+/// that is the point of the flag, `--patch-only` because it would duplicate the patch the listen
+/// run already does (see below). Every rejection is explicit: silently degrading a multi-hour
+/// diagnostic run to two-thirds of its output is the misleading-diagnostics failure this feature
+/// exists to avoid, and is why this deliberately diverges from the warn-and-ignore `--mux` /
+/// `--gap-fingerprints` precedent.
 ///
 /// **`dry_run` is not in this list.** It defaults to `true` and is cleared only by an output flag,
 /// so a scan-only run *is* the canonical listen invocation — rejecting it would reject everything.
@@ -330,6 +338,19 @@ fn validate_gap_listen_run_mode(args: &Args) -> Result<(), String> {
     }
     if args.mux.is_some() {
         return Err("--gap-listen cannot be used with --mux".into());
+    }
+    // The odd one out: patch-only *could* deliver the clips, and that is the problem. A listen run
+    // owns its own decode and patch (`gap_listen`), and `run_repair` reaches them only because no
+    // output flag puts it on the write arm. `--patch-only` puts it there anyway, so the pair would
+    // run the gate twice — ~93% of wall clock, paid twice — and the second result would overwrite
+    // the first. Rejected rather than de-duplicated: a listen run already produces `fill_level`
+    // through its own patch, so there is nothing to reconcile.
+    if args.patch_only {
+        return Err(
+            "--gap-listen cannot be used with --patch-only: a listen run already runs the full \
+                    patch (and reports fill_level); --patch-only would run the gate a second time"
+                .into(),
+        );
     }
     Ok(())
 }
@@ -658,6 +679,79 @@ mod cli_override_tests {
         assert!(config.repair.repair_preview);
         assert!(config.repair.dry_run);
         config.repair.validate().expect("preview alone is valid");
+    }
+
+    #[test]
+    fn patch_only_cli_sets_config_flag_and_keeps_dry_run() {
+        use clap::Parser;
+
+        let args = Args::parse_from(["clip-sync-repair", "a.wav", "b.wav", "--patch-only"]);
+        let mut config = RepairAppConfig::default();
+        apply_cli_overrides(&mut config, &args);
+        assert!(config.repair.patch_only);
+        assert!(
+            config.repair.dry_run,
+            "patch-only writes no file, so dry_run stays set"
+        );
+        config.repair.validate().expect("patch-only alone is valid");
+    }
+
+    #[test]
+    fn patch_only_with_wav_is_rejected_by_config_validate() {
+        use clap::Parser;
+
+        let args = Args::parse_from([
+            "clip-sync-repair",
+            "a.wav",
+            "b.wav",
+            "--patch-only",
+            "--wav",
+            "out.wav",
+        ]);
+        let mut config = RepairAppConfig::default();
+        apply_cli_overrides(&mut config, &args);
+        let err = config.repair.validate().expect_err("patch-only + wav");
+        assert!(
+            format!("{err:?}").contains("patch_only"),
+            "unexpected err: {err:?}"
+        );
+    }
+
+    /// `--wav` clears `dry_run` and `--patch-only` sets it again, so the flags cannot be told apart
+    /// by `dry_run` alone — the conflict has to be caught by name, in either order.
+    #[test]
+    fn patch_only_before_wav_is_rejected_too() {
+        use clap::Parser;
+
+        let args = Args::parse_from([
+            "clip-sync-repair",
+            "a.wav",
+            "b.wav",
+            "--wav",
+            "out.wav",
+            "--patch-only",
+        ]);
+        let mut config = RepairAppConfig::default();
+        apply_cli_overrides(&mut config, &args);
+        assert!(config.repair.validate().is_err(), "order must not matter");
+    }
+
+    #[cfg(feature = "calibration")]
+    #[test]
+    fn gap_listen_with_patch_only_is_rejected() {
+        use clap::Parser;
+
+        let args = Args::parse_from([
+            "clip-sync-repair",
+            "a.wav",
+            "b.wav",
+            "--gap-fingerprints",
+            "dump",
+            "--gap-listen",
+            "--patch-only",
+        ]);
+        let err = validate_gap_listen_run_mode(&args).expect_err("listen already patches");
+        assert!(err.contains("--patch-only"), "unexpected err: {err}");
     }
 
     #[cfg(feature = "calibration")]

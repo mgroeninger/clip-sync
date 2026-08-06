@@ -36,7 +36,8 @@ pub struct PendingRepairWrite {
 
 /// What runs after [`ScanGaps`] — the three orchestration modes (scan-only / preview / write).
 ///
-/// Built from `RepairConfig` (`dry_run`, `repair_preview`, output paths) in `composition`.
+/// Built from `RepairConfig` (`dry_run`, `repair_preview`, `patch_only`, output paths) in
+/// `composition`.
 pub enum PendingAfterScan {
     /// Scan report only (`dry_run`, no preview, no output paths). Selection tokens are still
     /// validated against the report so a retry mistype (`--only-gaps 99`) fails instead of exit 0.
@@ -46,7 +47,9 @@ pub enum PendingAfterScan {
         patch_settings: PatchRequestSettings,
         crossfade_ms: u64,
     },
-    /// Full patch + optional file outputs (`--wav` / `--mux` / `dry_run = false`).
+    /// Full patch + optional file outputs (`--wav` / `--mux` / `dry_run = false`), or the patch
+    /// alone with no sink (`--patch-only`) — splice-time measurements such as `fill_level` come
+    /// from here either way, which is why they are unreachable from the `Preview` arm.
     Write(PendingRepairWrite),
 }
 

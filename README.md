@@ -180,6 +180,7 @@ clip-sync-repair [OPTIONS] <VIDEO_A> <VIDEO_B>
 | `--no-measure-fill-level` | — | Skip the fill-level measurement pass |
 | `--wav <PATH>` | — | Write patched multi-channel WAV (implies write mode) |
 | `--mux <PATH>` | — | Mux patched audio into video A via ffmpeg (implies write mode; requires build with `--features ffmpeg-mux` and `ffmpeg` on `PATH`). AAC is re-encoded; bitrate defaults to the lower measured rate of A and B (see `mux_audio_bitrate` below) |
+| `--patch-only` | — | Run the full patch (splice included) and report it, writing no audio. The way to collect splice-time measurements such as `fill_level` — `--repair-preview` stops before the splice. Mutually exclusive with `--wav` / `--mux` / `--repair-preview` |
 | `--no-normalize` | — | Disable loudness normalization of fill segments |
 | `--no-dual-fit` | — | Disable dual-fit rescue (G6); bracket-only skip path for regression (D6) |
 | `--dual-fit` | on | Re-enable dual-fit after TOML/override; default is on — omit both flags for normal repair |

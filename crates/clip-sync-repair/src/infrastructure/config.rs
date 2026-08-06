@@ -195,6 +195,16 @@ pub struct RepairConfig {
     /// scan+characterize rather than scan-only. See [`crate::application::run_repair::PendingAfterScan`].
     #[serde(default)]
     pub repair_preview: bool,
+    /// Run the full patch path (splice included) with **no** output file (`--patch-only`).
+    ///
+    /// The write arm with every sink absent, not a fourth mode: it exists because measurements taken
+    /// during the patch — `fill_level` above all — are unreachable any other way. `repair_preview`
+    /// returns before execute, and the only alternative was a throwaway `--wav`, which fails outright
+    /// past the 4 GiB classic WAV limit on long surround media and takes the whole report down with
+    /// it (the numbers were already computed). Mutually exclusive with `repair_preview` and with
+    /// output paths — a run that names a sink is not a patch-only run.
+    #[serde(default)]
+    pub patch_only: bool,
     /// When query-reference alignment is used, only treat gaps inside the mapped B coverage
     /// region as fillable (gaps outside are still reported).
     #[serde(default = "default_true")]
@@ -566,6 +576,7 @@ impl Default for RepairConfig {
             output: RepairOutputConfig::default(),
             dry_run: default_true(),
             repair_preview: false,
+            patch_only: false,
             limit_fill_to_mapped_region: default_true(),
             fill_offset_mode: crate::domain::FillOffsetMode::default(),
             fill_mode: crate::domain::FillMode::default(),
@@ -1062,6 +1073,22 @@ impl RepairConfig {
                     .into(),
             });
         }
+        if self.patch_only && (self.output.wav_path.is_some() || self.output.video_path.is_some()) {
+            return Err(ConfigError::InvalidValue {
+                field: "patch_only".into(),
+                reason: "cannot combine with output.wav_path / output.video_path (--wav / --mux): \
+                         patch-only means the patch runs and nothing is written"
+                    .into(),
+            });
+        }
+        if self.patch_only && self.repair_preview {
+            return Err(ConfigError::InvalidValue {
+                field: "patch_only".into(),
+                reason: "cannot combine with repair_preview (--repair-preview): preview stops \
+                         before execute, patch-only runs through the splice"
+                    .into(),
+            });
+        }
         if self.only_gaps.is_some() && self.skip_gaps.is_some() {
             return Err(ConfigError::InvalidValue {
                 field: "only_gaps".into(),
@@ -1349,6 +1376,52 @@ dry_run = true
             format!("{err:?}").contains("repair_preview"),
             "unexpected err: {err:?}"
         );
+    }
+
+    /// Patch-only is the write arm with no sink; naming a sink means it is an ordinary write run,
+    /// so the combination is a contradiction rather than a redundancy.
+    #[test]
+    fn rejects_patch_only_with_output_paths() {
+        let config = RepairConfig {
+            patch_only: true,
+            output: RepairOutputConfig {
+                wav_path: Some(PathBuf::from("out.wav")),
+                ..RepairOutputConfig::default()
+            },
+            ..RepairConfig::default()
+        };
+        let err = config.validate().expect_err("patch_only + wav");
+        assert!(
+            format!("{err:?}").contains("patch_only"),
+            "unexpected err: {err:?}"
+        );
+    }
+
+    /// The two flags disagree about how far the run goes — preview stops before execute, patch-only
+    /// runs through the splice — so one silently winning would decide whether `fill_level` exists.
+    #[test]
+    fn rejects_patch_only_with_repair_preview() {
+        let config = RepairConfig {
+            patch_only: true,
+            repair_preview: true,
+            ..RepairConfig::default()
+        };
+        let err = config.validate().expect_err("patch_only + preview");
+        assert!(
+            format!("{err:?}").contains("patch_only"),
+            "unexpected err: {err:?}"
+        );
+    }
+
+    /// Patch-only alone is a legal run mode: no sink is required, and `dry_run` staying `true` is
+    /// what it means (nothing is written), not a conflict.
+    #[test]
+    fn allows_patch_only_without_output_paths() {
+        let config = RepairConfig {
+            patch_only: true,
+            ..RepairConfig::default()
+        };
+        config.validate().expect("patch_only alone is valid");
     }
 
     #[test]

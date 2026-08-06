@@ -164,6 +164,13 @@ pub struct Args {
     #[arg(long)]
     pub repair_preview: bool,
 
+    /// Run the **full** patch path (characterize → execute → anchored retry → splice) and report
+    /// it, writing no audio file. Unlike `--repair-preview` this reaches the splice, so splice-time
+    /// measurements — notably `fill_level` — are produced. Mutually exclusive with `--wav` / `--mux`
+    /// / `--repair-preview`.
+    #[arg(long)]
+    pub patch_only: bool,
+
     /// Disable loudness normalization of fill segments [default: normalization enabled].
     #[arg(long)]
     pub no_normalize: bool,

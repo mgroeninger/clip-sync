@@ -16,13 +16,13 @@ The `clip-sync-repair` execution pipeline, phase by phase, with the reference do
 | **4** | **Per-gap patch** | Unified fit (or gate) placement → seam tiers → optional anchor seam / boundary grid → residual gate → splice | [gap-repair-guide.md](gap-repair-guide.md), [gap-fill-modes.md](gap-fill-modes.md), [seam-scoring.md](seam-scoring.md) | `application/patch_region.rs`, `domain/gap_fill_fit.rs`, `gap_structure.rs`, `gap_energy.rs`, `domain/gap_anchor_seam.rs` |
 | **5** | **Write / mux** | Write patched WAV / mux into A's container via ffmpeg | README § Write output, [cli-output.md](cli-output.md) § Timeline warnings | `application/repair_videos.rs`, `infrastructure/ffmpeg_mux.rs` |
 
-Phases **1–2** always run. Phases **3–5** run in **write mode**; phases **3–4** (pass-1 characterize) also run under **`--repair-preview`** (see [Orchestration](#orchestration-scan-only-vs-write-mode-vs-repair-preview) below).
+Phases **1–2** always run. Phases **3–5** run in **write mode**; phases **3–4** (pass-1 characterize) also run under **`--repair-preview`**, and phases **3–4 plus the splice** run under **`--patch-only`** with phase 5 skipped (see [Orchestration](#orchestration-scan-only-vs-preview-vs-patch-only-vs-write-mode) below).
 
 For the architectural view (crates, hexagonal layers, ports), see [PLAN.md](../PLAN.md).
 
 ---
 
-## Orchestration: scan-only vs write mode vs repair preview
+## Orchestration: scan-only vs preview vs patch-only vs write mode
 
 The five phases above are the **logical** execution order. The **binary** wires them in two steps (`application/run_repair.rs`):
 
@@ -32,17 +32,21 @@ ScanGaps (align + scan)  →  GapReport
        ├── when --repair-preview:
        │     PatchAudio::preview (fill plan + decode + pass-1 characterize) → patch summary, no splice/write
        │
-       └── when --wav / --mux (dry_run = false):
+       └── when --wav / --mux (dry_run = false) or --patch-only:
              RepairVideos → PatchAudio (fill plan + per-gap patch + splice) → write WAV / mux
+                                                                              (skipped: --patch-only)
 ```
 
 | Mode | Trigger | What runs | Output |
 |------|---------|-----------|--------|
-| **Scan-only** (default) | `dry_run = true`, no `--wav` / `--mux` / `--repair-preview` | Phases **1–2** only | `GapReport` on stdout (alignment + gaps + fillability signal) |
+| **Scan-only** (default) | `dry_run = true`, no `--wav` / `--mux` / `--repair-preview` / `--patch-only` | Phases **1–2** only | `GapReport` on stdout (alignment + gaps + fillability signal) |
 | **Repair preview** | `--repair-preview` | Phases **1–4** (pass-1 characterize only; no anchored retry, splice, or file write) | Gap report + would-be patch/skip summary (production gate) |
+| **Patch-only** | `--patch-only` | Phases **1–4** **plus the splice**; phase 5 skipped | Full patch summary in the report, including splice-time measurements (`fill_level`). No file |
 | **Write mode** | `--wav` and/or `--mux` | Phases **1–5** | Patched file(s) + full patch summary in the report |
 
 `--repair-preview` is mutually exclusive with `--wav` / `--mux`. It is **not** `--gap-fingerprints` (that dump uses fingerprint `any_ok` semantics; preview uses the production residual-veto gate). Cost is still a full multichannel decode plus characterize — only splice/encode are skipped.
+
+**`--patch-only` is the write arm with no sink**, not a lighter preview: it costs everything write mode costs except the encode, because the splice is the point. Use it when the run wants the *measurements* a patch produces rather than the audio — `fill_level` above all, which is taken during the splice and so cannot come from preview. It is mutually exclusive with `--wav`, `--mux`, and `--repair-preview` (a run that names a sink is not a patch-only run), and rejected alongside `--gap-listen`, which already runs the full patch itself. Its reason for existing is concrete: forcing write mode with a throwaway `--wav` fails past the 4 GiB classic WAV limit on long surround media, and the write error discards a report whose measurements were already complete.
 
 In scan-only mode, phases **3–5 never execute** — there is no `build_gap_fill_plan`, no seam scoring, no splice. Plan-time labels (`fillable`, `unfillable`, `not planned: …`) are still readable from the scan report via `Gap::is_fillable`, `GapReport::repairable_count`, and `track_compatibility` (same rules as the fill plan, but skip reasons like `track_layout_mismatch` only appear in the patch section after a write or preview run).
 
@@ -105,7 +109,7 @@ When the envelope correlation is below `min_envelope_r` (or there are too few bi
 6. Summarize           PatchSummary
 ```
 
-**Fill-level check (`measure_fill_level`, on by default).** Between steps 4 and 5 — final patches chosen, A not yet mutated — each fill's loudest 100 ms bin is measured against the A shoulders either side of its gap and recorded on the outcome as `fill_level`. It is **report-only**: no threshold, no veto. It exists because a fill placed into quiet A at a level the surrounding program never reaches is audible as damage even when every seam score is clean, and because a veto here would trade that for unrepaired holes — so the number is collected and calibrated first. The fill measured is exactly what the splice writes (`gained_fill` — gain applied, clamped, cut to the destination), and a shoulder with less than half its width of room is declined rather than measured from a sliver. Two rows must not be read naively: `reference_at_floor` means every shoulder was itself digital silence (a neighbouring dropout), and the seam crossfade is ignored. See [json-output.md](json-output.md) § FillLevelCheck. Corpus sweep over a pair manifest: `scripts/measure-fill-level.ps1` (write-mode JSON + `fill-level-rollup.csv`, floored references held out of the listen candidates; throwaway `--wav`).
+**Fill-level check (`measure_fill_level`, on by default).** Between steps 4 and 5 — final patches chosen, A not yet mutated — each fill's loudest 100 ms bin is measured against the A shoulders either side of its gap and recorded on the outcome as `fill_level`. It is **report-only**: no threshold, no veto. It exists because a fill placed into quiet A at a level the surrounding program never reaches is audible as damage even when every seam score is clean, and because a veto here would trade that for unrepaired holes — so the number is collected and calibrated first. The fill measured is exactly what the splice writes (`gained_fill` — gain applied, clamped, cut to the destination), and a shoulder with less than half its width of room is declined rather than measured from a sliver. Two rows must not be read naively: `reference_at_floor` means every shoulder was itself digital silence (a neighbouring dropout), and the seam crossfade is ignored. See [json-output.md](json-output.md) § FillLevelCheck. Corpus sweep over a pair manifest: `scripts/measure-fill-level.ps1` (`--patch-only` JSON + `fill-level-rollup.csv`, floored references held out of the listen candidates). The measurement needs the splice, so `--repair-preview` cannot produce it and `--patch-only` is the cheapest run that can.
 
 ### Per gap (`prepare_region_patch`)
 
@@ -166,7 +170,7 @@ In write mode the patched A audio is emitted:
 
 **Internal representation:** all patched audio is held as normalized `f32` samples in `[-1.0, 1.0]` inside `MultiChannelPcm`. Conversion to output integers happens at write time: `f32 × 32767 → i16` (16-bit path) or `f32 × 8_388_607 → i32` (24-bit path). The source bit depth (`AudioTrack.bit_depth`, populated at Symphonia probe time) is carried through `MultiChannelPcm.source_bit_depth` and resolved by `resolve_output_bit_depth()` to one of `WavBitDepth::Int16` or `WavBitDepth::Int24`. `MonoPcmClip` (used by the chromaprint fingerprinter) remains `Vec<i16>` — it is not affected by this representation.
 
-Report-only / scan-only mode (default `dry_run = true`, no output paths) runs phases 1–2 and writes nothing to disk — see [Orchestration](#orchestration-scan-only-vs-write-mode).
+Report-only / scan-only mode (default `dry_run = true`, no output paths) runs phases 1–2 and writes nothing to disk — see [Orchestration](#orchestration-scan-only-vs-preview-vs-patch-only-vs-write-mode).
 
 - **Config:** `dry_run`, output paths, `audio_codec`, `mux_audio_bitrate`, `normalize_fill`, `crossfade_ms`.
 - **References:** README § Write output, [cli-output.md](cli-output.md) § Timeline / duration warnings, [json-output.md](json-output.md).

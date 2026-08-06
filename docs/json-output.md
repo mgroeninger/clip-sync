@@ -296,6 +296,11 @@ an unrepaired hole, so the number is collected for calibration first. Present on
 fill was actually spliced (a failed splice reports nothing) and only when `measure_fill_level` is
 on (the default; `--no-measure-fill-level` skips the pass).
 
+Because it is measured *during* the splice, it appears on write-mode runs (`--wav` / `--mux`) and on
+`--patch-only` — which runs the same patch and writes no file — but never under `--repair-preview`,
+which returns before execute. For a corpus sweep prefer `--patch-only`: a run whose output is thrown
+away should not be able to fail on the output.
+
 | Field | Type | Presence | Meaning |
 |-------|------|----------|---------|
 | `pre_shoulder_db` | number | when there is A before the gap | Interleaved RMS of the pre-gap A shoulder, dBFS. Absent when the available room is under half the shoulder width (head of media) — a sliver is declined, not measured |

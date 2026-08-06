@@ -126,3 +126,92 @@ scan_both = false
         "patched WAV gap region should have audio after fill, got rms={gap_rms}"
     );
 }
+
+/// `--patch-only` runs the same patch as the `--wav` case above and reports it, writing nothing.
+///
+/// The measurement that motivates the flag is `fill_level`, which is taken during the splice and so
+/// cannot come from `--repair-preview`. Asserting it is present *and* that no file appeared is the
+/// whole contract: the corpus sweep needs the number, not the audio, and a throwaway `--wav` is what
+/// puts long surround runs into the 4 GiB classic-WAV failure that discards the report.
+#[test]
+fn cli_patch_only_reports_fill_level_and_writes_nothing() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let (path_a, path_b) =
+        write_offset_chirp_wav_pair(temp.path(), SAMPLE_RATE, TOTAL_SECS, OFFSET_SECS);
+    zero_wav_segment(&path_a, SAMPLE_RATE, SILENT_START_SECS, SILENT_END_SECS);
+
+    let config_path = temp.path().join("repair.toml");
+    std::fs::write(
+        &config_path,
+        r#"
+[clip]
+clip_length = 60
+
+[repair]
+min_fill_correlation = -1.0
+scan_both = false
+"#,
+    )
+    .expect("write config");
+
+    // Everything the fixture put there; anything new after the run is a file patch-only wrote.
+    let before = dir_entries(temp.path());
+
+    let bin = env!("CARGO_BIN_EXE_clip-sync-repair");
+    let output = Command::new(bin)
+        .args([
+            path_a.to_str().expect("path_a utf8"),
+            path_b.to_str().expect("path_b utf8"),
+            "--config",
+            config_path.to_str().expect("config utf8"),
+            "--patch-only",
+            "--format",
+            "json",
+            "--min-gap-ms",
+            "25000",
+            "--no-scan-both",
+        ])
+        .output()
+        .expect("run clip-sync-repair");
+
+    assert!(
+        output.status.success(),
+        "patch-only should exit 0: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let doc: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("patch-only emits a JSON report");
+    let gaps = doc["patch"]["gaps"]
+        .as_array()
+        .expect("a patch block with gaps — patch-only must reach the splice, not stop at preview");
+    let levels: Vec<&serde_json::Value> = gaps
+        .iter()
+        .filter_map(|gap| gap.get("fill_level"))
+        .collect();
+    assert!(
+        !levels.is_empty(),
+        "patch-only exists to produce fill_level; got none in {gaps:#?}"
+    );
+    assert!(
+        levels[0]["peak_delta_db"].is_number(),
+        "fill_level must carry the calibration statistic: {:#?}",
+        levels[0]
+    );
+
+    let mut after = dir_entries(temp.path());
+    after.retain(|name| !before.contains(name));
+    assert!(
+        after.is_empty(),
+        "patch-only must leave no new files behind; found {after:?}"
+    );
+}
+
+fn dir_entries(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .expect("read dir")
+        .map(|entry| entry.expect("dir entry").file_name().to_string_lossy().into())
+        .collect();
+    names.sort();
+    names
+}

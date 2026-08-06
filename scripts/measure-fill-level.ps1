@@ -2,9 +2,10 @@
 # Write-mode repair over a pair manifest, capturing `fill_level` (fill-level check) as parseable JSON.
 #
 # Sibling of `scan-registration.ps1` (same manifest format, same stdout/stderr split) but runs the
-# **full patch path**: throwaway `--wav` so splice + `measure_fill_level` execute, `--format json`
-# so each pair lands as `<label>.json` with `patch.gaps[*].fill_level`. Preview / scan-only cannot
-# produce this field — see docs/pipeline.md § Fill-level check / docs/json-output.md § FillLevelCheck.
+# **full patch path**: `--patch-only` so splice + `measure_fill_level` execute with no audio file
+# written, `--format json` so each pair lands as `<label>.json` with `patch.gaps[*].fill_level`.
+# Preview / scan-only cannot produce this field — `--repair-preview` returns before execute.
+# See docs/pipeline.md § Fill-level check / docs/json-output.md § FillLevelCheck.
 #
 # Usage:
 #   ./scripts/measure-fill-level.ps1 -Manifest pairs.csv
@@ -19,8 +20,11 @@
 # STDOUT vs STDERR: repair JSON → stdout → `<label>.json`; progress → stderr → `<label>.log`.
 # Do not Tee both streams into one file — that interleaves progress into the document.
 #
-# Throwaway WAV: written under -WavDir as `<label>.repaired.wav`, deleted after each pair unless
-# -KeepWav. There is no first-class "fill without encode" mode; this is the supported workaround.
+# NO THROWAWAY WAV. This used to force write mode with a `--wav` nobody wanted, which cost the
+# 2026-08-05 run 8 of 39 pairs: their patched PCM exceeded the 4 GiB classic WAV limit, the write
+# error took the whole run down (exit 4), and the fill-level numbers — already computed minutes
+# earlier, before the splice — died with the report. `--patch-only` runs the same patch and skips
+# the sink. Do not reintroduce `--wav` here; `-WavDir` / `-KeepWav` are gone with it.
 #
 # PRECHECK: the first pair with patched_count > 0 must carry at least one `fill_level`. A binary
 # built before the fill-level check, or `--no-measure-fill-level`, produces healthy JSON with the field silently
@@ -41,10 +45,7 @@ param(
     # Per-pair stderr (progress + warnings): `<label>.log`.
     [string]$LogDir = (Join-Path $env:TEMP 'clip-sync-fill-level'),
 
-    # Throwaway `--wav` targets. Deleted after each pair unless -KeepWav.
-    [string]$WavDir = (Join-Path $env:TEMP 'clip-sync-fill-level-wav'),
-
-    # Shared repair args after `A B --wav OUT --format json`. Per-pair `extra` follows these.
+    # Shared repair args after `A B --patch-only --format json`. Per-pair `extra` follows these.
     [string]$RepairArgs = '',
 
     [ValidateSet('auto', 'comma', 'tab')]
@@ -52,9 +53,6 @@ param(
 
     # Overwrite existing `<label>.json`. Without this, parseable reports are skipped (resume).
     [switch]$Force,
-
-    # Keep the per-pair WAV under -WavDir (default: delete after the run).
-    [switch]$KeepWav,
 
     # Skip the first-pair fill_level precheck.
     [switch]$SkipPrecheck,
@@ -77,11 +75,11 @@ if (-not (Test-Path $Manifest)) { throw "manifest not found: $Manifest" }
 
 $forbidden = @(
     '--gap-fingerprints', '--gap-listen', '--wav', '--mux', '--repair-preview',
-    '--format', '--no-measure-fill-level'
+    '--patch-only', '--format', '--no-measure-fill-level'
 )
 foreach ($f in $forbidden) {
     if ($RepairArgs -match [regex]::Escape($f)) {
-        throw "-RepairArgs must not contain '$f'. This script supplies --wav (throwaway) and " +
+        throw "-RepairArgs must not contain '$f'. This script supplies --patch-only and " +
         "--format json, and requires measure_fill_level on. For scan-only registration use " +
         "scan-registration.ps1; for dumps use measure-gap-fingerprints.ps1; for kept repairs use " +
         "repair-directory-pairs.ps1."
@@ -90,9 +88,6 @@ foreach ($f in $forbidden) {
 
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
-if (-not $RollupOnly) {
-    New-Item -ItemType Directory -Force -Path $WavDir | Out-Null
-}
 
 $outFull = (Resolve-Path $OutDir).Path.TrimEnd('\', '/')
 $repoFull = (Resolve-Path $RepoRoot).Path.TrimEnd('\', '/')
@@ -329,7 +324,6 @@ foreach ($row in $rows) {
 
     $json = Join-Path $OutDir "$label.json"
     $log = Join-Path $LogDir "$label.log"
-    $wav = Join-Path $WavDir "$label.repaired.wav"
 
     $summary = $null
     if ((Test-Path -LiteralPath $json) -and -not $Force) {
@@ -353,9 +347,10 @@ foreach ($row in $rows) {
         continue
     }
 
-    # A B --wav OUT --format json [shared] [per-pair extra]. Write mode is required for fill_level.
+    # A B --patch-only --format json [shared] [per-pair extra]. The patch must actually run —
+    # fill_level is measured during the splice — but nothing is written.
     $argList = [System.Collections.Generic.List[string]]::new()
-    $argList.AddRange([string[]]@($aPath, $bPath, '--wav', $wav, '--format', 'json'))
+    $argList.AddRange([string[]]@($aPath, $bPath, '--patch-only', '--format', 'json'))
     if ($RepairArgs -ne '') {
         foreach ($tok in ($RepairArgs -split '\s+' | Where-Object { $_ -ne '' })) { $argList.Add($tok) }
     }
@@ -379,10 +374,6 @@ foreach ($row in $rows) {
         else { $env:RUST_LOG = $prevLog }
     }
     $sw.Stop()
-
-    if (-not $KeepWav -and (Test-Path -LiteralPath $wav)) {
-        Remove-Item -LiteralPath $wav -Force -ErrorAction SilentlyContinue
-    }
 
     $summary = $null
     if ($rc -eq 0 -and (Test-Path -LiteralPath $json)) {
@@ -451,7 +442,6 @@ $rollup = Write-FillLevelRollup -Directory $OutDir -PairLabels $doneLabels
 Write-Host ''
 Write-Host "Reports: $OutDir" -ForegroundColor DarkGray
 Write-Host "Logs:    $LogDir" -ForegroundColor DarkGray
-if ($KeepWav) { Write-Host "WAVs:    $WavDir" -ForegroundColor DarkGray }
 Write-Host "Rollup:  $($rollup.Path) ($($rollup.Count) row(s), sorted by peak_delta_db desc)" -ForegroundColor DarkGray
 
 Write-FillLevelCandidates -Rollup $rollup

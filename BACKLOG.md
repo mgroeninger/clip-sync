@@ -19,6 +19,7 @@ Last updated: 2026-08-05.
 |------|--------|
 | [TEMP-nway-donor-alignment-plan.md](docs/dev/TEMP-nway-donor-alignment-plan.md) | N-way donor alignment: repair one damaged copy from multiple donors — draft, not started |
 | [TEMP-flac-output-plan.md](docs/dev/TEMP-flac-output-plan.md) | In-process `--flac` lossless output (peer of `--wav`, no ffmpeg) — draft, not started |
+| [TEMP-residual-measured-unify-plan.md](docs/dev/TEMP-residual-measured-unify-plan.md) | Unify mono/multichannel residual “measured” semantics — draft; census before gate move |
 
 ## Open work
 
@@ -78,7 +79,7 @@ From [archive/repair-write-path-plan.md](docs/dev/archive/repair-write-path-plan
 
 | Item | Direction |
 |------|-----------|
-| `--dry-run` / `--write` | Explicit CLI flags; today write mode is implied by `--wav` / `--mux` or TOML `dry_run = false` |
+| `--dry-run` / `--write` | Explicit CLI flags; today write mode is implied by `--wav` / `--mux` or TOML `dry_run = false`. **Still open, and now bigger than it was:** `--patch-only` (shipped) added a fourth run mode — patch, no sink — so the mode is no longer a `dry_run` boolean at all. Four modes (scan-only / `--repair-preview` / `--patch-only` / write) are selected today by three flags plus a TOML boolean, with the mutual exclusions enforced pairwise in `RepairConfig::validate`. If this is picked up, do it as one coherent mode selector rather than bolting `--dry-run` / `--write` onto the side — note `--patch-only` deliberately *keeps* `dry_run = true` (it writes nothing), which an explicit `--write` flag would make incoherent |
 | Scratch-buffer regression test | Dedicated unit test for patch PCM path |
 | Streaming / chunked WAV encode | Large multi-gap fills without holding full PCM |
 | Adaptive gap-signature context (low priority) | Widen `gap_signature_context_secs` per-gap only when the score at the nominal map is below floor, instead of decoding wide B context for every gap. From [energy-signature-plan.md](docs/dev/archive/energy-signature-plan.md) Phase 4; low value since mode-coupled `nominal_bias` already handles drift at the 3 s default |
@@ -102,7 +103,7 @@ From [archive/residual-gate-findings.md](docs/dev/archive/residual-gate-findings
 | **`finale_floor_nan_probe`** | optional test | Unit repro: why Grieg finale floor is NaN (M3-adjacent); catalog backlog |
 | **`c1b_acoustic_echo_pipeline_veto`** | optional test | Pipeline `ResidualHeadroomExceeded` under `production_fit` on non-F4 echo fixture — optional C1b |
 | **`p2_search_winner_bounds`** | optional test | Bound headroom on search winner vs truth placement — needs design |
-| **Mono/multichannel disagree on "measured"** | med | A side whose probes are **sourced but non-finite** (window found, fit failed) makes the *mono* verdict uninformative — the gate abstains — while the *multichannel* path drops that side from `side_floor_informative` and lets the other side govern, so the veto still applies. Same physical event, opposite gate behaviour; found reviewing residual-abstention reporting (2026-08-05, `uninformative_reason` names the event on both). Multichannel is the stricter reading. Unifying moves the gate either way, so it needs corpus counts (how many gaps have exactly one side sourced-non-finite) before a direction is chosen — **not** a reporting change |
+| **Mono/multichannel disagree on "measured"** | med | A side whose probes are **sourced but non-finite** (window found, fit failed) makes the *mono* verdict uninformative — the gate abstains — while the *multichannel* path drops that side from `side_floor_informative` and lets the other side govern, so the veto still applies. Same physical event, opposite gate behaviour; found reviewing residual-abstention reporting (2026-08-05, `uninformative_reason` names the event on both). Multichannel is the stricter reading. Unifying moves the gate either way, so it needs corpus counts (how many gaps have exactly one side sourced-non-finite) before a direction is chosen — **not** a reporting change. Plan: [TEMP-residual-measured-unify-plan.md](docs/dev/TEMP-residual-measured-unify-plan.md) |
 
 **Explicitly not planned:** `veto_rescue` as default (G5: synthetic-only); F4 pipeline veto (M6).
 

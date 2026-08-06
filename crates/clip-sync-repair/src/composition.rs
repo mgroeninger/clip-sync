@@ -304,8 +304,8 @@ pub fn repair_run_input(
     Ok(RepairRunInput { scan, after_scan })
 }
 
-/// Map `RepairConfig` run-mode fields (`dry_run`, `repair_preview`, output paths) onto the
-/// post-scan orchestration arm.
+/// Map `RepairConfig` run-mode fields (`dry_run`, `repair_preview`, `patch_only`, output paths)
+/// onto the post-scan orchestration arm.
 fn pending_after_scan(
     config: &RepairAppConfig,
     source_video: PathBuf,
@@ -325,12 +325,21 @@ fn pending_after_scan(
     }
 }
 
-/// Whether the run will splice and write — i.e. [`pending_repair_write`] will yield a request.
+/// Whether the run will splice — i.e. [`pending_repair_write`] will yield a request.
 ///
 /// Split out so the run mode can be known *before* the scan, without building the request (which
 /// clones settings and can fail on an unparseable bitrate policy). `pending_repair_write` is
 /// defined in terms of it, so the two can never drift.
-fn wants_repair_write(config: &RepairAppConfig) -> bool {
+///
+/// Named for the patch, not the write, because the two are no longer the same question:
+/// `patch_only` takes this arm with every sink absent, so a run can splice and write nothing.
+fn runs_patch_pass(config: &RepairAppConfig) -> bool {
+    // Checked before `dry_run`: patch-only keeps `dry_run` set (it writes no file) and would
+    // otherwise be turned away here, which is exactly the fall-through to scan-only that would make
+    // the flag silently do nothing.
+    if config.repair.patch_only {
+        return true;
+    }
     if config.repair.dry_run {
         return false;
     }
@@ -352,14 +361,17 @@ fn wants_repair_write(config: &RepairAppConfig) -> bool {
 /// `--gap-fingerprints` alone.
 #[cfg(feature = "calibration")]
 pub(crate) fn is_scan_only_run(config: &RepairAppConfig) -> bool {
-    !config.repair.repair_preview && !wants_repair_write(config)
+    !config.repair.repair_preview && !runs_patch_pass(config)
 }
 
+/// The write arm's request. On a `patch_only` run every path below is `None` — `RepairConfig::validate`
+/// rejects `patch_only` alongside `--wav` / `--mux`, so the sinks are absent by construction rather
+/// than cleared here, and `RepairFileOutput` already treats "no path" as "write nothing".
 fn pending_repair_write(
     config: &RepairAppConfig,
     source_video: PathBuf,
 ) -> Result<Option<PendingRepairWrite>, RepairError> {
-    if !wants_repair_write(config) {
+    if !runs_patch_pass(config) {
         return Ok(None);
     }
 
@@ -508,6 +520,53 @@ mod gap_selection_output_tests {
             OutputFormat::Json,
             &config_err
         ));
+    }
+}
+
+/// Run-mode arm selection. Deliberately **not** in `mod tests` below: that module is
+/// `feature = "calibration"` (it covers the fingerprint selector), and `--patch-only` is a plain
+/// production flag — gating its tests would let a default build ship the flag untested.
+#[cfg(test)]
+mod run_mode_tests {
+    use std::path::PathBuf;
+
+    use super::{pending_after_scan, PendingAfterScan, RepairAppConfig};
+
+    /// `--patch-only` as the CLI leaves it: the flag set and `dry_run` still `true`, because nothing
+    /// is written.
+    fn patch_only_config() -> RepairAppConfig {
+        let mut config = RepairAppConfig::default();
+        config.repair.patch_only = true;
+        config.repair.dry_run = true;
+        config
+    }
+
+    /// The whole point of the flag: it must reach the arm that splices. `dry_run` is still set, so
+    /// without the explicit patch-only check this would fall through to scan-only and the run would
+    /// look healthy while measuring nothing.
+    #[test]
+    fn patch_only_takes_the_write_arm() {
+        let pending =
+            pending_after_scan(&patch_only_config(), PathBuf::from("a.mkv")).expect("valid config");
+        let PendingAfterScan::Write(write) = pending else {
+            panic!("patch_only must take the Write arm, not preview or scan-only");
+        };
+        assert!(write.wav_path.is_none(), "patch-only writes no WAV");
+        #[cfg(feature = "ffmpeg-mux")]
+        assert!(write.video_path.is_none(), "patch-only muxes nothing");
+    }
+
+    /// The flag is what moves the run, not `dry_run` being cleared: an ordinary dry run with no
+    /// output path still stops at the scan.
+    #[test]
+    fn a_dry_run_without_patch_only_still_stops_at_the_scan() {
+        let config = RepairAppConfig::default();
+        assert!(config.repair.dry_run, "dry_run defaults on");
+        let pending = pending_after_scan(&config, PathBuf::from("a.mkv")).expect("valid config");
+        assert!(
+            matches!(pending, PendingAfterScan::None { .. }),
+            "a plain dry run is scan-only"
+        );
     }
 }
 
