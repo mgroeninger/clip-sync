@@ -14,7 +14,6 @@ fn fill_offset_mode_label(mode: FillOffsetMode) -> &'static str {
     match mode {
         FillOffsetMode::Recommended => "recommended",
         FillOffsetMode::Interpolated => "interpolated",
-        FillOffsetMode::Anchored => "anchored",
         FillOffsetMode::AnchoredRetry => "anchored_retry",
     }
 }

@@ -2,12 +2,14 @@
 
 use std::str::FromStr;
 
+use serde::{Deserialize, Deserializer, Serialize};
+
 use crate::domain::align::{ClipRole, ScanAlignment};
 
 use crate::domain::patch_anchor::{interpolate_anchored_offset_secs, PatchAnchorTable};
 
 /// How patch maps each gap on A to B's timeline.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FillOffsetMode {
     /// Use `recommended_offset_secs` for every gap (scan + patch).
@@ -15,8 +17,6 @@ pub enum FillOffsetMode {
     Recommended,
     /// Linearly interpolate between start-clip and end-clip offsets by position on A.
     Interpolated,
-    /// Interpolate from patch anchors plus clip endpoints (single-pass; not wired in patch yet).
-    Anchored,
     /// Pass 1: clip-based offset; pass 2: retry seam failures using anchors from pass-1 successes.
     AnchoredRetry,
 }
@@ -36,12 +36,25 @@ impl FromStr for FillOffsetMode {
         match s.trim().to_ascii_lowercase().as_str() {
             "recommended" => Ok(FillOffsetMode::Recommended),
             "interpolated" => Ok(FillOffsetMode::Interpolated),
-            "anchored" => Ok(FillOffsetMode::Anchored),
             "anchored-retry" | "anchored_retry" => Ok(FillOffsetMode::AnchoredRetry),
+            "anchored" => Err(
+                "fill offset mode 'anchored' was removed; use anchored-retry (two-pass patch anchors)"
+                    .into(),
+            ),
             _ => Err(format!(
-                "invalid fill offset mode: {s} (expected recommended, interpolated, anchored, or anchored-retry)"
+                "invalid fill offset mode: {s} (expected recommended, interpolated, or anchored-retry)"
             )),
         }
+    }
+}
+
+impl<'de> Deserialize<'de> for FillOffsetMode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        s.parse().map_err(serde::de::Error::custom)
     }
 }
 
@@ -74,9 +87,6 @@ pub fn resolve_gap_offset_secs(
     match mode {
         FillOffsetMode::Recommended => alignment.recommended_offset_secs,
         FillOffsetMode::Interpolated => clip_only_offset_secs(alignment, gap_time_on_a_secs),
-        FillOffsetMode::Anchored => {
-            anchored_offset_secs(alignment, gap_time_on_a_secs, patch_anchors)
-        }
         FillOffsetMode::AnchoredRetry => match anchored_retry_pass {
             AnchoredRetryPass::First => clip_only_offset_secs(alignment, gap_time_on_a_secs),
             AnchoredRetryPass::Second => {
@@ -208,7 +218,7 @@ mod tests {
     }
 
     #[test]
-    fn anchored_uses_patch_table() {
+    fn anchored_retry_second_pass_uses_patch_table() {
         let alignment = test_empty_alignment(0.0);
         let policy = PatchAnchorPolicy {
             min_correlation: 0.35,
@@ -232,12 +242,34 @@ mod tests {
         );
         let offset = resolve_gap_offset_secs(
             &alignment,
-            FillOffsetMode::Anchored,
+            FillOffsetMode::AnchoredRetry,
             50.0,
             Some(&table),
-            AnchoredRetryPass::First,
+            AnchoredRetryPass::Second,
         )
         .unwrap();
         assert!((offset - 1.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn from_str_rejects_removed_anchored_mode() {
+        let err = "anchored".parse::<FillOffsetMode>().unwrap_err();
+        assert!(err.contains("anchored-retry"), "{err}");
+    }
+
+    #[test]
+    fn serde_rejects_removed_anchored_mode_with_same_guidance() {
+        let err = serde_json::from_str::<FillOffsetMode>(r#""anchored""#).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("was removed") && msg.contains("anchored-retry"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn serde_accepts_snake_case_anchored_retry() {
+        let mode: FillOffsetMode = serde_json::from_str(r#""anchored_retry""#).unwrap();
+        assert_eq!(mode, FillOffsetMode::AnchoredRetry);
     }
 }

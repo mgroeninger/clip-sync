@@ -260,7 +260,6 @@ When write mode runs (`--wav` / `--mux`), each fillable gap goes through structu
 | `recommended` (default) | Every gap uses `recommended_offset_secs` from alignment (fusion or start preference when clip offsets disagree — not always the raw start-clip offset). |
 | `interpolated` | Linearly interpolates between start-clip and end-clip offsets by each gap's position on A. Use when alignment drift is significant (`end − start` offset differs by more than ~50 ms). CLI: `--fill-offset interpolated`. |
 | `anchored_retry` | **Two-pass:** pass 1 patches all gaps with clip-based offset (same as `interpolated` when start/end clips exist); pass 2 retries seam failures using offset anchors from high-confidence pass-1 successes. Use on drift-heavy long-form pairs when `interpolated` still leaves hard gaps near the search-window edge. CLI: `--fill-offset anchored-retry`. Orthogonal to `fill_mode` (`fit` / `gate`). See [gap-fill-modes.md](docs/gap-fill-modes.md) § Patch anchors. |
-| `anchored` | Config/CLI value reserved for future single-pass sequential mode. Today behaves like clip offset only (no live anchor table). Prefer **`anchored_retry`**. |
 
 **2. Structure match** (always runs)
 

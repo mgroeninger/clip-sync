@@ -1,6 +1,6 @@
 # Patch-anchor offset map (archived)
 
-> **Status:** **Archived** (2026-06-22). Phases 1–4 **shipped** in `clip-sync-repair`: `anchored_retry` two-pass, weighted anchors, JSON export, optional search prior, optional marginal pass-2 upgrade (`fill_anchor_retry_marginal`). Single-pass `anchored` **deferred** (enum + resolver only). **Phase 0** manual long-form drift validation **not yet recorded** — see [corpus-validation.md](../corpus-validation.md).
+> **Status:** **Archived** (2026-06-22). Phases 1–4 **shipped** in `clip-sync-repair`: `anchored_retry` two-pass, weighted anchors, JSON export, optional search prior, optional marginal pass-2 upgrade (`fill_anchor_retry_marginal`). Single-pass `anchored` was **removed** (2026-08-05) — never wired in `PatchAudio`; use `anchored_retry`. **Phase 0** manual long-form drift validation **not yet recorded** — see [corpus-validation.md](../corpus-validation.md).
 
 **Problem:** Per-gap B placement starts from alignment only: `recommended_offset_secs` (single global Δ) or `interpolated` (linear drift between **two** fingerprint clip anchors). Gaps are patched **independently** in one pass; `align_adjustment_secs` is reported on success but discarded for siblings. When clock drift is nonlinear or clip anchors are sparse (e.g. 15 min windows on a 2 h file), hard gaps search the wrong neighborhood even though nearby easy gaps proved the local Δ.
 
@@ -14,7 +14,7 @@
 
 | Key | Default | Notes |
 |-----|---------|-------|
-| `fill_offset_mode` | `recommended` | `anchored_retry` wired; `anchored` reserved |
+| `fill_offset_mode` | `recommended` | `anchored_retry` wired; single-pass `anchored` removed |
 | `fill_anchor_min_correlation` | same as `min_fill_correlation` | Anchor eligibility floor |
 | `fill_anchor_exclude_structure_trusted` | `true` | Gate patches without waveform |
 | `fill_anchor_max_adjustment_frac` | `0.9` | Reject edge-clamped slides |
@@ -32,7 +32,7 @@ CLI: `--fill-offset anchored-retry`; `--fill-anchor-*`; `--fill-anchor-retry-mar
 | 0 — Characterization | **Partial** — synthetic drift fixture; manual long-form notes open |
 | 1 — Anchor types + resolver | Yes |
 | 2 — Two-pass `PatchAudio` + wiring | Yes (fit + gate integration) |
-| 3 — Docs + eligibility | Yes (`anchored` single-pass deferred) |
+| 3 — Docs + eligibility | Yes (single-pass `anchored` later removed) |
 | 4 — Search prior / weights / JSON | Yes |
 | Post-ship — Marginal pass-2 retry | Yes (`fill_anchor_retry_marginal`) |
 
@@ -49,7 +49,7 @@ CLI: `--fill-offset anchored-retry`; `--fill-anchor-*`; `--fill-anchor-retry-mar
 
 ### Deferred / backlog
 
-- Single-pass `anchored` in `PatchAudio` (enum + resolver only today)
+- ~~Single-pass `anchored` in `PatchAudio`~~ — **removed** (collect-then-splice + `anchored_retry` supersede)
 - Pass-1 easy-first ordering (low priority; collect-then-splice makes pass-1 order irrelevant)
 - `BACKLOG` segment-wise alignment: patch anchors reduce urgency but do not replace global refine
 
@@ -96,7 +96,6 @@ Marginal patches are **not** anchor sources.
 | Item | Priority |
 |------|----------|
 | Manual listen / skip-count comparison on drift-heavy long-form pair | Medium |
-| Wire single-pass `anchored` | Low |
 | Segment-wise global alignment refine | Low (see `BACKLOG.md`) |
 
 ---
@@ -112,7 +111,7 @@ Marginal patches are **not** anchor sources.
 
 ## Open questions (resolved)
 
-1. **`anchored` vs `anchored_retry`:** two enum values; only `anchored_retry` wired in `PatchAudio`.
+1. **`anchored` vs `anchored_retry`:** two-pass `anchored_retry` shipped; single-pass `anchored` removed (2026-08-05).
 2. **Clip + patch anchor merge:** clip endpoints + patch anchors in `interpolate_anchored_offset_secs`.
 3. **Retry marginal pass-1 in pass 2:** shipped behind `fill_anchor_retry_marginal` (default off).
 4. **JSON anchor table:** `patch.patch_anchors_used` on `PatchSummary`.

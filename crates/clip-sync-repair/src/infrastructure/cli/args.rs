@@ -260,7 +260,7 @@ pub struct Args {
     pub border_standoff_secs: Option<f64>,
 
     /// Per-gap B mapping [default: recommended]: `recommended`, `interpolated` (clip drift),
-    /// `anchored` (anchor interpolation; not wired in patch yet), `anchored-retry` (two-pass retry).
+    /// or `anchored-retry` (two-pass patch anchors).
     #[arg(long, value_parser = clap::value_parser!(FillOffsetMode), value_name = "MODE")]
     pub fill_offset: Option<FillOffsetMode>,
 

@@ -115,7 +115,7 @@ When the envelope correlation is below `min_envelope_r` (or there are too few bi
 
 | Step | What |
 |------|------|
-| **Offset map** | `resolve_gap_offset_secs` (recommended / interpolated / anchored / anchored-retry pass 2) |
+| **Offset map** | `resolve_gap_offset_secs` (recommended / interpolated / anchored-retry pass 2) |
 | **A edge refine** | `refine_gap_frames` |
 | **B haystack** | Slice from full decoded B (context + border search + margin + slack) |
 | **Seam gate** | `evaluate_seam_gate` — **fit** (default) or **gate** (legacy); see below |

@@ -153,9 +153,7 @@ fn anchor_search_prior_for_gap(
         return None;
     }
     let table = patch_anchors.filter(|t| !t.is_empty())?;
-    if anchored_retry_pass != AnchoredRetryPass::Second
-        && request.fill_offset_mode != FillOffsetMode::Anchored
-    {
+    if anchored_retry_pass != AnchoredRetryPass::Second {
         return None;
     }
     let gap_time_on_a = (region.a_start_secs + region.a_end_secs) / 2.0;

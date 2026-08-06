@@ -340,7 +340,7 @@ Pass 2 (anchored_retry): retry failed gaps with improved gap_offset_secs
     → re-run the same fill_mode (fit or gate) with a centered haystack
 ```
 
-Single-pass `anchored` (easy-first sequential) is **deferred** — use `anchored_retry` today.
+Single-pass `anchored` was removed (never wired under collect-then-splice); use `anchored_retry`.
 
 **Orthogonal to `fill_mode`:** anchors only change step 1 (`fill_offset_mode` / `gap_offset_secs`). Structure match, unified fit, marginal tier, gate trust, and extension behavior are unchanged.
 

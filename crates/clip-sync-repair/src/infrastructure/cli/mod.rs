@@ -553,6 +553,25 @@ mod cli_override_tests {
     }
 
     #[test]
+    fn fill_offset_anchored_cli_is_rejected() {
+        use clap::Parser;
+
+        let err = Args::try_parse_from([
+            "clip-sync-repair",
+            "a.wav",
+            "b.wav",
+            "--fill-offset",
+            "anchored",
+        ])
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("was removed") && msg.contains("anchored-retry"),
+            "{msg}"
+        );
+    }
+
+    #[test]
     fn quick_cli_preserves_toml_explicit_border_search() {
         use clap::Parser;
         // TOML set fill_border_search_secs explicitly; --quick must not stomp it.
