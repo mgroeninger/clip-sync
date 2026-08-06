@@ -62,6 +62,10 @@ fn gap_status_gating_core(status: &GapPatchStatus) -> GapPatchStatus {
 fn gap_tags_gating_core(tags: &GapTags) -> GapTags {
     let mut t = tags.clone();
     t.residual_band = None;
+    // Same class as `residual_band`: reporting only. It is present whenever a residual was measured
+    // at all, so a measure-only run names its abstention where the pre-gate baseline has nothing to
+    // name — which is the point of the field, not a gating difference.
+    t.residual_uninformative = None;
     t
 }
 
@@ -78,6 +82,7 @@ fn gap_outcome_gating_core(outcome: &GapPatchOutcome) -> GapPatchOutcome {
 
 /// Compare patch/skip decisions and user-visible tier tags — not diagnostic-only fields
 /// (`GapPatchOutcome::residual`, `GapPatchOutcome::fill_level`, `tags.residual_band`,
+/// `tags.residual_uninformative`,
 /// `summary.donor_relation`).
 fn assert_patch_gating_equivalent(
     baseline: &PatchAudioResult,

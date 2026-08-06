@@ -239,6 +239,7 @@ mod tests {
             fit_path: None,
             signature_mode: None,
             residual_band: None,
+            residual_uninformative: None,
             anchor_seam_used: false,
             anchor_bracket_move_frames: 0,
             dual_fit_used: false,

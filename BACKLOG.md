@@ -19,7 +19,6 @@ Last updated: 2026-08-05.
 |------|--------|
 | [TEMP-nway-donor-alignment-plan.md](docs/dev/TEMP-nway-donor-alignment-plan.md) | N-way donor alignment: repair one damaged copy from multiple donors — draft, not started |
 | [TEMP-flac-output-plan.md](docs/dev/TEMP-flac-output-plan.md) | In-process `--flac` lossless output (peer of `--wav`, no ffmpeg) — draft, not started |
-| [TEMP-residual-abstention-reporting-plan.md](/docs/dev/TEMP-residual-abstention-reporting-plan.md) | a residual verdict that names *why* it carries no usable headroom reading, carried into the repair path's own output|
 
 ## Open work
 
@@ -55,7 +54,6 @@ check shipped; these remain.
 
 | Item | Direction |
 |------|-----------|
-| **Residual-abstention reporting** | Name *why* a residual reading is unusable (`beyond_lag_reach` vs no energetic window vs non-finite) and surface it in repair output — reporting only, no gate change. Plan: [TEMP-residual-abstention-reporting-plan.md](docs/dev/TEMP-residual-abstention-reporting-plan.md) |
 | **`equivalence-calibration --replay` reads `GapScanJson`** | Today `--replay` only loads fingerprint `corpus.json` / `GapCorpus`; plain scan JSON already carries the same registration + envelope fields on every gap (`scripts/scan-registration.ps1`). Teach the reader the scan shape so Apply flip/abstain counts come from the production classifier, not a hand reconstruction. Small reader change; no new measurement |
 | **Fingerprint `skip_reason` is a placeholder** | Every skip in every dump is `correlation_below_threshold` with zeroed correlations — `measure.rs` invents one variant for the `tier` axis only; `project.rs` can serialize all seven. Thread the real `GapPatchSkipReason` through `compute_region_measurements` (or document the lie until then). Independent of media; same family as residual-abstention reporting |
 | **Conditional donor test — investigation only** | Ask “is B non-silent *where A is silent*?” (at the registered lag) instead of independent A-floor + donor-occupancy halves — quiet periodic material can satisfy both in both masters (e.g. 10/12: 4/9 silent on each side, still `repairable_dropout`). **Do not change the gate yet.** First: count A-silent∩donor-silent coincidence on existing 39-pair scan JSON (no re-dump). That rate decides curiosity vs systematic; a wrong threshold drops real dropouts (dangerous direction). Fill-level already catches the observed damage. No TEMP plan until the count says it is worth designing |
@@ -104,6 +102,7 @@ From [archive/residual-gate-findings.md](docs/dev/archive/residual-gate-findings
 | **`finale_floor_nan_probe`** | optional test | Unit repro: why Grieg finale floor is NaN (M3-adjacent); catalog backlog |
 | **`c1b_acoustic_echo_pipeline_veto`** | optional test | Pipeline `ResidualHeadroomExceeded` under `production_fit` on non-F4 echo fixture — optional C1b |
 | **`p2_search_winner_bounds`** | optional test | Bound headroom on search winner vs truth placement — needs design |
+| **Mono/multichannel disagree on "measured"** | med | A side whose probes are **sourced but non-finite** (window found, fit failed) makes the *mono* verdict uninformative — the gate abstains — while the *multichannel* path drops that side from `side_floor_informative` and lets the other side govern, so the veto still applies. Same physical event, opposite gate behaviour; found reviewing residual-abstention reporting (2026-08-05, `uninformative_reason` names the event on both). Multichannel is the stricter reading. Unifying moves the gate either way, so it needs corpus counts (how many gaps have exactly one side sourced-non-finite) before a direction is chosen — **not** a reporting change |
 
 **Explicitly not planned:** `veto_rescue` as default (G5: synthetic-only); F4 pipeline veto (M6).
 

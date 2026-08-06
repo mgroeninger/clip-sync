@@ -290,11 +290,19 @@ Prefer **facts** in automation. Treat **hints** as shorthand for the C-layer sha
 | `fit_path` | `baseline_only`, `boundary_grid` | Profile (Layer 5) | `-v` `fit path:` |
 | `signature_mode` | `bool`, `energy` | Layer 4 (resolved) | `-v` `signature_mode=` |
 | `residual_band` | `cancels`, `correlates_only`, `no_floor` | Residual/floor headroom (fit mode) | `-v` `residual_band=`; JSON `tags` |
+| `residual_uninformative` | `beyond_lag_reach`, `no_reference_window`, `probe_non_finite`, `floor_above_ok_db` (omitted when the residual is usable) | Why there is no usable headroom reading — read **with** `residual_band`, which says `no_floor` for all four | `-v` `residual_reason=`; JSON `tags` |
 | `anchor_seam_used` | `true` (omitted when false) | Fit mode: winning placement used an editorial anchor bracket, not scan throat alone | `-v` `anchor_seam=true`; JSON `status.patched` + `tags` |
 | `anchor_bracket_move_frames` | integer (omitted when 0) | Total frame displacement of anchor bracket from scan-refined baseline | `-v` `anchor_move_frames=`; JSON `status.patched` + `tags` |
 | `patch_skip_reason` | `boundary_alignment_failed`, `correlation_below_threshold`, `b_extract_failed`, `aligned_segment_out_of_range`, `zero_length_gap`, `residual_headroom_exceeded` | Patch skip enum | JSON `reason`; verbose skip line |
 
 `patch_tier` and `seam_shape` apply only when the gap reached patch with `fill_mode = fit`. Plan-only gaps use `patch_tier = not_applicable`.
+
+`residual_uninformative` is **not** the negation of the verdict's `informative` flag: the gate
+abstains on `!informative` *or* beyond-reach placement, so `beyond_lag_reach` appears on gaps whose
+`informative` is `true`. Note also that only three of the four are abstentions — `floor_above_ok_db`
+means the floor *was* measured and sits above the threshold, and (like `donor_relation`'s
+`diff_capture`) says nothing about whether B is a different master. See
+[json-output.md](json-output.md) § SeamResidualVerdict.
 
 **Run metadata** (corpus matrix / tuning notes — not emitted as `gap tags:` today):
 

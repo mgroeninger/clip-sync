@@ -1,6 +1,36 @@
 # TEMP — Residual-abstention reporting
 
-**Status:** draft plan, 2026-08-05; self-review folded in the same day (§1.1 threshold note, §1.3
+**Status:** **SHIPPED and archived 2026-08-05** — all three phases implemented; durable behaviour in
+[json-output.md](../json-output.md) § *SeamResidualVerdict* / § *GapTags*,
+[gap-repair-guide.md](../gap-repair-guide.md) § *Tag axes*, and
+[gap-fingerprint.md](gap-fingerprint.md) (`residual` row + § *Gate recipe*).
+
+**One prediction did not hold: §4.1's golden churn never materialized.** No committed golden moved —
+the whole crate suite passed unchanged. The fingerprint JSONs under `tests/gap_corpus/fingerprints/`
+are *inputs* to the differentials, not re-emitted output, and `tests/fixtures/full_surface_repair.json`
+carries no `residual` block at all, so §1.4's correction had no committed multichannel side to move.
+The one test that did change is `integration_residual_gate_smoke`'s gating-core comparison, which now
+strips `residual_uninformative` exactly as it already stripped `residual_band` — a measure-only run
+names its abstention where the pre-gate baseline has nothing to name. That is §1.5 holding, not a
+neutrality failure.
+
+**Post-ship review, same day — §1.5 needed a structural guarantee, not a promise.** A cleanup pass
+had rewritten both gate readers to `uninformative_reason().is_some()`, which is *not* the guard:
+`side_floor_informative` drops a multichannel side whose channels all found a window and then failed
+the fit, so `informative` ignores it while the side still names `ProbeNonFinite`. On such a gap the
+verdict is `informative: true` with a finite headroom, and routing the gate through the reason
+suppressed a live `ResidualHeadroomExceeded` veto (measured: headroom +10 dB against a 6 dB margin,
+`Err(HeadroomExceeded)` → `Ok(High)`). Fixed by making the guard an explicit named predicate —
+`SeamResidualVerdict::gate_abstains()` — which both readers call and which
+`uninformative_reason()` is now *defined in terms of*. The dependency runs one way, so no change to
+the naming vocabulary can move a decision; §6's "nothing that decides anything reads it" is now
+enforced by shape rather than by discipline. Pinned by
+`uninformative_reason_is_exactly_the_gate_guard` (guard ≡ reason across every mono and multichannel
+shape) and `asymmetric_multichannel_side_does_not_widen_the_gate_guard`. The underlying
+mono/multichannel disagreement about what counts as *measured* is real, gate-facing, and out of this
+plan's scope — filed in [BACKLOG.md](../../../BACKLOG.md) § *Residual gate follow-ups*.
+
+Original status line: draft plan, 2026-08-05; self-review folded in the same day (§1.1 threshold note, §1.3
 contract, §1.4 channel consistency, §3 promoted to required, §4/§4.1 fixture + golden mechanics,
 §5 effort and churn counts); the two open decisions settled the same day against source (§1.1 record
 the threshold on `CorpusGateRecipe`; §3 carry the real placement values). **No open decisions
@@ -383,35 +413,35 @@ it, which is the opposite of how the original draft ordered the risk.
 
 **Phase 1 — domain**
 
-- [ ] Add `ResidualUninformative` to `crates/clip-sync-repair/src/domain/policies/seam_residual.rs`, next to `SeamFloorSource`; re-export from `domain/policies/mod.rs` if `SeamFloorSource` is.
-- [ ] Add a private `side_uninformative(floor: &SeamFloorProbe, floor_ok_db: f64) -> Option<ResidualUninformative>` implementing §1.2.
-- [ ] Add a `&[SeamChannelResidual]` variant that reads the min-floor channel, mirroring `side_floor_informative`.
-- [ ] **Fix `side_worst_headroom_summary` per §1.4** — fall back to a sourced-floor channel's `(floor_db, source)` when no channel has finite headroom.
-- [ ] Add the two fields to `SeamResidualVerdict`; populate in `from_parts_with_placement` and `from_channel_residuals`; extend the hand-written `PartialEq`.
-- [ ] Add `uninformative_reason()` with §1.3's combine rule, and the doc comment that says it mirrors the **gate guard**, not `!informative` (§1.3).
-- [ ] Docstring `FloorAboveOkDb` with the §1.1 caveat (mirror `DonorRelation::DiffCapture`'s wording) **and** the threshold-relativity note.
-- [ ] Unit tests per §4 rows 1–5; `worst_headroom_db()` invariance.
+- [x] Add `ResidualUninformative` to `crates/clip-sync-repair/src/domain/policies/seam_residual.rs`, next to `SeamFloorSource`; re-export from `domain/policies/mod.rs` if `SeamFloorSource` is.
+- [x] Add a private `side_uninformative(floor: &SeamFloorProbe, floor_ok_db: f64) -> Option<ResidualUninformative>` implementing §1.2.
+- [x] Add a `&[SeamChannelResidual]` variant that reads the min-floor channel, mirroring `side_floor_informative`.
+- [x] **Fix `side_worst_headroom_summary` per §1.4** — fall back to a sourced-floor channel's `(floor_db, source)` when no channel has finite headroom.
+- [x] Add the two fields to `SeamResidualVerdict`; populate in `from_parts_with_placement` and `from_channel_residuals`; extend the hand-written `PartialEq`.
+- [x] Add `uninformative_reason()` with §1.3's combine rule, and the doc comment that says it mirrors the **gate guard**, not `!informative` (§1.3).
+- [x] Docstring `FloorAboveOkDb` with the §1.1 caveat (mirror `DonorRelation::DiffCapture`'s wording) **and** the threshold-relativity note.
+- [x] Unit tests per §4 rows 1–5; `worst_headroom_db()` invariance.
 
 **Phase 2 — production output**
 
-- [ ] `GapTags.residual_uninformative` in `domain/gap_tags.rs`, populated at every `classify_residual_band` call site.
-- [ ] `format_gap_tags_verbose_line` appends the reason alongside `residual_band` (the `-v` line, via `log_gap_tags_verbose`).
-- [ ] `log_residual_verdict_debug` in `application/patch_region.rs` gains the field.
-- [ ] Decision-neutrality test on the four gate-facing quantities (§1.5); re-bless goldens per §4.1, checking each moved side had a sourced floor.
-- [ ] Write the missing `### SeamResidualVerdict` section in `docs/json-output.md` (the `#seamresidualverdict` link at `GapPatchOutcome.residual` is dangling today); add the `GapTags` row and enum values; update `docs/gap-repair-guide.md` § Tag axes.
+- [x] `GapTags.residual_uninformative` in `domain/gap_tags.rs`, populated at every `classify_residual_band` call site.
+- [x] `format_gap_tags_verbose_line` appends the reason alongside `residual_band` (the `-v` line, via `log_gap_tags_verbose`).
+- [x] `log_residual_verdict_debug` in `application/patch_region.rs` gains the field.
+- [x] Decision-neutrality test on the four gate-facing quantities (§1.5); re-bless goldens per §4.1, checking each moved side had a sourced floor.
+- [x] Write the missing `### SeamResidualVerdict` section in `docs/json-output.md` (the `#seamresidualverdict` link at `GapPatchOutcome.residual` is dangling today); add the `GapTags` row and enum values; update `docs/gap-repair-guide.md` § Tag axes.
 
 **Phase 3 — fingerprint (separate commit, required)**
 
-- [ ] `ResidualInfo` fields as `Option` + `default`; back-compat deserialize test against a pre-2026-08-05 fixture.
-- [ ] Carry the reason through `project.rs`'s **write** mapping (verdict → `ResidualInfo`) **and** its **replay** mapping (`ResidualInfo` → `SeamResidualVerdict`) — read the stored value, never recompute it (§3).
-- [ ] `ResidualInfo.placement_slide_frames` / `max_lag_frames` as `Option<i64>` + `default`; populate from the verdict in the write mapping; `unwrap_or(0)` on replay, replacing the hardcoded zeros (§3). Mirror the `floor_source_*` comments at both ends.
-- [ ] Replay test: a from-decode dump whose production verdict was beyond-reach round-trips to `beyond_lag_reach() == true` (fails today), and a pre-field fixture still lands on `0` / today's behaviour.
-- [ ] `CorpusGateRecipe.residual_floor_ok_db: Option<f64>` + `#[serde(default)]`, populated in `from_settings`; back-compat test that an existing recipe without the key still deserializes to `None` (§1.1).
+- [x] `ResidualInfo` fields as `Option` + `default`; back-compat deserialize test against a pre-2026-08-05 fixture.
+- [x] Carry the reason through `project.rs`'s **write** mapping (verdict → `ResidualInfo`) **and** its **replay** mapping (`ResidualInfo` → `SeamResidualVerdict`) — read the stored value, never recompute it (§3).
+- [x] `ResidualInfo.placement_slide_frames` / `max_lag_frames` as `Option<i64>` + `default`; populate from the verdict in the write mapping; `unwrap_or(0)` on replay, replacing the hardcoded zeros (§3). Mirror the `floor_source_*` comments at both ends.
+- [x] Replay test: a from-decode dump whose production verdict was beyond-reach round-trips to `beyond_lag_reach() == true` (fails today), and a pre-field fixture still lands on `0` / today's behaviour.
+- [x] `CorpusGateRecipe.residual_floor_ok_db: Option<f64>` + `#[serde(default)]`, populated in `from_settings`; back-compat test that an existing recipe without the key still deserializes to `None` (§1.1).
 
 **Close-out**
 
-- [ ] Strike the BACKLOG row; note the durable behaviour in [json-output.md](../json-output.md).
-- [ ] Archive this plan per [README.md](README.md) § Plans.
+- [x] Strike the BACKLOG row; note the durable behaviour in [json-output.md](../json-output.md).
+- [x] Archive this plan per [README.md](README.md) § Plans.
 
 ---
 

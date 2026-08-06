@@ -493,6 +493,9 @@ fn log_residual_verdict_debug(
         floor_post_db = verdict.floor_post_db,
         headroom_db = verdict.worst_headroom_db(),
         informative = verdict.informative,
+        // Why there is no usable headroom reading — including the beyond-reach case, where
+        // `informative` is true and the gate abstains anyway.
+        uninformative = verdict.uninformative_reason().map(|r| r.as_str()),
         residual_gate = ?params.settings.residual_gate,
         "fill seam residual verdict"
     );

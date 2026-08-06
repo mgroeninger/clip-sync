@@ -10,7 +10,7 @@ use serde::Serialize;
 use crate::domain::fill_mode::FillMode;
 use crate::domain::gap_fill_fit::{effective_fill_absolute_floor, FillConfidence};
 use crate::domain::patch_result::{GapFillSkipReason, GapPatchSkipReason, GapPatchStatus};
-use crate::domain::policies::SeamResidualVerdict;
+use crate::domain::policies::{ResidualUninformative, SeamResidualVerdict};
 use crate::domain::repair_profile::FitBoundarySearch;
 use crate::domain::residual_gate::DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB;
 
@@ -68,8 +68,11 @@ impl DonorRelation {
 }
 
 /// Classify per-gap residual band from a measured verdict and headroom margin.
+///
+/// `no_floor` is [`SeamResidualVerdict::gate_abstains`] — the guard itself, not the reason that
+/// names it, so the `residual_uninformative` vocabulary can never move a band.
 pub fn classify_residual_band(verdict: &SeamResidualVerdict, margin_db: f64) -> ResidualBand {
-    if !verdict.informative || verdict.beyond_lag_reach() {
+    if verdict.gate_abstains() {
         ResidualBand::NoFloor
     } else if verdict.worst_headroom_db() <= margin_db {
         ResidualBand::Cancels
@@ -283,6 +286,13 @@ pub struct GapTags {
     pub signature_mode: Option<SignatureModeTag>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub residual_band: Option<ResidualBand>,
+    /// Why the residual carries no usable headroom reading — what makes a `no_floor` band
+    /// self-explaining. Report-only; read together with `residual_band`, never on its own.
+    ///
+    /// Not the negation of the verdict's `informative`: see
+    /// [`SeamResidualVerdict::uninformative_reason`], whose combine rule this uses.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub residual_uninformative: Option<ResidualUninformative>,
     /// Editorial anchor seam won (not scan-throat placement alone).
     #[serde(default, skip_serializing_if = "is_false")]
     pub anchor_seam_used: bool,
@@ -331,6 +341,11 @@ impl GapTagsPatchContext {
     pub fn residual_band_tag(self) -> Option<ResidualBand> {
         self.residual
             .map(|v| classify_residual_band(&v, self.residual_headroom_margin_db))
+    }
+
+    /// Companion to [`residual_band_tag`](Self::residual_band_tag): *why* the band is `no_floor`.
+    pub fn residual_uninformative_tag(self) -> Option<ResidualUninformative> {
+        self.residual.and_then(|v| v.uninformative_reason())
     }
 }
 
@@ -449,6 +464,7 @@ pub fn derive_gap_tags_from_patch_outcome(
         fit_path: ctx.fit_path_tag(),
         signature_mode: ctx.signature_mode_tag(),
         residual_band: ctx.residual_band_tag(),
+        residual_uninformative: ctx.residual_uninformative_tag(),
         anchor_seam_used: ctx.anchor_seam_used,
         anchor_bracket_move_frames: if ctx.anchor_seam_used {
             ctx.anchor_bracket_move_frames
@@ -483,6 +499,7 @@ pub fn derive_gap_tags_from_status(
                 fit_path: None,
                 signature_mode: None,
                 residual_band: None,
+                residual_uninformative: None,
                 anchor_seam_used: false,
                 anchor_bracket_move_frames: 0,
                 dual_fit_used: false,
@@ -541,6 +558,7 @@ pub fn derive_gap_tags_from_status(
             fit_path: None,
             signature_mode: None,
             residual_band: None,
+            residual_uninformative: None,
             anchor_seam_used: false,
             anchor_bracket_move_frames: 0,
             dual_fit_used: false,
@@ -639,6 +657,11 @@ pub fn format_gap_tags_verbose_line(tags: &GapTags) -> String {
     }
     if let Some(band) = tags.residual_band {
         parts.push(format!("residual_band={}", band.as_str()));
+    }
+    // Read with the band above: `no_floor` alone never said whether the floor was unmeasurable or
+    // simply weak.
+    if let Some(reason) = tags.residual_uninformative {
+        parts.push(format!("residual_reason={}", reason.as_str()));
     }
     if tags.anchor_seam_used {
         parts.push("anchor_seam=true".to_string());
@@ -975,6 +998,180 @@ mod tests {
         assert_eq!(
             classify_residual_band(&verdict, DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB),
             ResidualBand::CorrelatesOnly
+        );
+    }
+
+    /// Abstention **reporting** must not move any gate-facing quantity.
+    ///
+    /// Pins `informative`, `beyond_lag_reach()`, the band, and the confidence the residual gate
+    /// returns, across the verdict shapes the reason field distinguishes — including the
+    /// multichannel sourced-floor fallback, which deliberately *does* move `floor_source` and
+    /// `floor_db` on the wire. Serialized output is expected to change there; these four are not.
+    #[test]
+    fn abstention_reporting_is_decision_neutral() {
+        use crate::domain::gap_fill_fit::{apply_residual_to_confidence, FillConfidence};
+        use crate::domain::policies::{
+            ResidualUninformative, SeamChannelResidual, SeamFloorProbe, SeamFloorSource,
+        };
+
+        let probe = |db: f64, source: SeamFloorSource| SeamFloorProbe {
+            residual_db: db,
+            source,
+            best_lag: 0,
+            gain: 1.0,
+        };
+        let sourced = |db: f64| probe(db, SeamFloorSource::Border);
+        let margin = DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB;
+
+        // (label, verdict, expected reason, expected informative, beyond_reach, band, confidence)
+        let cases: Vec<(
+            &str,
+            SeamResidualVerdict,
+            Option<ResidualUninformative>,
+            _,
+            _,
+            _,
+            _,
+        )> = vec![
+            (
+                "clean measured floor, no headroom",
+                SeamResidualVerdict::from_parts_with_placement(
+                    &sourced(-40.0),
+                    &sourced(-40.0),
+                    &sourced(-44.0),
+                    &sourced(-44.0),
+                    -15.0,
+                    0,
+                    480,
+                ),
+                None,
+                true,
+                false,
+                ResidualBand::Cancels,
+                Ok(FillConfidence::High),
+            ),
+            (
+                "beyond lag reach — informative is true and the gate still abstains",
+                SeamResidualVerdict::from_parts_with_placement(
+                    &sourced(60.0),
+                    &sourced(60.0),
+                    &sourced(-44.0),
+                    &sourced(-44.0),
+                    -15.0,
+                    600,
+                    480,
+                ),
+                Some(ResidualUninformative::BeyondLagReach),
+                true,
+                true,
+                ResidualBand::NoFloor,
+                Ok(FillConfidence::High),
+            ),
+            (
+                "no reference window on either side",
+                SeamResidualVerdict::from_parts_with_placement(
+                    &probe(f64::NAN, SeamFloorSource::None),
+                    &probe(f64::NAN, SeamFloorSource::None),
+                    &probe(f64::NAN, SeamFloorSource::None),
+                    &probe(f64::NAN, SeamFloorSource::None),
+                    -15.0,
+                    0,
+                    480,
+                ),
+                Some(ResidualUninformative::NoReferenceWindow),
+                false,
+                false,
+                ResidualBand::NoFloor,
+                Ok(FillConfidence::High),
+            ),
+            (
+                "window found, fit produced nothing",
+                SeamResidualVerdict::from_parts_with_placement(
+                    &sourced(f64::NAN),
+                    &sourced(f64::NAN),
+                    &sourced(f64::NAN),
+                    &sourced(f64::NAN),
+                    -15.0,
+                    0,
+                    480,
+                ),
+                Some(ResidualUninformative::ProbeNonFinite),
+                false,
+                false,
+                ResidualBand::NoFloor,
+                Ok(FillConfidence::High),
+            ),
+            (
+                "floor measured above FLOOR_OK — not an abstention",
+                SeamResidualVerdict::from_parts_with_placement(
+                    &sourced(-8.0),
+                    &sourced(-8.0),
+                    &sourced(-10.0),
+                    &sourced(-10.0),
+                    -15.0,
+                    0,
+                    480,
+                ),
+                Some(ResidualUninformative::FloorAboveOkDb),
+                false,
+                false,
+                ResidualBand::NoFloor,
+                Ok(FillConfidence::High),
+            ),
+        ];
+
+        for (label, verdict, reason, informative, beyond, band, confidence) in cases {
+            assert_eq!(verdict.uninformative_reason(), reason, "reason: {label}");
+            assert_eq!(verdict.informative, informative, "informative: {label}");
+            assert_eq!(
+                verdict.beyond_lag_reach(),
+                beyond,
+                "beyond_lag_reach: {label}"
+            );
+            assert_eq!(
+                classify_residual_band(&verdict, margin),
+                band,
+                "band: {label}"
+            );
+            assert_eq!(
+                apply_residual_to_confidence(Ok(FillConfidence::High), &verdict, margin, false),
+                confidence,
+                "confidence: {label}"
+            );
+        }
+
+        // The §1.4 fallback: `floor_source` / `floor_db` move (that is the correction), while the
+        // gate reads the same absent headroom it always did and abstains identically.
+        let chan = |floor_db: f64| SeamChannelResidual {
+            channel: 0,
+            chosen: sourced(f64::NAN),
+            floor: sourced(floor_db),
+        };
+        let side = [chan(-44.0)];
+        let v = SeamResidualVerdict::from_channel_residuals(&side, &side, -15.0, 0, 480);
+        assert_eq!(
+            v.floor_source_pre,
+            SeamFloorSource::Border,
+            "reporting moves"
+        );
+        assert!(
+            v.informative,
+            "a measured floor below FLOOR_OK still reads informative"
+        );
+        assert!(!v.beyond_lag_reach());
+        assert!(
+            v.worst_headroom_db().is_nan(),
+            "the gate's scalar is untouched"
+        );
+        // `NaN <= margin` is false, so an informative floor with no headroom reading has always
+        // banded `correlates_only`. Unchanged by the fallback — headroom was absent either way.
+        assert_eq!(
+            classify_residual_band(&v, margin),
+            ResidualBand::CorrelatesOnly
+        );
+        assert_eq!(
+            apply_residual_to_confidence(Ok(FillConfidence::High), &v, margin, false),
+            Ok(FillConfidence::High)
         );
     }
 }

@@ -120,6 +120,97 @@ pub enum SeamFloorSource {
     None,
 }
 
+/// Why a residual verdict carries no usable headroom reading.
+///
+/// `informative: false` covers four unrelated events, and a reader outside the fingerprint schema
+/// cannot tell them apart from the flag alone. The first three are abstentions ("we could not
+/// measure here"); [`FloorAboveOkDb`](ResidualUninformative::FloorAboveOkDb) is a *measurement*, and
+/// naming only the abstentions would leave that fork unexplained.
+///
+/// Report-only: nothing that decides anything reads this. The gate branches on
+/// [`SeamResidualVerdict::gate_abstains`], which this enum *names* — the dependency runs one way,
+/// so extending or reordering the vocabulary cannot move a decision. `Deserialize` because the gap
+/// fingerprint emits it on `ResidualInfo` and reads its own dumps back, like [`SeamFloorSource`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResidualUninformative {
+    /// Placement slid past the unified lag radius — the gate's deliberate abstention
+    /// ([`SeamResidualVerdict::beyond_lag_reach`]). A property of the placement, not of a side.
+    BeyondLagReach,
+    /// No energetic, in-coverage A reference window within `max_walk_frames`.
+    NoReferenceWindow,
+    /// A reference window was found; the lag fit still produced nothing (non-finite probe).
+    ProbeNonFinite,
+    /// The floor **was** measured and sits above `floor_ok_db` — not an abstention.
+    ///
+    /// **Carries the same caveat as `DonorRelation::DiffCapture`:** it means the same-master regime
+    /// was *not established at this seam*, **not** that B is proven a different master. A
+    /// same-master pair yields it whenever it drifts beyond the probe radius, or when the reference
+    /// window is quiet enough that cancellation never gets deep. Read it as "no cancellation
+    /// evidence here", never as a provenance finding.
+    ///
+    /// **Threshold-relative.** `floor_ok_db` is a setting (`residual_floor_ok_db`, TOML and CLI);
+    /// [`DEFAULT_RESIDUAL_FLOOR_OK_DB`] is only the default and `-50.0` is a documented variant, so
+    /// this variant is only interpretable against the run's own settings. Fingerprint dumps record
+    /// the threshold on `CorpusGateRecipe` for exactly this reason.
+    FloorAboveOkDb,
+}
+
+impl ResidualUninformative {
+    /// Stable label for human output and the `-v` tag line; matches the serde representation.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::BeyondLagReach => "beyond_lag_reach",
+            Self::NoReferenceWindow => "no_reference_window",
+            Self::ProbeNonFinite => "probe_non_finite",
+            Self::FloorAboveOkDb => "floor_above_ok_db",
+        }
+    }
+}
+
+/// Per-side reason, from the probes already computed — no new measurement (§1.2).
+///
+/// `BeyondLagReach` is not derivable here: it belongs to the placement, and is applied at the
+/// verdict level by [`SeamResidualVerdict::uninformative_reason`].
+fn side_uninformative(floor: &SeamFloorProbe, floor_ok_db: f64) -> Option<ResidualUninformative> {
+    if floor.source == SeamFloorSource::None {
+        Some(ResidualUninformative::NoReferenceWindow)
+    } else if !floor.residual_db.is_finite() {
+        Some(ResidualUninformative::ProbeNonFinite)
+    } else if floor.residual_db > floor_ok_db {
+        Some(ResidualUninformative::FloorAboveOkDb)
+    } else {
+        None
+    }
+}
+
+/// Multichannel per-side reason, derived from the slice **before** [`side_worst_headroom_summary`]
+/// collapses it — that collapse is what made "found a window, fit failed" indistinguishable from
+/// "never found a window".
+///
+/// Reads the **min-floor** channel, the same one [`side_floor_informative`] follows, so the reason
+/// explains `informative` rather than the worst-headroom channel the scalars summarize.
+fn side_uninformative_channels(
+    side: &[SeamChannelResidual],
+    floor_ok_db: f64,
+) -> Option<ResidualUninformative> {
+    let best_floor = side
+        .iter()
+        .filter(|c| c.floor.source != SeamFloorSource::None && c.floor.residual_db.is_finite())
+        .map(|c| c.floor.residual_db)
+        .reduce(f64::min);
+    match best_floor {
+        Some(floor_db) if floor_db <= floor_ok_db => None,
+        Some(_) => Some(ResidualUninformative::FloorAboveOkDb),
+        // No channel has a finite sourced floor. A channel that *did* anchor a window and then
+        // failed the fit is a different event from a side that never found one.
+        None if side.iter().any(|c| c.floor.source != SeamFloorSource::None) => {
+            Some(ResidualUninformative::ProbeNonFinite)
+        }
+        None => Some(ResidualUninformative::NoReferenceWindow),
+    }
+}
+
 /// Per-gap measured noise-floor probe (report-only): best A-vs-B residual of a clean, energetic
 /// reference window at the *nominal* offset, used to interpret a seam residual as headroom.
 #[derive(Debug, Clone, Copy)]
@@ -674,6 +765,16 @@ pub struct SeamResidualVerdict {
     /// Unified lag radius used for this verdict (`0` = reach check disabled).
     #[serde(skip_serializing_if = "is_zero_i64")]
     pub max_lag_frames: i64,
+    /// Why the pre side carries no usable floor; `None` when that side is usable.
+    ///
+    /// Diagnostic detail. [`uninformative_reason`](Self::uninformative_reason) is authoritative for
+    /// reporting and may legitimately disagree (a side reading `FloorAboveOkDb` under a combined
+    /// `BeyondLagReach` is correct, not a bug).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uninformative_pre: Option<ResidualUninformative>,
+    /// Why the post side carries no usable floor; `None` when that side is usable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uninformative_post: Option<ResidualUninformative>,
 }
 
 /// `PartialEq` for probe scalars: `NaN` compares equal to `NaN` (L1).
@@ -692,6 +793,8 @@ impl PartialEq for SeamResidualVerdict {
             && self.informative == other.informative
             && self.placement_slide_frames == other.placement_slide_frames
             && self.max_lag_frames == other.max_lag_frames
+            && self.uninformative_pre == other.uninformative_pre
+            && self.uninformative_post == other.uninformative_post
     }
 }
 
@@ -759,6 +862,8 @@ impl SeamResidualVerdict {
             informative: residual_verdict_informative(floor_pre, floor_post, floor_ok_db),
             placement_slide_frames,
             max_lag_frames,
+            uninformative_pre: side_uninformative(floor_pre, floor_ok_db),
+            uninformative_post: side_uninformative(floor_post, floor_ok_db),
         }
     }
 
@@ -795,12 +900,79 @@ impl SeamResidualVerdict {
             informative,
             placement_slide_frames,
             max_lag_frames,
+            uninformative_pre: side_uninformative_channels(pre, floor_ok_db),
+            uninformative_post: side_uninformative_channels(post, floor_ok_db),
         }
     }
 
     /// Placement slide exceeds the unified lag radius — residual gate abstains.
     pub fn beyond_lag_reach(&self) -> bool {
         self.max_lag_frames > 0 && self.placement_slide_frames as i64 > self.max_lag_frames
+    }
+
+    /// **The residual gate guard**, in one place: no usable headroom reading, so every consumer
+    /// leaves its input untouched (`apply_residual_to_confidence` returns Pearson unchanged,
+    /// `classify_residual_band` returns `NoFloor`).
+    ///
+    /// A disjunction, not `!informative`: a verdict whose floor established the regime is still
+    /// unusable when the placement slid outside the lag radius the floor was measured within.
+    ///
+    /// Decision-facing. [`uninformative_reason`](Self::uninformative_reason) *names* this condition
+    /// for reporting and is defined in terms of it; the dependency runs that way and not the other,
+    /// so no change to the naming vocabulary can move a gate decision.
+    pub fn gate_abstains(&self) -> bool {
+        !self.informative || self.beyond_lag_reach()
+    }
+
+    /// Why this verdict carries no usable headroom reading; `None` when the residual is usable.
+    ///
+    /// **This is not the negation of `informative`.** It names [`gate_abstains`](Self::gate_abstains)
+    /// — a disjunction — so a verdict can have `informative: true` and still carry a reason
+    /// (`BeyondLagReach`). "Why is there no usable headroom reading" is the question every reporting
+    /// surface is actually asking. `is_some() == gate_abstains()`, exactly; do not assume
+    /// `is_some() == !informative`.
+    ///
+    /// Combine rule over the two sides, which can disagree:
+    ///
+    /// 1. [`BeyondLagReach`](ResidualUninformative::BeyondLagReach) — a property of the placement,
+    ///    dominates both sides.
+    /// 2. The reason that actually failed `informative` among the **measured** sides
+    ///    (`ProbeNonFinite` / `FloorAboveOkDb`); on a tie prefer `ProbeNonFinite` (less measured).
+    /// 3. [`NoReferenceWindow`](ResidualUninformative::NoReferenceWindow) — only when *nothing* was
+    ///    measured.
+    ///
+    /// Step 3 is last, and that ordering is forced by [`residual_verdict_informative`]: unmeasured
+    /// sides are ignored, so a side with no reference window cannot by itself make a verdict
+    /// uninformative. If the other side was measured and failed, that failure is the reason; if it
+    /// was measured and passed, the verdict is informative and there is no reason at all.
+    ///
+    /// **[`gate_abstains`](Self::gate_abstains) is the authority on whether a reason exists at all**;
+    /// the per-side fields only say *which*. The two can disagree, because "measured" is not the
+    /// same test on both paths: [`side_floor_informative`] drops a multichannel side whose channels
+    /// all found a window and then failed the fit (so `informative` ignores it, exactly as the mono
+    /// path ignores an unmeasured side), while that side still names `ProbeNonFinite`. Deriving the
+    /// combined value from the sides alone would widen the guard and suppress a live headroom veto,
+    /// so the guard is consulted first and the sides only explain it.
+    pub fn uninformative_reason(&self) -> Option<ResidualUninformative> {
+        if !self.gate_abstains() {
+            return None;
+        }
+        if self.beyond_lag_reach() {
+            return Some(ResidualUninformative::BeyondLagReach);
+        }
+        let sides = [self.uninformative_pre, self.uninformative_post];
+        let has = |r: ResidualUninformative| sides.contains(&Some(r));
+        if has(ResidualUninformative::ProbeNonFinite) {
+            Some(ResidualUninformative::ProbeNonFinite)
+        } else if has(ResidualUninformative::FloorAboveOkDb) {
+            Some(ResidualUninformative::FloorAboveOkDb)
+        } else {
+            // Step 3. Total by construction: an uninformative verdict always leaves a reason on at
+            // least one side, so this is `both sides unmeasured`. Answering `None` here would narrow
+            // the guard below `!informative`, which is the mirror of the widening above — the tail
+            // stays a reason, not an absence.
+            Some(ResidualUninformative::NoReferenceWindow)
+        }
     }
 
     /// Worst-side headroom at the chosen placement (`chosen − floor`); larger = worse match.
@@ -835,8 +1007,19 @@ fn worst_finite_max(values: [f64; 2]) -> f64 {
 }
 
 /// Side summary for the scalar verdict fields: the worst-headroom channel's `(chosen_db, floor_db,
-/// source)`. Ignores channels where headroom is non-finite; `(NaN, NaN, None)` when the side has no
-/// channel with both probes measured.
+/// source)`. Ignores channels where headroom is non-finite.
+///
+/// When **no** channel has finite headroom, falls back to the **min-floor** channel that did anchor
+/// a floor — the same channel the reason and `informative` follow, so all three describe one
+/// channel. Reporting a bare `(NaN, NaN, None)` there would claim no reference window was ever
+/// found on a side that measured one, which is precisely what `floor_source` exists to disambiguate.
+/// That case includes a channel with a **finite, sourced floor and a non-finite chosen probe**,
+/// since this keys on `chosen − floor`, not on the floor alone.
+///
+/// All three values come from one channel in both paths, fallback included: mixing a floor from one
+/// channel with a `chosen_db` from another reproduces the cross-channel confusion `ResidualInfo`
+/// documents for `informative` vs the scalars. `(NaN, NaN, None)` only when no channel anchored a
+/// floor at all — and then `NoReferenceWindow` is the honest reason.
 fn side_worst_headroom_summary(side: &[SeamChannelResidual]) -> (f64, f64, SeamFloorSource) {
     let mut best: Option<(f64, &SeamChannelResidual)> = None;
     for c in side {
@@ -845,8 +1028,27 @@ fn side_worst_headroom_summary(side: &[SeamChannelResidual]) -> (f64, f64, SeamF
             best = Some((headroom, c));
         }
     }
-    match best {
-        Some((_, c)) => (c.chosen.residual_db, c.floor.residual_db, c.floor.source),
+    let sourced = || {
+        side.iter()
+            .filter(|c| c.floor.source != SeamFloorSource::None)
+    };
+    let fallback = || {
+        // Min-floor among channels that measured one; else any channel that anchored a window and
+        // then failed the fit, so `floor_source` still says `border`/`walked` with an absent
+        // `floor_db` — the "measured, then non-finite" reading, not "no window found".
+        sourced()
+            .filter(|c| c.floor.residual_db.is_finite())
+            .reduce(|a, b| {
+                if b.floor.residual_db < a.floor.residual_db {
+                    b
+                } else {
+                    a
+                }
+            })
+            .or_else(|| sourced().next())
+    };
+    match best.map(|(_, c)| c).or_else(fallback) {
+        Some(c) => (c.chosen.residual_db, c.floor.residual_db, c.floor.source),
         None => (f64::NAN, f64::NAN, SeamFloorSource::None),
     }
 }
@@ -1802,6 +2004,385 @@ mod tests {
             pre.residual_db > -6.0,
             "unrelated audio should not cancel, got {} dB",
             pre.residual_db
+        );
+    }
+
+    fn ch(channel: usize, chosen_db: f64, floor: SeamFloorProbe) -> SeamChannelResidual {
+        SeamChannelResidual {
+            channel,
+            chosen: SeamFloorProbe {
+                source: floor.source,
+                residual_db: chosen_db,
+                gain: 1.0,
+                best_lag: 0,
+            },
+            floor,
+        }
+    }
+
+    fn sourced(db: f64) -> SeamFloorProbe {
+        SeamFloorProbe {
+            source: SeamFloorSource::Walked,
+            residual_db: db,
+            gain: 1.0,
+            best_lag: 0,
+        }
+    }
+
+    #[test]
+    fn side_uninformative_names_each_cause() {
+        let floor_ok = -15.0;
+        // No window found at all.
+        assert_eq!(
+            side_uninformative(&SeamFloorProbe::none(), floor_ok),
+            Some(ResidualUninformative::NoReferenceWindow)
+        );
+        // Window found, fit produced nothing — `measure_a_win_at_delta` preserves `source`.
+        assert_eq!(
+            side_uninformative(&sourced(f64::NAN), floor_ok),
+            Some(ResidualUninformative::ProbeNonFinite)
+        );
+        // Measured, above FLOOR_OK: a measurement, not an abstention.
+        assert_eq!(
+            side_uninformative(&sourced(-10.0), floor_ok),
+            Some(ResidualUninformative::FloorAboveOkDb)
+        );
+        // Measured at/below FLOOR_OK — usable. The boundary is inclusive, matching
+        // `floor_probe_informative`.
+        assert_eq!(side_uninformative(&sourced(-15.0), floor_ok), None);
+        assert_eq!(side_uninformative(&sourced(-40.0), floor_ok), None);
+    }
+
+    #[test]
+    fn uninformative_reason_combine_rule() {
+        let floor_ok = -15.0;
+        let verdict = |pre: SeamFloorProbe, post: SeamFloorProbe, slide: u64, max_lag: i64| {
+            SeamResidualVerdict::from_parts_with_placement(
+                &sourced(-40.0),
+                &sourced(-40.0),
+                &pre,
+                &post,
+                floor_ok,
+                slide,
+                max_lag,
+            )
+        };
+
+        // 1. Placement dominates — and note `informative` is *true* here: the reason is not the
+        //    negation of the flag, it mirrors the gate guard.
+        let beyond = verdict(sourced(-40.0), sourced(-40.0), 600, 480);
+        assert!(beyond.informative && beyond.beyond_lag_reach());
+        assert_eq!(
+            beyond.uninformative_reason(),
+            Some(ResidualUninformative::BeyondLagReach)
+        );
+        // Per-side detail may disagree with the combined value, by design.
+        assert_eq!(
+            verdict(sourced(-10.0), sourced(-40.0), 600, 480).uninformative_pre,
+            Some(ResidualUninformative::FloorAboveOkDb)
+        );
+
+        // 2. The measured failure wins over the unmeasured side.
+        assert_eq!(
+            verdict(sourced(-10.0), SeamFloorProbe::none(), 0, 0).uninformative_reason(),
+            Some(ResidualUninformative::FloorAboveOkDb)
+        );
+        // Tie between two measured failures prefers the less-measured one.
+        assert_eq!(
+            verdict(sourced(-10.0), sourced(f64::NAN), 0, 0).uninformative_reason(),
+            Some(ResidualUninformative::ProbeNonFinite)
+        );
+
+        // 3. `NoReferenceWindow` only when nothing was measured.
+        let none = verdict(SeamFloorProbe::none(), SeamFloorProbe::none(), 0, 0);
+        assert!(!none.informative);
+        assert_eq!(
+            none.uninformative_reason(),
+            Some(ResidualUninformative::NoReferenceWindow)
+        );
+        // One side unmeasured, the other usable ⇒ informative, and so no reason at all — the
+        // ordering that `residual_verdict_informative`'s "unmeasured sides are ignored" forces.
+        let half = verdict(SeamFloorProbe::none(), sourced(-40.0), 0, 0);
+        assert!(half.informative);
+        assert_eq!(half.uninformative_reason(), None);
+
+        // Both usable.
+        assert_eq!(
+            verdict(sourced(-40.0), sourced(-40.0), 0, 0).uninformative_reason(),
+            None
+        );
+    }
+
+    #[test]
+    fn multichannel_windows_found_but_b_out_of_coverage_is_probe_non_finite() {
+        // §0.2's regression, end to end: the reference walk succeeds (A is energetic, `b_mono` is
+        // full length) but the per-channel B buffers are too short to hold the window, so every
+        // channel probe comes back sourced-with-NaN. That must read as `ProbeNonFinite` ("we found a
+        // window, the fit produced nothing"), never as `NoReferenceWindow`, and `floor_source` must
+        // keep saying where the window came from.
+        let total = 2000usize;
+        let gap_start = 800usize;
+        let gap_end = 1000usize;
+        let window = 128usize;
+
+        let l_b: Vec<f64> = (0..total)
+            .map(|i| (i as f64 * 0.17).sin() * 4000.0)
+            .collect();
+        let r_b: Vec<f64> = (0..total)
+            .map(|i| (i as f64 * 0.4).cos() * 4000.0)
+            .collect();
+        let b_mono: Vec<f64> = (0..total).map(|i| (l_b[i] + r_b[i]) / 2.0).collect();
+        let a_samples = interleave_a(
+            &[
+                l_b.iter().map(|s| s * 0.5).collect(),
+                r_b.iter().map(|s| s * 0.5).collect(),
+            ],
+            4000.0,
+        );
+        // The only difference from the healthy stereo fixture: B's per-channel buffers stop well
+        // before the gap, so no window fits at any lag.
+        let b_ch = vec![l_b[..100].to_vec(), r_b[..100].to_vec()];
+
+        let params = SeamFloorParams {
+            a_samples: &a_samples,
+            channels: 2,
+            b_mono: &b_mono,
+            window,
+            standoff_frames: 16,
+            a_to_b_delta: 0,
+            step_frames: window,
+            max_walk_frames: total,
+            absolute_silence_rms: 33.0 / 32767.0,
+            max_lag_frames: 512,
+        };
+        let side = |s| {
+            seam_chosen_and_floor_multichannel(&params, &b_ch, &[0, 1], s, gap_start, gap_end, 0)
+        };
+        let (pre, post) = (side(SeamSide::Pre), side(SeamSide::Post));
+        assert_eq!(pre.len(), 2, "both channels measured");
+        assert!(
+            pre.iter().all(
+                |c| c.floor.source != SeamFloorSource::None && !c.floor.residual_db.is_finite()
+            ),
+            "fixture must produce sourced-but-non-finite probes"
+        );
+
+        let v = SeamResidualVerdict::from_channel_residuals(
+            &pre,
+            &post,
+            DEFAULT_RESIDUAL_FLOOR_OK_DB,
+            0,
+            512,
+        );
+        assert!(!v.informative);
+        assert_eq!(
+            v.uninformative_reason(),
+            Some(ResidualUninformative::ProbeNonFinite)
+        );
+        assert_ne!(
+            v.floor_source_pre,
+            SeamFloorSource::None,
+            "the summary must not rewrite a sourced floor to `none` (§1.4)"
+        );
+        assert_ne!(v.floor_source_post, SeamFloorSource::None);
+    }
+
+    #[test]
+    fn summary_falls_back_to_sourced_floor_when_no_channel_has_finite_headroom() {
+        // §1.4's broader case: the floor was genuinely measured; only the *chosen* probe is
+        // non-finite. Keying the summary on headroom alone reported this as "no window ever found".
+        let side = [
+            ch(0, f64::NAN, sourced(-42.0)),
+            ch(1, f64::NAN, sourced(-30.0)),
+        ];
+        let v = SeamResidualVerdict::from_channel_residuals(&side, &side, -15.0, 0, 0);
+
+        assert_eq!(
+            v.floor_source_pre,
+            SeamFloorSource::Walked,
+            "sourced floor must survive the summary"
+        );
+        assert!(
+            (v.floor_pre_db - (-42.0)).abs() < 1e-9,
+            "fallback reports the min-floor channel, got {}",
+            v.floor_pre_db
+        );
+        assert!(
+            !v.chosen_pre_db.is_finite(),
+            "`chosen_db` comes from the same channel, not a leftover"
+        );
+        assert!(v.informative, "-42 dB establishes the regime");
+        assert_eq!(
+            v.uninformative_reason(),
+            None,
+            "a measured floor below FLOOR_OK is usable even with no headroom reading"
+        );
+        // The one scalar the gate reads is untouched by the fallback.
+        assert!(
+            v.worst_headroom_db().is_nan(),
+            "headroom stays absent: {}",
+            v.worst_headroom_db()
+        );
+
+        // No channel anchored a floor at all ⇒ still `none`, and the honest reason.
+        let unmeasured = [ch(0, f64::NAN, SeamFloorProbe::none())];
+        let v2 = SeamResidualVerdict::from_channel_residuals(&unmeasured, &unmeasured, -15.0, 0, 0);
+        assert_eq!(v2.floor_source_pre, SeamFloorSource::None);
+        assert_eq!(
+            v2.uninformative_reason(),
+            Some(ResidualUninformative::NoReferenceWindow)
+        );
+    }
+
+    /// The combined reason may never fire on a verdict the gate still reads.
+    ///
+    /// A multichannel side whose channels all found a window and then failed the fit is *dropped* by
+    /// `side_floor_informative` — `informative` ignores it exactly as the mono path ignores an
+    /// unmeasured side — while the side itself names `ProbeNonFinite`. Since
+    /// `apply_residual_to_confidence` and `classify_residual_band` both abstain on
+    /// `uninformative_reason().is_some()`, letting that side reach the combined value would widen
+    /// the guard past `!informative || beyond_lag_reach()` and drop a live headroom veto.
+    #[test]
+    fn asymmetric_multichannel_side_does_not_widen_the_gate_guard() {
+        // Pre: window found on every channel, fit produced nothing. Post: measured, and B is a bad
+        // match — headroom +10 dB, well past any margin the gate uses.
+        let unfit = [ch(0, f64::NAN, sourced(f64::NAN))];
+        let bad_match = [ch(0, -30.0, sourced(-40.0))];
+        let v = SeamResidualVerdict::from_channel_residuals(&unfit, &bad_match, -15.0, 0, 480);
+
+        assert!(
+            v.informative,
+            "a side with no fitted channel is ignored, not a failure"
+        );
+        assert!(!v.beyond_lag_reach());
+        assert_eq!(
+            v.uninformative_pre,
+            Some(ResidualUninformative::ProbeNonFinite),
+            "the per-side field still names what happened"
+        );
+        assert_eq!(
+            v.uninformative_reason(),
+            None,
+            "but the combined value must not claim the verdict is unusable"
+        );
+        assert_eq!(
+            v.worst_headroom_db(),
+            10.0,
+            "the veto the gate would drop if the reason fired"
+        );
+    }
+
+    /// `uninformative_reason()` is `Some` exactly when the gate abstains — across every shape the
+    /// reason field distinguishes, mono and multichannel. The gate reads `gate_abstains()` directly,
+    /// so this pins the *reporting* side: a named reason always corresponds to a real abstention,
+    /// and an abstention is always named.
+    #[test]
+    fn uninformative_reason_is_exactly_the_gate_guard() {
+        let floor_ok = -15.0;
+        let probes = [
+            SeamFloorProbe::none(),
+            sourced(f64::NAN),
+            sourced(-10.0),
+            sourced(-40.0),
+        ];
+        for pre in probes {
+            for post in probes {
+                for (slide, max_lag) in [(0u64, 0i64), (0, 480), (600, 480)] {
+                    let mono = SeamResidualVerdict::from_parts_with_placement(
+                        &sourced(-40.0),
+                        &sourced(-40.0),
+                        &pre,
+                        &post,
+                        floor_ok,
+                        slide,
+                        max_lag,
+                    );
+                    let multi = SeamResidualVerdict::from_channel_residuals(
+                        &[ch(0, -40.0, pre)],
+                        &[ch(0, -40.0, post)],
+                        floor_ok,
+                        slide,
+                        max_lag,
+                    );
+                    for v in [mono, multi] {
+                        assert_eq!(
+                            v.uninformative_reason().is_some(),
+                            v.gate_abstains(),
+                            "reason/guard drift: {v:?}"
+                        );
+                        assert_eq!(
+                            v.gate_abstains(),
+                            !v.informative || v.beyond_lag_reach(),
+                            "the guard is still the disjunction it always was: {v:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn multichannel_reason_follows_min_floor_channel() {
+        // A noisy surround (floor above FLOOR_OK) alongside a channel that established the regime:
+        // `informative` follows the best-cancelling channel, so the reason must too — otherwise the
+        // field would explain a channel the flag never consulted.
+        let center = ch(2, -50.0, sourced(-50.0));
+        let surround = ch(4, -3.0, sourced(-3.0));
+        let v = SeamResidualVerdict::from_channel_residuals(
+            &[center, surround],
+            &[center, surround],
+            -15.0,
+            0,
+            0,
+        );
+        assert!(v.informative);
+        assert_eq!(v.uninformative_pre, None, "min-floor channel is usable");
+        assert_eq!(v.uninformative_reason(), None);
+
+        // Both channels above FLOOR_OK ⇒ the side is a measurement that failed, not an abstention.
+        let quiet = ch(2, -10.0, sourced(-10.0));
+        let v2 = SeamResidualVerdict::from_channel_residuals(
+            &[quiet, surround],
+            &[quiet, surround],
+            -15.0,
+            0,
+            0,
+        );
+        assert!(!v2.informative);
+        assert_eq!(
+            v2.uninformative_reason(),
+            Some(ResidualUninformative::FloorAboveOkDb)
+        );
+    }
+
+    #[test]
+    fn uninformative_reasons_are_absent_on_the_wire_for_clean_gaps() {
+        let clean = SeamResidualVerdict::from_parts(
+            &sourced(-50.0),
+            &sourced(-50.0),
+            &sourced(-40.0),
+            &sourced(-40.0),
+        );
+        let json = serde_json::to_string(&clean).expect("serialize");
+        assert!(
+            !json.contains("uninformative"),
+            "clean gaps must stay byte-identical on the wire: {json}"
+        );
+
+        let abstained = SeamResidualVerdict::from_parts(
+            &sourced(-50.0),
+            &sourced(-50.0),
+            &SeamFloorProbe::none(),
+            &sourced(f64::NAN),
+        );
+        let json = serde_json::to_string(&abstained).expect("serialize");
+        assert!(
+            json.contains("\"uninformative_pre\":\"no_reference_window\""),
+            "{json}"
+        );
+        assert!(
+            json.contains("\"uninformative_post\":\"probe_non_finite\""),
+            "{json}"
         );
     }
 }

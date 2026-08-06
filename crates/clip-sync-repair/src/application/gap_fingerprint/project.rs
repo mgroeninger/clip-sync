@@ -138,6 +138,15 @@ pub fn spec_to_fingerprint_summary(
         floor_source_pre: Some(r.floor_source_pre),
         floor_source_post: Some(r.floor_source_post),
         informative: r.informative,
+        // Recorded, never recomputed on replay: `floor_above_ok_db` is relative to the run's
+        // `residual_floor_ok_db` (echoed in `CorpusGateRecipe`), so re-deriving it later would answer
+        // with the reader's threshold instead of the writer's.
+        uninformative_pre: r.uninformative_pre,
+        uninformative_post: r.uninformative_post,
+        // Always `Some` on a dump written by this path — production knows both, and without them a
+        // replayed verdict answers `beyond_lag_reach()` as if the placement never slid.
+        placement_slide_frames: Some(r.placement_slide_frames),
+        max_lag_frames: Some(r.max_lag_frames),
     });
     // Real per-bracket rows when characterize supplied them (from-decode dump, 8g.4b); else synthesize just
     // enough structure to round-trip the stored counts/best/closest (the corpus-projection path, which can't
@@ -490,8 +499,13 @@ pub(crate) fn tags_from_fields(
             .floor_source_post
             .unwrap_or(crate::domain::policies::SeamFloorSource::None),
         informative: r.informative,
-        placement_slide_frames: 0,
-        max_lag_frames: 0,
+        // Read back from the dump, never recomputed — see the write mapping.
+        uninformative_pre: r.uninformative_pre,
+        uninformative_post: r.uninformative_post,
+        // `unwrap_or(0)` only for dumps written before these fields existed, which reproduces the old
+        // structurally-`false` `beyond_lag_reach()`; a current dump replays production's own reach.
+        placement_slide_frames: r.placement_slide_frames.unwrap_or(0),
+        max_lag_frames: r.max_lag_frames.unwrap_or(0),
     });
     let gate = GateTags {
         brackets_total: brackets.len(),
@@ -604,6 +618,90 @@ mod tests {
         BExtractWindow, GapRepairCell, GapRepairTags, GateTags, SeamLocalTags,
     };
     use crate::domain::policies::RefinedGapFrames;
+
+    fn replayed_residual(r: ResidualInfo) -> crate::domain::policies::SeamResidualVerdict {
+        tags_from_fields(
+            None,
+            None,
+            None,
+            None,
+            &[],
+            None,
+            None,
+            Some(r),
+            None,
+            None,
+            None,
+        )
+        .gate
+        .residual
+        .expect("residual survives the replay mapping")
+    }
+
+    /// A dump whose production verdict abstained (placement slid past the lag radius) must replay as
+    /// beyond-reach, and its per-side reason must be the stored one.
+    ///
+    /// Before the reach was carried, replay rebuilt every verdict with `0`/`0`, which makes
+    /// `beyond_lag_reach()` structurally `false` — so a dump could never show the gate's own abstention,
+    /// and the replayed band disagreed with production on exactly those gaps.
+    #[test]
+    fn replayed_residual_carries_the_reach_and_the_stored_reason() {
+        let beyond = replayed_residual(ResidualInfo {
+            chosen_pre_db: Some(-42.0),
+            chosen_post_db: Some(-41.0),
+            floor_pre_db: Some(-40.0),
+            floor_post_db: Some(-40.0),
+            floor_source_pre: Some(crate::domain::policies::SeamFloorSource::Border),
+            floor_source_post: Some(crate::domain::policies::SeamFloorSource::Border),
+            informative: true,
+            uninformative_pre: None,
+            uninformative_post: None,
+            placement_slide_frames: Some(9_000),
+            max_lag_frames: Some(4_410),
+        });
+        assert!(beyond.beyond_lag_reach());
+        assert_eq!(
+            beyond.uninformative_reason(),
+            Some(crate::domain::policies::ResidualUninformative::BeyondLagReach)
+        );
+
+        let measured = replayed_residual(ResidualInfo {
+            chosen_pre_db: Some(-42.0),
+            chosen_post_db: Some(-30.0),
+            floor_pre_db: Some(-40.0),
+            floor_post_db: Some(-10.0),
+            floor_source_pre: Some(crate::domain::policies::SeamFloorSource::Border),
+            floor_source_post: Some(crate::domain::policies::SeamFloorSource::Border),
+            informative: false,
+            uninformative_pre: None,
+            uninformative_post: Some(
+                crate::domain::policies::ResidualUninformative::FloorAboveOkDb,
+            ),
+            placement_slide_frames: Some(10),
+            max_lag_frames: Some(4_410),
+        });
+        assert!(!measured.beyond_lag_reach());
+        // Stored, not recomputed: the reader has no access to the writer's `residual_floor_ok_db`.
+        assert_eq!(
+            measured.uninformative_reason(),
+            Some(crate::domain::policies::ResidualUninformative::FloorAboveOkDb)
+        );
+    }
+
+    /// A dump written before the reach existed keeps today's behaviour rather than inventing one.
+    #[test]
+    fn replayed_residual_from_a_pre_field_dump_lands_on_zero() {
+        let old = replayed_residual(
+            serde_json::from_str(
+                r#"{"chosen_pre_db":-42.0,"chosen_post_db":-41.0,"floor_pre_db":-40.0,"floor_post_db":-40.0,"informative":true}"#,
+            )
+            .expect("parse"),
+        );
+        assert_eq!(old.placement_slide_frames, 0);
+        assert_eq!(old.max_lag_frames, 0);
+        assert!(!old.beyond_lag_reach());
+        assert_eq!(old.uninformative_reason(), None);
+    }
 
     /// 8e projection: a bracket-exhausted **silence-splice skip** (dual-fit declined) projects to a
     /// fingerprint whose corpus-read fields equal the spec's stored tags — no re-measurement (A7). Exercises

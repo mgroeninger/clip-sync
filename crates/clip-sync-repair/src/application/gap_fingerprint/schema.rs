@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-pub use crate::domain::policies::SeamFloorSource;
+pub use crate::domain::policies::{ResidualUninformative, SeamFloorSource};
 
 /// dBFS sentinel substituted for true-silent RMS so level vectors carry no `-inf` (the value
 /// [`LevelProfile::floor_db`] reports). Shared by the schema projection and the PCM measure path.
@@ -119,6 +119,12 @@ pub struct CorpusGateRecipe {
     pub short_gap_mean_correlation_secs: f64,
     pub short_gap_one_strong_seam_fallback: bool,
     pub residual_headroom_margin_db: f64,
+    /// The threshold [`ResidualInfo::uninformative_pre`]'s `floor_above_ok_db` is relative to; without
+    /// it that reason cannot be read as a measurement. `Option` (not a defaulted `f64`) because this
+    /// struct has no other defaults, so a missing key must read as "recipe predates the field" rather
+    /// than falsely asserting today's default.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub residual_floor_ok_db: Option<f64>,
     pub residual_gate: crate::domain::ResidualGateMode,
 }
 
@@ -133,6 +139,7 @@ impl CorpusGateRecipe {
             short_gap_mean_correlation_secs: s.short_gap_mean_correlation_secs,
             short_gap_one_strong_seam_fallback: s.short_gap_one_strong_seam_fallback,
             residual_headroom_margin_db: s.residual_headroom_margin_db,
+            residual_floor_ok_db: Some(s.residual_floor_ok_db),
             residual_gate: s.residual_gate,
         }
     }
@@ -851,6 +858,30 @@ pub struct ResidualInfo {
     /// a contradiction. The per-channel breakdown that would reconcile them is not in the dump; it is
     /// only logged (`log_residual_channel_breakdown`).
     pub informative: bool,
+    /// Per-side reason the floor is unusable — `no_reference_window` (never found one),
+    /// `probe_non_finite` (found one, the fit produced nothing), `floor_above_ok_db` (measured, and
+    /// above the threshold — a measurement, not an abstention).
+    ///
+    /// Stored rather than derived: `informative: false` alone conflates all three, and
+    /// `floor_above_ok_db` is relative to `residual_floor_ok_db`, which is a setting — see
+    /// [`CorpusGateRecipe::residual_floor_ok_db`], where the run's threshold is recorded.
+    ///
+    /// `Option` only so dumps written before 2026-08-05 still deserialize.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub uninformative_pre: Option<ResidualUninformative>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub uninformative_post: Option<ResidualUninformative>,
+    /// Placement slide and lag radius, carried so a replayed verdict can answer
+    /// `beyond_lag_reach()` the way production did.
+    ///
+    /// Before these existed the projection path reconstructed every verdict with `0`/`0`, which made
+    /// `beyond_lag_reach()` structurally `false` on replay — so the gate's own abstention could never
+    /// be seen in a dump, and `residual_band` disagreed with production on exactly those gaps.
+    /// `None` means the dump predates the fields; replay then falls back to the old `0`.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub placement_slide_frames: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub max_lag_frames: Option<i64>,
 }
 
 /// Map a residual dB to wire form: non-finite and the `SILENCE_FLOOR_DB` (−120) sentinel become `None`.
@@ -1415,6 +1446,10 @@ mod tests {
                 floor_source_pre: Some(SeamFloorSource::Border),
                 floor_source_post: Some(SeamFloorSource::Border),
                 informative: true,
+                uninformative_pre: None,
+                uninformative_post: None,
+                placement_slide_frames: Some(0),
+                max_lag_frames: Some(0),
             }),
             seam_probe: Some(SeamProbeFingerprint {
                 pre: Some(SeamProbe {
@@ -1510,6 +1545,10 @@ mod tests {
             floor_source_pre: Some(SeamFloorSource::Walked),
             floor_source_post: Some(SeamFloorSource::None),
             informative: true,
+            uninformative_pre: None,
+            uninformative_post: Some(ResidualUninformative::NoReferenceWindow),
+            placement_slide_frames: Some(0),
+            max_lag_frames: Some(4410),
         };
         let wire = serde_json::to_string(&r).expect("serialize");
         assert!(
@@ -1522,5 +1561,68 @@ mod tests {
         );
         let back: ResidualInfo = serde_json::from_str(&wire).expect("parse");
         assert_eq!(back, r);
+    }
+
+    /// The abstention reason and the lag reach reach the wire, and a dump that predates them still
+    /// parses — landing on today's behaviour (`None` / `0`) rather than failing.
+    #[test]
+    fn abstention_reason_and_reach_round_trip_and_stay_back_compatible() {
+        let r = ResidualInfo {
+            chosen_pre_db: Some(-42.0),
+            chosen_post_db: Some(-30.0),
+            floor_pre_db: Some(-40.0),
+            floor_post_db: Some(-10.0),
+            floor_source_pre: Some(SeamFloorSource::Border),
+            floor_source_post: Some(SeamFloorSource::Border),
+            informative: false,
+            uninformative_pre: None,
+            uninformative_post: Some(ResidualUninformative::FloorAboveOkDb),
+            placement_slide_frames: Some(9_000),
+            max_lag_frames: Some(4_410),
+        };
+        let wire = serde_json::to_string(&r).expect("serialize");
+        assert!(
+            wire.contains(r#""uninformative_post":"floor_above_ok_db""#),
+            "the reason must name itself on the wire: {wire}"
+        );
+        // A side with a usable floor says nothing rather than writing a "fine" reason.
+        assert!(!wire.contains("uninformative_pre"), "{wire}");
+        assert_eq!(
+            serde_json::from_str::<ResidualInfo>(&wire).expect("parse"),
+            r
+        );
+
+        // Pre-2026-08-05 payload: no reason, no reach.
+        let old: ResidualInfo = serde_json::from_str(
+            r#"{"chosen_pre_db":-42.0,"chosen_post_db":-41.0,"floor_pre_db":-40.0,"floor_post_db":-40.0,"informative":true}"#,
+        )
+        .expect("parse");
+        assert_eq!(old.uninformative_pre, None);
+        assert_eq!(old.uninformative_post, None);
+        assert_eq!(old.placement_slide_frames, None);
+        assert_eq!(old.max_lag_frames, None);
+    }
+
+    /// The threshold `floor_above_ok_db` is relative to is recorded, and a recipe written before it
+    /// existed still parses.
+    #[test]
+    fn gate_recipe_carries_the_floor_ok_threshold_and_stays_back_compatible() {
+        let json = r#"{"min_structure_match_score":0.5,"min_fill_correlation":0.35,"fill_absolute_floor":0.2,"fill_marginal_margin":0.05,"short_gap_mean_correlation_secs":1.5,"short_gap_one_strong_seam_fallback":true,"residual_headroom_margin_db":6.0,"residual_gate":"veto"}"#;
+        let old: CorpusGateRecipe = serde_json::from_str(json).expect("parse");
+        assert_eq!(
+            old.residual_floor_ok_db, None,
+            "a missing key must read as 'recipe predates the field', not as today's default"
+        );
+
+        let current = CorpusGateRecipe {
+            residual_floor_ok_db: Some(-15.0),
+            ..old
+        };
+        let wire = serde_json::to_string(&current).expect("serialize");
+        assert!(wire.contains(r#""residual_floor_ok_db":-15.0"#), "{wire}");
+        assert_eq!(
+            serde_json::from_str::<CorpusGateRecipe>(&wire).expect("parse"),
+            current
+        );
     }
 }

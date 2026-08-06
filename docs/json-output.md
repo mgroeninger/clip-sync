@@ -251,6 +251,43 @@ Gap positions in `gaps[]` use the **decoded-sample clock**. When `delta_secs` is
 | `residual` | object | when measured | Full [`SeamResidualVerdict`](#seamresidualverdict) (gate active or `measure_residual`) |
 | `fill_level` | object | spliced gaps, when `measure_fill_level` | [FillLevelCheck](#filllevelcheck) — how loud the written fill is against the A around it |
 
+### SeamResidualVerdict
+
+Same-master confirmation at the decision seam: how deeply B cancels A (least-squares residual, dB)
+at the chosen placement, versus a **floor** measured the same way on a clean reference window at the
+*nominal* alignment. Headroom (`chosen − floor`) is the reading the residual gate uses; the floor is
+what makes it a measurement rather than a tautology.
+
+Per-side (`_pre` / `_post`) values describe the two gap shoulders. On multichannel media the
+scalars summarize the **worst-headroom** channel while `informative` follows the **best-cancelling
+(min-floor)** channel — deliberately different channels, so do not read one as explaining the other.
+
+| Field | Type | Presence | Meaning |
+|-------|------|----------|---------|
+| `chosen_pre_db` / `chosen_post_db` | number | always | Residual at the chosen placement, dB. Non-finite when that side could not be measured (serialized as `null`) |
+| `floor_pre_db` / `floor_post_db` | number | always | Nominal-alignment floor for that side, dB |
+| `floor_source_pre` / `floor_source_post` | string | always | Where the floor's reference window came from — `border` (immediate window past the standoff was usable), `walked` (border was quiet, reference walked outward), `none` (no energetic in-coverage window found). **This is what tells an absent `floor_*_db` apart from a measured one** |
+| `informative` | bool | always | Every *measured* side established cancellation (`floor_db ≤ residual_floor_ok_db`). Unmeasured sides are ignored; `false` when no side was measured |
+| `placement_slide_frames` | integer | when non-zero | `\|chosen_delta − nominal_delta\|` |
+| `max_lag_frames` | integer | when non-zero | Unified lag radius this verdict was measured within (`0` = reach check disabled) |
+| `uninformative_pre` / `uninformative_post` | string | when that side has no usable floor | Per-side reason — `no_reference_window` \| `probe_non_finite` \| `floor_above_ok_db`. Diagnostic detail; the combined value on [GapTags](#gaptags) is authoritative |
+
+The gate abstains when `!informative` **or** when the placement slid past `max_lag_frames`
+(`placement_slide_frames > max_lag_frames`) — headroom is not meaningful outside the lag radius.
+Because it is a disjunction, a verdict can be `informative: true` and still carry no usable reading,
+which is why `residual_uninformative` is **not** the negation of `informative`.
+
+The four reasons are not interchangeable. `no_reference_window` and `probe_non_finite` are
+abstentions ("we could not measure here"), `beyond_lag_reach` is the gate's deliberate refusal, and
+`floor_above_ok_db` is a **measurement** — the floor was taken and sits above the threshold.
+
+> **`floor_above_ok_db` is not a provenance finding**, and carries the same caveat as
+> `donor_relation`'s `diff_capture`: it means the same-master regime was not established *at this
+> seam*, not that B is a different master. A same-master pair yields it whenever it drifts beyond the
+> probe radius, or when the reference window is too quiet for cancellation to go deep. It is also
+> **threshold-relative** — `residual_floor_ok_db` is configurable, so the variant only means
+> something against the run's own settings.
+
 ### FillLevelCheck
 
 Record-only: the written fill's loudest bin measured against the A shoulders either side of the
@@ -293,6 +330,7 @@ Orthogonal gap classification tags. `plan_skip_reason`, `fit_path`, and `signatu
 | `fit_path` | string | fit gaps only | `baseline_only` \| `boundary_grid` |
 | `signature_mode` | string | fit gaps only | `bool` \| `energy` |
 | `residual_band` | string | when residual measured | `cancels` \| `correlates_only` \| `no_floor` |
+| `residual_uninformative` | string | when the residual has no usable headroom reading | Why — `beyond_lag_reach` \| `no_reference_window` \| `probe_non_finite` \| `floor_above_ok_db`. Same values and combine rule as [`SeamResidualVerdict`](#seamresidualverdict)'s per-side fields; **read it with `residual_band`**, never alone |
 | `anchor_seam_used` | bool | when true | Editorial anchor bracket won (not scan-throat placement) |
 | `anchor_bracket_move_frames` | integer | when `anchor_seam_used` and > 0 | Total frame displacement from scan-refined baseline |
 | `dual_fit_used` | bool | when true | A3 dual-fit (G6) rescued this gap after the bracket search exhausted, not ordinary bracket-search fitting |

@@ -15,8 +15,9 @@ pub use gap_borders::{
 };
 pub use seam_residual::{
     floor_probe_informative, residual_verdict_informative, seam_chosen_and_floor,
-    seam_chosen_and_floor_multichannel, seam_floor_probe, SeamChannelResidual, SeamFloorParams,
-    SeamFloorProbe, SeamFloorSource, SeamResidualVerdict, SeamSide, DEFAULT_RESIDUAL_FLOOR_OK_DB,
+    seam_chosen_and_floor_multichannel, seam_floor_probe, ResidualUninformative,
+    SeamChannelResidual, SeamFloorParams, SeamFloorProbe, SeamFloorSource, SeamResidualVerdict,
+    SeamSide, DEFAULT_RESIDUAL_FLOOR_OK_DB,
 };
 pub use seam_scoring::{
     fill_repeat_correlations, fill_seam_correlations, fill_splice_seam_correlations,

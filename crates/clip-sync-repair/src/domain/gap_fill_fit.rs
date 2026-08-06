@@ -205,15 +205,17 @@ pub enum ResidualGateError {
 
 /// Compose Pearson waveform tiering with the residual headroom gate (fit mode).
 ///
-/// Abstains (`NoOpinion`) when `!verdict.informative` or `verdict.beyond_lag_reach()` — returns
-/// `pearson` unchanged.
+/// Abstains (`NoOpinion`) on [`SeamResidualVerdict::gate_abstains`] — no usable headroom reading —
+/// and returns `pearson` unchanged. Reads the guard itself, not
+/// [`uninformative_reason`](SeamResidualVerdict::uninformative_reason), which only *names* it:
+/// reporting must never be able to move this branch.
 pub fn apply_residual_to_confidence(
     pearson: Result<FillConfidence, f64>,
     verdict: &SeamResidualVerdict,
     margin_db: f64,
     rescue_enabled: bool,
 ) -> Result<FillConfidence, ResidualGateError> {
-    if !verdict.informative || verdict.beyond_lag_reach() {
+    if verdict.gate_abstains() {
         return pearson.map_err(ResidualGateError::PearsonBelowFloor);
     }
     let headroom = verdict.worst_headroom_db();
@@ -1801,7 +1803,7 @@ fn placement_in_bounds(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::policies::{SeamFloorSource, SeamResidualVerdict};
+    use crate::domain::policies::{ResidualUninformative, SeamFloorSource, SeamResidualVerdict};
 
     #[test]
     fn interior_trim_cuts_in_the_quiet_valley() {
@@ -1852,6 +1854,9 @@ mod tests {
             informative,
             placement_slide_frames: 0,
             max_lag_frames: 0,
+            // Consistent with the floors above: `-5.0` is a measured floor above FLOOR_OK.
+            uninformative_pre: (!informative).then_some(ResidualUninformative::FloorAboveOkDb),
+            uninformative_post: (!informative).then_some(ResidualUninformative::FloorAboveOkDb),
         }
     }
 

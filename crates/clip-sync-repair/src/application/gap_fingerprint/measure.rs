@@ -2209,6 +2209,12 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
             floor_source_pre: Some(v.floor_source_pre),
             floor_source_post: Some(v.floor_source_post),
             informative: v.informative,
+            // See the `project.rs` twin: recorded as measured, and the reach is carried so a replayed
+            // verdict abstains where production did.
+            uninformative_pre: v.uninformative_pre,
+            uninformative_post: v.uninformative_post,
+            placement_slide_frames: Some(v.placement_slide_frames),
+            max_lag_frames: Some(v.max_lag_frames),
         })
     });
 
@@ -3389,6 +3395,10 @@ mod tests {
                 floor_source_pre: Some(SeamFloorSource::Border),
                 floor_source_post: Some(SeamFloorSource::Border),
                 informative: true,
+                uninformative_pre: None,
+                uninformative_post: None,
+                placement_slide_frames: Some(0),
+                max_lag_frames: Some(0),
             }),
             lag: None,
         };

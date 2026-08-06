@@ -196,7 +196,7 @@ approaches were refuted by measurement. Full analysis + cost hierarchy: that pla
 | `donor_interior` | full, B present | B occupancy over the **aligned** bridge span (`b_mapped_start+L_pre … b_mapped_end+L_post`): `rms_db`, `silence_fraction`, `longest_silence_ms`, `continuous` |
 | `donor_interior_nominal` | full, B present | B occupancy over the **nominal** geometry span (no lag adjustment) — registration-independent; the D11 program-quiet signal |
 | `splice_dualfit` | full, B present | dual-fit viability: seams scored at per-shoulder placement + `gate_pass` / `trim_frames` / validators (see below) |
-| `residual` | full, B present | least-squares same-source cancellation (dB) vs noise floor; per-side dB values are `Option` (absent for non-finite / −120 sentinel) |
+| `residual` | full, B present | least-squares same-source cancellation (dB) vs noise floor; per-side dB values are `Option` (absent for non-finite / −120 sentinel). `uninformative_pre`/`_post` name *why* a side carries no usable floor (`no_reference_window` / `probe_non_finite` / `floor_above_ok_db`), and `placement_slide_frames` / `max_lag_frames` carry the lag reach so a replayed verdict abstains where production did — all four absent on pre-2026-08-05 dumps |
 | `outcome` | B present | plan_kind, tier, fit_path, signature_mode, skip_reason. `seam_shape` is **omitted** on the production path (`None`) |
 | `equivalence` | B present | **gap-equivalence class (diagnostic)** — does this gap need patching? (silence-character; see below) |
 | `scan_equivalence` | scan classified | the **authoritative production** verdict for the same gap (`GapReport::gap_equivalence`; block size = the `scan_block_ms` knob), copied in so one dump holds both readings for calibration. **This is the authoritative one** — see below |
@@ -268,7 +268,11 @@ From-decode dumps stamp `source.gate_recipe` with the seam-gate floors used to a
 | `min_structure_match_score` | `structure_floor` |
 | `min_fill_correlation` / `fill_absolute_floor` / `fill_marginal_margin` | `waveform_floor` (plus short-gap mean / one-strong-seam flags) |
 | `short_gap_mean_correlation_secs` / `short_gap_one_strong_seam_fallback` | short-gap structure/waveform relaxations |
-| `residual_headroom_margin_db` / `residual_gate` | `residual` stage |
+| `residual_headroom_margin_db` / `residual_floor_ok_db` / `residual_gate` | `residual` stage |
+
+`residual_floor_ok_db` is the threshold `residual.uninformative_*: "floor_above_ok_db"` is relative to,
+so a reader can tell a floor that failed *this run's* bar from one that would fail any. Absent on
+recipes written before 2026-08-05 (and it must read as absent, not as today's default).
 
 Absent on pre-2026-08-03 corpora and on summary-only / refused corpora. With bracket scores, this is
 enough to audit stage assignment without re-scoring PCM. Equivalence has the same pattern in
