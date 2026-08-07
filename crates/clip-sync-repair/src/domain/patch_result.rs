@@ -372,7 +372,6 @@ pub enum GapPatchStatus {
         /// `true` when placement was accepted from structure match without a waveform gate.
         structure_trusted: bool,
         /// Fit-mode waveform tier (`high` confident, `marginal` warn-patch band).
-        #[serde(default = "default_fill_confidence_high")]
         confidence: FillConfidence,
         /// Frames the winning A gap start was shifted from the pre-search refined edge.
         #[serde(default)]
@@ -416,11 +415,6 @@ pub enum GapPatchStatus {
     NotApplied {
         reason: GapPatchNotAppliedReason,
     },
-}
-
-#[allow(dead_code)]
-fn default_fill_confidence_high() -> FillConfidence {
-    FillConfidence::High
 }
 
 /// Skip serializing `anchor_bracket_move_frames` for non-anchor patches (the common case).

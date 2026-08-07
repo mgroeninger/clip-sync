@@ -38,8 +38,11 @@ pub fn lag_correlation_curve(a: &[f64], b_ctx: &[f64], max_lag: i64) -> Vec<(i64
     out
 }
 
-/// **B1 — FFT-accelerated equivalent of [`lag_correlation_curve`].** Not yet wired into any caller (that's
-/// perf-plan §3 step 4); this exists purely to be gated by the equivalence test below before the swap.
+/// **B1 — FFT-accelerated equivalent of [`lag_correlation_curve`].** Selected automatically by
+/// [`lag_correlation_curve_auto`] when estimated naive cost exceeds [`FFT_CROSSOVER_OPS`] (seam-local /
+/// baseline sweeps); small probes stay on the naive path. Equivalence to naive is pinned by the
+/// `fft_curve_matches_naive_*` tests below (ε = 1e-8) — this is the production backend above the
+/// crossover, not a draft waiting to be wired.
 ///
 /// The numerator `sum_ab(base) = Σ a[i]·b_ctx[base+i]` is a linear cross-correlation, computed via one
 /// forward FFT of each zero-padded signal, a conjugate-multiply, and one inverse FFT (`O(M log M)`,
