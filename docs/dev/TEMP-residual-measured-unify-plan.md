@@ -1,8 +1,8 @@
 # TEMP — Unify residual “measured” semantics (mono ↔ multichannel)
 
-**Status:** Phase 0 done 2026-08-06; Phase 1+ pending. Working plan for resolving the
-mono/multichannel disagreement on what counts as a *measured* residual floor — the gate-facing
-leftover from
+**Status:** Phase 0–2 done 2026-08-06 (§5.1 toward MC); Phase 3+ pending. Working plan for
+resolving the mono/multichannel disagreement on what counts as a *measured* residual floor —
+the gate-facing leftover from
 [archive/TEMP-residual-abstention-reporting-plan.md](archive/TEMP-residual-abstention-reporting-plan.md).
 
 Companion: [BACKLOG.md](../../BACKLOG.md) § *Residual gate follow-ups* (row **Mono/multichannel
@@ -136,8 +136,14 @@ Prefer **dump-only** over existing fingerprint / repair JSON that already carrie
 | **C** | `probe_non_finite` + `floor_above_ok_db` |
 | Split | Mono-downmix / analysis dumps vs true multichannel production pairs |
 
-Script shape: small PowerShell or Rust harness over a dump directory (fill-level /
-fingerprint corpora). Emit pair-index + gap-index counts only (media hygiene).
+Script: [`scripts/census-residual-measured.ps1`](../../scripts/census-residual-measured.ps1)
+over a dump directory (fill-level / patch-outcomes / fingerprint corpora). Emit pair-index +
+gap-index counts only (media hygiene).
+
+```powershell
+./scripts/census-residual-measured.ps1 -DumpDir gap-files/2026-08-05-fill-level
+./scripts/census-residual-measured.ps1 -DumpDir gap-files/2026-08-05-fill-level -CsvOut gap-files/census-residual-measured.csv
+```
 
 **Exit:** tabulated counts for A, A∩veto, B, C with channel-layout split. **No gate change.**
 If A is empty across the available corpus, record that and keep the Phase 0 pin until a
@@ -153,7 +159,7 @@ broader dump says otherwise — do not “unify” on zero evidence.
 | A∩veto often false / geometry-edge / B OOB (M3-adjacent) | **Unify toward mono** — sourced-non-finite is a measured failure; MC becomes softer (more abstentions). Safer when ProbeNonFinite means “don’t trust this seam.” |
 | A material but mixed | Prefer still converging. If not, keep asymmetry **explicit** via a documented three-state policy enum — not two accidental filters — and say why in the decision memo. |
 
-**Lean (pending census):** multichannel semantics.
+**Lean (confirmed by census):** multichannel semantics.
 
 - Production repair residual is multichannel (`seam_chosen_and_floor_multichannel`).
 - The abstention plan already refused to let ProbeNonFinite widen the guard and kill a live
@@ -164,15 +170,32 @@ broader dump says otherwise — do not “unify” on zero evidence.
 **Exit:** a short decision memo in this file (§5.1 when filled) naming the chosen direction
 and the counts that justified it. Implementation does not start without it.
 
-### 5.1 Decision memo *(fill after Phase 1)*
+### 5.1 Decision memo
 
 | Field | Value |
 |-------|-------|
-| Date | |
-| Corpus / dump set | |
-| Counts (A / A∩veto / B / C) | |
-| Chosen direction | toward MC / toward mono / defer |
-| Rationale | |
+| Date | 2026-08-06 |
+| Corpus / dump set | `gap-files/2026-08-05-fill-level` (39 pair JSON, `--patch-only`; census via `scripts/census-residual-measured.ps1`, margin 6 dB) |
+| Counts (A / A∩veto / B / C) | **10 / 5 / 77 / 31** over **227** eligible gaps (A = 4.4%, A∩veto = 2.2%) |
+| Chosen direction | **toward MC** |
+| Rationale | A is uncommon, not empty. All five A∩veto rows are the non-dual-fit (MC) path: `informative: true`, finite headroom 16–18 dB ≫ margin — live veto stake on a regime-OK shoulder. The five A-without-veto rows are mostly `dual_fit_used` (mono `from_parts`): already abstaining with NaN headroom, so no veto to preserve either way. B is large (geometry / fit failure on both sides) but orthogonal to the asymmetric cell. Matches the first decision-table row and the prior lean: ignore sourced-NaN like unmeasured; do not let it kill a veto the other side supports. |
+
+**A / A∩veto index list** (pair, gap_index):
+
+| pair | gap | bucket | informative | headroom | dual_fit |
+|------|-----|--------|-------------|----------|----------|
+| 5 | 2 | A∩veto | true | 17.5 | — |
+| 5 | 3 | A∩veto | true | 17.2 | — |
+| 5 | 5 | A∩veto | true | 17.6 | — |
+| 7 | 1 | A∩veto | true | 16.6 | — |
+| 34 | 11 | A∩veto | true | 18.5 | — |
+| 23 | 11 | A | false | NaN | true |
+| 30 | 2 | A | false | NaN | true |
+| 36 | 8 | A | false | NaN | true |
+| 39 | 5 | A | false | NaN | true |
+| 39 | 6 | A | true | NaN | — |
+
+Split: all eligible gaps were 6-ch; A∩veto only on `dual_fit` absent; A-without-veto dominated by `dual_fit=true`.
 
 ---
 
@@ -259,8 +282,8 @@ scope for the same reason the backlog forbade a reporting-only “fix.”
 ## 10. Verification checklist *(execute when implementing)*
 
 - [x] Phase 0: cross-path disagreement unit + doc comments
-- [ ] Phase 1: census table committed or attached to §5.1 (pair/gap indices only)
-- [ ] Phase 2: §5.1 filled; direction named
+- [x] Phase 1: census table committed or attached to §5.1 (pair/gap indices only)
+- [x] Phase 2: §5.1 filled; direction named
 - [ ] Phase 3: single `SideFloorState` / `combine_informative`; both constructors call it
 - [ ] Phase 4: cross-path agreement pin; retargeted asymmetric test; guard ≡ reason still holds
 - [ ] `cargo test -p clip-sync-repair` (unit + residual gate smoke) green
@@ -270,5 +293,4 @@ scope for the same reason the backlog forbade a reporting-only “fix.”
 
 ## 11. Open decisions
 
-None at plan-authoring time beyond what Phase 1 must answer. The only policy fork is
-§5’s direction table; it is deliberately deferred to census.
+None — §5.1 chose **toward MC**. Phase 3 may proceed.
