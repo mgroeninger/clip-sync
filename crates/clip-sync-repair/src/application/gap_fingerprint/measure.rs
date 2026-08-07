@@ -2066,7 +2066,11 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
         seam_shape: None,
         fit_path: None,
         signature_mode: None,
-        skip_reason: (!patched).then(|| "gate skipped".into()),
+        // Fingerprint-native: closest failing bracket's FailureStage (same as analyzer
+        // `closest_failure_stage`). Projection may refine from the final bracket list.
+        skip_reason: (!patched)
+            .then(|| closest_bracket_failure_stage(&infos).map(|s| s.as_str().to_string()))
+            .flatten(),
         // Set below, once `splice_dualfit_at` has run — `gate_pass` is not available yet.
         dual_fit_rescue: None,
     };
@@ -2349,8 +2353,7 @@ pub fn characterize_gaps_from_decode(
     progress: &dyn clip_sync::ProgressReporter,
 ) -> GapCorpus {
     use crate::domain::gap_repair_spec::{
-        BExtractWindow, GapRepairCell, GapRepairSpec, GapRepairStrategy, GapRepairVerdict,
-        LevelTags,
+        BExtractWindow, GapRepairSpec, GapRepairStrategy, GapRepairVerdict, LevelTags,
     };
 
     let CharacterizeAbPcm {
@@ -2461,22 +2464,21 @@ pub fn characterize_gaps_from_decode(
         });
 
         // Decision spec: geometry + levels from the summary fp; verdict from `m.outcome` (any_ok); tags from
-        // the shared measurements. A placeholder strategy/reason carries only the `patch`/`skip` distinction the
-        // reader's `tier` axis needs (mirrors `fingerprint_to_spec`).
+        // the shared measurements. Placeholder strategy/reason carries only the `patch`/`skip` + cell
+        // distinction the reader's `tier` axis needs — dump `outcome.skip_reason` is the closest
+        // `FailureStage` from `m.brackets`, not this production enum.
         let levels = LevelTags {
             a_gap_floor_db: f64::from(fp.levels.gap_floor_db),
             a_noise_floor_db: f64::from(fp.levels.noise_floor_db),
         };
         let verdict = if m.outcome.tier == "skip" {
-            GapRepairVerdict::Skip {
-                cell: GapRepairCell::Decorrelated,
-                reason: GapPatchSkipReason::CorrelationBelowThreshold {
-                    pre_correlation: 0.0,
-                    post_correlation: 0.0,
-                    min_correlation: 0.0,
-                    best_attempt: None,
-                },
-            }
+            // Inert reason for `cell` only (`Decorrelated` default); wire skip_reason comes from brackets.
+            GapRepairVerdict::skip(GapPatchSkipReason::CorrelationBelowThreshold {
+                pre_correlation: 0.0,
+                post_correlation: 0.0,
+                min_correlation: 0.0,
+                best_attempt: None,
+            })
         } else {
             GapRepairVerdict::Patch(GapRepairStrategy::SilenceSplice {
                 fill: Vec::new(),

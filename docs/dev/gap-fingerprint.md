@@ -197,7 +197,7 @@ approaches were refuted by measurement. Full analysis + cost hierarchy: that pla
 | `donor_interior_nominal` | full, B present | B occupancy over the **nominal** geometry span (no lag adjustment) — registration-independent; the D11 program-quiet signal |
 | `splice_dualfit` | full, B present | dual-fit viability: seams scored at per-shoulder placement + `gate_pass` / `trim_frames` / validators (see below) |
 | `residual` | full, B present | least-squares same-source cancellation (dB) vs noise floor; per-side dB values are `Option` (absent for non-finite / −120 sentinel). `uninformative_pre`/`_post` name *why* a side carries no usable floor (`no_reference_window` / `probe_non_finite` / `floor_above_ok_db`), and `placement_slide_frames` / `max_lag_frames` carry the lag reach so a replayed verdict abstains where production did — all four absent on pre-2026-08-05 dumps |
-| `outcome` | B present | plan_kind, tier, fit_path, signature_mode, skip_reason. `seam_shape` is **omitted** on the production path (`None`) |
+| `outcome` | B present | plan_kind, tier, fit_path, signature_mode, skip_reason. On skip, `skip_reason` is the closest failing bracket's `failure_stage` (`structure_align` / `structure_floor` / `waveform_floor` / `residual`) — fingerprint-native, **not** a production `GapPatchSkipReason`. `seam_shape` is **omitted** on the production path (`None`). Legacy dumps may still say `correlation_below_threshold` |
 | `equivalence` | B present | **gap-equivalence class (diagnostic)** — does this gap need patching? (silence-character; see below) |
 | `scan_equivalence` | scan classified | the **authoritative production** verdict for the same gap (`GapReport::gap_equivalence`; block size = the `scan_block_ms` knob), copied in so one dump holds both readings for calibration. **This is the authoritative one** — see below |
 | `lag` | diagnostics | **Tier-3** per pre/post anchor lag fingerprint at the best-energy bracket / structure throat — requires `--fingerprint-diagnostics` |
@@ -282,6 +282,10 @@ recipes written before 2026-08-05 (and it must read as absent, not as today's de
 Absent on pre-2026-08-03 corpora and on summary-only / refused corpora. With bracket scores, this is
 enough to audit stage assignment without re-scoring PCM. Equivalence has the same pattern in
 `scan_equivalence.thresholds`.
+
+On skip, `outcome.skip_reason` is that same closest-stage reduction (analyzer
+`closest_failure_stage`) — not a production `GapPatchSkipReason`. Prefer the brackets / closest
+stage for analysis; treat legacy `correlation_below_threshold` dump values as pre-native placeholders.
 
 ### Bracket placement — `start_frame`, `fill_frames`, and why the seam does not choose them
 

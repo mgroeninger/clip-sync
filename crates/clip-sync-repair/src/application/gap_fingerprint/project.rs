@@ -7,7 +7,6 @@
 
 use super::schema::*;
 use crate::domain::gap_repair_spec::{GapRepairSpec, GapRepairVerdict, LevelTags};
-use crate::domain::patch_result::GapPatchSkipReason;
 
 // ---------------------------------------------------------------------------------------------
 // GapRepairSpec → GapFingerprint projection (Fingerprint-unification 8e)
@@ -71,11 +70,33 @@ pub fn spec_to_fingerprint_summary(
     let refined_end_secs = spec.refined.end_frame as f64 / rate;
     let x = x.unwrap_or_default();
 
+    let gate = &tags.gate;
+    let MeasuredDetail {
+        brackets: measured_brackets,
+        baseline_lag: measured_baseline_lag,
+    } = measured;
+    // Real per-bracket rows when characterize supplied them (from-decode dump, 8g.4b); else synthesize just
+    // enough structure to round-trip the stored counts/best/closest (the corpus-projection path, which can't
+    // recover per-bracket detail from stored tags).
+    let brackets = measured_brackets.unwrap_or_else(|| {
+        synth_brackets(
+            gate.brackets_total,
+            gate.brackets_passing,
+            gate.best_bracket_seam,
+            gate.closest_failure_stage.as_deref(),
+        )
+    });
+
+    // Fingerprint-native skip label: closest failing bracket's `FailureStage` — not production
+    // `GapPatchSkipReason`. Prefer the brackets we are about to emit; fall back to the stored gate
+    // tag when synthesis could not recover a stage (empty / all-passing synth).
     let (tier, skip_reason) = match &spec.verdict {
         GapRepairVerdict::Patch(_) => ("patch".to_string(), None),
-        GapRepairVerdict::Skip { reason, .. } => (
+        GapRepairVerdict::Skip { .. } => (
             "skip".to_string(),
-            Some(skip_reason_tag(reason).to_string()),
+            closest_bracket_failure_stage(&brackets)
+                .map(|s| s.as_str().to_string())
+                .or_else(|| gate.closest_failure_stage.clone()),
         ),
     };
 
@@ -93,7 +114,7 @@ pub fn spec_to_fingerprint_summary(
     };
     // The measured sweep when the caller ran one; otherwise the four-scalar stand-in, whose fabricated
     // half `source.not_measured` disowns.
-    let baseline_lag = measured.baseline_lag.or_else(|| {
+    let baseline_lag = measured_baseline_lag.or_else(|| {
         if reg.pre_peak_r.is_some() || reg.post_peak_r.is_some() {
             Some(LagFingerprint {
                 pre_anchor: projected_lag_entry(
@@ -114,7 +135,6 @@ pub fn spec_to_fingerprint_summary(
         }
     });
 
-    let gate = &tags.gate;
     let structure = gate.structure_min.map(|m| StructureScores {
         baseline_pre: m,
         baseline_post: m,
@@ -147,17 +167,6 @@ pub fn spec_to_fingerprint_summary(
         // replayed verdict answers `beyond_lag_reach()` as if the placement never slid.
         placement_slide_frames: Some(r.placement_slide_frames),
         max_lag_frames: Some(r.max_lag_frames),
-    });
-    // Real per-bracket rows when characterize supplied them (from-decode dump, 8g.4b); else synthesize just
-    // enough structure to round-trip the stored counts/best/closest (the corpus-projection path, which can't
-    // recover per-bracket detail from stored tags).
-    let brackets = measured.brackets.unwrap_or_else(|| {
-        synth_brackets(
-            gate.brackets_total,
-            gate.brackets_passing,
-            gate.best_bracket_seam,
-            gate.closest_failure_stage.as_deref(),
-        )
     });
 
     let gap_frames = spec
@@ -355,19 +364,6 @@ fn projected_level_profile(l: Option<&LevelTags>) -> LevelProfile {
     }
 }
 
-/// The corpus-reader skip-reason tag for a [`GapPatchSkipReason`] (serde snake_case variant name).
-fn skip_reason_tag(reason: &GapPatchSkipReason) -> &'static str {
-    match reason {
-        GapPatchSkipReason::BExtractFailed => "b_extract_failed",
-        GapPatchSkipReason::AlignedSegmentOutOfRange => "aligned_segment_out_of_range",
-        GapPatchSkipReason::ZeroLengthGap => "zero_length_gap",
-        GapPatchSkipReason::BoundaryAlignmentFailed => "boundary_alignment_failed",
-        GapPatchSkipReason::ProgramQuiet => "program_quiet",
-        GapPatchSkipReason::CorrelationBelowThreshold { .. } => "correlation_below_threshold",
-        GapPatchSkipReason::ResidualHeadroomExceeded { .. } => "residual_headroom_exceeded",
-    }
-}
-
 // ---------------------------------------------------------------------------------------------
 // Inverse: GapFingerprint → GapRepairTags / GapRepairSpec (Fingerprint-unification 8f)
 // ---------------------------------------------------------------------------------------------
@@ -383,16 +379,6 @@ fn mono_lag(v: &[LagSummary]) -> Option<&LagSummary> {
     v.iter()
         .find(|e| e.channel == LagChannel::Mono)
         .or_else(|| v.first())
-}
-
-/// [`FailureStage`] → corpus-reader tag (inverse of [`failure_stage_from_tag`]).
-fn failure_stage_tag(stage: FailureStage) -> &'static str {
-    match stage {
-        FailureStage::StructureAlign => "structure_align",
-        FailureStage::StructureFloor => "structure_floor",
-        FailureStage::WaveformFloor => "waveform_floor",
-        FailureStage::Residual => "residual",
-    }
 }
 
 /// Extract the D/R payload (`GapRepairTags`) an oracle-produced [`GapFingerprint`] carries — the inverse of
@@ -475,15 +461,8 @@ pub(crate) fn tags_from_fields(
         .iter()
         .filter_map(min_seam)
         .fold(None, |acc, v| Some(acc.map_or(v, |a: f64| a.max(v))));
-    let closest_failure_stage = brackets
-        .iter()
-        .filter(|b| b.failure_stage.is_some())
-        .max_by(|x, y| {
-            bracket_failure_progress(x)
-                .partial_cmp(&bracket_failure_progress(y))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .and_then(|b| b.failure_stage.map(|s| failure_stage_tag(s).to_string()));
+    let closest_failure_stage = closest_bracket_failure_stage(brackets)
+        .map(|s| s.as_str().to_string());
     let residual = residual.map(|r| crate::domain::policies::SeamResidualVerdict {
         chosen_pre_db: r.chosen_pre_db.unwrap_or(f64::NAN),
         chosen_post_db: r.chosen_post_db.unwrap_or(f64::NAN),
@@ -557,8 +536,9 @@ pub fn tags_from_fingerprint(fp: &GapFingerprint) -> crate::domain::gap_repair_s
 pub fn fingerprint_to_spec(fp: &GapFingerprint) -> crate::domain::gap_repair_spec::GapRepairSpec {
     use crate::domain::gap_fill_fit::FillConfidence;
     use crate::domain::gap_repair_spec::{
-        BExtractWindow, GapRepairCell, GapRepairSpec, GapRepairStrategy, GapRepairVerdict,
+        BExtractWindow, GapRepairSpec, GapRepairStrategy, GapRepairVerdict,
     };
+    use crate::domain::patch_result::GapPatchSkipReason;
     use crate::domain::policies::RefinedGapFrames;
 
     let is_skip = fp
@@ -567,15 +547,13 @@ pub fn fingerprint_to_spec(fp: &GapFingerprint) -> crate::domain::gap_repair_spe
         .map(|o| o.tier == "skip")
         .unwrap_or(false);
     let verdict = if is_skip {
-        GapRepairVerdict::Skip {
-            cell: GapRepairCell::Decorrelated,
-            reason: GapPatchSkipReason::CorrelationBelowThreshold {
-                pre_correlation: 0.0,
-                post_correlation: 0.0,
-                min_correlation: 0.0,
-                best_attempt: None,
-            },
-        }
+        // Placeholder for tier/cell only — dump skip_reason is FailureStage, not this enum.
+        GapRepairVerdict::skip(GapPatchSkipReason::CorrelationBelowThreshold {
+            pre_correlation: 0.0,
+            post_correlation: 0.0,
+            min_correlation: 0.0,
+            best_attempt: None,
+        })
     } else {
         GapRepairVerdict::Patch(GapRepairStrategy::SilenceSplice {
             fill: Vec::new(),
@@ -615,8 +593,10 @@ pub fn fingerprint_to_spec(fp: &GapFingerprint) -> crate::domain::gap_repair_spe
 mod tests {
     use super::*;
     use crate::domain::gap_repair_spec::{
-        BExtractWindow, GapRepairCell, GapRepairTags, GateTags, SeamLocalTags,
+        BExtractWindow, GapRepairCell, GapRepairSpec, GapRepairTags, GapRepairVerdict, GateTags,
+        SeamLocalTags,
     };
+    use crate::domain::patch_result::GapPatchSkipReason;
     use crate::domain::policies::RefinedGapFrames;
 
     fn replayed_residual(r: ResidualInfo) -> crate::domain::policies::SeamResidualVerdict {
@@ -774,13 +754,10 @@ mod tests {
 
         let fp = spec_to_fingerprint_summary(&spec, 48_000, 2, None, MeasuredDetail::default());
 
-        // outcome: a skip (tier is patch/skip, matching the scan path).
+        // outcome: skip tier; skip_reason is the closest FailureStage (here from gate tags → synth).
         let o = fp.outcome.as_ref().unwrap();
         assert_eq!(o.tier, "skip");
-        assert_eq!(
-            o.skip_reason.as_deref(),
-            Some("correlation_below_threshold")
-        );
+        assert_eq!(o.skip_reason.as_deref(), Some("waveform_floor"));
 
         // splice_dualfit — single-source copies of seam_local (A7), gate_pass + step-real inputs preserved.
         let df = fp.splice_dualfit.expect("splice_dualfit projected");
@@ -803,6 +780,94 @@ mod tests {
                 .filter(|b| b.failure_stage.is_none())
                 .count(),
             0
+        );
+    }
+
+    /// Real brackets win over a production-shaped placeholder verdict: dump `skip_reason` is the
+    /// closest `FailureStage`, not `correlation_below_threshold`.
+    #[test]
+    fn skip_reason_follows_closest_measured_failure_stage() {
+        let tags = GapRepairTags {
+            gate: GateTags {
+                brackets_total: 1,
+                brackets_passing: 0,
+                closest_failure_stage: Some("waveform_floor".into()),
+                ..GateTags::default()
+            },
+            ..GapRepairTags::default()
+        };
+        let spec = GapRepairSpec {
+            gap_index: 0,
+            a_start_secs: 1.0,
+            a_end_secs: 1.5,
+            gap_offset_secs: 0.0,
+            refined: RefinedGapFrames {
+                start_frame: 48_000,
+                end_frame: 72_000,
+            },
+            b_extract: BExtractWindow {
+                start_frame: 0,
+                end_frame: 0,
+                b_mapped_start_frame: 0,
+            },
+            crossfade_secs: 0.01,
+            verdict: GapRepairVerdict::skip(GapPatchSkipReason::CorrelationBelowThreshold {
+                pre_correlation: 0.0,
+                post_correlation: 0.0,
+                min_correlation: 0.0,
+                best_attempt: None,
+            }),
+            tags_ctx: tags,
+        };
+        let brackets = vec![
+            BracketInfo {
+                pre_time_secs: 0.0,
+                post_time_secs: 0.5,
+                span_secs: 0.5,
+                move_frames: 0,
+                structure_pre: None,
+                structure_post: None,
+                seam_pre: Some(0.4),
+                seam_post: Some(0.5),
+                start_frame: None,
+                fill_frames: None,
+                failure_stage: Some(FailureStage::WaveformFloor),
+                residual_margin_db: None,
+            },
+            BracketInfo {
+                pre_time_secs: 0.0,
+                post_time_secs: 0.5,
+                span_secs: 0.5,
+                move_frames: 10,
+                structure_pre: None,
+                structure_post: None,
+                seam_pre: Some(0.55),
+                seam_post: Some(0.6),
+                start_frame: None,
+                fill_frames: None,
+                failure_stage: Some(FailureStage::Residual),
+                residual_margin_db: Some(6.0),
+            },
+        ];
+        let fp = spec_to_fingerprint_summary(
+            &spec,
+            48_000,
+            2,
+            None,
+            MeasuredDetail {
+                brackets: Some(brackets),
+                baseline_lag: None,
+            },
+        );
+        assert_eq!(fp.outcome.as_ref().unwrap().tier, "skip");
+        assert_eq!(
+            fp.outcome.as_ref().unwrap().skip_reason.as_deref(),
+            Some("residual"),
+            "higher seam progress on residual bracket wins"
+        );
+        assert_eq!(
+            closest_bracket_failure_stage(&fp.brackets),
+            Some(FailureStage::Residual)
         );
     }
 }

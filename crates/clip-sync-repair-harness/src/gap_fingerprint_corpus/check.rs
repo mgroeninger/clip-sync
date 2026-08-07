@@ -1068,7 +1068,7 @@ mod tests {
                {"pre_time_secs":10,"post_time_secs":11,"span_secs":1,"move_frames":0,
                 "seam_pre":0.2,"seam_post":0.2,"failure_stage":"waveform_floor"}
              ],
-             "outcome":{"plan_kind":"fillable","tier":"skip","seam_shape":"","skip_reason":"correlation_below_threshold"}}
+             "outcome":{"plan_kind":"fillable","tier":"skip","seam_shape":"","skip_reason":"waveform_floor"}}
           ]
         }"#
         .into()

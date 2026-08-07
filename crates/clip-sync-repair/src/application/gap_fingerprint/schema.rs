@@ -546,6 +546,20 @@ pub fn bracket_failure_progress(b: &BracketInfo) -> f64 {
     }
 }
 
+/// Failing bracket that got furthest (highest [`bracket_failure_progress`]) — the gap-level
+/// fingerprint skip label. `None` when every bracket passed or none were scored.
+pub fn closest_bracket_failure_stage(brackets: &[BracketInfo]) -> Option<FailureStage> {
+    brackets
+        .iter()
+        .filter(|b| b.failure_stage.is_some())
+        .max_by(|x, y| {
+            bracket_failure_progress(x)
+                .partial_cmp(&bracket_failure_progress(y))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .and_then(|b| b.failure_stage)
+}
+
 /// Which gate stage rejected a bracket (mirrors the W5 `failure_stage` taxonomy).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -554,6 +568,18 @@ pub enum FailureStage {
     StructureFloor,
     WaveformFloor,
     Residual,
+}
+
+impl FailureStage {
+    /// Stable dump / analyzer label; matches the serde `snake_case` representation.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::StructureAlign => "structure_align",
+            Self::StructureFloor => "structure_floor",
+            Self::WaveformFloor => "waveform_floor",
+            Self::Residual => "residual",
+        }
+    }
 }
 
 /// **F14 — the fingerprint analogue of production's `dual_fit_eligible`** (`patch_audio/region.rs`).
@@ -1008,6 +1034,12 @@ pub struct GateOutcome {
     pub fit_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub signature_mode: Option<String>,
+    /// On `tier: "skip"`: closest failing bracket's [`FailureStage`] (`structure_align` /
+    /// `structure_floor` / `waveform_floor` / `residual`) — the same reduction as analyzer
+    /// `closest_failure_stage`. **Not** a production [`crate::domain::GapPatchSkipReason`]: the
+    /// fingerprint path enumerates brackets (`any_ok`) and does not run the production patch gate.
+    /// `None` on patch, or when no bracket recorded a failure stage. Legacy dumps may still say
+    /// `correlation_below_threshold` (placeholder from before this was fingerprint-native).
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub skip_reason: Option<String>,
     /// **Would production's dual-fit rescue this bracket-gate skip?** (F14.) `tier` is contractually the
