@@ -1684,24 +1684,8 @@ mod tests {
     /// `scan_classifies_the_donor_window_at_the_registered_lag`.
     #[test]
     fn scan_edge_core_under_apply_matches_observe_class() {
-        let apply = registration_report_at(
-            true,
-            0,
-            0.0,
-            0.6,
-            0.5,
-            1.1,
-            0.5,
-        );
-        let observe = registration_report_at(
-            false,
-            0,
-            0.0,
-            0.6,
-            0.5,
-            1.1,
-            0.5,
-        );
+        let apply = registration_report_at(true, 0, 0.0, 0.6, 0.5, 1.1, 0.5);
+        let observe = registration_report_at(false, 0, 0.0, 0.6, 0.5, 1.1, 0.5);
 
         assert_eq!(apply.gaps.len(), 1, "only the head hole is silent");
         assert_eq!(observe.gaps.len(), 1);

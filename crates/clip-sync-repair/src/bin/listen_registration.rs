@@ -135,7 +135,10 @@ fn main() {
         );
     }
 
-    println!("\n{} gaps, {compared} with an engine lag to compare", rows.len());
+    println!(
+        "\n{} gaps, {compared} with an engine lag to compare",
+        rows.len()
+    );
     if let Some((gap, bins)) = worst {
         println!("worst disagreement: {gap} at {bins:.2} bins");
     }
@@ -248,7 +251,11 @@ fn measure(args: &Args, pair: &str, a_wav: &Path) -> Result<Row, String> {
         engine_lag_ms,
         a_core_db: dbfs(&a[core_lo.min(a.len())..core_hi.min(a.len())]),
         b_nominal_db: dbfs(window(&b, core_lo as isize, core_hi as isize)),
-        b_registered_db: dbfs(window(&b, core_lo as isize + shift, core_hi as isize + shift)),
+        b_registered_db: dbfs(window(
+            &b,
+            core_lo as isize + shift,
+            core_hi as isize + shift,
+        )),
     })
 }
 
@@ -281,7 +288,8 @@ fn load<T: for<'de> serde::Deserialize<'de>>(path: &Path) -> Result<T, String> {
 /// registration question is about timing, not layout — a plain channel mean is the right reduction
 /// and matches what the offline analysis this tool replaces did.
 fn read_mono(path: &Path) -> Result<(Vec<f64>, u32), String> {
-    let mut reader = hound::WavReader::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut reader =
+        hound::WavReader::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let spec = reader.spec();
     let channels = spec.channels.max(1) as usize;
     let scale = match spec.sample_format {
@@ -316,7 +324,13 @@ fn window(b: &[f64], lo: isize, hi: isize) -> &[f64] {
 /// Pearson of `a` against `b` slid over `±half` samples in `step`s, returning the best `(lag, r)`.
 /// `b_center` is where lag 0 sits in `b` — the same index the window came from in `a`, because the
 /// two clips are cut on the nominal map.
-fn best_lag(a: &[f64], b: &[f64], b_center: usize, half: usize, step: usize) -> Option<(isize, f64)> {
+fn best_lag(
+    a: &[f64],
+    b: &[f64],
+    b_center: usize,
+    half: usize,
+    step: usize,
+) -> Option<(isize, f64)> {
     let mean_a = a.iter().sum::<f64>() / a.len() as f64;
     let centred: Vec<f64> = a.iter().map(|x| x - mean_a).collect();
     let denom_a = centred.iter().map(|x| x * x).sum::<f64>().sqrt();
