@@ -35,9 +35,9 @@ fn row_of(fx: &GapCellFixture) -> GapRow {
 
 /// Re-run the domain equivalence classifier from a fixture's recorded silence signals, asserting the class.
 ///
-/// Reads **`equivalence_production`**, not the diagnostic `equivalence` block. The cells in this taxonomy are
+/// Reads **`equivalence_production`**, not `equivalence_diagnostic`. The cells in this taxonomy are
 /// *scan-time* cells (see `GapCellType`'s variant docs) and the scan verdict is what production acts on;
-/// the diagnostic block is a second opinion that diverges on a small fraction of gaps (1.7 % measured
+/// `equivalence_diagnostic` is a second opinion that diverges on a small fraction of gaps (1.7 % measured
 /// 2026-07-30, **before** I1/I3 converged the binning and the donor predicate — expect lower now), in the
 /// safe direction on every observed case. Until 2026-07-30 this read the diagnostic block — harmless on
 /// these fixtures, where the two agree, but the wrong authority.

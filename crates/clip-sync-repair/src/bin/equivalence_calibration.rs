@@ -328,8 +328,8 @@ fn corpus_pairs(
 > {
     corpus.gaps.iter().map(|fp| {
         (
-            fp.equivalence_production.as_ref(),
-            fp.equivalence_diagnostic.as_ref(),
+            fp.equivalence_production_verdict(),
+            fp.equivalence_diagnostic_verdict(),
         )
     })
 }
@@ -437,8 +437,8 @@ fn recipe_deltas(scan: &GapEquivalenceVerdict, refv: &GapEquivalenceVerdict) -> 
 fn instrument_line(corpus: &GapCorpus) -> Option<String> {
     for fp in &corpus.gaps {
         let (Some(scan), Some(diag)) = (
-            fp.equivalence_production.as_ref(),
-            fp.equivalence_diagnostic.as_ref(),
+            fp.equivalence_production_verdict(),
+            fp.equivalence_diagnostic_verdict(),
         ) else {
             continue;
         };
@@ -485,8 +485,8 @@ fn print_detail(corpus: &GapCorpus) -> Summary {
     );
     for fp in &corpus.gaps {
         let (Some(refv), Some(scanv)) = (
-            fp.equivalence_diagnostic.as_ref(),
-            fp.equivalence_production.as_ref(),
+            fp.equivalence_diagnostic_verdict(),
+            fp.equivalence_production_verdict(),
         ) else {
             continue;
         };
@@ -703,7 +703,7 @@ fn band_pair(label: String, corpus: &GapCorpus, args: &Args) -> BandPair {
         unprovenanced: 0,
     };
     for fp in &corpus.gaps {
-        let Some(v) = fp.equivalence_production.as_ref() else {
+        let Some(v) = fp.equivalence_production_verdict() else {
             continue;
         };
         if !v.drop {
@@ -1011,7 +1011,7 @@ fn print_replay(path: &Path, args: &Args) -> ExitCode {
             }
         };
         for fp in &corpus.gaps {
-            let Some(v) = fp.equivalence_production.as_ref() else {
+            let Some(v) = fp.equivalence_production_verdict() else {
                 continue;
             };
             tally.gaps += 1;

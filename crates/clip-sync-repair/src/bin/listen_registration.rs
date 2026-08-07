@@ -242,8 +242,7 @@ fn measure(args: &Args, pair: &str, a_wav: &Path) -> Result<Row, String> {
         pair: pair.to_string(),
         index: gap.index,
         class: gap
-            .equivalence_production
-            .as_ref()
+            .equivalence_production_verdict()
             .map(|v| format!("{:?}", v.class))
             .unwrap_or_else(|| "-".into()),
         wav_lag_ms: lag_samples as f64 / f64::from(rate) * 1000.0,
@@ -271,8 +270,7 @@ fn engine_lag(args: &Args, pair: &str, stem: &str, index: usize) -> Option<f64> 
     let corpus: GapCorpus = load(&dir.join(format!("{stem}.json"))).ok()?;
     let gap = corpus.gaps.iter().find(|g| g.index == index)?;
     Some(
-        gap.equivalence_production
-            .as_ref()?
+        gap.equivalence_production_verdict()?
             .donor_registration
             .as_ref()?
             .lag_ms,

@@ -205,6 +205,42 @@ approaches were refuted by measurement. Full analysis + cost hierarchy: that pla
 | `seam_probe` | diagnostics | **Tier-3** encoding-robust seam metrics (R2/R4/spectrum/env/recovered); not used by any gate |
 | `b_levels` | diagnostics | **Tier-3** symmetric B-side `LevelProfile` (validation instrument for the program-quiet hypothesis) |
 
+### `_contract` — the measurement contract travels with the numbers
+
+`_contract` is **never a top-level key** — it appears only *inside* a metric group's own object, which
+is the entire point. Selected groups carry it beside their values:
+
+```json
+"equivalence_production": {
+  "_contract": {
+    "measures": "silence-character class the production gate acted on: dropout vs mutual/program silence",
+    "placement": "scan-time gap: A's silent core, donor window = that core offset-mapped onto B",
+    "window": "scan blocks of `scan_recipe.scan_block_ms`; noise floor = median over +/-2.0s context",
+    "not": "equivalence_diagnostic (second opinion, gates nothing); not a seam or lag measurement"
+  },
+  "class": "shared_silence",
+  "drop": true
+}
+```
+
+Field *names* answer "which field?". The four contract keys answer what the numbers are (`measures`),
+where on the timeline (`placement`), over what window (`window`), and which confusable sibling this is
+**not** (`not`) — the axes this corpus actually gets misread on. A corpus-root notes map was rejected:
+too easy to skip, and too far from the value it explains.
+
+| Property | Behaviour |
+|---|---|
+| **Authority** | None. Nothing gates, classifies, or diffs on `_contract`; it is write-time reader metadata |
+| **Wire shape** | Unchanged — `#[serde(flatten)]` keeps the group's own keys where they were, with `_contract` beside them |
+| **Absence** | Always valid. Old corpora, and any path that stamps nothing, deserialize to `None` |
+| **Goldens** | Not a Tier-1/2 axis. Curated fixtures stay contract-free until an intentional harvest |
+| **Repetition** | Repeated per gap, deliberately: these are diagnostic dumps, and a definition beside the value beats a smaller file |
+
+Carried today by `equivalence_diagnostic` and `equivalence_production` (C1, 2026-08-07). The lag,
+donor, `residual` and `seam_probe` groups are queued for C2 — see
+[TEMP-fingerprint-field-clarity-plan.md](TEMP-fingerprint-field-clarity-plan.md) § 2. Source of truth
+for the strings is `application/gap_fingerprint/contract.rs`; do not retype them elsewhere.
+
 ### Not measured — the fields a production dump does *not* fill
 
 Several fields above are questions the production path does not ask. Since 2026‑08‑03 they are

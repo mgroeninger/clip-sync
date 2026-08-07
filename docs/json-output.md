@@ -412,6 +412,11 @@ Per-gap silence-character classification (advisory; scan report `gap_equivalence
 `equivalence_production` blocks on `--gap-fingerprints`). See [gap-vocabulary.md](dev/gap-vocabulary.md)
 § Silence-character pre-gate.
 
+On `--gap-fingerprints` dumps only, both blocks also carry a `_contract` object stating what the
+verdict measures, where, and what it is not. It is reader metadata — nothing reads it, it is absent on
+older corpora, and it never appears on the scan report's `gap_equivalence[]`. See
+[dev/gap-fingerprint.md](dev/gap-fingerprint.md) § *`_contract`*.
+
 On a `--gap-fingerprints` dump the same gap carries **two** of these. `equivalence_production` is the one
 production acts on; `equivalence_diagnostic` is a second opinion kept for calibration, and it
 disagrees on ~2 % of gaps (always biased toward `drop`). It is **not** a "fine" reading of the same

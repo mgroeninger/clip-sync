@@ -5,6 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::contract::Contracted;
+
 pub use crate::domain::policies::{ResidualUninformative, SeamFloorSource};
 
 /// dBFS sentinel substituted for true-silent RMS so level vectors carry no `-inf` (the value
@@ -400,7 +402,8 @@ pub struct GapFingerprint {
         skip_serializing_if = "Option::is_none",
         default
     )]
-    pub equivalence_diagnostic: Option<crate::domain::gap_equivalence::GapEquivalenceVerdict>,
+    pub equivalence_diagnostic:
+        Option<Contracted<crate::domain::gap_equivalence::GapEquivalenceVerdict>>,
     /// The **production** equivalence verdict for the same gap — the scan-block gate the scan
     /// report carries (`GapReport::gap_equivalence`; block size is the `scan_block_ms` recipe knob, not a
     /// constant), copied in so one `--gap-fingerprints` run holds both readings per gap for calibration
@@ -416,7 +419,28 @@ pub struct GapFingerprint {
         skip_serializing_if = "Option::is_none",
         default
     )]
-    pub equivalence_production: Option<crate::domain::gap_equivalence::GapEquivalenceVerdict>,
+    pub equivalence_production:
+        Option<Contracted<crate::domain::gap_equivalence::GapEquivalenceVerdict>>,
+}
+
+impl GapFingerprint {
+    /// The authoritative verdict, without its `_contract` wrapper — what production acted on.
+    ///
+    /// Prefer this over reaching through [`Contracted::value`] at read sites: the wrapper is a wire
+    /// concern, and analysis code should not care whether reader metadata is attached.
+    pub fn equivalence_production_verdict(
+        &self,
+    ) -> Option<&crate::domain::gap_equivalence::GapEquivalenceVerdict> {
+        self.equivalence_production.as_deref()
+    }
+
+    /// The diagnostic second opinion, without its `_contract` wrapper. Gates nothing — see
+    /// `docs/dev/gap-fingerprint.md` § *`equivalence_diagnostic` vs `equivalence_production`*.
+    pub fn equivalence_diagnostic_verdict(
+        &self,
+    ) -> Option<&crate::domain::gap_equivalence::GapEquivalenceVerdict> {
+        self.equivalence_diagnostic.as_deref()
+    }
 }
 
 /// Gap edges on A (reported + refined) and the mapped B fill window (when B is present).
@@ -1581,11 +1605,11 @@ mod tests {
         }"#;
         let fp: GapFingerprint = serde_json::from_str(old).expect("legacy keys deserialize");
         assert_eq!(
-            fp.equivalence_diagnostic.as_ref().map(|v| v.class),
+            fp.equivalence_diagnostic_verdict().map(|v| v.class),
             Some(GapEquivalenceClass::RepairableDropout)
         );
         assert_eq!(
-            fp.equivalence_production.as_ref().map(|v| v.class),
+            fp.equivalence_production_verdict().map(|v| v.class),
             Some(GapEquivalenceClass::SharedSilence)
         );
 

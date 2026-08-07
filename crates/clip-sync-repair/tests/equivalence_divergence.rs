@@ -75,14 +75,61 @@ fn reclassify(v: &GapEquivalenceVerdict, side: &str) -> GapEquivalenceClass {
     live.class
 }
 
+/// C1 wrapped both verdicts in `Contracted<_>`, whose `#[serde(flatten)]` deserializes through serde's
+/// buffered `Content` rather than the struct's own field visitor. Buffering is the one C1 change that
+/// could alter *values* rather than merely add a key, so it is pinned against the committed bytes:
+/// every key the live type still carries must come back **byte-equal** to the artifact.
+///
+/// Deliberately not a whole-object equality. `silent_core_probes` was hard-deleted from
+/// `GapEquivalenceVerdict` (see `docs/dev/gap-fingerprint.md` § *`measurement`*) while committed
+/// fixtures keep the dead key, so a re-serialization is *expected* to be a subset. The invariant is
+/// "nothing the type still models drifted", which is what the flatten wrapper could plausibly break.
+#[test]
+fn wrapping_in_contracted_did_not_disturb_the_verdict_wire_shape() {
+    /// Keys deleted from the type but still present in committed fixtures.
+    const DEAD_KEYS: &[&str] = &["silent_core_probes"];
+
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/gap_corpus/fingerprints/equivalence_divergence/band_donor.json");
+    let text = std::fs::read_to_string(&path).expect("read fixture");
+    let before: serde_json::Value = serde_json::from_str(&text).expect("parse fixture");
+    let corpus: GapCorpus = serde_json::from_str(&text).expect("typed parse");
+    let after = serde_json::to_value(&corpus).expect("re-serialize");
+
+    for key in ["equivalence_diagnostic", "equivalence_production"] {
+        let orig = before["gaps"][0][key]
+            .as_object()
+            .unwrap_or_else(|| panic!("fixture must carry {key}"));
+        let round = after["gaps"][0][key]
+            .as_object()
+            .unwrap_or_else(|| panic!("{key} must re-serialize as an object"));
+
+        assert!(
+            !round.contains_key("_contract"),
+            "{key}: fixtures stay contract-free — contracts are stamped at measurement (plan § 4.3)"
+        );
+        for (k, v) in round {
+            assert_eq!(
+                Some(v),
+                orig.get(k),
+                "{key}.{k} drifted across the flatten round trip"
+            );
+        }
+        for k in orig.keys() {
+            assert!(
+                round.contains_key(k) || DEAD_KEYS.contains(&k.as_str()),
+                "{key}.{k} was dropped and is not a known dead key"
+            );
+        }
+    }
+}
+
 fn both(fp: &GapFingerprint) -> (&GapEquivalenceVerdict, &GapEquivalenceVerdict) {
     (
-        fp.equivalence_production
-            .as_ref()
+        fp.equivalence_production_verdict()
             .expect("fixture carries no equivalence_production"),
-        fp.equivalence_diagnostic
-            .as_ref()
-            .expect("fixture carries no diag equivalence"),
+        fp.equivalence_diagnostic_verdict()
+            .expect("fixture carries no equivalence_diagnostic"),
     )
 }
 

@@ -1,6 +1,6 @@
 # TEMP — Fingerprint field clarity (rename + co-located contracts)
 
-**Status:** **R1 shipped 2026-08-07**; R2 / R3 / C1–C3 open. Working plan for making
+**Status:** **R1 + C1 shipped 2026-08-07**; R2 / R3 / C2 / C3 open. Working plan for making
 `--gap-fingerprints` dumps harder for agents (and humans) to misread by (1) renaming
 high-confusion wire fields, then (2) co-locating short measurement contracts next to the values
 they describe.
@@ -306,8 +306,8 @@ Do **not** put contracts only in a sidecar unless a consumer workflow *forces* o
 
 | Phase | Work |
 |-------|------|
-| **C0** | Spec only (this section); no code |
-| **C1** | After **R1**: add `MetricContract` + `_contract` on the two equivalence verdict objects |
+| **C0** ✅ | Spec only (this section); no code |
+| **C1** ✅ | **Shipped 2026-08-07.** `MetricContract` + generic `Contracted<T>` + `_contract` on the two equivalence verdict objects — see § 2.11 |
 | **C2** | After **R2/R3**: contracts on lag + donor groups (+ `residual` / `seam_probe` as listed) |
 | **C3** | Optional: share string table with `legend_text()`; optional `--fingerprint-contracts` knob |
 
@@ -331,6 +331,60 @@ rename first, then freeze contract text against the new names.
   required for this plan’s success).
 
 ---
+
+### 2.11 C1 as shipped (2026-08-07)
+
+Landed as `application/gap_fingerprint/contract.rs`: `MetricContract`, generic `Contracted<T>`, and
+the const contract table. What §2 did not anticipate, and what C2 inherits:
+
+- **The wrapper was mandatory, not stylistic.** §2.5 assumed a `contract` field could be added to each
+  opted-in group's own struct. It cannot: `equivalence_diagnostic` and `equivalence_production` are the
+  **same type** (`domain::gap_equivalence::GapEquivalenceVerdict`), which is also serialized on the
+  production `--json` surface as `GapReport::gap_equivalence`. A field on it would give the pair one
+  shared string and leak reader metadata into a domain type and into production output.
+- **This recurs for C2, which is why the wrapper is generic.** `lag` / `baseline_lag` share
+  `LagFingerprint` (fingerprint-local), and `donor_interior` / `donor_interior_nominal` share
+  `DonorInterior` — **also a domain type** (`domain/donor.rs`, used by `dual_fit.rs` and
+  `gap_repair_spec.rs`). Four of C2's six groups are pairs over a shared type. C2 should be a field
+  *type* change (`Option<X>` → `Option<Contracted<X>>`) plus table entries — no new mechanism.
+- **`#[serde(flatten)]` keeps the wire shape.** The group's keys stay where they were, `_contract`
+  beside them, so adding a contract is not a schema break. Caveat for C2: flatten is incompatible with
+  `deny_unknown_fields`, and it deserializes via a buffered map (fine for JSON, which is all we emit).
+- **Read-site churn was contained by accessors**, not by touching every call site: `Contracted<T>`
+  implements `Deref`, and `GapFingerprint::equivalence_{production,diagnostic}_verdict()` return the
+  bare verdict. Only one call site was *forced* to change (`corpus_pairs` in
+  `equivalence_calibration`, which names the type in its signature) — the rest compiled unchanged via
+  deref coercion. They have since been moved onto the accessors anyway: **read sites should not know
+  the wrapper exists**, and a half-converted file is how the next reader concludes it must care. C2
+  should add the same accessor per renamed group and convert its readers in the same change.
+- **Strings are `Cow<'static, str>`**, not `&'static str` — `&'static str` cannot `Deserialize`. Cow
+  keeps the table `const` while letting a parsed corpus round-trip.
+- **Contract text is validated, not just written**, and the validation is **registry-swept** so C2
+  cannot bypass it. Contracts are declared through the `contracts!` macro, which enrols each one in
+  `SHIPPED_CONTRACTS` as it declares it — a hand-maintained roster was the obvious second place for a
+  C2 entry to be forgotten. Swept properties: `CONTRACT_MAX_LEN` (120); no two contracts identical;
+  every `not` opens with a **registered sibling wire key** (see below). Add contracts via the macro,
+  or they ship unchecked.
+- **`not:` is sibling-first, and that is enforced.** C1 first shipped the diagnostic's `not` as
+  *"authoritative: skip_equivalent_gaps reads equivalence_production…"* — a property, which only
+  parses if the reader mentally prefixes the key, and a summarizing model will not. It now opens with
+  the sibling's name like its counterpart. `every_not_names_a_sibling_first` pins the shape.
+- **Text that quotes code is guarded against drift.** A `const` table cannot `format!`, so the ±2.0 s
+  context window and the wire path `scan_recipe.scan_block_ms` are hardcoded prose.
+  `quoted_constants_still_match_the_code` fails if `EQUIVALENCE_CONTEXT_SECS` moves or the recipe key
+  is renamed. **C2/R2/R3 note:** any contract quoting a field path needs a line here, or a rename
+  silently makes the contract lie — which is worse than having no contract.
+- **Flatten was pinned against the committed bytes.** `Contracted`'s `#[serde(flatten)]` deserializes
+  through serde's buffered `Content` rather than the struct's field visitor, so it could alter values
+  and not merely add a key. `wrapping_in_contracted_did_not_disturb_the_verdict_wire_shape`
+  (`tests/equivalence_divergence.rs`) round-trips `band_donor.json` and asserts every key the live
+  type models comes back byte-equal. Deliberately not whole-object equality: `silent_core_probes` was
+  hard-deleted from the type while fixtures keep the dead key, so a subset is correct. C2 should
+  extend the same test rather than trust flatten by inspection.
+- **Fixtures and goldens untouched**, per §4.3. `golden_baseline_invariance` stayed green with no
+  regen, confirming contracts are not a Tier-1/2 axis.
+- **Not yet done (C3):** the strings are not shared with `legend_text()`, and there is no
+  `--fingerprint-contracts` knob. Default is effectively `always`.
 
 ## 3. Suggested ship order
 

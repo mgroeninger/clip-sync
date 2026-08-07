@@ -5,6 +5,7 @@
 //! [`write_corpus_dir`]. Depends on [`super::schema`] (types) and [`super::project`]
 //! (`tags_from_fields`) — never the reverse.
 
+use super::contract::*;
 use super::project::*;
 use super::schema::*;
 
@@ -2744,11 +2745,12 @@ pub fn characterize_gaps_from_decode(
         // count behind it. Re-attaching `levels.gap_floor_db` would overwrite the fix with the whole-span
         // content peak it exists to replace. `levels.gap_floor_db` is still dumped in its own block for
         // anyone who wants the old number.
-        fp.equivalence_diagnostic = Some(
+        fp.equivalence_diagnostic = Some(Contracted::new(
             equiv
                 .with_measurement(measurement)
                 .with_noise_floor_probes(nf_probes),
-        );
+            EQUIVALENCE_DIAGNOSTIC_CONTRACT,
+        ));
     }
 
     // Copy in the coarse scan-block verdict (block size = the `scan_block_ms` recipe knob, not a
@@ -2771,7 +2773,11 @@ pub fn characterize_gaps_from_decode(
     // It cannot simply move to the top of the loop: `*fp = spec_to_fingerprint_summary(..)` rebuilds
     // the fingerprint wholesale mid-body and would clobber an early assignment.
     for fp in corpus.gaps.iter_mut() {
-        fp.equivalence_production = report.gap_equivalence.get(fp.index).cloned();
+        fp.equivalence_production = report
+            .gap_equivalence
+            .get(fp.index)
+            .cloned()
+            .map(|v| Contracted::new(v, EQUIVALENCE_PRODUCTION_CONTRACT));
     }
 
     // Declare fabricated stand-ins this path still writes — stamped **here**, not in
@@ -4067,8 +4073,7 @@ mod tests {
             &clip_sync_repair_fixtures::NoOpProgressReporter,
         );
         let eq = corpus.gaps[0]
-            .equivalence_diagnostic
-            .as_ref()
+            .equivalence_diagnostic_verdict()
             .expect("overlay ran");
         let m = eq
             .measurement
@@ -4121,8 +4126,7 @@ mod tests {
             &clip_sync_repair_fixtures::NoOpProgressReporter,
         );
         let eq = corpus.gaps[0]
-            .equivalence_diagnostic
-            .as_ref()
+            .equivalence_diagnostic_verdict()
             .expect("diagnostic overlay still runs — the refusal is about the donor, not the gap");
         assert_eq!(
             eq.measurement.as_ref().and_then(|m| m.donor_span),
@@ -4410,10 +4414,72 @@ mod tests {
             "unmappable gap: the diagnostic path genuinely cannot measure it"
         );
         assert_eq!(
-            fp.equivalence_production.as_ref().map(|v| v.class),
+            fp.equivalence_production_verdict().map(|v| v.class),
             Some(GapEquivalenceClass::NotEvaluated),
             "scan's stated refusal must reach the dump; an absent key would read as 'never asked'"
         );
+    }
+
+    /// C1: both equivalence verdicts ship a co-located `_contract`, and the two carry **different**
+    /// text — that per-field difference is the reason the wrapper exists rather than a field on the
+    /// shared `GapEquivalenceVerdict`. Contracts are reader metadata: their presence must never
+    /// change a class, so this asserts alongside, not instead of, the verdict itself.
+    #[test]
+    fn from_decode_dump_stamps_a_contract_on_both_equivalence_verdicts() {
+        let (report, a_pcm, b) = equivalence_overlay_fixture();
+        let corpus = characterize_gaps_from_decode(
+            &report,
+            &CharacterizeAbPcm {
+                a_pcm: &a_pcm,
+                b_samples: &b,
+                sources: None,
+            },
+            &crate::infrastructure::config::RepairConfig::default()
+                .patch_settings()
+                .into_request(report.clone())
+                .expect("default All gap selection"),
+            &[],
+            false,
+            &clip_sync_repair_fixtures::NoOpProgressReporter,
+        );
+        let fp = &corpus.gaps[0];
+
+        let diag = fp
+            .equivalence_diagnostic
+            .as_ref()
+            .expect("overlay ran")
+            .contract
+            .as_ref()
+            .expect("diagnostic contract stamped on write");
+        let prod = fp
+            .equivalence_production
+            .as_ref()
+            .expect("scan verdict copied in")
+            .contract
+            .as_ref()
+            .expect("production contract stamped on write");
+
+        assert_ne!(
+            diag, prod,
+            "the pair shares one type; contract text must still distinguish them"
+        );
+        assert!(
+            prod.not
+                .as_deref()
+                .is_some_and(|s| s.contains("equivalence_diagnostic")),
+            "the authoritative verdict must name its confusable sibling: {prod:?}"
+        );
+        assert!(
+            diag.not
+                .as_deref()
+                .is_some_and(|s| s.contains("equivalence_production")),
+            "the diagnostic verdict must point at the authoritative one: {diag:?}"
+        );
+
+        // `_contract` sits beside the values, not around them (flatten), and does not displace them.
+        let json = serde_json::to_value(fp).expect("serialize");
+        assert!(json["equivalence_production"]["_contract"]["placement"].is_string());
+        assert!(json["equivalence_production"]["class"].is_string());
     }
 
     /// The diagnostic equivalence overlay measures the **silent core**, taken off the
