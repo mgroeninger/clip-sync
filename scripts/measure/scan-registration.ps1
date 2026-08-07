@@ -13,10 +13,10 @@
 # actually run, which scan-only cannot do - use `measure-patch-outcomes.ps1` instead.
 #
 # Usage:
-#   ./scripts/scan-registration.ps1 -Manifest pairs.csv
-#   ./scripts/scan-registration.ps1 -Manifest pairs.csv -OutDir gap-files/2026-08-04-registration-rate
-#   ./scripts/scan-registration.ps1 -Manifest pairs.csv -ScanArgs "--min-gap-ms 500"
-#   ./scripts/scan-registration.ps1 -Manifest pairs.csv -SkipBuild -Force
+#   ./scripts/measure/scan-registration.ps1 -Manifest pairs.csv
+#   ./scripts/measure/scan-registration.ps1 -Manifest pairs.csv -OutDir gap-files/2026-08-04-registration-rate
+#   ./scripts/measure/scan-registration.ps1 -Manifest pairs.csv -ScanArgs "--min-gap-ms 500"
+#   ./scripts/measure/scan-registration.ps1 -Manifest pairs.csv -SkipBuild -Force
 #
 # Manifest format (CSV or TSV; '#' comments and blank lines ignored): one pair per line, no header
 #     label , path/to/A.mkv , path/to/B.m4v [, extra per-pair args]
@@ -47,7 +47,7 @@ param(
     [string]$Manifest,
 
     # Where per-pair scan reports are written, as `<label>.json`.
-    [string]$OutDir = (Join-Path (Split-Path -Parent $PSScriptRoot) 'gap-files/registration-scan'),
+    [string]$OutDir = (Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'gap-files/registration-scan'),
 
     # Where per-pair stderr (progress + warnings) goes, as `<label>.log`.
     [string]$LogDir = (Join-Path $env:TEMP 'clip-sync-scan-registration'),
@@ -79,7 +79,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$RepoRoot = Split-Path -Parent $PSScriptRoot
+$RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
 if (-not (Test-Path $Manifest)) { throw "manifest not found: $Manifest" }
 

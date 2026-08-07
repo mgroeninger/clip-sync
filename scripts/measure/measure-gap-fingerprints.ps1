@@ -6,12 +6,12 @@
 # any bulk `--gap-fingerprints` pass. Not a perf harness — no span timing.
 #
 # Usage:
-#   ./scripts/measure-gap-fingerprints.ps1 -Manifest pairs.csv
-#   ./scripts/measure-gap-fingerprints.ps1 -Manifest pairs.csv -CorpusRoot gap-files/anchor-bracket-corpus
-#   ./scripts/measure-gap-fingerprints.ps1 -Manifest pairs.csv -ScanArgs "--min-gap-ms 500" -FingerprintDiagnostics
-#   ./scripts/measure-gap-fingerprints.ps1 -Manifest pairs.csv -Check
+#   ./scripts/measure/measure-gap-fingerprints.ps1 -Manifest pairs.csv
+#   ./scripts/measure/measure-gap-fingerprints.ps1 -Manifest pairs.csv -CorpusRoot gap-files/anchor-bracket-corpus
+#   ./scripts/measure/measure-gap-fingerprints.ps1 -Manifest pairs.csv -ScanArgs "--min-gap-ms 500" -FingerprintDiagnostics
+#   ./scripts/measure/measure-gap-fingerprints.ps1 -Manifest pairs.csv -Check
 #   # listenable WAVs too (see LISTEN below) — narrow each row with --fingerprint-gap first:
-#   ./scripts/measure-gap-fingerprints.ps1 -Manifest narrowed.csv -ScanArgs "--gap-listen"
+#   ./scripts/measure/measure-gap-fingerprints.ps1 -Manifest narrowed.csv -ScanArgs "--gap-listen"
 #
 # Manifest format (CSV or TSV; '#' comments and blank lines ignored): one pair per line, no header
 #     label , path/to/A.mkv , path/to/B.m4v [, extra per-pair args]
@@ -63,7 +63,7 @@ param(
     [string]$ScanArgs = '',
 
     # Where per-pair fingerprint corpora are written. Each pair gets a subdir named for its label.
-    [string]$CorpusRoot = (Join-Path (Split-Path -Parent $PSScriptRoot) 'gap-files/fingerprint-corpus'),
+    [string]$CorpusRoot = (Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'gap-files/fingerprint-corpus'),
 
     # Where per-pair logs go.
     [string]$OutDir = (Join-Path $env:TEMP 'clip-sync-gap-fingerprints'),
@@ -90,7 +90,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$RepoRoot = Split-Path -Parent $PSScriptRoot
+$RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
 if ($Features -notmatch '(^|,)calibration($|,)') {
     throw "-Features must include 'calibration' (enables --gap-fingerprints). Got: $Features"

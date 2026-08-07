@@ -104,16 +104,16 @@ so an accidental multi-hour run can still be aborted. Narrow with `--fingerprint
 > timestamps, never titles or paths), so names are safe to quote in notes even though the files are
 > not. That is by construction; keep it that way if the naming authority ever changes.
 
-**Bulk runs (many pairs):** use [`scripts/measure-gap-fingerprints.ps1`](../../scripts/measure-gap-fingerprints.ps1)
-with the same manifest format as [`measure-repair-perf.ps1`](../../scripts/measure-repair-perf.ps1)
+**Bulk runs (many pairs):** use [`scripts/measure/measure-gap-fingerprints.ps1`](../../scripts/measure/measure-gap-fingerprints.ps1)
+with the same manifest format as [`measure-repair-perf.ps1`](../../scripts/measure/measure-repair-perf.ps1)
 (`label, A, B [, extra]`). One `--gap-fingerprints` dump per row under `-CorpusRoot/<label>/`.
 Requires `--features …,calibration`. Prefer gitignored `gap-files/` for corpora; keep manifests/logs
 (which contain media paths) out of git — same media-hygiene rule as [repair-perf.md](repair-perf.md).
 
 ```powershell
-./scripts/measure-gap-fingerprints.ps1 -Manifest pairs.csv -CorpusRoot gap-files/my-corpus
-./scripts/measure-gap-fingerprints.ps1 -Manifest pairs.csv -ScanArgs "--min-gap-ms 500" -FingerprintDiagnostics
-./scripts/measure-gap-fingerprints.ps1 -Manifest pairs.csv -Check   # post-dump integrity via gap-fingerprint-stats --check
+./scripts/measure/measure-gap-fingerprints.ps1 -Manifest pairs.csv -CorpusRoot gap-files/my-corpus
+./scripts/measure/measure-gap-fingerprints.ps1 -Manifest pairs.csv -ScanArgs "--min-gap-ms 500" -FingerprintDiagnostics
+./scripts/measure/measure-gap-fingerprints.ps1 -Manifest pairs.csv -Check   # post-dump integrity via gap-fingerprint-stats --check
 ```
 
 **Dump health check** (after a bulk run, or with `-Check` on the measure script):
@@ -506,7 +506,7 @@ gaps). Feed it back with the gate disabled to get the counterfactual the dumps c
 clip-sync-repair A B --gap-fingerprints DIR --no-skip-equivalent-gaps --only-gaps 3,7,12
 ```
 
-Via `scripts/measure-gap-fingerprints.ps1` those go in the manifest's per-pair `extra` column, quoted
+Via `scripts/measure/measure-gap-fingerprints.ps1` those go in the manifest's per-pair `extra` column, quoted
 or not — the 4th field runs to end of line, so unquoted delimiters inside it are rejoined rather than
 read as further columns. This is not `ConvertFrom-Csv`'s behaviour: with a 4-name `-Header` it
 discards surplus fields silently (`--only-gaps 3,7,12` → `3`, exit 0, wrong gaps, `$Error` empty).

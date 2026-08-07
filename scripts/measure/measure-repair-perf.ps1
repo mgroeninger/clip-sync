@@ -29,11 +29,11 @@
 #
 # Two modes:
 #   Run pairs from a manifest:
-#     ./scripts/measure-repair-perf.ps1 -Manifest pairs.csv
+#     ./scripts/measure/measure-repair-perf.ps1 -Manifest pairs.csv
 #   Roll up logs you already captured (skip the runs):
-#     ./scripts/measure-repair-perf.ps1 -Logs perf_logs/
+#     ./scripts/measure/measure-repair-perf.ps1 -Logs perf_logs/
 #   Put specific spans back under the microscope:
-#     ./scripts/measure-repair-perf.ps1 -Logs perf_logs/ -Focus exec_fill_assembly,gate_anchor_search
+#     ./scripts/measure/measure-repair-perf.ps1 -Logs perf_logs/ -Focus exec_fill_assembly,gate_anchor_search
 #
 # M-CLONE #2 (FftPlanner / ambiguous-band GCC-PHAT): every report also sums inclusive busy for
 # `anchor_matchability` (gate envelope) and `local_anchor_xcorr` (planner+PHAT path only). Old logs
@@ -100,7 +100,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$RepoRoot = Split-Path -Parent $PSScriptRoot
+$RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
 # `pwsh -File script.ps1 -Focus a,b` binds ONE string "a,b" (with -File every arg is a string, so array
 # coercion never happens), unlike `-Command`. Split here so both invocation styles behave the same.

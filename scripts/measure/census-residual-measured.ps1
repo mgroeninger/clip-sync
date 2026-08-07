@@ -8,9 +8,9 @@
 # `_post` (post-2026-08-05); older dumps are skipped and tallied as excluded.
 #
 # Usage:
-#   ./scripts/census-residual-measured.ps1 -DumpDir gap-files/2026-08-05-fill-level
-#   ./scripts/census-residual-measured.ps1 -DumpDir gap-files/2026-08-05-fill-level -MarginDb 6
-#   ./scripts/census-residual-measured.ps1 -DumpDir gap-files/fingerprint-corpus -CsvOut gap-files/census-residual-measured.csv
+#   ./scripts/measure/census-residual-measured.ps1 -DumpDir gap-files/2026-08-05-fill-level
+#   ./scripts/measure/census-residual-measured.ps1 -DumpDir gap-files/2026-08-05-fill-level -MarginDb 6
+#   ./scripts/measure/census-residual-measured.ps1 -DumpDir gap-files/fingerprint-corpus -CsvOut gap-files/census-residual-measured.csv
 #
 # Accepted layouts (same tree may mix them):
 #   * Repair / patch-outcomes: `<DumpDir>/<pair>.json` with `patch.gaps[*].residual`

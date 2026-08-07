@@ -15,10 +15,10 @@
 # CSV covers `fill_level` only; for anything else, read the JSON.
 #
 # Usage:
-#   ./scripts/measure-patch-outcomes.ps1 -Manifest pairs.csv
-#   ./scripts/measure-patch-outcomes.ps1 -Manifest pairs.csv -OutDir gap-files/2026-08-07-shape
-#   ./scripts/measure-patch-outcomes.ps1 -Manifest pairs.csv -RepairArgs "--min-gap-ms 500" -SkipBuild -Force
-#   ./scripts/measure-patch-outcomes.ps1 -Manifest pairs.csv -RollupOnly   # re-derive CSV from existing JSON
+#   ./scripts/measure/measure-patch-outcomes.ps1 -Manifest pairs.csv
+#   ./scripts/measure/measure-patch-outcomes.ps1 -Manifest pairs.csv -OutDir gap-files/2026-08-07-shape
+#   ./scripts/measure/measure-patch-outcomes.ps1 -Manifest pairs.csv -RepairArgs "--min-gap-ms 500" -SkipBuild -Force
+#   ./scripts/measure/measure-patch-outcomes.ps1 -Manifest pairs.csv -RollupOnly   # re-derive CSV from existing JSON
 #
 # Manifest format (CSV or TSV; '#' comments and blank lines ignored): one pair per line, no header
 #     label , path/to/A.mkv , path/to/B.m4v [, extra per-pair repair args]
@@ -47,7 +47,7 @@ param(
     [string]$Manifest,
 
     # Per-pair repair JSON: `<label>.json`. Also receives `fill-level-rollup.csv` at the end.
-    [string]$OutDir = (Join-Path (Split-Path -Parent $PSScriptRoot) 'gap-files/patch-outcomes'),
+    [string]$OutDir = (Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'gap-files/patch-outcomes'),
 
     # Per-pair stderr (progress + warnings): `<label>.log`.
     [string]$LogDir = (Join-Path $env:TEMP 'clip-sync-patch-outcomes'),
@@ -76,7 +76,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$RepoRoot = Split-Path -Parent $PSScriptRoot
+$RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
 if (-not (Test-Path $Manifest)) { throw "manifest not found: $Manifest" }
 

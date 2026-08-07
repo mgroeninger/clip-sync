@@ -30,7 +30,7 @@ derived numbers and the pair index — nothing else. Grep before committing.
 
 ## How to measure
 
-`scripts/measure-repair-perf.ps1`. Two modes: `-Manifest pairs.csv` runs the
+`scripts/measure/measure-repair-perf.ps1`. Two modes: `-Manifest pairs.csv` runs the
 pairs, `-Logs dir/` rolls up logs you already have (tolerates a run still
 appending). `-Focus <spans>` puts named spans against the root; `-MinPct` trims
 deep trees. Every report prints the span tree, the exclusive by-name roll-up, and
@@ -51,7 +51,7 @@ Non-negotiables — the measurement is invalid otherwise:
   dump/oracle path and enumerates brackets **exhaustively** instead of
   short-circuiting at the first winner — an upper bound, not the production
   shape (287 vs 192 brackets on pair 1). For bulk fingerprint dumps (same
-  manifest format, no span timing), use `scripts/measure-gap-fingerprints.ps1`
+  manifest format, no span timing), use `scripts/measure/measure-gap-fingerprints.ps1`
   — see [gap-fingerprint.md](gap-fingerprint.md).
 - **`CLIP_SYNC_SPAN_TIMING=1`**, or no timings emit. It switches the fmt
   subscriber to `FmtSpan::CLOSE` (`clip-sync/src/infrastructure/logging/mod.rs`).
