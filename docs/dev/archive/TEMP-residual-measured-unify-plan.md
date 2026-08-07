@@ -1,15 +1,21 @@
 # TEMP — Unify residual “measured” semantics (mono ↔ multichannel)
 
-**Status:** Phase 0–2 done 2026-08-06 (§5.1 toward MC); Phase 3+ pending. Working plan for
-resolving the mono/multichannel disagreement on what counts as a *measured* residual floor —
-the gate-facing leftover from
-[archive/TEMP-residual-abstention-reporting-plan.md](archive/TEMP-residual-abstention-reporting-plan.md).
+**Status:** **SHIPPED and archived 2026-08-06** (Phases 0–4). Mono/multichannel residual
+“measured” semantics unified **toward MC**: `ProbeNonFinite` is ignored like unmeasured on both
+constructors via shared `SideFloorState` / `combine_informative`. Durable behaviour in
+[json-output.md](../../json-output.md) § *SeamResidualVerdict*,
+[gap-fingerprint.md](../gap-fingerprint.md) § *Gate recipe*, and
+`domain/policies/seam_residual.rs`. Companion of
+[TEMP-residual-abstention-reporting-plan.md](TEMP-residual-abstention-reporting-plan.md).
 
-Companion: [BACKLOG.md](../../BACKLOG.md) § *Residual gate follow-ups* (row **Mono/multichannel
-disagree on "measured"**), `domain/policies/seam_residual.rs`
-(`residual_verdict_informative`, `side_floor_informative`, `gate_abstains`,
-`uninformative_reason`), [gap-fingerprint.md](gap-fingerprint.md) § *Gate recipe*,
-[`residual_gate_catalog/`](../../crates/clip-sync-repair/tests/residual_gate_catalog/).
+Census script retained: [`scripts/census-residual-measured.ps1`](../../../scripts/census-residual-measured.ps1).
+
+Working plan body below is the historical record (problem → census → decision → architecture).
+
+Companion (historical): [BACKLOG.md](../../../BACKLOG.md) § *Residual gate follow-ups*,
+`domain/policies/seam_residual.rs` (`residual_verdict_informative`, `gate_abstains`,
+`uninformative_reason`), [gap-fingerprint.md](../gap-fingerprint.md) § *Gate recipe*,
+[`residual_gate_catalog/`](../../../crates/clip-sync-repair/tests/residual_gate_catalog/).
 
 **Deliverable:** one shared measuredness predicate and combine rule for
 `SeamResidualVerdict::informative`, chosen only after a corpus census of the asymmetric cell.
@@ -284,13 +290,13 @@ scope for the same reason the backlog forbade a reporting-only “fix.”
 - [x] Phase 0: cross-path disagreement unit + doc comments
 - [x] Phase 1: census table committed or attached to §5.1 (pair/gap indices only)
 - [x] Phase 2: §5.1 filled; direction named
-- [ ] Phase 3: single `SideFloorState` / `combine_informative`; both constructors call it
-- [ ] Phase 4: cross-path agreement pin; retargeted asymmetric test; guard ≡ reason still holds
-- [ ] `cargo test -p clip-sync-repair` (unit + residual gate smoke) green
-- [ ] BACKLOG row closed; this plan archived; `gap-fingerprint.md` Gate recipe note
+- [x] Phase 3: single `SideFloorState` / `combine_informative`; both constructors call it
+- [x] Phase 4: cross-path agreement pin; retargeted asymmetric test; guard ≡ reason still holds
+- [x] `cargo test -p clip-sync-repair` (unit + residual gate smoke) green
+- [x] BACKLOG row closed; this plan archived; `gap-fingerprint.md` Gate recipe note
 
 ---
 
 ## 11. Open decisions
 
-None — §5.1 chose **toward MC**. Phase 3 may proceed.
+None — §5.1 chose **toward MC**; Phases 3–4 shipped 2026-08-06.

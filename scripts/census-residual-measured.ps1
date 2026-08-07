@@ -1,5 +1,5 @@
 #!/usr/bin/env pwsh
-# Phase 1 census for TEMP-residual-measured-unify-plan.md — dump-only, no gate change.
+# Phase 1 census for docs/dev/archive/TEMP-residual-measured-unify-plan.md — dump-only, no gate change.
 #
 # Walks existing repair / fingerprint JSON and counts residual sides where
 # `probe_non_finite` appears, especially the asymmetric cell (exactly one side) and whether
@@ -28,7 +28,7 @@
 # `gate_recipe.residual_headroom_margin_db` / repair-adjacent recipe wins when present.
 #
 # MEDIA HYGIENE: emit pair label + gap index only — never media paths or titles.
-# Docs: docs/dev/TEMP-residual-measured-unify-plan.md §4.
+# Docs: docs/dev/archive/TEMP-residual-measured-unify-plan.md §4.
 
 [CmdletBinding()]
 param(
@@ -363,7 +363,7 @@ if ($CsvOut -ne '') {
 }
 
 Write-Host ''
-Write-Host 'Paste counts into docs/dev/TEMP-residual-measured-unify-plan.md §5.1 before Phase 3.' `
+Write-Host 'Paste counts into docs/dev/archive/TEMP-residual-measured-unify-plan.md §5.1 before Phase 3.' `
     -ForegroundColor DarkGray
 Write-Host 'No gate change from this script.' -ForegroundColor DarkGray
 

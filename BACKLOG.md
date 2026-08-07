@@ -19,7 +19,6 @@ Last updated: 2026-08-06.
 |------|--------|
 | [TEMP-nway-donor-alignment-plan.md](docs/dev/TEMP-nway-donor-alignment-plan.md) | N-way donor alignment: repair one damaged copy from multiple donors — draft, not started |
 | [TEMP-flac-output-plan.md](docs/dev/TEMP-flac-output-plan.md) | In-process `--flac` lossless output (peer of `--wav`, no ffmpeg) — draft, not started |
-| [TEMP-residual-measured-unify-plan.md](docs/dev/TEMP-residual-measured-unify-plan.md) | Unify mono/multichannel residual “measured” semantics — draft; census before gate move |
 
 ## Open work
 
@@ -137,9 +136,12 @@ From [archive/residual-gate-findings.md](docs/dev/archive/residual-gate-findings
 | **`finale_floor_nan_probe`** | optional test | Unit repro: why Grieg finale floor is NaN (M3-adjacent); catalog backlog |
 | **`c1b_acoustic_echo_pipeline_veto`** | optional test | Pipeline `ResidualHeadroomExceeded` under `production_fit` on non-F4 echo fixture — optional C1b |
 | **`p2_search_winner_bounds`** | optional test | Bound headroom on search winner vs truth placement — needs design |
-| **Mono/multichannel disagree on "measured"** | med | A side whose probes are **sourced but non-finite** (window found, fit failed) makes the *mono* verdict uninformative — the gate abstains — while the *multichannel* path drops that side from `side_floor_informative` and lets the other side govern, so the veto still applies. Same physical event, opposite gate behaviour; found reviewing residual-abstention reporting (2026-08-05, `uninformative_reason` names the event on both). Multichannel is the stricter reading. Unifying moves the gate either way, so it needs corpus counts (how many gaps have exactly one side sourced-non-finite) before a direction is chosen — **not** a reporting change. Plan: [TEMP-residual-measured-unify-plan.md](docs/dev/TEMP-residual-measured-unify-plan.md) |
 
 **Explicitly not planned:** `veto_rescue` as default (G5: synthetic-only); F4 pipeline veto (M6).
+
+**Shipped 2026-08-06:** mono/multichannel “measured” semantics unified toward MC
+([archive/TEMP-residual-measured-unify-plan.md](docs/dev/archive/TEMP-residual-measured-unify-plan.md)) —
+`ProbeNonFinite` ignored like unmeasured on both constructors via shared `combine_informative`.
 
 ---
 

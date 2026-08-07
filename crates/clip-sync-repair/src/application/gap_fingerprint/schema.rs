@@ -846,17 +846,17 @@ pub struct ResidualInfo {
     pub floor_source_pre: Option<SeamFloorSource>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub floor_source_post: Option<SeamFloorSource>,
-    /// The noise floor established cancellation on every measured side — the residual is interpretable.
+    /// The noise floor established cancellation on every *governing* side — the residual is interpretable.
     ///
     /// **Do not try to recompute this from the four dB scalars above; on multichannel media it is not
     /// derivable from them.** `SeamResidualVerdict::from_channel_residuals` deliberately reads two
     /// different channels: the scalars summarize the **worst-headroom** channel
     /// (`side_worst_headroom_summary`), while `informative` follows the **best-cancelling (min-floor)**
-    /// channel (`side_floor_informative`), so that a noisy surround cannot flip the same-master regime
-    /// off (Non-goal §2). Both are intentional and neither is wrong — but they describe different
-    /// channels, so `floor_pre_db > −15 dB` alongside `informative: true` is a consistent reading, not
-    /// a contradiction. The per-channel breakdown that would reconcile them is not in the dump; it is
-    /// only logged (`log_residual_channel_breakdown`).
+    /// channel (shared measuredness: sourced-NaN ignored like unmeasured), so that a noisy surround
+    /// cannot flip the same-master regime off (Non-goal §2). Both are intentional and neither is wrong —
+    /// but they describe different channels, so `floor_pre_db > −15 dB` alongside `informative: true`
+    /// is a consistent reading, not a contradiction. The per-channel breakdown that would reconcile
+    /// them is not in the dump; it is only logged (`log_residual_channel_breakdown`).
     pub informative: bool,
     /// Per-side reason the floor is unusable — `no_reference_window` (never found one),
     /// `probe_non_finite` (found one, the fit produced nothing), `floor_above_ok_db` (measured, and

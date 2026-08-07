@@ -188,7 +188,7 @@ fn side_uninformative(floor: &SeamFloorProbe, floor_ok_db: f64) -> Option<Residu
 /// collapses it — that collapse is what made "found a window, fit failed" indistinguishable from
 /// "never found a window".
 ///
-/// Reads the **min-floor** channel, the same one [`side_floor_informative`] follows, so the reason
+/// Reads the **min-floor** channel, the same one [`side_floor_state_channels`] follows, so the reason
 /// explains `informative` rather than the worst-headroom channel the scalars summarize.
 fn side_uninformative_channels(
     side: &[SeamChannelResidual],
@@ -723,31 +723,82 @@ pub fn floor_probe_informative(probe: &SeamFloorProbe, floor_ok_db: f64) -> bool
         && probe.residual_db <= floor_ok_db
 }
 
+/// Per-side floor regime for [`combine_informative`] — shared by mono and multichannel constructors.
+///
+/// Derived from the same rules as [`side_uninformative`] / [`side_uninformative_channels`].
+/// §5.1 (toward MC): [`SideFloorState::ProbeFailed`] is ignored like [`SideFloorState::Unmeasured`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SideFloorState {
+    /// [`ResidualUninformative::NoReferenceWindow`]
+    Unmeasured,
+    /// [`ResidualUninformative::ProbeNonFinite`] — naming only; does not block `informative`
+    ProbeFailed,
+    /// [`ResidualUninformative::FloorAboveOkDb`] — measured failure
+    RegimeFailed,
+    RegimeOk,
+}
+
+fn side_floor_state(floor: &SeamFloorProbe, floor_ok_db: f64) -> SideFloorState {
+    match side_uninformative(floor, floor_ok_db) {
+        None => SideFloorState::RegimeOk,
+        Some(ResidualUninformative::NoReferenceWindow) => SideFloorState::Unmeasured,
+        Some(ResidualUninformative::ProbeNonFinite) => SideFloorState::ProbeFailed,
+        Some(ResidualUninformative::FloorAboveOkDb) => SideFloorState::RegimeFailed,
+        Some(ResidualUninformative::BeyondLagReach) => {
+            unreachable!("BeyondLagReach is placement-level, not per-side")
+        }
+    }
+}
+
+fn side_floor_state_channels(side: &[SeamChannelResidual], floor_ok_db: f64) -> SideFloorState {
+    match side_uninformative_channels(side, floor_ok_db) {
+        None => SideFloorState::RegimeOk,
+        Some(ResidualUninformative::NoReferenceWindow) => SideFloorState::Unmeasured,
+        Some(ResidualUninformative::ProbeNonFinite) => SideFloorState::ProbeFailed,
+        Some(ResidualUninformative::FloorAboveOkDb) => SideFloorState::RegimeFailed,
+        Some(ResidualUninformative::BeyondLagReach) => {
+            unreachable!("BeyondLagReach is placement-level, not per-side")
+        }
+    }
+}
+
+/// Whether headroom is regime-informative given both sides' floor states.
+///
+/// **Toward-MC policy** ([TEMP-residual-measured-unify-plan.md](docs/dev/archive/TEMP-residual-measured-unify-plan.md)
+/// §5.1): `Unmeasured` and `ProbeFailed` are ignored; every remaining side must be `RegimeOk`.
+/// Returns false when neither side contributes a governing reading. `RegimeFailed` always fails
+/// regardless of constructor path.
+fn combine_informative(pre: SideFloorState, post: SideFloorState) -> bool {
+    let govern = |s: SideFloorState| -> Option<bool> {
+        match s {
+            SideFloorState::Unmeasured | SideFloorState::ProbeFailed => None,
+            SideFloorState::RegimeOk => Some(true),
+            SideFloorState::RegimeFailed => Some(false),
+        }
+    };
+    match (govern(pre), govern(post)) {
+        (None, None) => false,
+        (a, b) => a.unwrap_or(true) && b.unwrap_or(true),
+    }
+}
+
 /// Whether headroom on this gap is regime-informative (same-master + aligned at nominal).
 ///
-/// **Mono measuredness** (this path / [`SeamResidualVerdict::from_parts`] /
-/// [`SeamResidualVerdict::from_parts_with_placement`]): a side is *measured*
-/// when `source != None`. Every measured side must pass [`floor_probe_informative`] (finite and
-/// `≤ floor_ok_db`). Unmeasured sides (`source == None`) are ignored. Returns false when no side
-/// was measured.
-///
-/// A sourced but non-finite floor (`ProbeNonFinite`) therefore counts as measured-and-failed →
-/// `informative: false` → the gate abstains. Multichannel `side_floor_informative` uses a stricter
-/// filter (`source != None && residual_db.is_finite()`). Same probes can disagree across
-/// constructors; that asymmetry is pinned until
-/// [TEMP-residual-measured-unify-plan.md](docs/dev/TEMP-residual-measured-unify-plan.md) Phase 3.
+/// Shared measuredness for [`SeamResidualVerdict::from_parts`] /
+/// [`SeamResidualVerdict::from_parts_with_placement`] and the multichannel constructor: a side
+/// *governs* only when it has a finite sourced floor. Sourced-NaN (`ProbeNonFinite`) is ignored
+/// like an unmeasured side — the other side may keep `informative` and a live veto. Per-side
+/// `uninformative_*` still names [`ResidualUninformative::ProbeNonFinite`]. See
+/// [`combine_informative`].
 pub fn residual_verdict_informative(
     floor_pre: &SeamFloorProbe,
     floor_post: &SeamFloorProbe,
     floor_ok_db: f64,
 ) -> bool {
-    let pre_measured = floor_pre.source != SeamFloorSource::None;
-    let post_measured = floor_post.source != SeamFloorSource::None;
-    if !pre_measured && !post_measured {
-        return false;
-    }
-    (!pre_measured || floor_probe_informative(floor_pre, floor_ok_db))
-        && (!post_measured || floor_probe_informative(floor_post, floor_ok_db))
+    combine_informative(
+        side_floor_state(floor_pre, floor_ok_db),
+        side_floor_state(floor_post, floor_ok_db),
+    )
 }
 
 /// Combined residual/floor verdict for one gap (P1 report-only, uniform schema).
@@ -766,7 +817,8 @@ pub struct SeamResidualVerdict {
     pub floor_post_db: f64,
     pub floor_source_pre: SeamFloorSource,
     pub floor_source_post: SeamFloorSource,
-    /// Nominal floor established cancellation on every measured side (`floor_db ≤ FLOOR_OK`).
+    /// Nominal floor established cancellation on every *governing* side (`floor_db ≤ FLOOR_OK`).
+    /// Unmeasured and sourced-NaN (`ProbeNonFinite`) sides are ignored — see [`combine_informative`].
     pub informative: bool,
     /// `|chosen_delta − nominal_delta|` in frames (0 when unset / harness default).
     #[serde(skip_serializing_if = "is_zero_u64")]
@@ -892,13 +944,6 @@ impl SeamResidualVerdict {
         let (chosen_pre_db, floor_pre_db, floor_source_pre) = side_worst_headroom_summary(pre);
         let (chosen_post_db, floor_post_db, floor_source_post) = side_worst_headroom_summary(post);
 
-        let pre_inf = side_floor_informative(pre, floor_ok_db);
-        let post_inf = side_floor_informative(post, floor_ok_db);
-        let informative = match (pre_inf, post_inf) {
-            (None, None) => false,
-            _ => pre_inf.unwrap_or(true) && post_inf.unwrap_or(true),
-        };
-
         Self {
             chosen_pre_db,
             chosen_post_db,
@@ -906,7 +951,10 @@ impl SeamResidualVerdict {
             floor_post_db,
             floor_source_pre,
             floor_source_post,
-            informative,
+            informative: combine_informative(
+                side_floor_state_channels(pre, floor_ok_db),
+                side_floor_state_channels(post, floor_ok_db),
+            ),
             placement_slide_frames,
             max_lag_frames,
             uninformative_pre: side_uninformative_channels(pre, floor_ok_db),
@@ -945,23 +993,24 @@ impl SeamResidualVerdict {
     ///
     /// 1. [`BeyondLagReach`](ResidualUninformative::BeyondLagReach) — a property of the placement,
     ///    dominates both sides.
-    /// 2. The reason that actually failed `informative` among the **measured** sides
+    /// 2. The reason that actually failed `informative` among the **governing** sides
     ///    (`ProbeNonFinite` / `FloorAboveOkDb`); on a tie prefer `ProbeNonFinite` (less measured).
-    /// 3. [`NoReferenceWindow`](ResidualUninformative::NoReferenceWindow) — only when *nothing* was
-    ///    measured.
+    ///    A sourced-NaN side still *names* `ProbeNonFinite` even when [`combine_informative`]
+    ///    ignores it like unmeasured — so this step can surface a per-side name that did not drive
+    ///    the abstention when a governing side also failed.
+    /// 3. [`NoReferenceWindow`](ResidualUninformative::NoReferenceWindow) — only when *nothing*
+    ///    governed (both sides unmeasured and/or probe-failed).
     ///
-    /// Step 3 is last, and that ordering is forced by [`residual_verdict_informative`]: unmeasured
-    /// sides are ignored, so a side with no reference window cannot by itself make a verdict
-    /// uninformative. If the other side was measured and failed, that failure is the reason; if it
-    /// was measured and passed, the verdict is informative and there is no reason at all.
+    /// Step 3 is last: unmeasured and probe-failed sides are ignored by
+    /// [`combine_informative`], so they cannot by themselves make a verdict uninformative when the
+    /// other side is `RegimeOk`. If the other side was governing and failed, that failure is why
+    /// the gate abstains; if it passed, the verdict is informative and there is no combined reason.
     ///
     /// **[`gate_abstains`](Self::gate_abstains) is the authority on whether a reason exists at all**;
-    /// the per-side fields only say *which*. The two can disagree, because "measured" is not the
-    /// same test on both paths: [`side_floor_informative`] drops a multichannel side whose channels
-    /// all found a window and then failed the fit (so `informative` ignores it, exactly as the mono
-    /// path ignores an unmeasured side), while that side still names `ProbeNonFinite`. Deriving the
-    /// combined value from the sides alone would widen the guard and suppress a live headroom veto,
-    /// so the guard is consulted first and the sides only explain it.
+    /// the per-side fields only say *which*. Deriving the combined value from the sides alone would
+    /// widen the guard past `!informative || beyond_lag_reach()` whenever a `ProbeNonFinite` side
+    /// coexisted with a regime-OK side — killing a live headroom veto — so the guard is consulted
+    /// first and the sides only explain it.
     pub fn uninformative_reason(&self) -> Option<ResidualUninformative> {
         if !self.gate_abstains() {
             return None;
@@ -1060,27 +1109,6 @@ fn side_worst_headroom_summary(side: &[SeamChannelResidual]) -> (f64, f64, SeamF
         Some(c) => (c.chosen.residual_db, c.floor.residual_db, c.floor.source),
         None => (f64::NAN, f64::NAN, SeamFloorSource::None),
     }
-}
-
-/// Whether a side's **best-cancelling** (min-floor) selected channel established same-master
-/// cancellation (`floor_db ≤ floor_ok_db`).
-///
-/// **Multichannel measuredness** (this path / [`SeamResidualVerdict::from_channel_residuals`]): a
-/// channel enters the min-floor read only when `source != None && residual_db.is_finite()`.
-/// `None` when no such channel exists — treated like unmeasured (`unwrap_or(true)` on the other
-/// side), so a sourced-NaN side does **not** block `informative` and a live veto can still fire.
-/// Per-side `uninformative_*` still names [`ResidualUninformative::ProbeNonFinite`].
-///
-/// Mono [`residual_verdict_informative`] treats the same sourced-NaN as measured failure. Cross-path
-/// disagreement is intentional until
-/// [TEMP-residual-measured-unify-plan.md](docs/dev/TEMP-residual-measured-unify-plan.md) Phase 3;
-/// see `mono_and_multichannel_disagree_on_sourced_nan_measuredness`.
-fn side_floor_informative(side: &[SeamChannelResidual], floor_ok_db: f64) -> Option<bool> {
-    side.iter()
-        .filter(|c| c.floor.source != SeamFloorSource::None && c.floor.residual_db.is_finite())
-        .map(|c| c.floor.residual_db)
-        .reduce(f64::min)
-        .map(|best_floor| best_floor <= floor_ok_db)
 }
 
 #[cfg(test)]
@@ -2253,15 +2281,13 @@ mod tests {
         );
     }
 
-    /// Phase 0 freeze: mono and multichannel disagree on whether sourced-NaN is "measured".
+    /// Phase 4: mono and multichannel agree on sourced-NaN measuredness (toward-MC §5.1).
     ///
-    /// Cell `(ProbeNonFinite, regime-OK)` — the only asymmetric cell left after abstention
-    /// reporting. Mono treats sourced-NaN as measured failure → abstains (veto lost). Multichannel
-    /// drops it like unmeasured → other side governs (veto can fire). Do not "fix" this by
-    /// accident; unify only after
-    /// `docs/dev/TEMP-residual-measured-unify-plan.md` Phase 1–2.
+    /// Cell `(ProbeNonFinite, regime-OK)`: both constructors ignore the failed fit like unmeasured;
+    /// the regime-OK side keeps `informative` and the gate does not abstain. Per-side fields still
+    /// name `ProbeNonFinite`.
     #[test]
-    fn mono_and_multichannel_disagree_on_sourced_nan_measuredness() {
+    fn mono_and_multichannel_agree_on_sourced_nan_measuredness() {
         let floor_ok = -15.0;
         let nan_side = sourced(f64::NAN);
         let deep = sourced(-40.0);
@@ -2295,65 +2321,71 @@ mod tests {
         assert_eq!(multi.uninformative_post, None);
 
         assert!(
-            !mono.informative && mono.gate_abstains(),
-            "mono: sourced-NaN is measured failure → abstain (veto lost): {mono:?}"
+            mono.informative && !mono.gate_abstains(),
+            "mono: ProbeNonFinite ignored → other side governs: {mono:?}"
         );
         assert!(
             multi.informative && !multi.gate_abstains(),
-            "multichannel: sourced-NaN dropped → other side governs (veto lives): {multi:?}"
+            "multichannel: ProbeNonFinite ignored → other side governs: {multi:?}"
         );
-        assert_ne!(
-            mono.informative, multi.informative,
-            "cross-path disagreement on the asymmetric cell must stay visible"
-        );
-        assert_ne!(
-            mono.gate_abstains(),
-            multi.gate_abstains(),
-            "gate decisions must disagree while the asymmetry stands"
-        );
-        assert_eq!(
-            mono.uninformative_reason(),
-            Some(ResidualUninformative::ProbeNonFinite)
-        );
-        assert_eq!(multi.uninformative_reason(), None);
+        assert_eq!(mono.informative, multi.informative);
+        assert_eq!(mono.gate_abstains(), multi.gate_abstains());
+        assert_eq!(mono.uninformative_reason(), multi.uninformative_reason());
+        assert_eq!(mono.uninformative_reason(), None);
     }
 
-    /// The combined reason may never fire on a verdict the gate still reads.
+    /// Shared policy: a ProbeNonFinite side must not widen the gate guard and kill a live veto.
     ///
-    /// A multichannel side whose channels all found a window and then failed the fit is *dropped* by
-    /// `side_floor_informative` — `informative` ignores it exactly as the mono path ignores an
-    /// unmeasured side — while the side itself names `ProbeNonFinite`. Since
-    /// `apply_residual_to_confidence` and `classify_residual_band` both abstain on
-    /// `uninformative_reason().is_some()`, letting that side reach the combined value would widen
-    /// the guard past `!informative || beyond_lag_reach()` and drop a live headroom veto.
+    /// Both constructors ignore sourced-NaN like unmeasured. Per-side fields still name
+    /// `ProbeNonFinite`. Letting that name reach the combined reason while the verdict stays
+    /// informative would widen the guard past `!informative || beyond_lag_reach()`.
     #[test]
-    fn asymmetric_multichannel_side_does_not_widen_the_gate_guard() {
-        // Pre: window found on every channel, fit produced nothing. Post: measured, and B is a bad
-        // match — headroom +10 dB, well past any margin the gate uses.
-        let unfit = [ch(0, f64::NAN, sourced(f64::NAN))];
-        let bad_match = [ch(0, -30.0, sourced(-40.0))];
-        let v = SeamResidualVerdict::from_channel_residuals(&unfit, &bad_match, -15.0, 0, 480);
+    fn asymmetric_probe_non_finite_side_does_not_widen_the_gate_guard() {
+        // Pre: window found, fit produced nothing. Post: measured, and B is a bad match —
+        // headroom +10 dB, well past any margin the gate uses.
+        let nan_side = sourced(f64::NAN);
+        let bad_floor = sourced(-40.0);
+        let bad_chosen = sourced(-30.0);
 
-        assert!(
-            v.informative,
-            "a side with no fitted channel is ignored, not a failure"
+        let mono = SeamResidualVerdict::from_parts_with_placement(
+            &sourced(f64::NAN),
+            &bad_chosen,
+            &nan_side,
+            &bad_floor,
+            -15.0,
+            0,
+            480,
         );
-        assert!(!v.beyond_lag_reach());
-        assert_eq!(
-            v.uninformative_pre,
-            Some(ResidualUninformative::ProbeNonFinite),
-            "the per-side field still names what happened"
+        let multi = SeamResidualVerdict::from_channel_residuals(
+            &[ch(0, f64::NAN, nan_side)],
+            &[ch(0, -30.0, bad_floor)],
+            -15.0,
+            0,
+            480,
         );
-        assert_eq!(
-            v.uninformative_reason(),
-            None,
-            "but the combined value must not claim the verdict is unusable"
-        );
-        assert_eq!(
-            v.worst_headroom_db(),
-            10.0,
-            "the veto the gate would drop if the reason fired"
-        );
+
+        for v in [mono, multi] {
+            assert!(
+                v.informative,
+                "a side with no fitted floor is ignored, not a failure: {v:?}"
+            );
+            assert!(!v.beyond_lag_reach());
+            assert_eq!(
+                v.uninformative_pre,
+                Some(ResidualUninformative::ProbeNonFinite),
+                "the per-side field still names what happened"
+            );
+            assert_eq!(
+                v.uninformative_reason(),
+                None,
+                "but the combined value must not claim the verdict is unusable"
+            );
+            assert_eq!(
+                v.worst_headroom_db(),
+                10.0,
+                "the veto the gate would drop if the reason fired"
+            );
+        }
     }
 
     /// `uninformative_reason()` is `Some` exactly when the gate abstains — across every shape the
@@ -2400,6 +2432,20 @@ mod tests {
                             "the guard is still the disjunction it always was: {v:?}"
                         );
                     }
+                    assert_eq!(
+                        mono.informative, multi.informative,
+                        "cross-path informative: mono={mono:?} multi={multi:?}"
+                    );
+                    assert_eq!(
+                        mono.gate_abstains(),
+                        multi.gate_abstains(),
+                        "cross-path gate_abstains: mono={mono:?} multi={multi:?}"
+                    );
+                    assert_eq!(
+                        mono.uninformative_reason(),
+                        multi.uninformative_reason(),
+                        "cross-path reason: mono={mono:?} multi={multi:?}"
+                    );
                 }
             }
         }

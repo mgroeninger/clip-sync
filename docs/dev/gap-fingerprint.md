@@ -274,6 +274,11 @@ From-decode dumps stamp `source.gate_recipe` with the seam-gate floors used to a
 so a reader can tell a floor that failed *this run's* bar from one that would fail any. Absent on
 recipes written before 2026-08-05 (and it must read as absent, not as today's default).
 
+**Measuredness:** a side governs `informative` only with a finite sourced floor; sourced-NaN
+(`probe_non_finite`) is ignored like unmeasured on both mono and multichannel constructors (shared
+`combine_informative`, toward-MC — see
+[archive/TEMP-residual-measured-unify-plan.md](archive/TEMP-residual-measured-unify-plan.md)).
+
 Absent on pre-2026-08-03 corpora and on summary-only / refused corpora. With bracket scores, this is
 enough to audit stage assignment without re-scoring PCM. Equivalence has the same pattern in
 `scan_equivalence.thresholds`.
