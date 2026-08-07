@@ -18,7 +18,7 @@ Reference for `clip-sync-repair` gap patching: how `fill_mode` interacts with CL
 | Patch anchors? | **`anchored_retry`** (config / `--fill-offset anchored-retry`): pass 1 clip offset, pass 2 retries failures using patch anchors. Works in **both** `fit` and `gate`. See [Patch anchors](#patch-anchors). |
 | Editorial anchor seam? | **`anchor_seam_mode = auto|force`** (`--anchor-seam-mode`): search speech peaks / bool onsets when throat Pearson is weak. **Fit only**; orthogonal to patch anchors. See [Editorial anchor seam](#editorial-anchor-seam). |
 | Residual gate? | Default **`residual_gate = veto`** (fit only): anti-echo headroom veto after Pearson tiering; `veto_rescue` opt-in for broadband dead-zone rescue. See [Residual / floor gate](#residual--floor-gate). |
-| Dual-fit rescue? | Default **`dual_fit = true`**: when bracket search exhausts without a passing lag-0 placement (or other scored gate skip except structure alignment failed), try per-shoulder fit + interior trim, re-validated by the unchanged gate. Opt out with **`--no-dual-fit`**. See [Dual-fit rescue](#dual-fit-rescue-g6). |
+| Dual-fit rescue? | Default **`dual_fit = true`** in **both** `fit` and `gate`: after a **scored** gate skip (anything but structure alignment failed), try per-shoulder fit + interior trim, re-validated by the unchanged gate floors. Opt out with **`--no-dual-fit`**. See [Dual-fit rescue](#dual-fit-rescue-g6). |
 | Program-quiet (D11)? | **Plan-time** (`b_has_energy = false` → `unfillable`) and **fingerprint/analyzer** label (`donor_interior_nominal`). Not a production pre-gate skip — nominal-hole silence alone cannot distinguish true program-quiet from patchable quiet-content pauses. See [Program-quiet (D11)](#program-quiet-d11). |
 
 ---
@@ -94,10 +94,13 @@ Per gap:
   1–2. Same mapping + structure match
   3. Waveform Pearson at structure winner (may be skipped if structure-trusted)
   4. On waveform failure only: sequential A-boundary extension retries
-  5. Splice
+  5. On scored gate skip (except structure alignment failed): dual-fit rescue (G6, default on)
+     → re-validate → patch or skip
+  6. On gate Ok: splice
 ```
 
 - Structure trust, partial soften, short-gap mean, one-strong-seam apply here.
+- Dual-fit eligibility is the same as fit (`dual_fit_eligible`: flag on and failure ≠ `StructureAlignmentFailed`). Gate’s extension retries run **before** dual-fit when the failure is waveform-below-threshold.
 - Set `--fill-mode gate` or `fill_mode = "gate"` in config.
 
 ---
@@ -129,7 +132,7 @@ CLI flags are accepted in both modes unless noted. **Effect** differs by mode.
 | `fill_fit_structure_weight`, `fill_fit_waveform_weight` | Unified scorer weights (config; CLI optional) | Ignored |
 | `fill_marginal_margin`, `fill_absolute_floor` | Warn tier / hard skip (config-only) | Ignored |
 | `anchor_seam_mode`, `max_anchor_bracket_secs`, `max_anchors_per_side`, `anchor_seam_min_*` | **Active** — editorial anchor bracket search when triggered | **No effect** (fit only) |
-| `dual_fit` / `--no-dual-fit` | **Active** — G6 rescue after scored gate skip (except structure alignment failed) | **No effect** (fit only) |
+| `dual_fit` / `--no-dual-fit` | **Active** — G6 rescue after scored gate skip (except structure alignment failed) | **Active** — same G6 rescue after scored gate skip (after any gate extension retries) |
 
 **Align / scan flags** (`--clip-length`, `--num-clips`, query-reference, high-rate, gap scan knobs) are orthogonal to `fill_mode`. **Gap selection** (`--only-gaps` / `--skip-gaps`) is also orthogonal — it filters the fill plan after scan; see [gap-repair-guide.md](gap-repair-guide.md) § Iterative subset patching.
 
@@ -173,7 +176,7 @@ that structure/energy matching should still patch.
 |-------|-------------------|---------|
 | **Scan / plan** | `b_has_energy = false` on the mapped B span | `unfillable` — gap never enters patch |
 | **Fingerprint / `--gap-fingerprints`** | `donor_interior_nominal.silence_fraction ≥ 0.5` | Analyzer label `program_quiet_skip` — metrics only, not a patch router |
-| **Dual-fit (G6)** | Same nominal occupancy check inside `try_dual_fit` | Declines fully program-quiet donors after bracket search already failed |
+| **Dual-fit (G6)** | Same nominal occupancy check inside `try_dual_fit` | Declines fully program-quiet donors after the primary gate already failed |
 | **Production patch** | Seam gate (+ dual-fit) decides skip/patch | No pre-gate short-circuit on nominal silence |
 
 Common on long-form pairs where A has tail padding silence B does not share — usually caught at scan as
@@ -186,8 +189,14 @@ See [gap-fingerprint.md](dev/gap-fingerprint.md) § Registration & dual-fit meas
 
 ## Dual-fit rescue (G6)
 
-When bracket search (baseline → anchor → grid) returns a **scored gate failure** other than
-`StructureAlignmentFailed`, dual-fit (default **on**) attempts a distinct repair path:
+After the primary placement pipeline fails with a **scored** gate failure other than
+`StructureAlignmentFailed`, dual-fit (default **on**) attempts a distinct repair path.
+That applies in **both** `fill_mode = fit` and `fill_mode = gate` — `characterize_region`
+always routes eligible skips through `skip_or_dual_fit`; there is no fill-mode gate on the flag.
+
+- **Fit:** after Fit-joint routing exhausts (baseline → optional anchor → optional grid).
+- **Gate:** after structure/waveform evaluation and any sequential A-boundary extension retries
+  (retries only run for waveform-below-threshold; other scored failures go straight to dual-fit).
 
 ```text
 seam-local peaks on A pre/post shoulders (±600 ms)
@@ -211,11 +220,11 @@ Rescued gaps report tier/confidence from the re-validated seams like other patch
 from ordinary bracket-search fits: status shows `patched (dual-fit pre→post)` (or `! patched (dual-fit …)`
 when marginal), and `dual_fit_used: true` appears on `status.patched` and `tags` in JSON (verbose `gap tags:`
 adds `dual_fit=true`). See [cli-output.md](cli-output.md) § Gap patch gate and skip reasons.
-Typical rescue profile: bracket-exhausted silence splices where both shoulders align at their own lag but
-lag-0 bracket search failed (see [gap-repair-guide.md](gap-repair-guide.md) § W7).
+Typical rescue profile: scored primary-gate skips where both shoulders align at their own lag but
+rigid lag-0 (fit) / structure-winner (gate) placement failed (see [gap-repair-guide.md](gap-repair-guide.md) § W7).
 
-For calibration / regression against the pre-A3 bracket path, use `--no-dual-fit` (D6 byte-identical to
-legacy skips on bracket-exhausted gaps).
+For calibration / regression against the pre-A3 bracket-only path, use `--no-dual-fit` (D6 byte-identical to
+legacy skips on those gaps).
 
 ---
 
@@ -529,7 +538,10 @@ Add `--full` if gaps still skip after anchor seam (boundary grid shifts A bracke
 
 ---
 
-## Config keys (fit-specific)
+## Config keys (placement / seam)
+
+Most keys below drive **fit** placement. `dual_fit` is shared: G6 rescue runs after scored skips in
+**both** `fit` and `gate`. Extension ms/step keys also apply to gate’s sequential retries.
 
 | Key | Default | CLI | Notes |
 |-----|---------|-----|--------|
@@ -555,7 +567,7 @@ Add `--full` if gaps still skip after anchor seam (boundary grid shifts A bracke
 | `anchor_seam_min_match_pearson` | `0.12` | — | Per-anchor B matchability Pearson |
 | `anchor_seam_min_xcorr_peak` | `0.5` | — | Tier-2 xcorr rescue floor |
 | `anchor_seam_xcorr_ambiguous_band` | `0.15` | — | Pearson band that may trigger xcorr |
-| `dual_fit` | `true` | `--no-dual-fit` | G6 per-shoulder rescue after scored gate skip |
+| `dual_fit` | `true` | `--no-dual-fit` | G6 per-shoulder rescue after scored gate skip (**both** fit and gate) |
 
 **Fit-mode short B bracket:** when structure match returns fewer frames than the A gap, fit mode greedily extends into contiguous B audio frame-by-frame while padded `min(pre, post)` does not fall and `fill_repeat_correlations` post-repeat stays bounded; remaining frames are zero-padded. Gate mode still blind-extends then pads.
 
