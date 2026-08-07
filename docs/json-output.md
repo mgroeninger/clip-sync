@@ -307,12 +307,11 @@ away should not be able to fail on the output.
 | `post_shoulder_db` | number | when there is A after the gap | Interleaved RMS of the post-gap A shoulder, dBFS. Same half-width rule at the tail |
 | `reference_db` | number | always | The **louder** shoulder — what the fill is judged against |
 | `peak_bin_db` | number | always | Level of the fill's loudest bin, dBFS |
-| `peak_delta_db` | number | always | `peak_bin_db - reference_db`; positive means the fill is louder than its neighbourhood |
-| `reference_at_floor` | bool | always | The reference bottomed out at the −120 dB floor: every measurable shoulder is digital silence, usually a neighbouring dropout inside the shoulder window. `peak_delta_db` is then an artifact — **exclude these rows from calibration** |
+| `peak_delta_db` | number | always | `peak_bin_db - reference_db`. **Diagnostic only — do not rank or threshold on it** (see below); read as the interior half of the pair with `edge_delta_db` |
+| `reference_at_floor` | bool | always | The reference bottomed out at the −120 dB floor: every measurable shoulder is digital silence, usually a neighbouring dropout inside the shoulder window. Both deltas are then artifacts — **exclude these rows from calibration** |
 | `peak_bin_index` | integer | always | Which bin that was, from the start of the fill |
 | `head_bin_db` / `tail_bin_db` | number | always | Level of the fill's first / last measured bin, dBFS — what meets A at each seam |
-| `edge_delta_db` | number | always | `min(head_bin_db, tail_bin_db) - reference_db`: how far the fill sits above its neighbourhood **at both seams**. Read against `peak_delta_db` (see below) |
-| `reference_spread_db` | number | when the reference shoulder is at least one bin wide | The reference shoulder's loudest bin minus its median bin, in dB. Near zero is a uniform neighbourhood; large is a quiet pocket whose level was set by one occasional event |
+| `edge_delta_db` | number | always | `min(head_bin_db, tail_bin_db) - reference_db`: how far the fill sits above its neighbourhood **at both seams**. The field to read; see below for what it does and does not say |
 | `bins` | integer | always | Bins measured (a trailing partial bin under half width is dropped) |
 | `bin_ms` | number | always | Bin width the peak was taken over (100 ms) |
 
@@ -320,10 +319,11 @@ The statistic is a per-bin **peak**, not a whole-fill aggregate: on the gaps thi
 against, a single 100 ms bin well above the surrounding program was what made a patch sound worse
 than the unrepaired A, and an average over the fill hides exactly that.
 
-**`peak_delta_db` does not, by itself, order audibility.** Ear labels over the 39-pair corpus
-(2026-08-06) put the corpus maximum at +24.34 dB in the *clean* group, while the one fill heard as
-too loud read +15.93 dB — 0.6 dB from a clean one matching it on every other field. What separated
-them was where the excess lived, which is what `edge_delta_db` reports:
+**`peak_delta_db` does not order audibility.** Ear labels over the 39-pair corpus (2026-08-06) put
+the corpus maximum at +24.34 dB in the *clean* group, along with both +15 dB rows, while the fill
+heard as too loud read +15.93 dB — 0.6 dB from a clean one matching it on every other field. Ten
+labels in it has never ordered anything, and a corpus sorted by it yields a listen list of correct
+repairs. What separated them was where the excess lived, which is what `edge_delta_db` reports:
 
 | shape | reading | what it was |
 |-------|---------|-------------|
@@ -334,12 +334,33 @@ them was where the excess lived, which is what `edge_delta_db` reports:
 same conservatism as `reference_db` taking the louder shoulder. On a one-bin fill the head, tail and
 peak are the same bin and it degenerates to `peak_delta_db`.
 
-Three limits worth knowing before reading a number. The seam **crossfade is ignored** (the fill's
-edge bins are measured as pure fill, while what lands in A is a blend over `--crossfade-ms` —
-negligible at the 10 ms default, growing with it), and `edge_delta_db` is built on exactly those
-bins, so it is the more crossfade-sensitive of the two deltas. `reference_at_floor` rows must be
-dropped before any histogram. And all of this is still **record-only**: `edge_delta_db` and
-`reference_spread_db` are hypotheses the corpus has not yet confirmed, not gates.
+Over the same labels `edge_delta_db` separated every fill heard as too loud from every fill heard as
+clean, and it is rare in the way a useful field should be: on 227 patched gaps only 11% are above
+their reference at the seams at all, and 1.8% clear +4 dB.
+
+**It is still not a gate, and the reason is a specific counter-example.** One fill measured +9.83 dB
+— the largest in the corpus — and was heard as *correct*: a gunshot in a conversation, where being
+far louder than the neighbourhood is exactly what the missing content was. The field says how much
+louder, never whether that is wrong. What conditioned it on that set was registration quality, from
+[GapPatchStatus](#gappatchstatus): `pre_correlation` was 0.998 on the correct one and 0.29–0.47 on
+the three heard as too loud. `edge_delta_db ≥ 5` with `pre_correlation < 0.6` selects exactly those
+three out of 227 rows — recorded here as the open hypothesis it is, resting on a single
+counter-example.
+
+Three limits before reading a number. The seam **crossfade is ignored** (the fill's edge bins are
+measured as pure fill, while what lands in A is a blend over `--crossfade-ms` — negligible at the
+10 ms default, growing with it), and `edge_delta_db` is built on exactly those bins, so it is the
+more crossfade-sensitive of the two deltas. `reference_at_floor` rows must be dropped before any
+histogram. And **this pass measures level, not placement**: two of the ten labelled clips carried
+damage it cannot see — a fill that duplicated the shoulder before the missing content, and one
+running seconds longer than the gap — both at unremarkable deltas. A clean `fill_level` is not a
+clean repair. See BACKLOG.md § *Per-gap alignment drift*.
+
+A third field, `reference_spread_db` (the reference shoulder's loudest bin minus its median), was
+recorded here briefly on 2026-08-06 and **removed the same day**: two rounds of labels showed no
+separation, and the one direction it showed inverted its own hypothesis — the clip heard as too loud
+had the most uniform neighbourhood in the set. Reports written in that window carry it; nothing
+reads it.
 
 ### GapTags
 

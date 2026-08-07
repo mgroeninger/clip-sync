@@ -581,11 +581,10 @@ mod tests {
             reference_at_floor: false,
             peak_bin_index: 0,
             // These tests are about which gaps carry a level at all, not what the level says, so
-            // the fill is flat: every bin at the peak, and a steady neighbourhood.
+            // the fill is flat: every bin at the peak.
             head_bin_db: -40.0 + peak_delta_db,
             tail_bin_db: -40.0 + peak_delta_db,
             edge_delta_db: peak_delta_db,
-            reference_spread_db: Some(0.0),
             bins: 5,
             bin_ms: 100.0,
         }

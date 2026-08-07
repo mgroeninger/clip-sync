@@ -2,14 +2,14 @@
 
 Open follow-up work for `clip-sync`. See [PLAN.md](PLAN.md) for architecture, [docs/pipeline.md](docs/pipeline.md) for the repair pipeline (phase by phase), [docs/dev/corpus-validation.md](docs/dev/corpus-validation.md) for the test corpus, and [docs/error-mapping.md](docs/error-mapping.md) for error handling. Shipped work is recorded in `docs/dev/archive/*` and git history.
 
-Last updated: 2026-08-05.
+Last updated: 2026-08-06.
 
 **How this doc works**
 
 - **Open** — actionable items below (problem / direction kept for open work only).
 - **Plans** — active drafts under `docs/dev/TEMP-*.md`; archive when shipped.
 
-**Next:** [Donor registration leftovers](#donor-registration-leftovers); [Repair R6](#repair-r6-follow-ups); [Residual gate](#residual-gate-follow-ups).
+**Next:** [Per-gap alignment drift](#per-gap-alignment-drift-suspected-defect); [Donor registration leftovers](#donor-registration-leftovers); [Repair R6](#repair-r6-follow-ups); [Residual gate](#residual-gate-follow-ups).
 
 ---
 
@@ -22,6 +22,40 @@ Last updated: 2026-08-05.
 | [TEMP-residual-measured-unify-plan.md](docs/dev/TEMP-residual-measured-unify-plan.md) | Unify mono/multichannel residual “measured” semantics — draft; census before gate move |
 
 ## Open work
+
+### Per-gap alignment drift (suspected defect)
+
+**The only ear-confirmed wrong repair in the corpus.** Everything else in this doc is deferred
+work on things that behave as designed; this one produces audibly incorrect output and is
+accepted at `confidence: high`. Found 2026-08-06 while ear-labelling the fill-level listen set,
+not by any gate. Data: `gap-files/2026-08-07-fill-level-shape/` (38 pairs, 227 patched gaps);
+listen manifest for the flagged rows in `gap-files/2026-08-09-drift-listen/listen.csv`.
+
+**What was heard.** Pair 31 gap 8: *"the patch is a repeat of the shoulder and then the patch."*
+The fill leads with a duplicate of the material immediately preceding the gap.
+
+**What the report says.** That gap took `align_adjustment_secs = −0.977` on a 1.119 s gap — the
+donor window slid back by 87% of the gap length, which is exactly a shoulder-then-content fill.
+It is not an isolated search miss: pair 31's gaps 8/9/11/12 take −0.977, −1.114, −1.119, −1.104 s,
+a near-constant ≈ −1.11 s across gaps of 0.6–1.9 s and 28–107 min apart, while its gap 7 (at
+13 min) takes 0.000. The pair's start-window alignment fit +1.363 s. Reading: **a pair-level
+alignment drift of ~1.11 s that the per-gap search silently re-discovers and re-applies on every
+gap**, instead of the pair alignment being corrected once. Four of the five largest
+`|align_adjustment| / gap_length` ratios corpus-wide are these four gaps.
+
+**Why nothing caught it.** 31/8 was accepted at `patch_tier: high`, `confidence: high`, with a
+correlation gain of **+0.0001** (`pre` 0.4368 → `post` 0.4369). 31/12 was accepted at `high` while
+correlation *fell* 0.574 → 0.376. Corpus-wide, 67% of patched gaps improve `post−pre` by less than
+0.001 and the median splice slightly reduces it, so the existing acceptance path is not reading
+this signal at all. Fill-level does not see it either: 31/8 sits at `edge_delta_db` 3.56, below the
+break, and its fill/gap length ratio is 0.98 — the defect is *placement*, not level or length.
+
+| Item | Direction |
+|------|-----------|
+| **Ear-confirm the scope** | 7 rows corpus-wide have `\|align_adjustment\| / gap_length ≥ 0.5` (4 in pair 31, plus 18/40, 26/7, 3/10). Manifest ready — render with `measure-gap-fingerprints.ps1 -Manifest gap-files/2026-08-09-drift-listen/listen.csv -ScanArgs "--gap-listen"`. Question it answers: is duplication the general consequence of a large adjustment, or was 31/8 unlucky in landing near exactly one gap-length? **Do this before designing anything** — the fix differs completely between the two |
+| **Decide where drift belongs** | If the pair-level reading holds, the ~1.11 s is an *alignment* error being paid per gap. Candidates: re-fit alignment mid-timeline (the two-clip start/end fit already exists and its `offset_secs` disagree — see this pair's `scan.alignment`), or carry a drift term. Note `audio_timeline_skew.delta_secs` is 0.044 s here, two orders too small to explain 1.11 s — this is not PTS skew |
+| **A cheap guard, once scope is known** | A gap whose adjustment approaches its own length can produce a self-duplicating fill by construction. Whether that is a veto, a confidence demotion, or a warning depends on the ear pass above — a veto's false positive is an unrepaired hole, the same asymmetry that kept fill-level record-only |
+| **Correlation gain is not consulted** | `post − pre` of +0.0001 (or a *fall*) should not read as `confidence: high`. Independent of the drift, this is the signal that would have flagged 31/8 and 31/12. Do not act on it before the ear pass — 7/7 goes 0.993 → 0.354 and sounds clean, so `post_correlation` is not a quality measure and a naive floor would veto good repairs |
 
 ### Gap-selection parked debt (do not fold into thin v1)
 
@@ -57,7 +91,7 @@ check shipped; these remain.
 |------|-----------|
 | **`equivalence-calibration --replay` reads `GapScanJson`** | Today `--replay` only loads fingerprint `corpus.json` / `GapCorpus`; plain scan JSON already carries the same registration + envelope fields on every gap (`scripts/scan-registration.ps1`). Teach the reader the scan shape so Apply flip/abstain counts come from the production classifier, not a hand reconstruction. Small reader change; no new measurement |
 | **Fingerprint `skip_reason` is a placeholder** | Every skip in every dump is `correlation_below_threshold` with zeroed correlations — `measure.rs` invents one variant for the `tier` axis only; `project.rs` can serialize all seven. Thread the real `GapPatchSkipReason` through `compute_region_measurements` (or document the lie until then). Independent of media; same family as residual-abstention reporting |
-| **Conditional donor test — investigation only** | Ask “is B non-silent *where A is silent*?” (at the registered lag) instead of independent A-floor + donor-occupancy halves — quiet periodic material can satisfy both in both masters (e.g. 10/12: 4/9 silent on each side, still `repairable_dropout`). **Do not change the gate yet.** First: count A-silent∩donor-silent coincidence on existing 39-pair scan JSON (no re-dump). That rate decides curiosity vs systematic; a wrong threshold drops real dropouts (dangerous direction). Fill-level already catches the observed damage. No TEMP plan until the count says it is worth designing |
+| **Conditional donor test — investigation only** | Ask “is B non-silent *where A is silent*?” (at the registered lag) instead of independent A-floor + donor-occupancy halves — quiet periodic material can satisfy both in both masters (e.g. 10/12: 4/9 silent on each side, still `repairable_dropout`). **Do not change the gate yet.** First: count A-silent∩donor-silent coincidence on existing 39-pair scan JSON (no re-dump). That rate decides curiosity vs systematic; a wrong threshold drops real dropouts (dangerous direction). ~~Fill-level already catches the observed damage.~~ **Retracted 2026-08-06:** fill-level catches *loudness* damage only, and not reliably enough to gate on — see [Per-gap alignment drift](#per-gap-alignment-drift-suspected-defect) for damage it does not see at all. No TEMP plan until the count says it is worth designing |
 | **33/17 placement-path investigation** | Which path placed 33/17’s fill is **unrecorded**. The dump’s `brackets` array is the oracle enumeration (`list_feasible_anchor_brackets`), not the candidate production selected; rendered seams (`pre_seam_r` 0.998 / `post_seam_r` 0.973) match **no** bracket row (scores top out ~0.43). Bound-/price-extension proposals are dead (comparator already prices move hard; default profile never runs the grid; smaller moves failed the waveform floor). **Next:** instrument the selected candidate / fit path so a later “overrun” proposal has a target; likely site if anything is tuned is the **acceptance floor**, not the comparator |
 
 ### Dual-fit confidence axis

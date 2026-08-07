@@ -1,49 +1,56 @@
 #!/usr/bin/env pwsh
-# Write-mode repair over a pair manifest, capturing `fill_level` (fill-level check) as parseable JSON.
+# Full patch path over a pair manifest, captured as parseable per-gap JSON.
 #
 # Sibling of `scan-registration.ps1` (same manifest format, same stdout/stderr split) but runs the
-# **full patch path**: `--patch-only` so splice + `measure_fill_level` execute with no audio file
-# written, `--format json` so each pair lands as `<label>.json` with `patch.gaps[*].fill_level`.
-# Preview / scan-only cannot produce this field — `--repair-preview` returns before execute.
-# See docs/pipeline.md § Fill-level check / docs/json-output.md § FillLevelCheck.
+# **full patch path**: `--patch-only` so the splice executes with no audio file written, `--format
+# json` so each pair lands as `<label>.json` with a complete `patch.gaps[*]`. Scan-only and
+# `--repair-preview` cannot produce any of it — preview returns before execute.
+#
+# WHAT THE OUTPUT IS FOR. Named for `fill_level` when that was the only reason to run it; the
+# reports carry every per-gap patch outcome, and the rest has since proved more informative than the
+# level did. `align_adjustment_secs` is where the 2026-08-06 per-gap alignment drift was found
+# (BACKLOG.md § "Per-gap alignment drift") — one pair re-applying a ~1.11 s correction on every gap,
+# producing a fill that duplicated the shoulder, accepted at `confidence: high`. `pre_correlation` /
+# `post_correlation`, the tier and confidence, and the `tags` block are all here too. The rolled-up
+# CSV covers `fill_level` only; for anything else, read the JSON.
 #
 # Usage:
-#   ./scripts/measure-fill-level.ps1 -Manifest pairs.csv
-#   ./scripts/measure-fill-level.ps1 -Manifest pairs.csv -OutDir gap-files/2026-08-04-fill-level
-#   ./scripts/measure-fill-level.ps1 -Manifest pairs.csv -RepairArgs "--min-gap-ms 500" -SkipBuild -Force
-#   ./scripts/measure-fill-level.ps1 -Manifest pairs.csv -RollupOnly   # re-derive CSV from existing JSON
+#   ./scripts/measure-patch-outcomes.ps1 -Manifest pairs.csv
+#   ./scripts/measure-patch-outcomes.ps1 -Manifest pairs.csv -OutDir gap-files/2026-08-07-shape
+#   ./scripts/measure-patch-outcomes.ps1 -Manifest pairs.csv -RepairArgs "--min-gap-ms 500" -SkipBuild -Force
+#   ./scripts/measure-patch-outcomes.ps1 -Manifest pairs.csv -RollupOnly   # re-derive CSV from existing JSON
 #
 # Manifest format (CSV or TSV; '#' comments and blank lines ignored): one pair per line, no header
 #     label , path/to/A.mkv , path/to/B.m4v [, extra per-pair repair args]
 # Identical to `scan-registration.ps1` / `measure-gap-fingerprints.ps1` / `repair-directory-pairs.ps1`.
 #
-# STDOUT vs STDERR: repair JSON → stdout → `<label>.json`; progress → stderr → `<label>.log`.
-# Do not Tee both streams into one file — that interleaves progress into the document.
+# STDOUT vs STDERR: repair JSON -> stdout -> `<label>.json`; progress -> stderr -> `<label>.log`.
+# Do not Tee both streams into one file - that interleaves progress into the document.
 #
 # NO THROWAWAY WAV. This used to force write mode with a `--wav` nobody wanted, which cost the
 # 2026-08-05 run 8 of 39 pairs: their patched PCM exceeded the 4 GiB classic WAV limit, the write
-# error took the whole run down (exit 4), and the fill-level numbers — already computed minutes
-# earlier, before the splice — died with the report. `--patch-only` runs the same patch and skips
-# the sink. Do not reintroduce `--wav` here; `-WavDir` / `-KeepWav` are gone with it.
+# error took the whole run down (exit 4), and the numbers - already computed minutes earlier, before
+# the splice - died with the report. `--patch-only` runs the same patch and skips the sink. Do not
+# reintroduce `--wav` here; `-WavDir` / `-KeepWav` are gone with it.
 #
-# PRECHECK: the first pair with patched_count > 0 must carry at least one `fill_level`. A binary
-# built before the fill-level check, or `--no-measure-fill-level`, produces healthy JSON with the field silently
-# absent — stop before the rest of the manifest pays full repair cost. Bypass with -SkipPrecheck.
+# PRECHECK: the first pair with patched_count > 0 must carry at least one `fill_level`, and at least
+# one of those must carry `edge_delta_db`. A binary built before either produces healthy JSON with
+# the field silently absent - stop before the rest of the manifest pays full repair cost. Bypass
+# with -SkipPrecheck.
 #
 # MEDIA HYGIENE: reports and the manifest carry absolute media paths. -OutDir defaults under
-# `gap-files/` (gitignored). Prefer numeric labels in docs — never paths or titles.
+# `gap-files/` (gitignored). Prefer numeric labels in docs - never paths or titles.
 # See docs/dev/repair-perf.md §"Media handling".
-
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
     [string]$Manifest,
 
     # Per-pair repair JSON: `<label>.json`. Also receives `fill-level-rollup.csv` at the end.
-    [string]$OutDir = (Join-Path (Split-Path -Parent $PSScriptRoot) 'gap-files/fill-level'),
+    [string]$OutDir = (Join-Path (Split-Path -Parent $PSScriptRoot) 'gap-files/patch-outcomes'),
 
     # Per-pair stderr (progress + warnings): `<label>.log`.
-    [string]$LogDir = (Join-Path $env:TEMP 'clip-sync-fill-level'),
+    [string]$LogDir = (Join-Path $env:TEMP 'clip-sync-patch-outcomes'),
 
     # Shared repair args after `A B --patch-only --format json`. Per-pair `extra` follows these.
     [string]$RepairArgs = '',
@@ -165,15 +172,14 @@ function Get-FillLevelRows {
                     PreShoulderDb  = $(if ($null -ne $fl.pre_shoulder_db) { [double]$fl.pre_shoulder_db } else { $null })
                     PostShoulderDb = $(if ($null -ne $fl.post_shoulder_db) { [double]$fl.post_shoulder_db } else { $null })
                     PeakBinIndex   = [int]$fl.peak_bin_index
-                    # Shape fields. `peak_delta_db` alone was refuted as an audibility order by the
-                    # 2026-08-06 ear labels; EdgeDeltaDb says whether the fill's excess reaches its
-                    # seams (uniformly hot) or sits inside it (a loud event in a quiet gap), and
-                    # ReferenceSpreadDb says whether the neighbourhood it is judged against is
-                    # uniform or sparse. Absent from reports produced before those fields shipped.
+                    # EdgeDeltaDb is the field to read: `peak_delta_db` was refuted as an audibility
+                    # order by the 2026-08-06 ear labels (its corpus maximum is clean), and the edge
+                    # delta says whether the fill's excess reaches its seams — uniformly hot — or
+                    # sits inside it, a loud event correctly restored into a quiet gap. Absent from
+                    # reports produced before those fields shipped (2026-08-06).
                     HeadBinDb      = $(if ($null -ne $fl.head_bin_db) { [double]$fl.head_bin_db } else { $null })
                     TailBinDb      = $(if ($null -ne $fl.tail_bin_db) { [double]$fl.tail_bin_db } else { $null })
                     EdgeDeltaDb    = $(if ($null -ne $fl.edge_delta_db) { [double]$fl.edge_delta_db } else { $null })
-                    RefSpreadDb    = $(if ($null -ne $fl.reference_spread_db) { [double]$fl.reference_spread_db } else { $null })
                     Bins           = [int]$fl.bins
                     BinMs          = [double]$fl.bin_ms
                     # True when every measurable shoulder was digital silence — usually a
@@ -197,15 +203,18 @@ function Get-FillLevelSummary {
     $patched = 0
     $withLevel = 0
     $withShape = 0
-    $maxDelta = $null
+    $maxEdge = $null
     if ($null -ne $doc.patch) {
         $patched = [int]$doc.patch.patched_count
         foreach ($g in @($doc.patch.gaps)) {
             if ($null -ne $g.fill_level) {
                 $withLevel++
                 if ($null -ne $g.fill_level.edge_delta_db) { $withShape++ }
-                $d = [double]$g.fill_level.peak_delta_db
-                if ($null -eq $maxDelta -or $d -gt $maxDelta) { $maxDelta = $d }
+                # Edge, not peak: the per-pair headline must not be the refuted statistic.
+                if ($null -ne $g.fill_level.edge_delta_db) {
+                    $d = [double]$g.fill_level.edge_delta_db
+                    if ($null -eq $maxEdge -or $d -gt $maxEdge) { $maxEdge = $d }
+                }
             }
         }
     }
@@ -214,7 +223,7 @@ function Get-FillLevelSummary {
         Patched   = $patched
         WithLevel = $withLevel
         WithShape = $withShape
-        MaxDelta  = $maxDelta
+        MaxEdge   = $maxEdge
         HasPatch  = ($null -ne $doc.patch)
     }
 }
@@ -237,13 +246,16 @@ function Write-FillLevelRollup {
             Write-Warning "[$label] rollup skipped (unreadable): $_"
         }
     }
-    $sorted = @($all | Sort-Object -Property PeakDeltaDb -Descending)
+    # Sorted by EdgeDeltaDb, NOT PeakDeltaDb. Ranking on the peak sends the listener to correct
+    # repairs: on the 39-pair corpus its top rows are a +24.34 dB clean restoration and two fills
+    # 20–25 dB *below* their reference. Rows predating the shape fields sort last (null).
+    $sorted = @($all | Sort-Object -Property EdgeDeltaDb -Descending)
     $csv = Join-Path $Directory 'fill-level-rollup.csv'
     # Keep this list in sync with Get-FillLevelRows — a field added there but not here is silently
     # absent from the CSV even though the reports carry it (cost the 2026-08-06 edge-delta rollup).
-    $sorted | Select-Object Label, Gap1Based, Gap0Based, AStartSecs, AEndSecs, PeakDeltaDb,
-    PeakBinDb, ReferenceDb, RefAtFloor, PreShoulderDb, PostShoulderDb, PeakBinIndex,
-    HeadBinDb, TailBinDb, EdgeDeltaDb, RefSpreadDb, Bins, BinMs,
+    $sorted | Select-Object Label, Gap1Based, Gap0Based, AStartSecs, AEndSecs, EdgeDeltaDb,
+    HeadBinDb, TailBinDb, ReferenceDb, RefAtFloor, PreShoulderDb, PostShoulderDb,
+    PeakDeltaDb, PeakBinDb, PeakBinIndex, Bins, BinMs,
     DualFitUsed, Report |
         Export-Csv -LiteralPath $csv -NoTypeInformation -Encoding utf8
     # Ranking keeps every row in the CSV but drops floored references from the listen candidates:
@@ -258,17 +270,17 @@ function Write-FillLevelRollup {
     }
 }
 
-# Top deltas, floored references held out (they sort to the top and mean nothing there).
+# Top edge deltas, floored references held out (they sort to the top and mean nothing there).
 function Write-FillLevelCandidates {
     param([object]$Rollup)
     if ($Rollup.Count -le 0) { return }
     Write-Host ''
-    Write-Host 'Top peak_delta_db (listen candidates)' -ForegroundColor Cyan
-    '{0,-12} {1,5} {2,10} {3,10} {4,10}' -f 'pair', 'gap#', 'delta_db', 'peak_db', 'ref_db'
+    Write-Host 'Top edge_delta_db (fills hot at both seams)' -ForegroundColor Cyan
+    '{0,-12} {1,5} {2,10} {3,10} {4,10}' -f 'pair', 'gap#', 'edge_delta', 'peak_delta', 'ref_db'
     Write-Host ('-' * 52)
     foreach ($r in @($Rollup.Ranked | Select-Object -First 15)) {
-        '{0,-12} {1,5} {2,10:N2} {3,10:N2} {4,10:N2}' -f $r.Label, $r.Gap1Based,
-        $r.PeakDeltaDb, $r.PeakBinDb, $r.ReferenceDb
+        '{0,-12} {1,5} {2,10} {3,10:N2} {4,10:N2}' -f $r.Label, $r.Gap1Based,
+        ($null -eq $r.EdgeDeltaDb ? '-' : ('{0:N2}' -f $r.EdgeDeltaDb)), $r.PeakDeltaDb, $r.ReferenceDb
     }
     if ($Rollup.Floored -gt 0) {
         Write-Host ''
@@ -276,6 +288,11 @@ function Write-FillLevelCandidates {
             'digital silence (neighbouring dropout), so the delta is an artifact. In the CSV as ' +
             'RefAtFloor=True.') -ForegroundColor DarkYellow
     }
+    Write-Host ''
+    Write-Host ('Not a severity ranking. edge_delta_db says how far the fill sits above its ' +
+        'neighbourhood at both seams, never whether that is wrong — a correctly restored gunshot ' +
+        'in a conversation measured +9.83 dB. Read it with the registration (pre_correlation) ' +
+        'before concluding anything.') -ForegroundColor DarkGray
 }
 
 $delimChar = switch ($Delimiter) {
@@ -354,7 +371,7 @@ foreach ($row in $rows) {
                 Gaps      = $summary.Gaps
                 Patched   = $summary.Patched
                 WithLevel = $summary.WithLevel
-                MaxDelta  = $summary.MaxDelta
+                MaxEdge   = $summary.MaxEdge
                 Report    = $json
                 Log       = $log
                 Skipped   = $true
@@ -396,8 +413,8 @@ foreach ($row in $rows) {
         catch { Write-Warning "[$label] report written but did not parse: $_" }
     }
 
-    $maxNote = if ($null -eq $summary -or $null -eq $summary.MaxDelta) { '-' } else { '{0:N1}' -f $summary.MaxDelta }
-    Write-Host ("[$label] exit {0} in {1:N1}s  gaps={2} patched={3} fill_level={4} max_delta={5}" -f
+    $maxNote = if ($null -eq $summary -or $null -eq $summary.MaxEdge) { '-' } else { '{0:N1}' -f $summary.MaxEdge }
+    Write-Host ("[$label] exit {0} in {1:N1}s  gaps={2} patched={3} fill_level={4} max_edge={5}" -f
         $rc, $sw.Elapsed.TotalSeconds,
         ($summary?.Gaps ?? '?'), ($summary?.Patched ?? '?'), ($summary?.WithLevel ?? '?'), $maxNote)
     if ($rc -ne 0) {
@@ -439,7 +456,7 @@ collect peak_delta_db only.
             Gaps      = ${summary}?.Gaps
             Patched   = ${summary}?.Patched
             WithLevel = ${summary}?.WithLevel
-            MaxDelta  = ${summary}?.MaxDelta
+            MaxEdge   = ${summary}?.MaxEdge
             Report    = $json
             Log       = $log
             Skipped   = $false
@@ -448,11 +465,11 @@ collect peak_delta_db only.
 
 Write-Host ''
 Write-Host 'Summary' -ForegroundColor Green
-'{0,-20} {1,6} {2,8} {3,6} {4,8} {5,8} {6,10}' -f 'pair', 'exit', 'secs', 'gaps', 'patched', 'levels', 'max_delta'
+'{0,-20} {1,6} {2,8} {3,6} {4,8} {5,8} {6,10}' -f 'pair', 'exit', 'secs', 'gaps', 'patched', 'levels', 'max_edge'
 Write-Host ('-' * 72)
 $tGaps = 0; $tPatched = 0; $tLevel = 0
 foreach ($r in $results) {
-    $maxNote = if ($null -eq $r.MaxDelta) { '-' } else { '{0:N1}' -f $r.MaxDelta }
+    $maxNote = if ($null -eq $r.MaxEdge) { '-' } else { '{0:N1}' -f $r.MaxEdge }
     '{0,-20} {1,6} {2,8} {3,6} {4,8} {5,8} {6,10}' -f $r.Label, $r.ExitCode,
     ($null -eq $r.Seconds ? '-' : ('{0:N1}' -f $r.Seconds)),
     ($r.Gaps ?? '?'), ($r.Patched ?? '?'), ($r.WithLevel ?? '?'), $maxNote
@@ -467,12 +484,15 @@ $rollup = Write-FillLevelRollup -Directory $OutDir -PairLabels $doneLabels
 Write-Host ''
 Write-Host "Reports: $OutDir" -ForegroundColor DarkGray
 Write-Host "Logs:    $LogDir" -ForegroundColor DarkGray
-Write-Host "Rollup:  $($rollup.Path) ($($rollup.Count) row(s), sorted by peak_delta_db desc)" -ForegroundColor DarkGray
+Write-Host "Rollup:  $($rollup.Path) ($($rollup.Count) row(s), sorted by edge_delta_db desc)" -ForegroundColor DarkGray
 
 Write-FillLevelCandidates -Rollup $rollup
 
 Write-Host ''
-Write-Host "Ear-check high deltas with --gap-listen / fingerprint-gap; threshold is still open." -ForegroundColor DarkGray
+Write-Host ("Ear-check the top edge_delta_db rows with --gap-listen / --fingerprint-gap. No " +
+    "threshold is proposed: a cut on edge_delta_db alone is refuted (a correct +9.83 dB " +
+    "restoration), and two of ten labelled clips carry placement damage this pass cannot see " +
+    'at all — see BACKLOG.md § "Per-gap alignment drift".') -ForegroundColor DarkGray
 Write-Host "Docs: docs/pipeline.md § Fill-level check; docs/json-output.md § FillLevelCheck" -ForegroundColor DarkGray
 
 $failed = @($results | Where-Object { $_.ExitCode -ne 0 })
