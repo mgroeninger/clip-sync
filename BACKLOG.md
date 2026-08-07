@@ -136,12 +136,14 @@ From [archive/residual-gate-findings.md](docs/dev/archive/residual-gate-findings
 | **`finale_floor_nan_probe`** | optional test | Unit repro: why Grieg finale floor is NaN (M3-adjacent); catalog backlog |
 | **`c1b_acoustic_echo_pipeline_veto`** | optional test | Pipeline `ResidualHeadroomExceeded` under `production_fit` on non-F4 echo fixture — optional C1b |
 | **`p2_search_winner_bounds`** | optional test | Bound headroom on search winner vs truth placement — needs design |
+| **Informative floor + NaN headroom** | low | `informative: true` with non-finite `worst_headroom_db` does **not** abstain: band is `correlates_only`, residual gate pass-through (no veto). Shipped MC behaviour, now shared by mono after measuredness unify. Documented in `abstention_reporting_is_decision_neutral`. **Direction:** leave as-is unless a census shows the cell is common and harmful; if tightening, extend `gate_abstains` to require finite headroom (more abstentions) — count first, like the unify plan |
 
 **Explicitly not planned:** `veto_rescue` as default (G5: synthetic-only); F4 pipeline veto (M6).
 
 **Shipped 2026-08-06:** mono/multichannel “measured” semantics unified toward MC
 ([archive/TEMP-residual-measured-unify-plan.md](docs/dev/archive/TEMP-residual-measured-unify-plan.md)) —
 `ProbeNonFinite` ignored like unmeasured on both constructors via shared `combine_informative`.
+Combined `uninformative_reason` prefers governing `FloorAboveOkDb` over coexisting `ProbeNonFinite`.
 
 ---
 

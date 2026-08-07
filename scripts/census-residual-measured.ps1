@@ -1,5 +1,6 @@
 #!/usr/bin/env pwsh
-# Phase 1 census for docs/dev/archive/TEMP-residual-measured-unify-plan.md — dump-only, no gate change.
+# Dump-only residual ProbeNonFinite census (historical input to
+# docs/dev/archive/TEMP-residual-measured-unify-plan.md). No gate change.
 #
 # Walks existing repair / fingerprint JSON and counts residual sides where
 # `probe_non_finite` appears, especially the asymmetric cell (exactly one side) and whether
@@ -363,12 +364,11 @@ if ($CsvOut -ne '') {
 }
 
 Write-Host ''
-Write-Host 'Paste counts into docs/dev/archive/TEMP-residual-measured-unify-plan.md §5.1 before Phase 3.' `
+Write-Host 'Dump-only census — no gate change. Historical plan: docs/dev/archive/TEMP-residual-measured-unify-plan.md' `
     -ForegroundColor DarkGray
-Write-Host 'No gate change from this script.' -ForegroundColor DarkGray
 
 if ($countA -eq 0) {
     Write-Host ''
-    Write-Host 'A is empty on this dump set — keep the Phase 0 pin; do not unify on zero evidence.' `
+    Write-Host 'A is empty on this dump set — record that; do not treat zero evidence as a policy signal.' `
         -ForegroundColor Yellow
 }

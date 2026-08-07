@@ -717,6 +717,11 @@ fn shared_alignment_lag(
 pub const DEFAULT_RESIDUAL_FLOOR_OK_DB: f64 = -15.0;
 
 /// True when a floor probe measured nominal cancellation at or below `floor_ok_db`.
+///
+/// **Single-probe helper only** — not the constructor measuredness predicate. Verdict-level
+/// `informative` is [`combine_informative`] / [`residual_verdict_informative`] (toward-MC: sourced-NaN
+/// sides are ignored like unmeasured). Use this for “does *this* probe clear `floor_ok_db`?”, not for
+/// combining pre/post sides.
 pub fn floor_probe_informative(probe: &SeamFloorProbe, floor_ok_db: f64) -> bool {
     probe.source != SeamFloorSource::None
         && probe.residual_db.is_finite()
@@ -993,18 +998,19 @@ impl SeamResidualVerdict {
     ///
     /// 1. [`BeyondLagReach`](ResidualUninformative::BeyondLagReach) — a property of the placement,
     ///    dominates both sides.
-    /// 2. The reason that actually failed `informative` among the **governing** sides
-    ///    (`ProbeNonFinite` / `FloorAboveOkDb`); on a tie prefer `ProbeNonFinite` (less measured).
-    ///    A sourced-NaN side still *names* `ProbeNonFinite` even when [`combine_informative`]
-    ///    ignores it like unmeasured — so this step can surface a per-side name that did not drive
-    ///    the abstention when a governing side also failed.
-    /// 3. [`NoReferenceWindow`](ResidualUninformative::NoReferenceWindow) — only when *nothing*
-    ///    governed (both sides unmeasured and/or probe-failed).
+    /// 2. A **governing** failure — [`FloorAboveOkDb`](ResidualUninformative::FloorAboveOkDb) —
+    ///    when any side measured a finite floor above `floor_ok_db`. That is what failed
+    ///    [`combine_informative`]; a coexisting `ProbeNonFinite` name is ignored for the combined
+    ///    value (same as for `informative`).
+    /// 3. [`ProbeNonFinite`](ResidualUninformative::ProbeNonFinite) — only when nothing governed
+    ///    (both sides unmeasured and/or probe-failed) but at least one side attempted a fit.
+    /// 4. [`NoReferenceWindow`](ResidualUninformative::NoReferenceWindow) — both sides never found
+    ///    a reference window.
     ///
-    /// Step 3 is last: unmeasured and probe-failed sides are ignored by
-    /// [`combine_informative`], so they cannot by themselves make a verdict uninformative when the
-    /// other side is `RegimeOk`. If the other side was governing and failed, that failure is why
-    /// the gate abstains; if it passed, the verdict is informative and there is no combined reason.
+    /// Unmeasured and probe-failed sides are ignored by [`combine_informative`], so they cannot by
+    /// themselves make a verdict uninformative when the other side is `RegimeOk`. If the other side
+    /// was governing and failed, that failure is why the gate abstains; if it passed, the verdict is
+    /// informative and there is no combined reason.
     ///
     /// **[`gate_abstains`](Self::gate_abstains) is the authority on whether a reason exists at all**;
     /// the per-side fields only say *which*. Deriving the combined value from the sides alone would
@@ -1020,15 +1026,15 @@ impl SeamResidualVerdict {
         }
         let sides = [self.uninformative_pre, self.uninformative_post];
         let has = |r: ResidualUninformative| sides.contains(&Some(r));
-        if has(ResidualUninformative::ProbeNonFinite) {
-            Some(ResidualUninformative::ProbeNonFinite)
-        } else if has(ResidualUninformative::FloorAboveOkDb) {
+        // Governing failure first — matches what `combine_informative` actually rejected.
+        if has(ResidualUninformative::FloorAboveOkDb) {
             Some(ResidualUninformative::FloorAboveOkDb)
+        } else if has(ResidualUninformative::ProbeNonFinite) {
+            Some(ResidualUninformative::ProbeNonFinite)
         } else {
-            // Step 3. Total by construction: an uninformative verdict always leaves a reason on at
-            // least one side, so this is `both sides unmeasured`. Answering `None` here would narrow
-            // the guard below `!informative`, which is the mirror of the widening above — the tail
-            // stays a reason, not an absence.
+            // Total by construction: an uninformative verdict always leaves a reason on at least
+            // one side, so this is `both sides unmeasured`. Answering `None` here would narrow the
+            // guard below `!informative` — the tail stays a reason, not an absence.
             Some(ResidualUninformative::NoReferenceWindow)
         }
     }
@@ -2129,14 +2135,24 @@ mod tests {
             Some(ResidualUninformative::FloorAboveOkDb)
         );
 
-        // 2. The measured failure wins over the unmeasured side.
+        // 2. Governing failure wins over unmeasured / probe-failed sides.
         assert_eq!(
             verdict(sourced(-10.0), SeamFloorProbe::none(), 0, 0).uninformative_reason(),
             Some(ResidualUninformative::FloorAboveOkDb)
         );
-        // Tie between two measured failures prefers the less-measured one.
+        // FloorAboveOkDb drove `informative: false`; ProbeNonFinite is ignored for the combined
+        // name the same way `combine_informative` ignores it for the flag.
         assert_eq!(
             verdict(sourced(-10.0), sourced(f64::NAN), 0, 0).uninformative_reason(),
+            Some(ResidualUninformative::FloorAboveOkDb)
+        );
+        // Nothing governed, but a fit was attempted ⇒ ProbeNonFinite (not NoReferenceWindow).
+        assert_eq!(
+            verdict(sourced(f64::NAN), SeamFloorProbe::none(), 0, 0).uninformative_reason(),
+            Some(ResidualUninformative::ProbeNonFinite)
+        );
+        assert_eq!(
+            verdict(sourced(f64::NAN), sourced(f64::NAN), 0, 0).uninformative_reason(),
             Some(ResidualUninformative::ProbeNonFinite)
         );
 

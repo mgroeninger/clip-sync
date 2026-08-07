@@ -274,8 +274,13 @@ scalars summarize the **worst-headroom** channel while `informative` follows the
 
 The gate abstains when `!informative` **or** when the placement slid past `max_lag_frames`
 (`placement_slide_frames > max_lag_frames`) — headroom is not meaningful outside the lag radius.
-Because it is a disjunction, a verdict can be `informative: true` and still carry no usable reading,
-which is why `residual_uninformative` is **not** the negation of `informative`.
+Because it is a disjunction, a verdict can be `informative: true` and still carry
+`residual_uninformative: beyond_lag_reach`, which is why that field is **not** the negation of
+`informative`.
+
+Combined `residual_uninformative` (on [GapTags](#gaptags)) prefers a governing
+`floor_above_ok_db` over a coexisting per-side `probe_non_finite` — matching what failed
+`informative`. `probe_non_finite` is the combined reason only when nothing governed.
 
 The four reasons are not interchangeable. `no_reference_window` and `probe_non_finite` are
 abstentions ("we could not measure here"), `beyond_lag_reach` is the gate's deliberate refusal, and
