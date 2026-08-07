@@ -725,8 +725,17 @@ pub fn floor_probe_informative(probe: &SeamFloorProbe, floor_ok_db: f64) -> bool
 
 /// Whether headroom on this gap is regime-informative (same-master + aligned at nominal).
 ///
-/// Every **measured** side (`source != None`) must have `floor_db ≤ floor_ok_db`. Unmeasured
-/// sides are ignored. Returns false when no side was measured.
+/// **Mono measuredness** (this path / [`SeamResidualVerdict::from_parts`] /
+/// [`SeamResidualVerdict::from_parts_with_placement`]): a side is *measured*
+/// when `source != None`. Every measured side must pass [`floor_probe_informative`] (finite and
+/// `≤ floor_ok_db`). Unmeasured sides (`source == None`) are ignored. Returns false when no side
+/// was measured.
+///
+/// A sourced but non-finite floor (`ProbeNonFinite`) therefore counts as measured-and-failed →
+/// `informative: false` → the gate abstains. Multichannel `side_floor_informative` uses a stricter
+/// filter (`source != None && residual_db.is_finite()`). Same probes can disagree across
+/// constructors; that asymmetry is pinned until
+/// [TEMP-residual-measured-unify-plan.md](docs/dev/TEMP-residual-measured-unify-plan.md) Phase 3.
 pub fn residual_verdict_informative(
     floor_pre: &SeamFloorProbe,
     floor_post: &SeamFloorProbe,
@@ -1054,8 +1063,18 @@ fn side_worst_headroom_summary(side: &[SeamChannelResidual]) -> (f64, f64, SeamF
 }
 
 /// Whether a side's **best-cancelling** (min-floor) selected channel established same-master
-/// cancellation (`floor_db ≤ floor_ok_db`). `None` when the side was not measured (no channel with a
-/// finite, sourced floor) — so an unmeasured side neither asserts nor blocks `informative`.
+/// cancellation (`floor_db ≤ floor_ok_db`).
+///
+/// **Multichannel measuredness** (this path / [`SeamResidualVerdict::from_channel_residuals`]): a
+/// channel enters the min-floor read only when `source != None && residual_db.is_finite()`.
+/// `None` when no such channel exists — treated like unmeasured (`unwrap_or(true)` on the other
+/// side), so a sourced-NaN side does **not** block `informative` and a live veto can still fire.
+/// Per-side `uninformative_*` still names [`ResidualUninformative::ProbeNonFinite`].
+///
+/// Mono [`residual_verdict_informative`] treats the same sourced-NaN as measured failure. Cross-path
+/// disagreement is intentional until
+/// [TEMP-residual-measured-unify-plan.md](docs/dev/TEMP-residual-measured-unify-plan.md) Phase 3;
+/// see `mono_and_multichannel_disagree_on_sourced_nan_measuredness`.
 fn side_floor_informative(side: &[SeamChannelResidual], floor_ok_db: f64) -> Option<bool> {
     side.iter()
         .filter(|c| c.floor.source != SeamFloorSource::None && c.floor.residual_db.is_finite())
@@ -2232,6 +2251,71 @@ mod tests {
             v2.uninformative_reason(),
             Some(ResidualUninformative::NoReferenceWindow)
         );
+    }
+
+    /// Phase 0 freeze: mono and multichannel disagree on whether sourced-NaN is "measured".
+    ///
+    /// Cell `(ProbeNonFinite, regime-OK)` — the only asymmetric cell left after abstention
+    /// reporting. Mono treats sourced-NaN as measured failure → abstains (veto lost). Multichannel
+    /// drops it like unmeasured → other side governs (veto can fire). Do not "fix" this by
+    /// accident; unify only after
+    /// `docs/dev/TEMP-residual-measured-unify-plan.md` Phase 1–2.
+    #[test]
+    fn mono_and_multichannel_disagree_on_sourced_nan_measuredness() {
+        let floor_ok = -15.0;
+        let nan_side = sourced(f64::NAN);
+        let deep = sourced(-40.0);
+
+        let mono = SeamResidualVerdict::from_parts_with_placement(
+            &sourced(-30.0),
+            &sourced(-40.0),
+            &nan_side,
+            &deep,
+            floor_ok,
+            0,
+            480,
+        );
+        let multi = SeamResidualVerdict::from_channel_residuals(
+            &[ch(0, -30.0, nan_side)],
+            &[ch(0, -40.0, deep)],
+            floor_ok,
+            0,
+            480,
+        );
+
+        assert_eq!(
+            mono.uninformative_pre,
+            Some(ResidualUninformative::ProbeNonFinite)
+        );
+        assert_eq!(
+            multi.uninformative_pre,
+            Some(ResidualUninformative::ProbeNonFinite)
+        );
+        assert_eq!(mono.uninformative_post, None);
+        assert_eq!(multi.uninformative_post, None);
+
+        assert!(
+            !mono.informative && mono.gate_abstains(),
+            "mono: sourced-NaN is measured failure → abstain (veto lost): {mono:?}"
+        );
+        assert!(
+            multi.informative && !multi.gate_abstains(),
+            "multichannel: sourced-NaN dropped → other side governs (veto lives): {multi:?}"
+        );
+        assert_ne!(
+            mono.informative, multi.informative,
+            "cross-path disagreement on the asymmetric cell must stay visible"
+        );
+        assert_ne!(
+            mono.gate_abstains(),
+            multi.gate_abstains(),
+            "gate decisions must disagree while the asymmetry stands"
+        );
+        assert_eq!(
+            mono.uninformative_reason(),
+            Some(ResidualUninformative::ProbeNonFinite)
+        );
+        assert_eq!(multi.uninformative_reason(), None);
     }
 
     /// The combined reason may never fire on a verdict the gate still reads.

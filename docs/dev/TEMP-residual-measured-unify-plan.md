@@ -1,7 +1,8 @@
 # TEMP — Unify residual “measured” semantics (mono ↔ multichannel)
 
-**Status:** draft plan, 2026-08-05. Working plan for resolving the mono/multichannel
-disagreement on what counts as a *measured* residual floor — the gate-facing leftover from
+**Status:** Phase 0 done 2026-08-06; Phase 1+ pending. Working plan for resolving the
+mono/multichannel disagreement on what counts as a *measured* residual floor — the gate-facing
+leftover from
 [archive/TEMP-residual-abstention-reporting-plan.md](archive/TEMP-residual-abstention-reporting-plan.md).
 
 Companion: [BACKLOG.md](../../BACKLOG.md) § *Residual gate follow-ups* (row **Mono/multichannel
@@ -102,7 +103,7 @@ purpose (do not let a ProbeNonFinite side reach the combined reason and kill a l
 
 ## 3. Phase 0 — Freeze & name the asymmetry
 
-**Gate does not move.**
+**Gate does not move.** **Done 2026-08-06.**
 
 1. Document the two measuredness definitions in one place (doc comment on
    `residual_verdict_informative` / `side_floor_informative`, pointing at this plan).
@@ -113,6 +114,7 @@ purpose (do not let a ProbeNonFinite side reach the combined reason and kill a l
    - `asymmetric_multichannel_side_does_not_widen_the_gate_guard`
 
 **Exit:** disagreement is visible in tests and docs; no production behaviour change.
+Pin: `mono_and_multichannel_disagree_on_sourced_nan_measuredness`.
 
 ---
 
@@ -256,7 +258,7 @@ scope for the same reason the backlog forbade a reporting-only “fix.”
 
 ## 10. Verification checklist *(execute when implementing)*
 
-- [ ] Phase 0: cross-path disagreement unit + doc comments
+- [x] Phase 0: cross-path disagreement unit + doc comments
 - [ ] Phase 1: census table committed or attached to §5.1 (pair/gap indices only)
 - [ ] Phase 2: §5.1 filled; direction named
 - [ ] Phase 3: single `SideFloorState` / `combine_informative`; both constructors call it
