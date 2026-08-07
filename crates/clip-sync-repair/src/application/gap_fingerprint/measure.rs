@@ -1755,8 +1755,8 @@ pub fn build_gap_fingerprint(
         wide_envelope: None,
         splice_dualfit: None,
         outcome: None,
-        equivalence: None,
-        scan_equivalence: None,
+        equivalence_diagnostic: None,
+        equivalence_production: None,
     }
 }
 
@@ -2547,7 +2547,7 @@ pub fn characterize_gaps_from_decode(
         // (`snr_db`, dual-fit's `a_gap_floor_db`) that must not move. See
         // `docs/dev/archive/TEMP-equivalence-divergence-findings.md` § *The three F15 fixes*.
         //
-        // The span is the **silent core** — `scan_equivalence.a_span_secs`, taken straight off the
+        // The span is the **silent core** — `equivalence_production.a_span_secs`, taken straight off the
         // index-parallel scan verdict — not `refined` and not the raw gap. Scan's block grid is
         // media-absolute and selects blocks by centre-containment, which is what fix 3 adopted and which
         // held (the grid reproduced scan's lattice on 802/802 gaps of the 39-pair corpus). The *interval*
@@ -2708,7 +2708,7 @@ pub fn characterize_gaps_from_decode(
         // cannot drift from the measurement it characterizes. **Retained** for I2 attribution.
         //
         // The `(EQUIVALENCE_CONTEXT_SECS, scan_block_ms, Interleaved)` row is the anchor: it matches
-        // scan's recipe on all three variables and so should reproduce `scan_equivalence.noise_floor_db`.
+        // scan's recipe on all three variables and so should reproduce `equivalence_production.noise_floor_db`.
         // Its `Downmix` twin was the anchor before the reduction dimension existed, and undershot by
         // 3.13–7.96 dB on every gap of the first run — the two rows now sit side by side, and their
         // difference *is* the reduction term.
@@ -2721,7 +2721,7 @@ pub fn characterize_gaps_from_decode(
             // nothing else; holding a different interval than the measurement it characterizes makes
             // every row carry an unlabelled fourth term. Measured cost of the mismatch on the
             // 2026-08-01 4-pair run: the anchor row (which matches scan's recipe on all three axes
-            // and should therefore reproduce `scan_equivalence.noise_floor_db`) missed it on 33/33
+            // and should therefore reproduce `equivalence_production.noise_floor_db`) missed it on 33/33
             // gaps, median 0.24 dB and max 7.49 dB, and the `gap_signature_context_secs` row missed
             // this path's own live floor by up to 1.63 dB. Both are the interval, not the axes.
             //
@@ -2744,7 +2744,7 @@ pub fn characterize_gaps_from_decode(
         // count behind it. Re-attaching `levels.gap_floor_db` would overwrite the fix with the whole-span
         // content peak it exists to replace. `levels.gap_floor_db` is still dumped in its own block for
         // anyone who wants the old number.
-        fp.equivalence = Some(
+        fp.equivalence_diagnostic = Some(
             equiv
                 .with_measurement(measurement)
                 .with_noise_floor_probes(nf_probes),
@@ -2771,7 +2771,7 @@ pub fn characterize_gaps_from_decode(
     // It cannot simply move to the top of the loop: `*fp = spec_to_fingerprint_summary(..)` rebuilds
     // the fingerprint wholesale mid-body and would clobber an early assignment.
     for fp in corpus.gaps.iter_mut() {
-        fp.scan_equivalence = report.gap_equivalence.get(fp.index).cloned();
+        fp.equivalence_production = report.gap_equivalence.get(fp.index).cloned();
     }
 
     // Declare fabricated stand-ins this path still writes — stamped **here**, not in
@@ -4066,7 +4066,10 @@ mod tests {
             false,
             &clip_sync_repair_fixtures::NoOpProgressReporter,
         );
-        let eq = corpus.gaps[0].equivalence.as_ref().expect("overlay ran");
+        let eq = corpus.gaps[0]
+            .equivalence_diagnostic
+            .as_ref()
+            .expect("overlay ran");
         let m = eq
             .measurement
             .as_ref()
@@ -4118,7 +4121,7 @@ mod tests {
             &clip_sync_repair_fixtures::NoOpProgressReporter,
         );
         let eq = corpus.gaps[0]
-            .equivalence
+            .equivalence_diagnostic
             .as_ref()
             .expect("diagnostic overlay still runs — the refusal is about the donor, not the gap");
         assert_eq!(
@@ -4403,11 +4406,11 @@ mod tests {
         );
         let fp = &corpus.gaps[0];
         assert!(
-            fp.equivalence.is_none(),
+            fp.equivalence_diagnostic.is_none(),
             "unmappable gap: the diagnostic path genuinely cannot measure it"
         );
         assert_eq!(
-            fp.scan_equivalence.as_ref().map(|v| v.class),
+            fp.equivalence_production.as_ref().map(|v| v.class),
             Some(GapEquivalenceClass::NotEvaluated),
             "scan's stated refusal must reach the dump; an absent key would read as 'never asked'"
         );
@@ -4534,7 +4537,7 @@ mod tests {
             )
             .gaps
             .remove(0)
-            .equivalence
+            .equivalence_diagnostic
             .expect("diagnostic equivalence")
         };
 
@@ -4762,7 +4765,7 @@ mod tests {
         // `diagnostic_equivalence_adopts_the_scan_verdicts_core_span`.
         {
             let equiv = with_sources.gaps[0]
-                .equivalence
+                .equivalence_diagnostic
                 .as_ref()
                 .expect("diagnostic equivalence");
             let m = equiv
@@ -5049,8 +5052,8 @@ mod tests {
             donor_interior_nominal: None,
             b_levels: None,
             outcome: None,
-            equivalence: None,
-            scan_equivalence: None,
+            equivalence_diagnostic: None,
+            equivalence_production: None,
         }
     }
 

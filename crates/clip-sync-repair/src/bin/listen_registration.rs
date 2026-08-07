@@ -55,7 +55,7 @@ struct Args {
     /// A `--gap-listen` run directory: pair subdirectories, or one flat directory of WAVs + dumps.
     listen_dir: PathBuf,
 
-    /// Where to read `scan_equivalence.donor_registration` from, when the listen run itself predates
+    /// Where to read `equivalence_production.donor_registration` from, when the listen run itself predates
     /// the scan wiring. Matched by pair directory + file stem. Defaults to the listen run.
     #[arg(long)]
     observe_dir: Option<PathBuf>,
@@ -242,7 +242,7 @@ fn measure(args: &Args, pair: &str, a_wav: &Path) -> Result<Row, String> {
         pair: pair.to_string(),
         index: gap.index,
         class: gap
-            .scan_equivalence
+            .equivalence_production
             .as_ref()
             .map(|v| format!("{:?}", v.class))
             .unwrap_or_else(|| "-".into()),
@@ -271,7 +271,7 @@ fn engine_lag(args: &Args, pair: &str, stem: &str, index: usize) -> Option<f64> 
     let corpus: GapCorpus = load(&dir.join(format!("{stem}.json"))).ok()?;
     let gap = corpus.gaps.iter().find(|g| g.index == index)?;
     Some(
-        gap.scan_equivalence
+        gap.equivalence_production
             .as_ref()?
             .donor_registration
             .as_ref()?

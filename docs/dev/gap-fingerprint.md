@@ -198,8 +198,8 @@ approaches were refuted by measurement. Full analysis + cost hierarchy: that pla
 | `splice_dualfit` | full, B present | dual-fit viability: seams scored at per-shoulder placement + `gate_pass` / `trim_frames` / validators (see below) |
 | `residual` | full, B present | least-squares same-source cancellation (dB) vs noise floor; per-side dB values are `Option` (absent for non-finite / −120 sentinel). `uninformative_pre`/`_post` name *why* a side carries no usable floor (`no_reference_window` / `probe_non_finite` / `floor_above_ok_db`), and `placement_slide_frames` / `max_lag_frames` carry the lag reach so a replayed verdict abstains where production did — all four absent on pre-2026-08-05 dumps |
 | `outcome` | B present | plan_kind, tier, fit_path, signature_mode, skip_reason. On skip, `skip_reason` is the closest failing bracket's `failure_stage` (`structure_align` / `structure_floor` / `waveform_floor` / `residual`) — fingerprint-native, **not** a production `GapPatchSkipReason`. `seam_shape` is **omitted** on the production path (`None`). Legacy dumps may still say `correlation_below_threshold` |
-| `equivalence` | B present | **gap-equivalence class (diagnostic)** — does this gap need patching? (silence-character; see below) |
-| `scan_equivalence` | scan classified | the **authoritative production** verdict for the same gap (`GapReport::gap_equivalence`; block size = the `scan_block_ms` knob), copied in so one dump holds both readings for calibration. **This is the authoritative one** — see below |
+| `equivalence_diagnostic` | B present | **gap-equivalence class (diagnostic)** — does this gap need patching? (silence-character; see below) |
+| `equivalence_production` | scan classified | the **authoritative production** verdict for the same gap (`GapReport::gap_equivalence`; block size = the `scan_block_ms` knob), copied in so one dump holds both readings for calibration. **This is the authoritative one** — see below |
 | `lag` | diagnostics | **Tier-3** per pre/post anchor lag fingerprint at the best-energy bracket / structure throat — requires `--fingerprint-diagnostics` |
 | `wide_envelope` | diagnostics | **Tier-3** 100 ms-bin RMS-envelope lag peak at `b_mapped` — cross-scale confirmer of `baseline_lag` |
 | `seam_probe` | diagnostics | **Tier-3** encoding-robust seam metrics (R2/R4/spectrum/env/recovered); not used by any gate |
@@ -281,7 +281,7 @@ recipes written before 2026-08-05 (and it must read as absent, not as today's de
 
 Absent on pre-2026-08-03 corpora and on summary-only / refused corpora. With bracket scores, this is
 enough to audit stage assignment without re-scoring PCM. Equivalence has the same pattern in
-`scan_equivalence.thresholds`.
+`equivalence_production.thresholds`.
 
 On skip, `outcome.skip_reason` is that same closest-stage reduction (analyzer
 `closest_failure_stage`) — not a production `GapPatchSkipReason`. Prefer the brackets / closest
@@ -349,7 +349,9 @@ newly harvested fixture hits it roughly **1 time in 40**. Verify a candidate fix
 best-by-min-seam bracket passed *before* adding it, or `curated_golden_fill_placement_is_armed` will
 fail for a reason that has nothing to do with a regression.
 
-### `equivalence` — does this gap need patching?
+### Gap equivalence — does this gap need patching?
+
+*(The classifier behind both `equivalence_diagnostic` and `equivalence_production`.)*
 
 Classifies each scanned gap from its **silence character** (no seam/lag math — that failed on drifting
 recordings). Two signals, both already in the fingerprint: A's gap RMS **relative to the recording's own noise
@@ -370,26 +372,32 @@ occupied → **keep**; `shared_silence` = B silent → nothing to fill → **dro
 tone (not a dropout) though B has content → genuine quiet → **drop**. Thresholds (`dropout_margin_db ≈ 35`,
 `donor_silence_thresh ≈ 0.5`) are tunable.
 
-The fingerprint **always emits** `equivalence` (diagnostic) and `scan_equivalence` (production) for calibration —
+The fingerprint **always emits** `equivalence_diagnostic` (diagnostic) and `equivalence_production` (production) for calibration —
 the dump itself never drops gaps. Production plan-time drop is separate and **on by default**
 (`skip_equivalent_gaps = true`; `--no-skip-equivalent-gaps` to patch all). See [gap-scan.md](../gap-scan.md).
 
-### `equivalence` vs `scan_equivalence` — a second opinion, not an oracle
+### `equivalence_diagnostic` vs `equivalence_production` — a second opinion, not an oracle
+
+> **Formerly known as** `equivalence` (→ `equivalence_diagnostic`) and `scan_equivalence`
+> (→ `equivalence_production`), renamed 2026-08-07 so the production/diagnostic axis lives in the key
+> itself. New dumps write the new keys **only**; the old keys still deserialize via serde aliases, so
+> pre-rename corpora and any harness reading them keep working. Searching old logs or archived plans
+> for the old names is expected — they were never dual-written.
 
 They feed the **same classifier**. They once did so from **differently defined** inputs; through
 2026-07-30/31 those definitions were converged one at a time (F15, then I1, then I3), each validated on
 media. Noise-floor context followed (both ±`EQUIVALENCE_CONTEXT_SECS`). What remains is not a
 tunable parameter split — see the open rows at the bottom of the table. Read them accordingly.
 
-- **`scan_equivalence` is authoritative.** It is the verdict production acts on (`skip_equivalent_gaps`),
+- **`equivalence_production` is authoritative.** It is the verdict production acts on (`skip_equivalent_gaps`),
   measured on scan blocks (size = the `scan_block_ms` recipe knob — not a constant, and not 250 ms).
   The curated gap **cells** in [gap-vocabulary.md](gap-vocabulary.md) are scan-time cells, so a fixture's
   declared cell is checked against *this* field.
-- **`equivalence` is diagnostic only.** Nothing in the plan or patch path reads it; it exists to be
+- **`equivalence_diagnostic` is diagnostic only.** Nothing in the plan or patch path reads it; it exists to be
   compared. Silent-core A gap RMS and floor, interleaved reduction, `scan_block_ms` bins — the same
   definitions the scan gate uses.
 
-**Do not call these two "fine" and "coarse" (rename completed 2026-07-31).** `equivalence` was called
+**Do not call these two "fine" and "coarse" (rename completed 2026-07-31).** `equivalence_diagnostic` was called
 "the fine reference" here until 2026-07-30, and the wording bred a recurring error: reading a divergence
 as "the coarse gate is inaccurate". The label was never right. The 50 ms binning it named was itself an
 accident — inherited by proximity from `gap_signature_bin_ms`, a value tuned for structure *pattern
@@ -436,8 +444,8 @@ pinning agreement on that gap. Full analysis in
 
 #### `measurement` — the live recipe on each verdict (Track B)
 
-Permanent replacement for the deleted `silent_core_probes` grid. Nested on both `scan_equivalence`
-and `equivalence` so a calibration diff can attribute a residual to an instrument difference without
+Permanent replacement for the deleted `silent_core_probes` grid. Nested on both `equivalence_production`
+and `equivalence_diagnostic` so a calibration diff can attribute a residual to an instrument difference without
 reading source. Provenance only — nothing classifies on it. Spec:
 [TEMP-fingerprint-provenance-plan.md](archive/TEMP-fingerprint-provenance-plan.md) §3a.
 
@@ -456,13 +464,13 @@ level stream — `None`, not `Some(0)`. Counts are only meaningful alongside a p
 
 `silent_core_probes` was **hard-deleted** from the emit/type once this landed. Committed fixtures may
 still carry the old JSON key — serde ignores it; do not rewrite fixtures just to strip it.
-`noise_floor_probes` still ships on the diagnostic `equivalence` verdict (see below); `scan_equivalence`
+`noise_floor_probes` still ships on the `equivalence_diagnostic` verdict (see below); `equivalence_production`
 never fills it, so the key is omitted there.
 
 #### `thresholds` — what the class was decided *against* (2026-08-01)
 
 `measurement` records how a verdict was measured; `thresholds` records what those measurements were
-compared to. Both live on `scan_equivalence` and `equivalence`.
+compared to. Both live on `equivalence_production` and `equivalence_diagnostic`.
 
 | field | meaning |
 |---|---|
@@ -562,7 +570,7 @@ anomaly. And **the sign is a theorem**: Cauchy–Schwarz gives `Downmix ≤ Inte
 uniformly-signed corpus result is not evidence *for* the reduction hypothesis, only compatible with it.
 
 The `(2 s, scan_block_ms, Interleaved)` row is the **anchor**: it matches scan's recipe on all three
-variables and should reproduce `scan_equivalence.noise_floor_db`. **Measured 2026-07-30** on the F15
+variables and should reproduce `equivalence_production.noise_floor_db`. **Measured 2026-07-30** on the F15
 pair (`fp_silent_core_floor_probe_reduction/`): it does so on **7/10** gaps (err −0.78…+0.51 dB,
 median +0.03); its `Downmix` twin was the old anchor and undershot by 3.13–7.96 dB on every gap — the
 difference between the two rows *is* the reduction term, read directly. The 3 misses (g5/g6/g10, all
@@ -747,7 +755,7 @@ tests (`gap_cell_fixtures`, `golden_baseline_invariance`, `gap_repair_spec_diff`
 
 A second, smaller committed set sits alongside it at
 `crates/clip-sync-repair/tests/gap_corpus/fingerprints/equivalence_divergence/` — originally gaps where
-`scan_equivalence` and `equivalence` disagreed; `band_donor.json` is now a **regression** fixture for
+`equivalence_production` and `equivalence_diagnostic` disagreed; `band_donor.json` is now a **regression** fixture for
 the closed F15 band mechanism (paths agree post-F15 + I1). Deliberately **not** in `curated/`: a cell
 is a property of a gap, a divergence is a property of the two front-ends reading it, so it has no
 `GapCellType` and is not subject to the per-cell coverage invariants.

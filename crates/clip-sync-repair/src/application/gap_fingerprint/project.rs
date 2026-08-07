@@ -239,8 +239,8 @@ pub fn spec_to_fingerprint_summary(
             skip_reason,
         }),
         // Equivalence is a from-decode-loop overlay (not a spec projection); the projection leaves it None.
-        equivalence: None,
-        scan_equivalence: None,
+        equivalence_diagnostic: None,
+        equivalence_production: None,
     }
 }
 
@@ -461,8 +461,8 @@ pub(crate) fn tags_from_fields(
         .iter()
         .filter_map(min_seam)
         .fold(None, |acc, v| Some(acc.map_or(v, |a: f64| a.max(v))));
-    let closest_failure_stage = closest_bracket_failure_stage(brackets)
-        .map(|s| s.as_str().to_string());
+    let closest_failure_stage =
+        closest_bracket_failure_stage(brackets).map(|s| s.as_str().to_string());
     let residual = residual.map(|r| crate::domain::policies::SeamResidualVerdict {
         chosen_pre_db: r.chosen_pre_db.unwrap_or(f64::NAN),
         chosen_post_db: r.chosen_post_db.unwrap_or(f64::NAN),

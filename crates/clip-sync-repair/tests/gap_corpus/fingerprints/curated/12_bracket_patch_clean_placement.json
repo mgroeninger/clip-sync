@@ -608,7 +608,7 @@
         "tier": "patch",
         "seam_shape": ""
       },
-      "equivalence": {
+      "equivalence_diagnostic": {
         "class": "repairable_dropout",
         "drop": false,
         "a_gap_rms_db": -102.06942982171776,
@@ -616,7 +616,7 @@
         "a_below_noise_db": -45.59598774408104,
         "donor_silence_fraction": 0.0
       },
-      "scan_equivalence": {
+      "equivalence_production": {
         "class": "repairable_dropout",
         "drop": false,
         "a_gap_rms_db": -99.11290429109441,

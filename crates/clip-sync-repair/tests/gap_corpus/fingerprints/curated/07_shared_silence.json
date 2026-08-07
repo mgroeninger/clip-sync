@@ -349,7 +349,7 @@
         "seam_shape": "",
         "skip_reason": "correlation_below_threshold"
       },
-      "equivalence": {
+      "equivalence_diagnostic": {
         "class": "shared_silence",
         "drop": true,
         "a_gap_rms_db": -94.14672808048466,
@@ -357,7 +357,7 @@
         "a_below_noise_db": -51.3525348126624,
         "donor_silence_fraction": 0.9404761904761905
       },
-      "scan_equivalence": {
+      "equivalence_production": {
         "class": "shared_silence",
         "drop": true,
         "a_gap_rms_db": -88.32425535749084,

@@ -318,7 +318,7 @@ fn check_corpus(
         check_gap(label, gap, opts, report);
     }
     check_not_measured(label, corpus, report);
-    check_scan_equivalence_coverage(label, corpus, report);
+    check_equivalence_production_coverage(label, corpus, report);
     check_donor_within_b(label, corpus, report);
 
     // Filename ↔ outcome when the library used patch/skip as the verdict suffix.
@@ -681,14 +681,14 @@ fn check_not_measured(label: &str, corpus: &CorpusFile, report: &mut HealthCheck
     }
 }
 
-/// `scan_equivalence` is either on every gap or on none — never on some.
+/// `equivalence_production` is either on every gap or on none — never on some.
 ///
 /// The scan pushes one verdict per gap unconditionally, so a corpus missing it on a subset was written
 /// by a binary that dropped the copy on an early `continue` (head gaps, before 2026-08-01). Partial
 /// coverage is the signature; total absence just means scan did not classify. Also flags a verdict with
 /// no `a_span_secs`, which predates span provenance — with it absent the diagnostic path silently binds
 /// the nominal span while still printing `a_span: core`.
-fn check_scan_equivalence_coverage(
+fn check_equivalence_production_coverage(
     label: &str,
     corpus: &CorpusFile,
     report: &mut HealthCheckReport,
@@ -696,7 +696,7 @@ fn check_scan_equivalence_coverage(
     let with: Vec<&GapEntry> = corpus
         .gaps
         .iter()
-        .filter(|g| g.scan_equivalence.is_some())
+        .filter(|g| g.equivalence_production.is_some())
         .collect();
     if with.is_empty() {
         return;
@@ -707,7 +707,7 @@ fn check_scan_equivalence_coverage(
             severity: IssueSeverity::Warn,
             pair: label.to_string(),
             message: format!(
-                "{missing} of {} gap(s) carry no scan_equivalence while {} do: the authoritative verdict \
+                "{missing} of {} gap(s) carry no equivalence_production while {} do: the authoritative verdict \
                  was dropped for a subset (pre-2026-08-01 dumps lost it on head gaps), so those gaps have \
                  only the diagnostic reading",
                 corpus.gaps.len(),
@@ -718,7 +718,7 @@ fn check_scan_equivalence_coverage(
     let no_span = with
         .iter()
         .filter(|g| {
-            g.scan_equivalence
+            g.equivalence_production
                 .as_ref()
                 .is_some_and(|v| v.a_span_secs.is_none())
         })
@@ -728,8 +728,8 @@ fn check_scan_equivalence_coverage(
             severity: IssueSeverity::Warn,
             pair: label.to_string(),
             message: format!(
-                "{no_span} scan_equivalence verdict(s) carry no a_span_secs: corpus predates span \
-                 provenance, so the diagnostic `equivalence` block measured the nominal gap span while \
+                "{no_span} equivalence_production verdict(s) carry no a_span_secs: corpus predates span \
+                 provenance, so the `equivalence_diagnostic` block measured the nominal gap span while \
                  reporting a_span=core — the two readings are not comparable"
             ),
         });
@@ -903,8 +903,9 @@ struct GapEntry {
     contour: Option<Contour>,
     #[serde(default)]
     anchors: Option<Anchors>,
-    #[serde(default)]
-    scan_equivalence: Option<ScanEquivalence>,
+    // Wire key was `scan_equivalence` before 2026-08-07; the alias keeps old corpora readable.
+    #[serde(default, alias = "scan_equivalence")]
+    equivalence_production: Option<ScanEquivalence>,
     #[serde(default)]
     baseline_lag: Option<BaselineLag>,
 }
@@ -1409,14 +1410,14 @@ mod tests {
     }
 
     #[test]
-    fn partial_scan_equivalence_coverage_warns() {
+    fn partial_equivalence_production_coverage_warns() {
         let root = tempfile::tempdir().unwrap();
         let dir = root.path().join("1");
         write_healthy_pair(&dir);
         let mut corpus: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(dir.join("corpus.json")).unwrap()).unwrap();
         // Gap 0 classified, gap 1 not: the head-gap `continue` signature.
-        corpus["gaps"][0]["scan_equivalence"] =
+        corpus["gaps"][0]["equivalence_production"] =
             serde_json::json!({"class":"repairable_dropout","a_span_secs":[0.0,1.0]});
         fs::write(dir.join("corpus.json"), corpus.to_string()).unwrap();
 
@@ -1426,14 +1427,41 @@ mod tests {
             report
                 .issues
                 .iter()
-                .any(|i| i.message.contains("carry no scan_equivalence while")),
+                .any(|i| i.message.contains("carry no equivalence_production while")),
             "{}",
             report.summary_text()
         );
     }
 
     #[test]
-    fn scan_equivalence_without_span_provenance_warns() {
+    fn equivalence_production_without_span_provenance_warns() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("1");
+        write_healthy_pair(&dir);
+        let mut corpus: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(dir.join("corpus.json")).unwrap()).unwrap();
+        for g in corpus["gaps"].as_array_mut().unwrap() {
+            g["equivalence_production"] = serde_json::json!({"class":"repairable_dropout"});
+        }
+        fs::write(dir.join("corpus.json"), corpus.to_string()).unwrap();
+
+        let report = check_dirs(&[root.path().to_path_buf()], &HealthCheckOptions::default());
+        assert!(report.ok(), "{}", report.summary_text());
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|i| i.message.contains("carry no a_span_secs")),
+            "{}",
+            report.summary_text()
+        );
+    }
+
+    /// Pre-2026-08-07 corpora wrote `scan_equivalence`. The serde alias must keep them readable, so
+    /// the same defect (no `a_span_secs`) is still detected under the legacy key — otherwise old
+    /// dumps would silently read as "no production verdict at all".
+    #[test]
+    fn legacy_scan_equivalence_key_still_parses() {
         let root = tempfile::tempdir().unwrap();
         let dir = root.path().join("1");
         write_healthy_pair(&dir);
@@ -1451,7 +1479,7 @@ mod tests {
                 .issues
                 .iter()
                 .any(|i| i.message.contains("carry no a_span_secs")),
-            "{}",
+            "legacy key must deserialize into equivalence_production: {}",
             report.summary_text()
         );
     }

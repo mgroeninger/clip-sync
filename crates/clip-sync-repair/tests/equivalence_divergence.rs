@@ -4,7 +4,7 @@
 //! equivalence gate (on by default).
 //!
 //! The two equivalence front-ends share `classify_gap_equivalence` but historically fed it
-//! differently-defined inputs (`docs/dev/gap-fingerprint.md` § *`equivalence` vs `scan_equivalence`*).
+//! differently-defined inputs (`docs/dev/gap-fingerprint.md` § *`equivalence_diagnostic` vs `equivalence_production`*).
 //! F15 closed the three diagnostic-path sensor defects; I1 converged the equivalence bin size onto
 //! `scan_block_ms`. This file pins the resulting contract media-free:
 //!
@@ -77,10 +77,10 @@ fn reclassify(v: &GapEquivalenceVerdict, side: &str) -> GapEquivalenceClass {
 
 fn both(fp: &GapFingerprint) -> (&GapEquivalenceVerdict, &GapEquivalenceVerdict) {
     (
-        fp.scan_equivalence
+        fp.equivalence_production
             .as_ref()
-            .expect("fixture carries no scan_equivalence"),
-        fp.equivalence
+            .expect("fixture carries no equivalence_production"),
+        fp.equivalence_diagnostic
             .as_ref()
             .expect("fixture carries no diag equivalence"),
     )

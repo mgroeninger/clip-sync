@@ -501,7 +501,7 @@
         "skip_reason": "correlation_below_threshold",
         "dual_fit_rescue": true
       },
-      "equivalence": {
+      "equivalence_diagnostic": {
         "class": "repairable_dropout",
         "drop": false,
         "a_gap_rms_db": -108.19154818669378,
@@ -509,7 +509,7 @@
         "a_below_noise_db": -41.17411502018987,
         "donor_silence_fraction": 0.0
       },
-      "scan_equivalence": {
+      "equivalence_production": {
         "class": "repairable_dropout",
         "drop": false,
         "a_gap_rms_db": -101.46919577612599,

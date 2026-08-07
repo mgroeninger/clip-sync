@@ -544,7 +544,7 @@ pub enum ChannelReduction {
 /// verdict being compared.
 ///
 /// **Provenance only.** Emitted over a grid so the variables can be separated: the probe at scan's own
-/// `(2 s, scan_block_ms, Interleaved)` should reproduce `scan_equivalence.noise_floor_db`, and the
+/// `(2 s, scan_block_ms, Interleaved)` should reproduce `equivalence_production.noise_floor_db`, and the
 /// crosses isolate each variable's contribution. The window/bin-only grid did *not* reproduce it —
 /// undershooting 3.13–7.96 dB uniformly — which is what added [`ChannelReduction`] as the third
 /// dimension. A residual after all three is most likely the excluded span (the diagnostic path excludes the *refined*

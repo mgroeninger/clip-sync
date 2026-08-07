@@ -260,7 +260,7 @@
         "tier": "patch",
         "seam_shape": ""
       },
-      "equivalence": {
+      "equivalence_diagnostic": {
         "class": "repairable_dropout",
         "drop": false,
         "a_gap_rms_db": -86.41410142925258,
@@ -344,7 +344,7 @@
           }
         ]
       },
-      "scan_equivalence": {
+      "equivalence_production": {
         "class": "repairable_dropout",
         "drop": false,
         "a_gap_rms_db": -86.41410142925258,

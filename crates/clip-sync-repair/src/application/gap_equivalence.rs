@@ -37,7 +37,7 @@
 //! pair, and re-measurement on 33 gaps after the A-span fix gave median 1.41 dB / max 11.96 dB. The floor
 //! reaches exactly one class boundary (`RepairableDropout` ↔ `AmbientQuiet`; `SharedSilence` is decided by
 //! the donor alone), so its blast radius is gaps with an occupied donor near the −`dropout_margin_db` line.
-//! `docs/dev/gap-fingerprint.md` § *`equivalence` vs `scan_equivalence`*.
+//! `docs/dev/gap-fingerprint.md` § *`equivalence_diagnostic` vs `equivalence_production`*.
 //!
 //! **Still open, and not convergeable by parameter:** the two paths bin on differently-*phased* lattices
 //! (scan on its media-absolute scan-time timeline; this path from `gap_start − context_frames` on A and

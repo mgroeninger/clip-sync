@@ -220,10 +220,10 @@ and track blocks win (§ Unfillable). The classification is always computed and 
 scan (`--json`, no `--mux`/`--wav`) shows it with the flag off.
 
 **These are scan-time cells.** A `--gap-fingerprints` dump carries a *second*, **diagnostic** verdict
-per gap (`equivalence`), and the two can disagree. The cell named here is always the **scan** one
-(`scan_equivalence`): it is what production acts on, and the diagnostic path retains a residual bias
+per gap (`equivalence_diagnostic`), and the two can disagree. The cell named here is always the **scan** one
+(`equivalence_production`): it is what production acts on, and the diagnostic path retains a residual bias
 toward `drop`, so it cannot serve as the arbiter of a `keep`. Curated fixtures are asserted against
-`scan_equivalence` for that reason.
+`equivalence_production` for that reason.
 
 > **Do not call the diagnostic path "the fine path" or "fine-bin"** (corrected 2026-07-31). It was
 > re-binned onto `scan_block_ms` by I1 — the 50 ms binning was inherited by proximity from
@@ -240,7 +240,7 @@ toward `drop`, so it cannot serve as the arbiter of a `keep`. Curated fixtures a
 > Do not quote it as a current rate. `tests/gap_corpus/fingerprints/equivalence_divergence/band_donor.json`
 > is now a **regression** fixture pinning *agreement* on the gap that used to diverge — it no longer
 > pins a disagreement. Full treatment, with the per-input status table:
-> [gap-fingerprint.md](gap-fingerprint.md) § *`equivalence` vs `scan_equivalence`*.
+> [gap-fingerprint.md](gap-fingerprint.md) § *`equivalence_diagnostic` vs `equivalence_production`*.
 
 ## Derived readouts (not primitives)
 

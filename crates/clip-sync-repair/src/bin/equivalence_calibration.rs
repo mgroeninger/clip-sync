@@ -105,8 +105,10 @@
 //! **scan says *drop* but the diagnostic says *keep*** (a potential false drop / unrepaired hole). That is
 //! the direction the surviving residual does **not** manufacture, which is what makes it worth gating on.
 //!
-//! A single `--gap-fingerprints DIR` run carries **both** verdicts per gap (`equivalence` = diagnostic,
-//! `scan_equivalence` = production). Two modes, auto-detected from the argument:
+//! A single `--gap-fingerprints DIR` run carries **both** verdicts per gap
+//! (`equivalence_diagnostic`, `equivalence_production`). Those keys were `equivalence` /
+//! `scan_equivalence` before the 2026-08-07 rename; old corpora still load via serde aliases.
+//! Two modes, auto-detected from the argument:
 //!
 //!   equivalence-calibration out_dir            # ONE corpus (dir or dir/corpus.json) → per-gap table
 //!   equivalence-calibration gap-files/equiv-coarse-vs-fine   # PARENT of numbered corpora → roll-up
@@ -142,7 +144,7 @@
 //!
 //! Exit code 1 if any **dangerous** divergence exists (scan drops, diagnostic keeps), else 0 — so it can
 //! gate CI.
-//! See `docs/dev/gap-fingerprint.md` § *`equivalence` vs `scan_equivalence`* and `docs/dev/gap-vocabulary.md`
+//! See `docs/dev/gap-fingerprint.md` § *`equivalence_diagnostic` vs `equivalence_production`* and `docs/dev/gap-vocabulary.md`
 //! § *Silence-character pre-gate*.
 
 use std::path::{Path, PathBuf};
@@ -324,10 +326,12 @@ fn corpus_pairs(
         Option<&GapEquivalenceVerdict>,
     ),
 > {
-    corpus
-        .gaps
-        .iter()
-        .map(|fp| (fp.scan_equivalence.as_ref(), fp.equivalence.as_ref()))
+    corpus.gaps.iter().map(|fp| {
+        (
+            fp.equivalence_production.as_ref(),
+            fp.equivalence_diagnostic.as_ref(),
+        )
+    })
 }
 
 fn class_label(c: GapEquivalenceClass) -> &'static str {
@@ -432,8 +436,10 @@ fn recipe_deltas(scan: &GapEquivalenceVerdict, refv: &GapEquivalenceVerdict) -> 
 /// residuals (typically `ctx +1.0  donor core→nominal`) belong here, not on every agree row.
 fn instrument_line(corpus: &GapCorpus) -> Option<String> {
     for fp in &corpus.gaps {
-        let (Some(scan), Some(diag)) = (fp.scan_equivalence.as_ref(), fp.equivalence.as_ref())
-        else {
+        let (Some(scan), Some(diag)) = (
+            fp.equivalence_production.as_ref(),
+            fp.equivalence_diagnostic.as_ref(),
+        ) else {
             continue;
         };
         let d = recipe_deltas(scan, diag);
@@ -470,28 +476,30 @@ fn print_detail(corpus: &GapCorpus) -> Summary {
     let block_ms = corpus.source.scan_recipe.scan_block_ms.unwrap_or(250);
     let baseline = instrument_line(corpus).unwrap_or_default();
     println!(
-        "  {:<4} {:<20} {:<16} {:<16} {:<56} verdict",
+        "  {:<4} {:<20} {:<18} {:<16} {:<56} verdict",
         "gap",
         "range",
-        format!("scan({block_ms}ms)"),
-        "diag",
-        "Δ(diag−scan)",
+        format!("production({block_ms}ms)"),
+        "diagnostic",
+        "Δ(diagnostic−production)",
     );
     for fp in &corpus.gaps {
-        let (Some(refv), Some(scanv)) = (fp.equivalence.as_ref(), fp.scan_equivalence.as_ref())
-        else {
+        let (Some(refv), Some(scanv)) = (
+            fp.equivalence_diagnostic.as_ref(),
+            fp.equivalence_production.as_ref(),
+        ) else {
             continue;
         };
         let pv = pair_verdict(scanv, refv);
         let verdict = match pv {
             PairVerdict::Agree => "ok",
             PairVerdict::SafeDiverge => "diverge (safe)",
-            PairVerdict::Dangerous => "⚠ DANGEROUS (scan drops, diag keeps)",
+            PairVerdict::Dangerous => "⚠ DANGEROUS (production drops, diagnostic keeps)",
         };
         let recipe = recipe_deltas(scanv, refv);
         let show_recipe = pv != PairVerdict::Agree || (!recipe.is_empty() && recipe != baseline);
         println!(
-            "  {:<4} {:<20} {:<16} {:<16} {:<56} {verdict}",
+            "  {:<4} {:<20} {:<18} {:<16} {:<56} {verdict}",
             fp.index + 1,
             hms(fp.geometry.a_start_secs),
             class_label(scanv.class),
@@ -501,7 +509,7 @@ fn print_detail(corpus: &GapCorpus) -> Summary {
     }
     let s = summarize(corpus_pairs(corpus));
     println!(
-        "\n{} gaps compared · {} divergent · {} dangerous (scan-drop / diag-keep)",
+        "\n{} gaps compared · {} divergent · {} dangerous (production-drop / diagnostic-keep)",
         s.compared, s.divergent, s.dangerous
     );
     if s.unpaired > 0 {
@@ -629,7 +637,7 @@ fn print_rollup(parent: &Path) -> ExitCode {
         },
     );
     println!(
-        "\n{} pair(s) · {} gaps compared · {} divergent · {} dangerous (scan-drop / diag-keep)",
+        "\n{} pair(s) · {} gaps compared · {} divergent · {} dangerous (production-drop / diagnostic-keep)",
         dirs.len() - read_errors,
         total.compared,
         total.divergent,
@@ -695,7 +703,7 @@ fn band_pair(label: String, corpus: &GapCorpus, args: &Args) -> BandPair {
         unprovenanced: 0,
     };
     for fp in &corpus.gaps {
-        let Some(v) = fp.scan_equivalence.as_ref() else {
+        let Some(v) = fp.equivalence_production.as_ref() else {
             continue;
         };
         if !v.drop {
@@ -1003,7 +1011,7 @@ fn print_replay(path: &Path, args: &Args) -> ExitCode {
             }
         };
         for fp in &corpus.gaps {
-            let Some(v) = fp.scan_equivalence.as_ref() else {
+            let Some(v) = fp.equivalence_production.as_ref() else {
                 continue;
             };
             tally.gaps += 1;

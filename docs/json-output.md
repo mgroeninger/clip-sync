@@ -408,15 +408,17 @@ Optional `residual_db`, `floor_db`, `headroom_db` (worst-side scalars) are prese
 
 ### GapEquivalenceVerdict
 
-Per-gap silence-character classification (advisory; scan report `gap_equivalence[]` and the `equivalence` /
-`scan_equivalence` blocks on `--gap-fingerprints`). See [gap-vocabulary.md](dev/gap-vocabulary.md)
+Per-gap silence-character classification (advisory; scan report `gap_equivalence[]` and the `equivalence_diagnostic` /
+`equivalence_production` blocks on `--gap-fingerprints`). See [gap-vocabulary.md](dev/gap-vocabulary.md)
 § Silence-character pre-gate.
 
-On a `--gap-fingerprints` dump the same gap carries **two** of these. `scan_equivalence` is the one
-production acts on; `equivalence` is a differently-defined fine-bin read kept for calibration, and it
-disagrees on ~2 % of gaps (always biased toward `drop`). Read `scan_equivalence` unless you are
+On a `--gap-fingerprints` dump the same gap carries **two** of these. `equivalence_production` is the one
+production acts on; `equivalence_diagnostic` is a second opinion kept for calibration, and it
+disagrees on ~2 % of gaps (always biased toward `drop`). It is **not** a "fine" reading of the same
+measurement — the axis is production vs diagnostic, not resolution (corrected 2026-07-31).
+Read `equivalence_production` unless you are
 specifically calibrating the two — [dev/gap-fingerprint.md](dev/gap-fingerprint.md)
-§ *`equivalence` vs `scan_equivalence`*.
+§ *`equivalence_diagnostic` vs `equivalence_production`*.
 
 | Field | Type | Presence | Notes |
 |-------|------|----------|-------|

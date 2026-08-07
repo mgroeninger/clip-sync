@@ -1,11 +1,12 @@
 # TEMP — Fingerprint field clarity (rename + co-located contracts)
 
-**Status:** draft plan, 2026-08-04. Working plan for making `--gap-fingerprints` dumps
-harder for agents (and humans) to misread by (1) renaming high-confusion wire fields, then
-(2) co-locating short measurement contracts next to the values they describe.
+**Status:** **R1 shipped 2026-08-07**; R2 / R3 / C1–C3 open. Working plan for making
+`--gap-fingerprints` dumps harder for agents (and humans) to misread by (1) renaming
+high-confusion wire fields, then (2) co-locating short measurement contracts next to the values
+they describe.
 
-Companion: [gap-fingerprint.md](gap-fingerprint.md) § Shape / § *`equivalence` vs
-`scan_equivalence`*, [gap-vocabulary.md](gap-vocabulary.md), harness
+Companion: [gap-fingerprint.md](gap-fingerprint.md) § Shape / § *`equivalence_diagnostic` vs
+`equivalence_production`*, [gap-vocabulary.md](gap-vocabulary.md), harness
 `gap_fingerprint_corpus/report.rs` `legend_text()`, curated fixtures under
 `crates/clip-sync-repair/tests/gap_corpus/fingerprints/`.
 
@@ -124,12 +125,12 @@ Execute in this order so round-trips stay green.
 
 | Doc | Edit |
 |-----|------|
-| [gap-fingerprint.md](gap-fingerprint.md) | Shape table; rename § *`equivalence` vs `scan_equivalence`* → *`equivalence_diagnostic` vs `equivalence_production`*; Registration & dual-fit subsections for lag/donor; any “formerly `baseline_lag`” note for one release cycle |
-| [gap-vocabulary.md](gap-vocabulary.md) | Silence-character pre-gate / fixture mapping that cites the old pair |
-| [json-output.md](../json-output.md) | Fingerprint dump note that names the authoritative field |
-| [docs/dev/README.md](README.md) | Link text that still says `` `equivalence` vs `scan_equivalence` `` |
-| Binary module docs | `equivalence_calibration.rs` header; `listen_registration.rs` comments |
-| Harness `legend_text()` | Use new names so agent-facing text matches dumps |
+| [gap-fingerprint.md](gap-fingerprint.md) | Shape table; rename § *`equivalence` vs `scan_equivalence`* → *`equivalence_diagnostic` vs `equivalence_production`* **(R1 done)**; Registration & dual-fit subsections for lag/donor; any “formerly `baseline_lag`” note for one release cycle |
+| [gap-vocabulary.md](gap-vocabulary.md) | Silence-character pre-gate / fixture mapping that cites the old pair **(R1 done)** |
+| [json-output.md](../json-output.md) | Fingerprint dump note that names the authoritative field **(R1 done)** |
+| [docs/dev/README.md](README.md) | Link text that still says `` `equivalence` vs `scan_equivalence` `` **(R1 done)** |
+| Binary module docs | `equivalence_calibration.rs` header **(R1 done)**; `listen_registration.rs` comments **(R1 done)** |
+| Harness `legend_text()` | Use new names so agent-facing text matches dumps — R1: `legend_text()` never named the equivalence pair, so nothing to change; the health-check messages in `check.rs` did and were updated |
 | This TEMP | Mark §1 done when shipped; archive after durable docs absorb it |
 
 **Archive policy:** do not rewrite archived TEMP findings to the new names. Live docs get a
@@ -140,7 +141,7 @@ short “formerly known as” where a rename would strand search (`baseline_lag`
 
 | Phase | Scope | Exit |
 |-------|--------|------|
-| **R1** | Equivalence pair only (`equivalence` / `scan_equivalence`) | Serde aliases + fixture rewrite + live docs; calibration + divergence tests green |
+| **R1** ✅ | Equivalence pair only (`equivalence` / `scan_equivalence`) | **Shipped 2026-08-07.** Serde aliases + fixture rewrite + live docs; calibration + divergence tests green |
 | **R2** | Lag pair (`lag` / `baseline_lag`) | Same pattern; legend + Registration section updated |
 | **R3** | `donor_interior` → `donor_interior_aligned` | Same pattern; golden axes already say `aligned_*` — keep that vocabulary consistent |
 
@@ -166,6 +167,33 @@ cargo test -p clip-sync-repair-harness
 Manual: open one rewritten curated JSON and confirm **only** new keys are present (no dual-write).
 Load one **unmodified** old corpus dir (if available under `gap-files/`) and confirm aliases still
 deserialize.
+
+### 1.9 R1 as shipped (2026-08-07)
+
+All of §1.5 landed as written. Deviations and things worth knowing before R2/R3 repeat the pattern:
+
+- **No `#[serde(rename)]`.** Rust ident == wire key (§4.1), so only `alias` was needed. Adding
+  `rename` too would have been redundant noise.
+- **`check_scan_equivalence_coverage` → `check_equivalence_production_coverage`**, plus its two
+  health-check *messages* and its two tests — the §1.5 "consider" resolved to yes. The harness's
+  private `ScanEquivalence` **type** name was left alone: it is not agent-facing and renaming it
+  buys nothing.
+- **The harness's minimal parser needed its own alias.** `gap_fingerprint_corpus/check.rs` projects
+  its own `GapEntry`, so the repair-crate alias does not cover it. R2/R3 must do the same for any
+  renamed field the harness reads (`baseline_lag` is one — `GapEntry::baseline_lag`).
+- **CLI cutover included the calibration *table*,** not just prose: the column headers are now
+  `production(<block>ms)` / `diagnostic` / `Δ(diagnostic−production)` and the verdict strings read
+  "production drops, diagnostic keeps". The production column was widened 16 → 18 to fit.
+- **`legend_text()` needed no change** — it never named the equivalence pair.
+- **`curated.golden.json` was bit-stable** after the fixture key rewrite, with no
+  `CURATED_GOLDEN_REGEN`, confirming §1.4's prediction.
+- **Alias verified against real pre-rename media dumps**, not only synthetic JSON:
+  `equivalence-calibration` on a `gap-files/` corpus from 2026-07-31 populated both verdicts.
+  Two round-trip tests pin it (`legacy_equivalence_keys_deserialize_and_reserialize_renamed` in
+  `schema.rs`, `legacy_scan_equivalence_key_still_parses` in the harness).
+- **The "no dual-write" assertion needs care.** `equivalence_diagnostic` *contains* the old key as a
+  substring, so a naive `!json.contains("equivalence")` check can never pass — assert on the quoted
+  key (`"equivalence"`) instead.
 
 ---
 

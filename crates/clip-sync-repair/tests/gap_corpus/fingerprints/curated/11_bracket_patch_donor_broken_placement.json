@@ -593,7 +593,7 @@
         "tier": "patch",
         "seam_shape": ""
       },
-      "equivalence": {
+      "equivalence_diagnostic": {
         "class": "shared_silence",
         "drop": true,
         "a_gap_rms_db": -80.10599641844281,
@@ -601,7 +601,7 @@
         "a_below_noise_db": -28.860188770737736,
         "donor_silence_fraction": 0.9583333333333334
       },
-      "scan_equivalence": {
+      "equivalence_production": {
         "class": "shared_silence",
         "drop": true,
         "a_gap_rms_db": -71.79900468853964,

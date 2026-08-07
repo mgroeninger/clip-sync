@@ -383,7 +383,7 @@ pub struct GapFingerprint {
     /// definitions the scan gate uses, since F15 + I1.
     ///
     /// **Diagnostic only, and not a reference.** Nothing in the plan or patch path reads this field —
-    /// `scan_equivalence` is the verdict production acts on. It was documented as "the fine reference"
+    /// `equivalence_production` is the verdict production acts on. It was documented as "the fine reference"
     /// until 2026-07-30; that framing was wrong, because the differences from the scan path then biased
     /// *this* side toward `drop` (whole-span `gap_floor_db` inflated donor silence; the ±3 s / 50 ms noise
     /// floor read lower). Those terms are fixed, and I1 removed the 50 ms binning outright — so do not
@@ -392,18 +392,31 @@ pub struct GapFingerprint {
     /// remaining one-signed residual, in the safe direction) and ~1 block of donor-window alignment
     /// (mixed sign). Measured divergence: 1.7 % of gaps, never in the dangerous direction — but that
     /// population was measured 2026-07-30, before I1/I3, and is not a current rate.
-    /// See `docs/dev/gap-fingerprint.md` § *`equivalence` vs `scan_equivalence`*.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub equivalence: Option<crate::domain::gap_equivalence::GapEquivalenceVerdict>,
-    /// The **coarse production** equivalence verdict for the same gap — the scan-block gate the scan
+    /// See `docs/dev/gap-fingerprint.md` § *`equivalence_diagnostic` vs `equivalence_production`*.
+    ///
+    /// Wire key was `equivalence` before 2026-08-07; old corpora still deserialize via the serde alias.
+    #[serde(
+        alias = "equivalence",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub equivalence_diagnostic: Option<crate::domain::gap_equivalence::GapEquivalenceVerdict>,
+    /// The **production** equivalence verdict for the same gap — the scan-block gate the scan
     /// report carries (`GapReport::gap_equivalence`; block size is the `scan_block_ms` recipe knob, not a
     /// constant), copied in so one `--gap-fingerprints` run holds both readings per gap for calibration
-    /// (the `equivalence-calibration` tool diffs `equivalence` vs this). They are **not** two granularities
+    /// (the `equivalence-calibration` tool diffs `equivalence_diagnostic` vs this). This is the
+    /// **authoritative** verdict — what `skip_equivalent_gaps` acts on. They are **not** two granularities
     /// of one measurement — see that tool's header for the five ways their definitions differ, and compare
     /// `gap_floor_db` on the two verdicts before concluding either is wrong.
     /// `None` when the scan did not classify the gap.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub scan_equivalence: Option<crate::domain::gap_equivalence::GapEquivalenceVerdict>,
+    ///
+    /// Wire key was `scan_equivalence` before 2026-08-07; old corpora still deserialize via the serde alias.
+    #[serde(
+        alias = "scan_equivalence",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub equivalence_production: Option<crate::domain::gap_equivalence::GapEquivalenceVerdict>,
 }
 
 /// Gap edges on A (reported + refined) and the mapped B fill window (when B is present).
@@ -1531,8 +1544,8 @@ mod tests {
                 skip_reason: Some("boundary correlation below threshold".into()),
                 dual_fit_rescue: None,
             }),
-            equivalence: None,
-            scan_equivalence: None,
+            equivalence_diagnostic: None,
+            equivalence_production: None,
         };
         let json = serde_json::to_string(&fp).expect("serialize");
         let back: GapFingerprint = serde_json::from_str(&json).expect("deserialize");
@@ -1541,6 +1554,51 @@ mod tests {
         assert!(!json.contains("\"lag\""));
         assert!(!json.contains("\"baseline_lag\""));
         assert!(!json.contains("\"brackets\""));
+    }
+
+    /// R1 rename: pre-2026-08-07 corpora wrote `equivalence` / `scan_equivalence`. Those keys must
+    /// still deserialize (serde aliases), and must re-serialize under the **new** names only — the
+    /// rename is not dual-write, so a round-tripped old dump carries no old key.
+    #[test]
+    fn legacy_equivalence_keys_deserialize_and_reserialize_renamed() {
+        use crate::domain::gap_equivalence::GapEquivalenceClass;
+
+        let old = r#"{
+            "index": 0,
+            "tier": "summary",
+            "sample_rate": 48000,
+            "channels": 2,
+            "levels": {"noise_floor_db": -60.0, "gap_floor_db": -70.0},
+            "geometry": {
+                "a_start_secs": 1.0,
+                "a_end_secs": 2.0,
+                "a_refined_start_secs": 1.0,
+                "a_refined_end_secs": 2.0,
+                "duration_secs": 1.0
+            },
+            "equivalence": {"class": "repairable_dropout", "drop": false},
+            "scan_equivalence": {"class": "shared_silence", "drop": true}
+        }"#;
+        let fp: GapFingerprint = serde_json::from_str(old).expect("legacy keys deserialize");
+        assert_eq!(
+            fp.equivalence_diagnostic.as_ref().map(|v| v.class),
+            Some(GapEquivalenceClass::RepairableDropout)
+        );
+        assert_eq!(
+            fp.equivalence_production.as_ref().map(|v| v.class),
+            Some(GapEquivalenceClass::SharedSilence)
+        );
+
+        let json = serde_json::to_string(&fp).expect("serialize");
+        assert!(json.contains("\"equivalence_diagnostic\""));
+        assert!(json.contains("\"equivalence_production\""));
+        assert!(!json.contains("\"scan_equivalence\""));
+        // `equivalence_*` contains `equivalence`, so check for the bare old key exactly.
+        assert!(!json.contains("\"equivalence\""));
+
+        // New keys round-trip unchanged.
+        let back: GapFingerprint = serde_json::from_str(&json).expect("new keys deserialize");
+        assert_eq!(fp, back);
     }
 
     #[test]
