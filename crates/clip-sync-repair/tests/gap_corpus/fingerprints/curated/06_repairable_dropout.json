@@ -159,7 +159,7 @@
           "failure_stage": "waveform_floor"
         }
       ],
-      "lag": {
+      "lag_editorial": {
         "pre_anchor": [
           {
             "window_ms": 1000,
@@ -233,7 +233,7 @@
           }
         ]
       },
-      "baseline_lag": {
+      "lag_decision": {
         "pre_anchor": [
           {
             "window_ms": 0,

@@ -13,7 +13,7 @@
 //!
 //! **Spot-check `b_mapped` registration (ledger C2)** — the `[fine uniqueness]` block already anchors B at
 //! `geometry.b_mapped_*` (same frame as capture after A2). Compare pre/post `peak@lag` and `peak_z` at
-//! 1000 ms against `baseline_lag` / `splice` in a fresh fingerprint scan.
+//! 1000 ms against `lag_decision` / `splice` in a fresh fingerprint scan.
 //!
 //! Pair-6 one-sided-dead (done): `SPLICE_EXP_GAPS=2,6,7,9,10` on `gap-files/6/corpus.json`.
 //! Pair-7 confirm (ledger C2): gaps that were dead at F1 throat — typically `SPLICE_EXP_GAPS=3,4`:
@@ -33,7 +33,7 @@
 //! $env:SPLICE_EXP_CORPUS = "gap-files/1/corpus.json"
 //! $env:SPLICE_EXP_A = "F:\Video\A.mkv"
 //! $env:SPLICE_EXP_B = "F:\Video\B.m4v"
-//! # optional: $env:SPLICE_EXP_GAPS = "3,19,22"   (default: gaps that carry baseline_lag)
+//! # optional: $env:SPLICE_EXP_GAPS = "3,19,22"   (default: gaps that carry lag_decision)
 //! # optional: $env:SPLICE_EXP_SR = "48000"
 //! cargo test -p clip-sync-repair --features diagnostic-tests --test diag_splice_timescale -- --nocapture
 //! ```
@@ -58,8 +58,9 @@ struct GapEntry {
     #[serde(default)]
     geometry: Option<Geometry>,
     /// Present only on gaps that found a matchable B placement — our experiment targets these.
-    #[serde(default)]
-    baseline_lag: Option<serde_json::Value>,
+    // Wire key was `baseline_lag` before 2026-08-07; this reads corpora dumped by any binary.
+    #[serde(default, alias = "baseline_lag")]
+    lag_decision: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -78,8 +79,8 @@ struct Geometry {
 const WINDOW_MS: [f64; 4] = [250.0, 500.0, 1000.0, 2000.0];
 /// Bin sizes swept for the wide bucketed-envelope segment curve.
 const ENV_BIN_MS: [f64; 3] = [20.0, 50.0, 100.0];
-/// ± lag search for the fine waveform curve (matches `baseline_lag`).
-/// ± lag search for the fine waveform curve (matches `baseline_lag` at 200 ms). Override with
+/// ± lag search for the fine waveform curve (matches `lag_decision`).
+/// ± lag search for the fine waveform curve (matches `lag_decision` at 200 ms). Override with
 /// `SPLICE_EXP_FINE_LAG_MS` to probe large offsets — e.g. a post lag pinned at the ±200 ms edge (6·g6):
 /// re-run with `SPLICE_EXP_FINE_LAG_MS=600` to see whether it peaks beyond 200 ms (clipped offset) or
 /// stays low everywhere (truly decorrelated).
@@ -765,7 +766,7 @@ fn diag_splice_timescale() {
             if !ids.contains(&g.index) {
                 continue;
             }
-        } else if g.baseline_lag.is_none() {
+        } else if g.lag_decision.is_none() {
             continue; // default: only gaps with a matchable B placement
         }
         let Some(geo) = &g.geometry else { continue };

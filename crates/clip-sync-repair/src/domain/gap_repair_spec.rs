@@ -53,7 +53,7 @@ pub enum GapRepairCell {
 /// across placements must fail the harness even if the value looks plausible.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Placement {
-    /// Gross `b_mapped`, 1 s window — `baseline_lag` / `splice` / `peak_z`.
+    /// Gross `b_mapped`, 1 s window — `lag_decision` / `splice` / `peak_z`.
     GrossBMapped,
     /// Seam-local, 250 ms ± `SEAM_LOCAL_REFINE_MS`, nominal-anchored — `splice_dualfit`.
     SeamLocal,
@@ -71,7 +71,7 @@ pub enum Placement {
 // D/R payload (§2.5.2a) — typed 1:1 against the golden `GapRow`; the fingerprint export is a projection.
 // ---------------------------------------------------------------------------------------------------------
 
-/// Placement = [`Placement::GrossBMapped`]. From `baseline_lag` mono pre/post + `SpliceSummary`.
+/// Placement = [`Placement::GrossBMapped`]. From `lag_decision` mono pre/post + `SpliceSummary`.
 #[derive(Debug, Clone, Default)]
 pub struct RegistrationTags {
     pub pre_peak_r: Option<f64>,

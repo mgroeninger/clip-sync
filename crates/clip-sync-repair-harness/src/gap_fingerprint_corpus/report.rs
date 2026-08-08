@@ -129,13 +129,13 @@ impl CorpusReport {
         );
 
         // C-harness-3: warn loudly when the corpus mixes pre-/post-A2 schemas — the legacy `lag` fallback
-        // sits at a different placement than `baseline_lag`, so the two aren't comparable in one run.
+        // sits at a different placement than `lag_decision`, so the two aren't comparable in one run.
         let legacy = self.count(|r| r.registration_from_legacy_lag);
         if legacy > 0 {
             let _ = writeln!(
                 s,
                 "  ⚠ registration schema mix: {legacy}/{n} row(s) fell back to the legacy diagnostic `lag` \
-                 (pre-A2, structure-throat placement) — do NOT compare their lags with `baseline_lag` rows."
+                 (pre-A2, structure-throat placement) — do NOT compare their lags with `lag_decision` rows."
             );
         }
 
@@ -679,7 +679,7 @@ impl CorpusReport {
         let _ = writeln!(
             s,
             "  (NOTE: recov/cross-codec here use the seam_probe (±25 ms pre / ±600 ms sequentially-centered \
-             post) — see the silence-splice view for the ±600 ms baseline_lag truth)"
+             post) — see the silence-splice view for the ±600 ms lag_decision truth)"
         );
         let matched = self.matched();
         let skipped: Vec<&&GapRow> = matched
@@ -741,7 +741,7 @@ impl CorpusReport {
         s
     }
 
-    /// **Silence-splice view** — the authoritative seam read, from the ±600 ms per-side `baseline_lag`
+    /// **Silence-splice view** — the authoritative seam read, from the ±600 ms per-side `lag_decision`
     /// peaks, sequentially centered (ledger A2) so pre offset and
     /// bridge-length mismatch don't stack into one search window (the ±25 ms `seam_probe.recovered_r`
     /// underlying `seam_probe_text` mislabels any step > 25 ms as "cross-codec"). Classifies every matched
@@ -770,7 +770,7 @@ impl CorpusReport {
         if classified == 0 {
             let _ = writeln!(
                 s,
-                "  (no per-side baseline_lag peaks — nothing to classify)"
+                "  (no per-side lag_decision peaks — nothing to classify)"
             );
             return s;
         }
@@ -1071,7 +1071,7 @@ impl CorpusReport {
 
     /// **Dual-fit scope (review C1/S4)** — proves patch/skip is *bracket-search success*, not step
     /// magnitude, and narrows the dual-fit target to bracket-exhausted-yet-recoverable skips. Answerable
-    /// from `brackets[]` + `baseline_lag` on the *current* corpora (no re-scan needed).
+    /// from `brackets[]` + `lag_decision` on the *current* corpora (no re-scan needed).
     pub fn dualfit_scope_text(&self) -> String {
         use std::fmt::Write;
         let mut s = String::new();
@@ -1170,14 +1170,14 @@ impl CorpusReport {
         "=== measurement provenance ===\n\
          structure (envelope) : bucketed 50 ms-bin envelope correlation · ~3 s context each side · at the structure/envelope placement\n\
          seam (waveform)      : sample-level Pearson · ~250 ms seam border · at the throat placement · scored at lag 0\n\
-         baseline_lag         : waveform correlation sweep · 1 s border · ±600 ms search, post sequentially\n\
+         lag_decision         : waveform correlation sweep · 1 s border · ±600 ms search, post sequentially\n\
                                  centered on pre lag (S + D_A + round(L_pre), not the naive S + D_A) · at\n\
                                  b_mapped (not the throat) · mono; reported gross-relative to b_mapped_end\n\
-         splice               : first-class step + per-side peak_r / peak_z from baseline_lag (post − pre);\n\
+         splice               : first-class step + per-side peak_r / peak_z from lag_decision (post − pre);\n\
                                  ≈ bridge-length mismatch (D_B − D_A) once sequential centering is in effect\n\
          wide_envelope        : 100 ms-bin RMS envelope · 2 s window · ±400 ms pre / ±600 ms sequentially-\n\
                                  centered post · segment-identity confirmer · at b_mapped\n\
-         offset/step          : (pre+post)/2 and post−pre of baseline_lag (or splice.step_ms), ms\n\
+         offset/step          : (pre+post)/2 and post−pre of lag_decision (or splice.step_ms), ms\n\
          residual headroom    : sample-level least-squares cancellation (dB vs floor) · ~250 ms seam · at the throat\n\
          uniqueness           : peak_z + prominence at 1 s window (≥12 / ≥0.45); legacy margin = peak_r − 2nd peak\n\
          donor_interior       : B RMS / continuity over the sequentially-aligned bridge span [S + L_pre,\n\

@@ -476,15 +476,18 @@ fn check_gap(
 /// declares this set, and [`check_not_measured`] below fails a corpus whose declaration disagrees with
 /// what the file actually contains.
 ///
-/// The union of the emitter's two lists, deliberately: the `baseline_lag.*` tail is
+/// The union of the emitter's two lists, deliberately: the `lag_decision.*` tail is
 /// Paths whose **presence at a projection default** still means "unmeasured" on legacy dumps that
 /// wrote zeros / `−120` / `""` instead of omitting the field. New dumps omit these via `Option` /
 /// skip-empty and no longer declare them in `source.not_measured`.
 ///
-/// Also includes `PROJECTED_BASELINE_LAG_FIELDS`, which a dump declares only when it projected the
+/// Also includes `PROJECTED_LAG_DECISION_FIELDS`, which a dump declares only when it projected the
 /// row rather than measuring it. This reader must recognize the paths either way — a corpus that
 /// declares them is a projected one (fine), and a corpus that carries a *real* sweep while declaring
 /// them is the false declaration [`check_not_measured`] exists to catch.
+///
+/// Spelled in the **post-rename** vocabulary. Corpora written before 2026-08-07 declare the same
+/// fields as `baseline_lag.*`; [`canonical_path`] folds those onto these before any comparison.
 const KNOWN_UNMEASURED: &[&str] = &[
     "levels.bin_ms",
     "levels.profile_db",
@@ -499,12 +502,12 @@ const KNOWN_UNMEASURED: &[&str] = &[
     "anchors.pre",
     "anchors.post",
     "outcome.seam_shape",
-    "baseline_lag.window_ms",
-    "baseline_lag.max_lag_ms",
-    "baseline_lag.peak_lag_samples",
-    "baseline_lag.frac_lag_samples",
-    "baseline_lag.lag0_r",
-    "baseline_lag.verdict",
+    "lag_decision.window_ms",
+    "lag_decision.max_lag_ms",
+    "lag_decision.peak_lag_samples",
+    "lag_decision.frac_lag_samples",
+    "lag_decision.lag0_r",
+    "lag_decision.verdict",
 ];
 
 /// The `floor_db` / `speech_peak_db` constant older `projected_level_profile` writes (`SILENCE_FLOOR_DB`).
@@ -575,35 +578,57 @@ fn measured_paths(gap: &GapEntry) -> Vec<&'static str> {
     // A shoulder row is "measured" per-field: the projection zeroes the search parameters and the
     // integer lag, copies `peak_r` into `lag0_r`, and hardcodes the verdict. Any shoulder departing
     // from one of those is enough — a real sweep cannot systematically reproduce them.
-    if let Some(bl) = gap.baseline_lag.as_ref() {
+    if let Some(bl) = gap.lag_decision.as_ref() {
         for e in bl.pre_anchor.iter().chain(bl.post_anchor.iter()) {
             if e.window_ms.unwrap_or(0) != 0 {
-                push_once(&mut out, "baseline_lag.window_ms");
+                push_once(&mut out, "lag_decision.window_ms");
             }
             if e.max_lag_ms.unwrap_or(0) != 0 {
-                push_once(&mut out, "baseline_lag.max_lag_ms");
+                push_once(&mut out, "lag_decision.max_lag_ms");
             }
             if e.peak_lag_samples.unwrap_or(0) != 0 {
-                push_once(&mut out, "baseline_lag.peak_lag_samples");
+                push_once(&mut out, "lag_decision.peak_lag_samples");
             }
             if e.frac_lag_samples.unwrap_or(0.0) != 0.0 {
-                push_once(&mut out, "baseline_lag.frac_lag_samples");
+                push_once(&mut out, "lag_decision.frac_lag_samples");
             }
             // The tell: projected rows peak exactly at lag 0 because `lag0_r` *is* `peak_r`.
             if let (Some(l0), Some(pk)) = (e.lag0_r, e.peak_r) {
                 if l0 != pk {
-                    push_once(&mut out, "baseline_lag.lag0_r");
+                    push_once(&mut out, "lag_decision.lag0_r");
                 }
             }
             if e.verdict
                 .as_deref()
                 .is_some_and(|v| v != PROJECTED_LAG_VERDICT)
             {
-                push_once(&mut out, "baseline_lag.verdict");
+                push_once(&mut out, "lag_decision.verdict");
             }
         }
     }
     out
+}
+
+/// Fold a `source.not_measured` path onto the vocabulary [`KNOWN_UNMEASURED`] and [`measured_paths`]
+/// speak.
+///
+/// The 2026-08-07 `baseline_lag` → `lag_decision` rename is **not** reachable by a serde alias here:
+/// these paths are *data* — strings written into `source.not_measured` on every already-committed
+/// corpus — not struct fields. Without folding, a pre-rename declaration stops matching, and the
+/// failure lands on the bad side: an unrecognized declaration silently reads as "this field was
+/// measured", which is exactly the false-declaration case [`check_not_measured`] exists to catch.
+fn canonical_path(path: &str) -> &str {
+    path.strip_prefix("baseline_lag.")
+        .map(|tail| match tail {
+            "window_ms" => "lag_decision.window_ms",
+            "max_lag_ms" => "lag_decision.max_lag_ms",
+            "peak_lag_samples" => "lag_decision.peak_lag_samples",
+            "frac_lag_samples" => "lag_decision.frac_lag_samples",
+            "lag0_r" => "lag_decision.lag0_r",
+            "verdict" => "lag_decision.verdict",
+            _ => path,
+        })
+        .unwrap_or(path)
 }
 
 fn push_once(out: &mut Vec<&'static str>, path: &'static str) {
@@ -638,7 +663,9 @@ fn check_not_measured(label: &str, corpus: &CorpusFile, report: &mut HealthCheck
     let mut falsely_declared: Vec<&str> = Vec::new();
     for gap in &full {
         for path in measured_paths(gap) {
-            if declared.iter().any(|d| d == path) && !falsely_declared.contains(&path) {
+            if declared.iter().any(|d| canonical_path(d) == path)
+                && !falsely_declared.contains(&path)
+            {
                 falsely_declared.push(path);
             }
         }
@@ -906,8 +933,9 @@ struct GapEntry {
     // Wire key was `scan_equivalence` before 2026-08-07; the alias keeps old corpora readable.
     #[serde(default, alias = "scan_equivalence")]
     equivalence_production: Option<ScanEquivalence>,
-    #[serde(default)]
-    baseline_lag: Option<BaselineLag>,
+    // Wire key was `baseline_lag` before 2026-08-07; the alias keeps old corpora readable.
+    #[serde(default, alias = "baseline_lag")]
+    lag_decision: Option<BaselineLag>,
 }
 
 #[derive(Deserialize)]
@@ -1348,14 +1376,14 @@ mod tests {
     /// and `lag0_r != peak_r` (the projection copies one into the other, so every projected shoulder
     /// reads as peaking at zero lag). Either alone must be enough.
     #[test]
-    fn declaring_a_measured_baseline_lag_fails() {
+    fn declaring_a_measured_lag_decision_fails() {
         for (field, row) in [
             (
-                "baseline_lag.max_lag_ms",
+                "lag_decision.max_lag_ms",
                 serde_json::json!({"peak_r":0.9,"lag0_r":0.9,"max_lag_ms":600,"verdict":"timing_offset"}),
             ),
             (
-                "baseline_lag.lag0_r",
+                "lag_decision.lag0_r",
                 serde_json::json!({"peak_r":0.9,"lag0_r":0.1,"verdict":"timing_offset"}),
             ),
         ] {
@@ -1367,7 +1395,7 @@ mod tests {
                     .unwrap();
             for g in corpus["gaps"].as_array_mut().unwrap() {
                 defaults_only(g);
-                g["baseline_lag"] = serde_json::json!({"pre_anchor":[row], "post_anchor":[]});
+                g["lag_decision"] = serde_json::json!({"pre_anchor":[row], "post_anchor":[]});
             }
             corpus["source"]["not_measured"] = serde_json::json!(KNOWN_UNMEASURED);
             fs::write(dir.join("corpus.json"), corpus.to_string()).unwrap();
@@ -1386,7 +1414,7 @@ mod tests {
 
     /// The projected shape — zeroed search, `lag0_r == peak_r`, constant verdict — stays silent.
     #[test]
-    fn declaring_a_projected_baseline_lag_is_clean() {
+    fn declaring_a_projected_lag_decision_is_clean() {
         let root = tempfile::tempdir().unwrap();
         let dir = root.path().join("1");
         write_healthy_pair(&dir);
@@ -1394,7 +1422,7 @@ mod tests {
             serde_json::from_str(&fs::read_to_string(dir.join("corpus.json")).unwrap()).unwrap();
         for g in corpus["gaps"].as_array_mut().unwrap() {
             defaults_only(g);
-            g["baseline_lag"] = serde_json::json!({
+            g["lag_decision"] = serde_json::json!({
                 "pre_anchor":[{"window_ms":0,"max_lag_ms":0,"lag0_r":0.9,"peak_r":0.9,
                                "peak_lag_samples":0,"frac_lag_samples":0.0,"frac_lag_ms":-3.0,
                                "verdict":"timing_offset"}],
@@ -1407,6 +1435,48 @@ mod tests {
         let report = check_dirs(&[root.path().to_path_buf()], &HealthCheckOptions::default());
         assert!(report.ok(), "{}", report.summary_text());
         assert_eq!(report.warn_count(), 0, "{}", report.summary_text());
+    }
+
+    /// Pre-2026-08-07 corpora spell the gap key `baseline_lag` **and** declare the dotted paths under
+    /// that prefix. Both halves must still be understood, and they fail in opposite ways: an unread gap
+    /// key makes a real sweep invisible (the check goes quiet), while an unrecognized declared path
+    /// makes the declaration look absent (also quiet). Either way a false declaration escapes, so this
+    /// pins the legacy spelling end to end — legacy key + legacy declaration + a real sweep must still
+    /// be caught.
+    #[test]
+    fn legacy_baseline_lag_key_and_declaration_are_still_recognized() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("1");
+        write_healthy_pair(&dir);
+        let mut corpus: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(dir.join("corpus.json")).unwrap()).unwrap();
+        for g in corpus["gaps"].as_array_mut().unwrap() {
+            defaults_only(g);
+            g["baseline_lag"] = serde_json::json!({
+                "pre_anchor":[{"peak_r":0.9,"lag0_r":0.9,"max_lag_ms":600,"verdict":"timing_offset"}],
+                "post_anchor":[]
+            });
+        }
+        // Declared the old way, as every already-committed corpus does.
+        corpus["source"]["not_measured"] = serde_json::json!([
+            "baseline_lag.window_ms",
+            "baseline_lag.max_lag_ms",
+            "baseline_lag.peak_lag_samples",
+            "baseline_lag.frac_lag_samples",
+            "baseline_lag.lag0_r",
+            "baseline_lag.verdict",
+        ]);
+        fs::write(dir.join("corpus.json"), corpus.to_string()).unwrap();
+
+        let report = check_dirs(&[root.path().to_path_buf()], &HealthCheckOptions::default());
+        assert!(
+            report.issues.iter().any(|i| {
+                i.message.contains("lag_decision.max_lag_ms")
+                    && i.message.contains("carry real values")
+            }),
+            "legacy spelling must still be caught: {}",
+            report.summary_text()
+        );
     }
 
     #[test]

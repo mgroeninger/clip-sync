@@ -44,11 +44,15 @@ struct GapEntry {
     #[serde(default)]
     levels: Option<BLevels>,
     /// Diagnostic lag at the best editorial bracket (may sit far from the decision seam).
-    #[serde(default)]
-    lag: Option<Lag>,
+    ///
+    /// Wire key was `lag` before 2026-08-07; the alias keeps old corpora readable.
+    #[serde(default, alias = "lag")]
+    lag_editorial: Option<Lag>,
     /// Lag at the **decision** placement (structure-slid throat) — the registration-relevant one (#2).
-    #[serde(default)]
-    baseline_lag: Option<Lag>,
+    ///
+    /// Wire key was `lag_decision` before 2026-08-07; the alias keeps old corpora readable.
+    #[serde(default, alias = "baseline_lag")]
+    lag_decision: Option<Lag>,
     /// Residual cancellation at the decision seam (the strong same-source confirm).
     #[serde(default)]
     residual: Option<Residual>,
@@ -112,7 +116,7 @@ struct Splice {
     pre_peak_z: Option<f64>,
     #[serde(default)]
     post_peak_z: Option<f64>,
-    /// Either shoulder's `baseline_lag` peak was search-exhausted (clipped at ±max_lag) ⇒ `step_ms` is
+    /// Either shoulder's `lag_decision` peak was search-exhausted (clipped at ±max_lag) ⇒ `step_ms` is
     /// GIGO (ledger A5/C6). `None` for fingerprints predating the edge-pin flag.
     #[serde(default)]
     edge_pinned: Option<bool>,
@@ -459,8 +463,8 @@ fn read_corpus_json(path: &Path) -> Option<CorpusFile> {
 }
 
 fn gap_row(pair: &str, source: &SourceMeta, gap: &GapEntry, eps: f64, tail_secs: f64) -> GapRow {
-    // Registration is read at the **decision** seam (`baseline_lag`, #2); fall back to the diagnostic
-    // best-bracket `lag` for older fingerprints that predate it. Select the mono entry explicitly (P2-1):
+    // Registration is read at the **decision** seam (`lag_decision`, #2); fall back to the diagnostic
+    // best-bracket `lag_editorial` for older fingerprints that predate it. Select the mono entry explicitly (P2-1):
     // capture pushes mono first today, but `.first()` silently picks whatever is first if channel order
     // ever changes — match on `channel` instead, falling back to `.first()` only when `channel` is absent
     // (pre-A2 fingerprints, which only ever wrote one mono entry anyway).
@@ -469,12 +473,12 @@ fn gap_row(pair: &str, source: &SourceMeta, gap: &GapEntry, eps: f64, tail_secs:
             .find(|e| e.channel == Some(LagChannelTag::Mono))
             .or_else(|| v.first())
     }
-    // Registration prefers the decision-seam `baseline_lag` (b_mapped, ledger A2); the diagnostic
-    // best-bracket `lag` is only a **legacy fallback** for pre-A2 fingerprints and sits at a *different*
+    // Registration prefers the decision-seam `lag_decision` (b_mapped, ledger A2); the diagnostic
+    // best-bracket `lag_editorial` is only a **legacy fallback** for pre-A2 fingerprints and sits at a *different*
     // placement (structure throat). Flag when a row falls back so a run mixing pre-/post-A2 corpora is
     // visible instead of silently conflating placements (C-harness-3).
-    let registration_from_legacy_lag = gap.baseline_lag.is_none() && gap.lag.is_some();
-    let lag = gap.baseline_lag.as_ref().or(gap.lag.as_ref());
+    let registration_from_legacy_lag = gap.lag_decision.is_none() && gap.lag_editorial.is_some();
+    let lag = gap.lag_decision.as_ref().or(gap.lag_editorial.as_ref());
     let pre = lag.and_then(|l| mono_entry(&l.pre_anchor));
     let post = lag.and_then(|l| mono_entry(&l.post_anchor));
     let verdict = pre.or(post).map(|s| s.verdict.clone());
@@ -516,7 +520,7 @@ fn gap_row(pair: &str, source: &SourceMeta, gap: &GapEntry, eps: f64, tail_secs:
         .or_else(|| post.map(|s| s.peak_r));
     let splice_step_ms = splice.map(|s| s.step_ms);
     let splice_edge_pinned = splice.and_then(|s| s.edge_pinned);
-    // Prefer the splice's per-shoulder z (same `baseline_lag` source), but stay two-sided: fall back to the
+    // Prefer the splice's per-shoulder z (same `lag_decision` source), but stay two-sided: fall back to the
     // lag-entry both-sided z only when the splice carries neither shoulder.
     let uniqueness_z = match splice {
         Some(s) => both(s.pre_peak_z, s.post_peak_z).or(base_uniqueness_z),

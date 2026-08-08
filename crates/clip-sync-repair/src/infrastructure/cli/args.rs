@@ -51,7 +51,7 @@ pub struct Args {
     pub gap_listen: Option<Option<PathBuf>>,
 
     /// Include Tier-3 diagnostic measurements in `--gap-fingerprints` output (`seam_probe`,
-    /// `wide_envelope`, diagnostic `lag`, `b_levels`). Slower; needed for analyzer seam-probe reports
+    /// `wide_envelope`, `lag_editorial`, `b_levels`). Slower; needed for analyzer seam-probe reports
     /// [default: off — decision/repair fields only].
     #[cfg(feature = "calibration")]
     #[arg(long)]

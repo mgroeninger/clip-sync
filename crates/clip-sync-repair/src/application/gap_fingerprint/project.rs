@@ -20,7 +20,7 @@ pub struct FingerprintXSet {
     pub seam_probe: Option<SeamProbeFingerprint>,
     pub wide_envelope: Option<WideEnvelopeFingerprint>,
     pub b_levels: Option<LevelProfile>,
-    pub lag: Option<LagFingerprint>,
+    pub lag_editorial: Option<LagFingerprint>,
 }
 
 /// Per-gap detail the **from-decode** path measured and the spec cannot carry.
@@ -32,8 +32,8 @@ pub struct FingerprintXSet {
 /// then carries the real thing. `Default` (both `None`) is the oracle/spec-only path, which has
 /// nothing to hand over.
 ///
-/// Fabricated `baseline_lag` shoulders (when this is `None`) are what
-/// [`crate::application::gap_fingerprint::PROJECTED_BASELINE_LAG_FIELDS`] declares. Envelope /
+/// Fabricated `lag_decision` shoulders (when this is `None`) are what
+/// [`crate::application::gap_fingerprint::PROJECTED_LAG_DECISION_FIELDS`] declares. Envelope /
 /// silence / contour / anchors / seam_shape are omitted outright (`None`) rather than declared.
 #[derive(Debug, Clone, Default)]
 pub struct MeasuredDetail {
@@ -41,7 +41,7 @@ pub struct MeasuredDetail {
     pub brackets: Option<Vec<BracketInfo>>,
     /// The real ±`max_lag_ms` sweep at `b_mapped` (`lag_at_placement`), else [`projected_lag_entry`]'s
     /// four-scalar stand-in.
-    pub baseline_lag: Option<LagFingerprint>,
+    pub lag_decision: Option<LagFingerprint>,
 }
 
 /// Project a characterized [`GapRepairSpec`] into the licensing-safe [`GapFingerprint`] export schema
@@ -53,7 +53,7 @@ pub struct MeasuredDetail {
 /// levels envelope are omitted (`None` / skip-empty) when the spec cannot carry them — absence, not
 /// zeros. `outcome.tier` is `patch`/`skip` (matching the scan path, `gap_fingerprint.rs` tier logic);
 /// uniqueness validators (`*_seam_prom`/`*_seam_z`, `peak_z`) are `None` on the production path
-/// (Tier-3, tolerated by the golden diff). `brackets` and `baseline_lag` are the **real** measurements
+/// (Tier-3, tolerated by the golden diff). `brackets` and `lag_decision` are the **real** measurements
 /// when [`MeasuredDetail`] supplies them (the from-decode dump, 8g.4b), else reconstructed from the
 /// stored scalars — round-tripping the counts/best/closest and the four registration scalars
 /// respectively, not the original detail. See §2.5.2a / 8e.
@@ -73,7 +73,7 @@ pub fn spec_to_fingerprint_summary(
     let gate = &tags.gate;
     let MeasuredDetail {
         brackets: measured_brackets,
-        baseline_lag: measured_baseline_lag,
+        lag_decision: measured_lag_decision,
     } = measured;
     // Real per-bracket rows when characterize supplied them (from-decode dump, 8g.4b); else synthesize just
     // enough structure to round-trip the stored counts/best/closest (the corpus-projection path, which can't
@@ -114,7 +114,7 @@ pub fn spec_to_fingerprint_summary(
     };
     // The measured sweep when the caller ran one; otherwise the four-scalar stand-in, whose fabricated
     // half `source.not_measured` disowns.
-    let baseline_lag = measured_baseline_lag.or_else(|| {
+    let lag_decision = measured_lag_decision.or_else(|| {
         if reg.pre_peak_r.is_some() || reg.post_peak_r.is_some() {
             Some(LagFingerprint {
                 pre_anchor: projected_lag_entry(
@@ -219,8 +219,8 @@ pub fn spec_to_fingerprint_summary(
         brackets,
         structure,
         seams,
-        lag: x.lag,
-        baseline_lag,
+        lag_editorial: x.lag_editorial,
+        lag_decision,
         residual,
         seam_probe: x.seam_probe,
         donor_interior: tags.donor_aligned,
@@ -373,7 +373,7 @@ fn projected_level_profile(l: Option<&LevelTags>) -> LevelProfile {
 // them back, and assert the corpus reader's decision axes (`golden_baseline`) are unchanged. Reads only the
 // decision/repair fields the reader consumes — the same set `spec_to_fingerprint_summary` re-emits — so the
 // round-trip is identity on `GoldenRecord`. `tags_from_fingerprint` mirrors `gap_fingerprint_corpus::gap_row`
-// (baseline_lag-preferred registration, per-side donor, brackets → counts/best/closest).
+// (lag_decision-preferred registration, per-side donor, brackets → counts/best/closest).
 
 fn mono_lag(v: &[LagSummary]) -> Option<&LagSummary> {
     v.iter()
@@ -383,14 +383,14 @@ fn mono_lag(v: &[LagSummary]) -> Option<&LagSummary> {
 
 /// Extract the D/R payload (`GapRepairTags`) an oracle-produced [`GapFingerprint`] carries — the inverse of
 /// [`spec_to_fingerprint_summary`]'s tag mapping, mirroring `gap_row`'s reads so the projection round-trips the
-/// `golden_baseline` axes. Registration prefers `baseline_lag` (falls back to the diagnostic `lag`), matching
+/// `golden_baseline` axes. Registration prefers `lag_decision` (falls back to `lag_editorial`), matching
 /// the reader.
 /// Shared core of [`tags_from_fingerprint`] and [`tags_from_measurements`] — build the D/R tag payload from the
 /// individual overlay fields, so the oracle-fingerprint path (8f) and the from-decode path (8g.3b) read specs
 /// through ONE mapping. `structure`/`seams` are the summary throat scores (`None` under `skip_baseline`).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn tags_from_fields(
-    baseline_lag: Option<&LagFingerprint>,
+    lag_decision: Option<&LagFingerprint>,
     diag_lag: Option<&LagFingerprint>,
     splice: Option<&SpliceSummary>,
     splice_dualfit: Option<SpliceDualfit>,
@@ -404,7 +404,7 @@ pub(crate) fn tags_from_fields(
 ) -> crate::domain::gap_repair_spec::GapRepairTags {
     use crate::domain::gap_repair_spec::{GateTags, RegistrationTags, SeamLocalTags};
 
-    let lag = baseline_lag.or(diag_lag);
+    let lag = lag_decision.or(diag_lag);
     let pre = lag.and_then(|l| mono_lag(&l.pre_anchor));
     let post = lag.and_then(|l| mono_lag(&l.post_anchor));
 
@@ -512,8 +512,8 @@ pub(crate) fn tags_from_fields(
 /// Extract the D/R tag payload from an oracle [`GapFingerprint`] (8f). Thin wrapper over [`tags_from_fields`].
 pub fn tags_from_fingerprint(fp: &GapFingerprint) -> crate::domain::gap_repair_spec::GapRepairTags {
     tags_from_fields(
-        fp.baseline_lag.as_ref(),
-        fp.lag.as_ref(),
+        fp.lag_decision.as_ref(),
+        fp.lag_editorial.as_ref(),
         fp.splice.as_ref(),
         fp.splice_dualfit,
         &fp.brackets,
@@ -856,7 +856,7 @@ mod tests {
             None,
             MeasuredDetail {
                 brackets: Some(brackets),
-                baseline_lag: None,
+                lag_decision: None,
             },
         );
         assert_eq!(fp.outcome.as_ref().unwrap().tier, "skip");

@@ -71,7 +71,7 @@ impl MetricContract {
 ///
 /// Generic on purpose. Four of the groups slated for contracts are *pairs* sharing one type
 /// (`equivalence_diagnostic`/`equivalence_production` over `GapEquivalenceVerdict`,
-/// `lag`/`baseline_lag` over `LagFingerprint`, `donor_interior`/`donor_interior_nominal` over
+/// `lag_editorial`/`lag_decision` over `LagFingerprint`, `donor_interior`/`donor_interior_nominal` over
 /// `DonorInterior`) — and two of those types are **domain** types also serialized on the production
 /// `--json` surface. A per-field wrapper is what lets the two halves of a pair carry *different*
 /// contract text without pushing reader metadata down into the domain.

@@ -240,9 +240,9 @@ struct LagSideSweep<'a> {
 const DUALFIT_SEAM_UNIQ_LAG_MS: f64 = 30.0;
 
 /// Half-width (ms) of the per-shoulder **seam-local** lag search in [`splice_dualfit_at`], anchored on the
-/// **nominal `b_mapped`** (not the gross 1 s `baseline_lag`). The seam defines its own placement, so the
+/// **nominal `b_mapped`** (not the gross 1 s `lag_decision`). The seam defines its own placement, so the
 /// search must cover the full registration range: a gross lag that locked onto distant content (7·g3: 1 s
-/// pre lag −319 ms but the seam is at +18 ms) would otherwise clip a live seam. Set to the `baseline_lag`
+/// pre lag −319 ms but the seam is at +18 ms) would otherwise clip a live seam. Set to the `lag_decision`
 /// range so anything the 1 s sweep could register, the seam sweep can too. `peak_z` on the seam curve is the
 /// alias guard against a wide search locking onto a far periodic peak. Calibrate at ledger A5/C6.
 const SEAM_LOCAL_SEARCH_MS: f64 = 600.0;
@@ -264,8 +264,8 @@ fn tags_from_measurements(
     levels: Option<crate::domain::gap_repair_spec::LevelTags>,
 ) -> crate::domain::gap_repair_spec::GapRepairTags {
     tags_from_fields(
-        m.baseline_lag.as_ref(),
-        m.lag.as_ref(),
+        m.lag_decision.as_ref(),
+        m.lag_editorial.as_ref(),
         m.splice.as_ref(),
         m.splice_dualfit,
         &m.brackets,
@@ -1030,13 +1030,13 @@ const SEAM_PROBE_ENV_BIN_MS: f64 = 10.0;
 
 /// Pre/post [`SeamProbe`]s at a placement (mono). Built at **`b_mapped`** registration to diagnose a dead
 /// waveform seam: recovery (mis-alignment) vs encoding-robust envelope (cross-encoding) vs level/SNR.
-/// `post_shift_frames` is the measured pre-side lag (rounded, from `baseline_lag`'s mono pre entry) —
+/// `post_shift_frames` is the measured pre-side lag (rounded, from `lag_decision`'s mono pre entry) —
 /// the same sequential-registration shift `lag_pair` applies (ledger A2 sequential registration),
-/// so the post probe isn't centered on the un-shifted `start_frame + gap_frames` while `baseline_lag`'s
+/// so the post probe isn't centered on the un-shifted `start_frame + gap_frames` while `lag_decision`'s
 /// post search is. The post fine-lag half-width is also raised to `cfg.lag_max_lag_ms` (from the ±25 ms
 /// `SEAM_PROBE_FINE_LAG_MS`) since, even after shifting, the residual search still needs to cover the
 /// bridge-length mismatch (`D_B - D_A`), not just fine sub-frame jitter. `recovered_lag_ms` is reported
-/// gross-relative (shifted back by `post_shift_frames`) to stay comparable with `baseline_lag`.
+/// gross-relative (shifted back by `post_shift_frames`) to stay comparable with `lag_decision`.
 struct SeamProbeAtPlacementInput<'a> {
     a_samples: &'a [f32],
     channels: usize,
@@ -1137,7 +1137,7 @@ fn seam_probe_at_placement(input: &SeamProbeAtPlacementInput<'_>) -> SeamProbeFi
 }
 
 /// Inputs for [`splice_dualfit_at`] — the A/B PCM plus the **nominal** `b_mapped` gap-start frame. The seam
-/// search re-anchors on nominal (not the gross `baseline_lag`), so it needs only the geometry anchor; the
+/// search re-anchors on nominal (not the gross `lag_decision`), so it needs only the geometry anchor; the
 /// pre shoulder butts at `b_mapped_start`, the post at `b_mapped_start + gap_frames`.
 struct SpliceDualfitInput<'a> {
     a_samples: &'a [f32],
@@ -1195,7 +1195,7 @@ fn splice_dualfit_at(input: &SpliceDualfitInput<'_>) -> Option<SpliceDualfit> {
     // Seam-local viability, **re-anchored on nominal `b_mapped`**: the fill places each shoulder at the lag
     // that maximizes ITS own seam, so search ±`max_lag` around the nominal shoulder (pre butts at
     // `b_mapped_start`, post at `b_mapped_start + gap_frames`) and take the peak. Anchoring on the gross 1 s
-    // `baseline_lag` (the prior behavior) clipped seams whose lag diverges far from the 1 s peak — e.g. 7·g3,
+    // `lag_decision` (the prior behavior) clipped seams whose lag diverges far from the 1 s peak — e.g. 7·g3,
     // pre 1 s lag −319 ms but the seam is at +18 ms, outside any narrow window around the gross placement.
     // Production `try_dual_fit` uses the same nominal centers (`dual_fit.rs`).
     let b_pre_nominal = b_mapped_start;
@@ -1283,7 +1283,7 @@ fn mono_lag_side(lag: &LagFingerprint, pre: bool) -> Option<&LagSummary> {
     entries.iter().find(|s| s.channel == LagChannel::Mono)
 }
 
-/// First-class splice summary from decision-seam `baseline_lag` (mono): step + per-side peaks / `peak_z`.
+/// First-class splice summary from decision-seam `lag_decision` (mono): step + per-side peaks / `peak_z`.
 pub fn splice_summary_from_lag(lag: &LagFingerprint) -> Option<SpliceSummary> {
     let pre = mono_lag_side(lag, true)?;
     let post = mono_lag_side(lag, false)?;
@@ -1343,11 +1343,11 @@ fn wide_envelope_side(
     })
 }
 
-/// Pre/post wide-envelope confirmers at **`b_mapped`** registration — cross-scale check vs `baseline_lag`.
+/// Pre/post wide-envelope confirmers at **`b_mapped`** registration — cross-scale check vs `lag_decision`.
 /// `post_shift_frames` mirrors `lag_pair`'s sequential centering (ledger A2): the post window is centered on `start_frame + gap_frames + post_shift_frames`, and its
-/// search half-width is raised to `cfg.lag_max_lag_ms` (aligned with `baseline_lag`, not the frozen
+/// search half-width is raised to `cfg.lag_max_lag_ms` (aligned with `lag_decision`, not the frozen
 /// ±400 ms `WIDE_ENV_MAX_LAG_MS`) so it can still resolve the bridge-length mismatch after shifting.
-/// `peak_lag_ms` is reported gross-relative for comparability with `baseline_lag`.
+/// `peak_lag_ms` is reported gross-relative for comparability with `lag_decision`.
 struct WideEnvelopeAtPlacementInput<'a> {
     a_samples: &'a [f32],
     channels: usize,
@@ -1588,8 +1588,8 @@ pub fn build_gap_fingerprint(
     // --- pairwise (B present) ---
     let mut structure = None;
     let mut seams = None;
-    let mut lag = None;
-    let mut baseline_lag = None;
+    let mut lag_editorial = None;
+    let mut lag_decision = None;
     // Per-bracket scoring in Full tier; Summary tier only needs baseline structure/seam at `b_mapped`.
     let mut brackets: Vec<BracketInfo> = raw_brackets
         .iter()
@@ -1656,7 +1656,7 @@ pub fn build_gap_fingerprint(
 
         if tier == DetailTier::Full {
             // Decision-seam lag at `b_mapped` nominal + ±600 ms sweep (ledger A2) — not structure throat.
-            baseline_lag = Some(lag_at_placement(&LagAtPlacementInput {
+            lag_decision = Some(lag_at_placement(&LagAtPlacementInput {
                 a_samples: inputs.a_samples,
                 channels: ch,
                 refined,
@@ -1713,7 +1713,7 @@ pub fn build_gap_fingerprint(
                 }
             }
             if let Some((_, start_frame, refined_b, selected)) = best {
-                lag = Some(lag_at_placement(&LagAtPlacementInput {
+                lag_editorial = Some(lag_at_placement(&LagAtPlacementInput {
                     a_samples: inputs.a_samples,
                     channels: ch,
                     refined: refined_b,
@@ -1745,8 +1745,8 @@ pub fn build_gap_fingerprint(
         brackets,
         structure,
         seams,
-        lag,
-        baseline_lag,
+        lag_editorial,
+        lag_decision,
         residual: None,
         seam_probe: None,
         donor_interior: None,
@@ -1891,7 +1891,7 @@ fn anchor_params_from_gate(
 struct RegionMeasurements {
     brackets: Vec<BracketInfo>,
     outcome: GateOutcome,
-    baseline_lag: Option<LagFingerprint>,
+    lag_decision: Option<LagFingerprint>,
     splice: Option<SpliceSummary>,
     seam_probe: Option<SeamProbeFingerprint>,
     donor_interior: Option<DonorInterior>,
@@ -1900,7 +1900,7 @@ struct RegionMeasurements {
     splice_dualfit: Option<SpliceDualfit>,
     wide_envelope: Option<WideEnvelopeFingerprint>,
     residual: Option<ResidualInfo>,
-    lag: Option<LagFingerprint>,
+    lag_editorial: Option<LagFingerprint>,
 }
 
 /// Per-gap inputs for [`compute_region_measurements`] — the geometry the caller resolved (refined throat, B
@@ -2091,7 +2091,7 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
     };
 
     // Registration metrics at `b_mapped` nominal (ledger A2 / §3.7) — stable gross map + ±600 ms lag sweep.
-    let baseline_lag = Some(lag_at_placement(&LagAtPlacementInput {
+    let lag_decision = Some(lag_at_placement(&LagAtPlacementInput {
         a_samples: &a_pcm.samples,
         channels: ch,
         refined,
@@ -2102,12 +2102,12 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
         cfg,
         sample_rate,
     }));
-    let pre_shift_frames = baseline_lag
+    let pre_shift_frames = lag_decision
         .as_ref()
         .and_then(|l| mono_lag_side(l, true))
         .map(|s| s.frac_lag_samples.round() as i64)
         .unwrap_or(0);
-    let post_gross_frames = baseline_lag
+    let post_gross_frames = lag_decision
         .as_ref()
         .and_then(|l| mono_lag_side(l, false))
         .map(|s| s.frac_lag_samples.round() as i64);
@@ -2198,7 +2198,7 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
     } else {
         None
     };
-    let splice = baseline_lag.as_ref().and_then(splice_summary_from_lag);
+    let splice = lag_decision.as_ref().and_then(splice_summary_from_lag);
 
     // Residual stays at the gate's structure throat. Reuse the throat placement from the bracket loop when the
     // throat bracket scored `Ok`; else a fresh `gate_structure_align` call.
@@ -2224,7 +2224,7 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
     });
 
     // Diagnostic lag (Tier-3): one placement search at the best (highest-seam) speech bracket.
-    let lag = if include_diagnostics {
+    let lag_editorial = if include_diagnostics {
         best_energy.and_then(|(_, refined_b)| {
             place_on_b(&PlaceOnBInput {
                 a_samples: &a_pcm.samples,
@@ -2260,7 +2260,7 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
     RegionMeasurements {
         brackets: infos,
         outcome,
-        baseline_lag,
+        lag_decision,
         splice,
         seam_probe,
         donor_interior,
@@ -2269,7 +2269,7 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
         splice_dualfit,
         wide_envelope,
         residual,
-        lag,
+        lag_editorial,
     }
 }
 
@@ -2381,8 +2381,8 @@ pub fn characterize_gaps_from_decode(
     // Seam-gate floors used for every bracket `failure_stage` on this dump — stamped once at corpus
     // level (same idea as equivalence `thresholds`). Summary-only `characterize_gaps` leaves this None.
     corpus.source.gate_recipe = Some(CorpusGateRecipe::from_settings(&request.settings));
-    // Gaps whose `baseline_lag` block came from `projected_lag_entry` rather than a real sweep —
-    // the population `PROJECTED_BASELINE_LAG_FIELDS` exists to disown. Zero on a dump where every
+    // Gaps whose `lag_decision` block came from `projected_lag_entry` rather than a real sweep —
+    // the population `PROJECTED_LAG_DECISION_FIELDS` exists to disown. Zero on a dump where every
     // measured gap carried its sweep through, which is the normal from-decode case.
     let mut projected_lag_gaps = 0usize;
 
@@ -2514,12 +2514,12 @@ pub fn characterize_gaps_from_decode(
             seam_probe: m.seam_probe,
             wide_envelope: m.wide_envelope,
             b_levels: m.b_levels,
-            lag: m.lag,
+            lag_editorial: m.lag_editorial,
         };
         // Carry the REAL per-bracket rows (8g.4b) so the flipped dump is byte-faithful to the oracle's
         // `brackets` in both modes — the oracle enumerates them unconditionally, so from-decode must too.
         //
-        // And the REAL `baseline_lag`: `lag_at_placement` already swept ±`lag_max_lag_ms` at `b_mapped`
+        // And the REAL `lag_decision`: `lag_at_placement` already swept ±`lag_max_lag_ms` at `b_mapped`
         // above, and the projection used to throw that away and rebuild a row from four stored scalars —
         // zeroed search parameters, `lag0_r` a copy of `peak_r`, `verdict` hardcoded `TimingOffset`. The
         // copy is the damaging one: it reads as "this shoulder peaks exactly at zero lag" on every gap,
@@ -2528,13 +2528,13 @@ pub fn characterize_gaps_from_decode(
         // projects — which is why the declaration below is conditional rather than a constant.
         let measured = MeasuredDetail {
             brackets: Some(m.brackets),
-            baseline_lag: m.baseline_lag,
+            lag_decision: m.lag_decision,
         };
-        let lag_supplied = measured.baseline_lag.is_some();
+        let lag_supplied = measured.lag_decision.is_some();
         *fp = spec_to_fingerprint_summary(&spec, sample_rate, channels as u16, Some(x), measured);
         // Count only gaps that ended up with a *fabricated* block. A gap with no sweep and no scalars
-        // has no `baseline_lag` at all, and absence needs no disowning.
-        if !lag_supplied && fp.baseline_lag.is_some() {
+        // has no `lag_decision` at all, and absence needs no disowning.
+        if !lag_supplied && fp.lag_decision.is_some() {
             projected_lag_gaps += 1;
         }
 
@@ -2784,19 +2784,19 @@ pub fn characterize_gaps_from_decode(
     // `characterize_gaps`, because it is this function that rebuilds via
     // `spec_to_fingerprint_summary`. Envelope / silence / contour / anchors / seam_shape are now
     // omitted (`None`) rather than zeroed, so [`NOT_MEASURED_BY_PROJECTION`] is empty; only
-    // `baseline_lag.*` may still need a declaration when the sweep was projected rather than measured.
+    // `lag_decision.*` may still need a declaration when the sweep was projected rather than measured.
     //
     // Scoped to `DetailTier::Full` — gaps that never reached the rebuild keep `characterize_gaps`'s
     // real values and stay `Summary`. Only claim anything if the rebuild actually ran.
     //
-    // `baseline_lag.*` is appended only when some gap actually got the fabricated row. This path
+    // `lag_decision.*` is appended only when some gap actually got the fabricated row. This path
     // normally threads the real sweep through `MeasuredDetail`, so the usual answer is "not declared,
     // because measured" — the declaration tracks what happened, not what the code is capable of.
     if corpus.gaps.iter().any(|g| g.tier == DetailTier::Full) {
         corpus.source.not_measured = NOT_MEASURED_BY_PROJECTION
             .iter()
             .chain(if projected_lag_gaps > 0 {
-                PROJECTED_BASELINE_LAG_FIELDS
+                PROJECTED_LAG_DECISION_FIELDS
             } else {
                 &[]
             })
@@ -2957,7 +2957,7 @@ fn hms(secs: f64) -> String {
 /// Headline tag for a gap's filename: the lag verdict if measured, else the gate outcome, else `na`.
 #[cfg(any(feature = "calibration", test))]
 fn entry_verdict(gap: &GapFingerprint) -> String {
-    gap.lag
+    gap.lag_editorial
         .as_ref()
         .and_then(|l| l.pre_anchor.first().or_else(|| l.post_anchor.first()))
         .map(|s| lag_verdict_str(s.verdict).to_string())
@@ -3042,7 +3042,7 @@ pub(crate) fn write_corpus_dir(
             tier: detail_tier_str(gap.tier),
             outcome: gap.outcome.as_ref().map(|o| o.tier.clone()),
             lag_verdict: gap
-                .lag
+                .lag_editorial
                 .as_ref()
                 .and_then(|l| l.pre_anchor.first().or_else(|| l.post_anchor.first()))
                 .map(|s| lag_verdict_str(s.verdict).to_string()),
@@ -3368,7 +3368,7 @@ mod tests {
                 // Patched by the bracket gate ⇒ dual-fit is never consulted.
                 dual_fit_rescue: None,
             },
-            baseline_lag: None,
+            lag_decision: None,
             splice: Some(SpliceSummary {
                 step_ms: 12.5,
                 pre_peak_r: 0.93,
@@ -3408,7 +3408,7 @@ mod tests {
                 placement_slide_frames: Some(0),
                 max_lag_frames: Some(0),
             }),
-            lag: None,
+            lag_editorial: None,
         };
         let levels = LevelTags {
             a_gap_floor_db: -70.0,
@@ -3734,7 +3734,7 @@ mod tests {
     }
 
     #[test]
-    fn splice_summary_from_baseline_lag_mono() {
+    fn splice_summary_from_lag_decision_mono() {
         let lag = LagFingerprint {
             pre_anchor: vec![LagSummary {
                 window_ms: 1000,
@@ -3948,7 +3948,10 @@ mod tests {
             ),
             "a speech-anchored bracket should score a strong seam where the throat cannot"
         );
-        assert!(fp.lag.is_some(), "lag computed at the best speech bracket");
+        assert!(
+            fp.lag_editorial.is_some(),
+            "lag computed at the best speech bracket"
+        );
     }
 
     /// One 2.5 s gap with speech shoulders on both sides and low-level noise filling B's donor window:
@@ -4144,7 +4147,7 @@ mod tests {
     }
 
     /// Production from-decode dump omits unmeasured Option fields and leaves `not_measured` empty
-    /// when the real `baseline_lag` sweep was threaded through (no fabricated lag stand-ins).
+    /// when the real `lag_decision` sweep was threaded through (no fabricated lag stand-ins).
     #[test]
     fn production_dump_omits_unmeasured_option_fields() {
         use crate::application::PatchAudioRequest;
@@ -4182,7 +4185,7 @@ mod tests {
         assert_eq!(
             corpus.source.not_measured, NOT_MEASURED_BY_PROJECTION,
             "the production dump must leave not_measured empty when it threads the real \
-             `baseline_lag` through (no `PROJECTED_BASELINE_LAG_FIELDS`)"
+             `lag_decision` through (no `PROJECTED_LAG_DECISION_FIELDS`)"
         );
         let recipe = corpus
             .source
@@ -4225,7 +4228,7 @@ mod tests {
             // keeps the conditional declaration below honest in the other direction — if the
             // pass-through ever regresses to projection, this fires before the declaration does.
             for e in g
-                .baseline_lag
+                .lag_decision
                 .iter()
                 .flat_map(|bl| bl.pre_anchor.iter().chain(bl.post_anchor.iter()))
             {
@@ -4234,21 +4237,21 @@ mod tests {
             }
         }
         assert!(
-            corpus.gaps.iter().any(|g| g.baseline_lag.is_some()),
-            "fixture must produce a baseline_lag to make the assertions above non-vacuous"
+            corpus.gaps.iter().any(|g| g.lag_decision.is_some()),
+            "fixture must produce a lag_decision to make the assertions above non-vacuous"
         );
     }
 
     /// The conditional list must not overlap the unconditional one.
     ///
-    /// If a `baseline_lag.*` path appeared in both, the declaration would be emitted even on dumps
+    /// If a `lag_decision.*` path appeared in both, the declaration would be emitted even on dumps
     /// that measured the sweep — claiming a field is unmeasured when it is real, which `--check`
     /// treats as worse than no declaration at all (it licenses discarding good data). The
     /// exact-equality assertion in the test above is what proves the from-decode dump omits them;
     /// this proves the constants can't make that impossible.
     #[test]
     fn conditional_lag_fields_stay_out_of_the_unconditional_list() {
-        for f in PROJECTED_BASELINE_LAG_FIELDS {
+        for f in PROJECTED_LAG_DECISION_FIELDS {
             assert!(
                 !NOT_MEASURED_BY_PROJECTION.contains(f),
                 "{f} is conditional; it must not sit in the unconditional list too"
@@ -5089,7 +5092,7 @@ mod tests {
             brackets: vec![],
             structure: None,
             seams: None,
-            lag: full.then(|| LagFingerprint {
+            lag_editorial: full.then(|| LagFingerprint {
                 pre_anchor: vec![LagSummary {
                     window_ms: 250,
                     max_lag_ms: 200,
@@ -5108,7 +5111,7 @@ mod tests {
                 }],
                 post_anchor: vec![],
             }),
-            baseline_lag: None,
+            lag_decision: None,
             residual: None,
             seam_probe: None,
             donor_interior: None,

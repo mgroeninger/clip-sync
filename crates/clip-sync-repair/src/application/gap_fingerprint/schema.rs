@@ -162,7 +162,7 @@ pub struct SourceMeta {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub gate_recipe: Option<CorpusGateRecipe>,
     /// Dotted paths of per-gap fields the emitting path left as **present structural defaults** rather
-    /// than measurements — see [`NOT_MEASURED_BY_PROJECTION`] and [`PROJECTED_BASELINE_LAG_FIELDS`].
+    /// than measurements — see [`NOT_MEASURED_BY_PROJECTION`] and [`PROJECTED_LAG_DECISION_FIELDS`].
     ///
     /// Only fields that still serialize a non-`Option` stand-in need an entry here. Envelope /
     /// silence / contour / anchors / `seam_shape` are `Option` (or skip-empty) and simply **omit**
@@ -177,13 +177,13 @@ pub struct SourceMeta {
 ///
 /// Empty since 2026-08-03: `levels` envelope / `silence` / `contour` / `anchors` / `outcome.seam_shape`
 /// are omitted (`Option` / skip-empty) rather than written as zeros / `−120` / `""`. The only remaining
-/// fabricated stand-ins are the conditional [`PROJECTED_BASELINE_LAG_FIELDS`].
+/// fabricated stand-ins are the conditional [`PROJECTED_LAG_DECISION_FIELDS`].
 ///
 /// Kept as a named constant so emitters and `--check` still share one list, and so older tests that
 /// assert "production declares exactly this" keep compiling against the empty claim.
 pub const NOT_MEASURED_BY_PROJECTION: &[&str] = &[];
 
-/// The `baseline_lag` shoulder fields `projected_lag_entry` fabricates — appended to
+/// The `lag_decision` shoulder fields `projected_lag_entry` fabricates — appended to
 /// [`SourceMeta::not_measured`] **only when some gap was actually projected**.
 ///
 /// Conditional because, unlike the lists above, this one has a path that answers it.
@@ -201,7 +201,23 @@ pub const NOT_MEASURED_BY_PROJECTION: &[&str] = &[];
 /// rather than the media. Both were read at face value before this declaration existed.
 ///
 /// [`MeasuredDetail`]: super::project::MeasuredDetail
-pub const PROJECTED_BASELINE_LAG_FIELDS: &[&str] = &[
+pub const PROJECTED_LAG_DECISION_FIELDS: &[&str] = &[
+    "lag_decision.window_ms",
+    "lag_decision.max_lag_ms",
+    "lag_decision.peak_lag_samples",
+    "lag_decision.frac_lag_samples",
+    "lag_decision.lag0_r",
+    "lag_decision.verdict",
+];
+
+/// The same declaration as written by dumps predating the 2026-08-07 `lag_decision` → `lag_decision`
+/// rename.
+///
+/// Unlike a struct field, these paths are **data**: they are strings inside `source.not_measured` on
+/// every already-committed corpus, and a serde alias cannot reach them. A reader that only knows the
+/// new spelling silently stops recognizing an old dump's declaration — and the failure mode is the
+/// bad direction, since an unrecognized declaration reads as "this field was measured".
+pub const LEGACY_PROJECTED_LAG_DECISION_FIELDS: &[&str] = &[
     "baseline_lag.window_ms",
     "baseline_lag.max_lag_ms",
     "baseline_lag.peak_lag_samples",
@@ -309,8 +325,9 @@ pub enum DetailTier {
 // Per-gap fingerprint
 // ---------------------------------------------------------------------------------------------
 
-/// One gap's numeric characterization. Pairwise fields (`structure`, `seams`, `lag`, `outcome`) are
-/// `None` when characterizing A alone; `lag` and per-bracket detail require [`DetailTier::Full`].
+/// One gap's numeric characterization. Pairwise fields (`structure`, `seams`, the two lag groups, `outcome`) are
+/// `None` when characterizing A alone; `lag_editorial` and per-bracket detail require
+/// [`DetailTier::Full`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GapFingerprint {
     pub index: usize,
@@ -335,13 +352,28 @@ pub struct GapFingerprint {
     pub structure: Option<StructureScores>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub seams: Option<SeamScores>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub lag: Option<LagFingerprint>,
+    /// Lag at the best-structure **editorial bracket** — a *diagnostic* placement that can sit far
+    /// from the throat the gate actually scores. Nothing decides on it; prefer `lag_decision` for
+    /// anything registration-shaped.
+    ///
+    /// Wire key was `lag` before 2026-08-07; old corpora still deserialize via the serde alias. The
+    /// bare name read as "the lag of this gap", which is what made it the wrong one to reach for.
+    #[serde(alias = "lag", skip_serializing_if = "Option::is_none", default)]
+    pub lag_editorial: Option<LagFingerprint>,
     /// Lag at the **decision placement** — the structure-slid throat (zero-move) seam the gate scores
-    /// for patch/skip — as opposed to `lag`, measured at the best-structure *editorial bracket* (a
-    /// diagnostic placement that can sit far from the throat). This is the registration-relevant lag.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub baseline_lag: Option<LagFingerprint>,
+    /// for patch/skip — as opposed to `lag_editorial`, measured at the best-structure *editorial
+    /// bracket* (a diagnostic placement that can sit far from the throat). This is the
+    /// registration-relevant lag.
+    ///
+    /// Wire key was `lag_decision` before 2026-08-07; old corpora still deserialize via the serde
+    /// alias. "Baseline" named the *placement pass* that produced it, not the role, and readers took
+    /// it for a reference/before value.
+    #[serde(
+        alias = "baseline_lag",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub lag_decision: Option<LagFingerprint>,
     /// Residual cancellation at the decision seam (the strong same-source confirm). Full tier, gate path.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub residual: Option<ResidualInfo>,
@@ -365,7 +397,7 @@ pub struct GapFingerprint {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub b_levels: Option<LevelProfile>,
     /// First-class splice summary: the per-side registration step + peaks/uniqueness the repair predicate
-    /// reads directly (instead of re-deriving from `baseline_lag`). Full tier, gate path.
+    /// reads directly (instead of re-deriving from `lag_decision`). Full tier, gate path.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub splice: Option<SpliceSummary>,
     /// Wide (100 ms-bin) envelope segment-identity confirmer at the decision seam — its peak lag should
@@ -966,7 +998,7 @@ fn de_residual_db_opt<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<f
 /// repair (A3) and this scan use one occupancy implementation. Re-exported for the existing call sites.
 pub use crate::domain::donor::{donor_interior_at, DonorInterior};
 
-/// First-class splice summary, derived from the per-side `baseline_lag` (mono): the registration `step`
+/// First-class splice summary, derived from the per-side `lag_decision` (mono): the registration `step`
 /// (`post_lag − pre_lag`) the length-reconciliation repair acts on, plus the per-side peak and robust
 /// uniqueness (`peak_z`) the addressability predicate gates on. Promoted so the gate reads it directly.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -978,7 +1010,7 @@ pub struct SpliceSummary {
     pub pre_peak_z: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub post_peak_z: Option<f64>,
-    /// **`step_ms` reliability flag:** true when *either* shoulder's `baseline_lag` peak was edge-pinned
+    /// **`step_ms` reliability flag:** true when *either* shoulder's `lag_decision` peak was edge-pinned
     /// (search-exhausted, [`LagSummary::edge_pinned`]). The step is `post_lag − pre_lag`, so a shoulder
     /// whose peak was clipped at the ±`max_lag` boundary makes `step_ms` GIGO (ledger A5/C6). `None` when
     /// neither shoulder carries the flag (older fingerprints).
@@ -989,7 +1021,7 @@ pub struct SpliceSummary {
 /// **Dual-fit viability** — the offline repair simulation promoted into the scan (ledger C3/C7; supersedes
 /// the `diag_splice_dualfit` harness, which decoded B separately and drifted from the scan). Each shoulder
 /// is placed with `seam_local_peak` re-anchored on nominal `b_mapped` (pre at `b_mapped_start`, post at
-/// `b_mapped_start + gap_frames`, ±`SEAM_LOCAL_SEARCH_MS`) — **not** on the gross 1 s `baseline_lag` —
+/// `b_mapped_start + gap_frames`, ±`SEAM_LOCAL_SEARCH_MS`) — **not** on the gross 1 s `lag_decision` —
 /// and the pre/post seams are scored at those placements against the gate thresholds — i.e. *would a
 /// length-reconciled fill pass the gate?* The trim/pad is interior, so it does not move the shoulder
 /// seams: `trim_frames` (`bridge − gap`) equals the registration step in frames. Computed on the scan's
@@ -1505,8 +1537,8 @@ mod tests {
                 mono_pre: 0.0296,
                 mono_post: 0.0290,
             }),
-            lag: None,
-            baseline_lag: None,
+            lag_editorial: None,
+            lag_decision: None,
             residual: Some(ResidualInfo {
                 chosen_pre_db: Some(-42.0),
                 chosen_post_db: Some(-38.0),
@@ -1575,8 +1607,8 @@ mod tests {
         let back: GapFingerprint = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(fp, back);
         // Absent optionals stay out of the wire form.
-        assert!(!json.contains("\"lag\""));
-        assert!(!json.contains("\"baseline_lag\""));
+        assert!(!json.contains("\"lag_editorial\""));
+        assert!(!json.contains("\"lag_decision\""));
         assert!(!json.contains("\"brackets\""));
     }
 
@@ -1623,6 +1655,129 @@ mod tests {
         // New keys round-trip unchanged.
         let back: GapFingerprint = serde_json::from_str(&json).expect("new keys deserialize");
         assert_eq!(fp, back);
+    }
+
+    /// R2 rename: pre-2026-08-07 corpora wrote `lag` / `baseline_lag`. Same contract as R1's — old
+    /// keys deserialize via alias, new keys only on the way out.
+    ///
+    /// The two halves are asserted separately on purpose: `lag` and `baseline_lag` alias onto
+    /// *different* fields, and a copy-paste that pointed both aliases at one field would still parse
+    /// and still round-trip — it would just silently merge the editorial and decision placements,
+    /// which is precisely the confusion this rename exists to end.
+    #[test]
+    fn legacy_lag_keys_deserialize_and_reserialize_renamed() {
+        let old = r#"{
+            "index": 0,
+            "tier": "full",
+            "sample_rate": 48000,
+            "channels": 2,
+            "geometry": {
+                "a_start_secs": 1.0,
+                "a_end_secs": 2.0,
+                "a_refined_start_secs": 1.0,
+                "a_refined_end_secs": 2.0,
+                "duration_secs": 1.0
+            },
+            "levels": {"noise_floor_db": -60.0, "gap_floor_db": -70.0},
+            "lag": {"pre_anchor": [{"window_ms": 250, "max_lag_ms": 200, "lag0_r": 0.1,
+                     "peak_r": 0.91, "channel": "mono", "peak_lag_samples": -100, "frac_lag_samples": -100.0,
+                     "frac_lag_ms": -2.08, "verdict": "timing_offset"}], "post_anchor": []},
+            "baseline_lag": {"pre_anchor": [{"window_ms": 1000, "max_lag_ms": 600, "lag0_r": 0.2,
+                     "peak_r": 0.77, "channel": "mono", "peak_lag_samples": -50, "frac_lag_samples": -50.0,
+                     "frac_lag_ms": -1.04, "verdict": "timing_offset"}], "post_anchor": []}
+        }"#;
+        let fp: GapFingerprint = serde_json::from_str(old).expect("legacy keys deserialize");
+
+        // Distinct placements must stay distinct — `peak_r` is the discriminator.
+        assert_eq!(
+            fp.lag_editorial
+                .as_ref()
+                .and_then(|l| l.pre_anchor.first())
+                .map(|s| s.peak_r),
+            Some(0.91),
+            "`lag` must land on lag_editorial"
+        );
+        assert_eq!(
+            fp.lag_decision
+                .as_ref()
+                .and_then(|l| l.pre_anchor.first())
+                .map(|s| s.peak_r),
+            Some(0.77),
+            "`baseline_lag` must land on lag_decision"
+        );
+
+        let json = serde_json::to_string(&fp).expect("serialize");
+        assert!(json.contains("\"lag_editorial\""));
+        assert!(json.contains("\"lag_decision\""));
+        assert!(!json.contains("\"baseline_lag\""));
+        // `lag_*` contains `lag`, so check for the bare old key exactly (the R1 substring trap).
+        assert!(!json.contains("\"lag\""));
+
+        let back: GapFingerprint = serde_json::from_str(&json).expect("new keys deserialize");
+        assert_eq!(fp, back);
+    }
+
+    /// The dotted paths in [`PROJECTED_LAG_DECISION_FIELDS`] are strings the compiler cannot check
+    /// against the struct they describe, and they are written into `source.not_measured` where a
+    /// stale spelling reads as "this field **was** measured". Pin each one to a key the type
+    /// actually emits.
+    ///
+    /// [`LEGACY_PROJECTED_LAG_DECISION_FIELDS`] is checked the opposite way: its entries must
+    /// *disagree* only in the prefix. It exists to be recognized on old corpora, so it has to stay a
+    /// faithful transcription of what those dumps wrote — not track the current spelling.
+    #[test]
+    fn projected_lag_decision_paths_name_keys_the_type_emits() {
+        // Deserialize-then-reserialize so both halves come from the types themselves: the group key
+        // from `GapFingerprint`, the field keys from `LagSummary`.
+        let fp: GapFingerprint = serde_json::from_str(
+            r#"{
+            "index": 0,
+            "tier": "full",
+            "sample_rate": 48000,
+            "channels": 2,
+            "geometry": {
+                "a_start_secs": 1.0,
+                "a_end_secs": 2.0,
+                "a_refined_start_secs": 1.0,
+                "a_refined_end_secs": 2.0,
+                "duration_secs": 1.0
+            },
+            "levels": {"noise_floor_db": -60.0, "gap_floor_db": -70.0},
+            "lag_decision": {"pre_anchor": [{"window_ms": 1000, "max_lag_ms": 600, "lag0_r": 0.2,
+                     "peak_r": 0.77, "channel": "mono", "peak_lag_samples": -50, "frac_lag_samples": -50.0,
+                     "frac_lag_ms": -1.04, "verdict": "timing_offset"}], "post_anchor": []}
+        }"#,
+        )
+        .expect("parse");
+        let wire = serde_json::to_value(&fp).expect("serialize");
+        let group = wire
+            .get("lag_decision")
+            .expect("the group key the dotted paths are rooted at");
+        let row = &group["pre_anchor"][0];
+
+        for path in PROJECTED_LAG_DECISION_FIELDS {
+            let (g, field) = path.split_once('.').expect("dotted path");
+            assert_eq!(g, "lag_decision", "{path}: unexpected group");
+            assert!(
+                row.get(field).is_some(),
+                "{path}: `{field}` is not a key a shoulder row emits"
+            );
+        }
+        assert_eq!(
+            LEGACY_PROJECTED_LAG_DECISION_FIELDS.len(),
+            PROJECTED_LAG_DECISION_FIELDS.len(),
+            "the legacy transcription must cover the same fields"
+        );
+        for (legacy, current) in LEGACY_PROJECTED_LAG_DECISION_FIELDS
+            .iter()
+            .zip(PROJECTED_LAG_DECISION_FIELDS)
+        {
+            assert_eq!(
+                legacy.strip_prefix("baseline_lag."),
+                current.strip_prefix("lag_decision."),
+                "{legacy} / {current}: same field, different prefix"
+            );
+        }
     }
 
     #[test]

@@ -103,7 +103,7 @@
     {
       "file": "10_decorrelated.json",
       "type": "decorrelated",
-      "expected": "SYNTHETIC (n=0 in real data): skip, donor occupied, seams recover at NO lag on EVERY peak layer (splice/baseline_lag/dualfit all collapsed), verdict=decorrelated, gate_pass=false => not a dual-fit target, !both_sides_recoverable. From 03_silence_splice.",
+      "expected": "SYNTHETIC (n=0 in real data): skip, donor occupied, seams recover at NO lag on EVERY peak layer (splice/lag_decision/dualfit all collapsed), verdict=decorrelated, gate_pass=false => not a dual-fit target, !both_sides_recoverable. From 03_silence_splice.",
       "provenance": {
         "corpus": "synthetic",
         "pair": "derived-from",

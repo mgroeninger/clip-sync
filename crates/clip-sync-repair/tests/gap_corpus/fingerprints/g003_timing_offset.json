@@ -481,7 +481,7 @@
         "mono_pre": 0.3741088869222046,
         "mono_post": -0.17153002393562936
       },
-      "lag": {
+      "lag_editorial": {
         "pre_anchor": [
           {
             "window_ms": 250,

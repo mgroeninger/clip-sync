@@ -57,7 +57,7 @@ mod tests {
             "anchors":{{"pre":[],"post":[]}},
             "lag":{{"pre_anchor":[{{"window_ms":250,"max_lag_ms":200,"channel":"mono","lag0_r":-0.1,"peak_r":0.95,"second_peak_r":0.20,"peak_lag_samples":-100,"frac_lag_samples":-100,"frac_lag_ms":{pre_ms},"verdict":"{verdict}"}}],
                     "post_anchor":[{{"window_ms":250,"max_lag_ms":200,"channel":"mono","lag0_r":-0.1,"peak_r":0.95,"second_peak_r":0.20,"peak_lag_samples":-50,"frac_lag_samples":-50,"frac_lag_ms":{post_ms},"verdict":"{verdict}"}}]}},
-            "baseline_lag":{{"pre_anchor":[{{"window_ms":250,"max_lag_ms":200,"channel":"mono","lag0_r":-0.1,"peak_r":0.95,"second_peak_r":0.20,"peak_lag_samples":-100,"frac_lag_samples":-100,"frac_lag_ms":{pre_ms},"verdict":"{verdict}"}}],
+            "lag_decision":{{"pre_anchor":[{{"window_ms":250,"max_lag_ms":200,"channel":"mono","lag0_r":-0.1,"peak_r":0.95,"second_peak_r":0.20,"peak_lag_samples":-100,"frac_lag_samples":-100,"frac_lag_ms":{pre_ms},"verdict":"{verdict}"}}],
                     "post_anchor":[{{"window_ms":250,"max_lag_ms":200,"channel":"mono","lag0_r":-0.1,"peak_r":0.95,"second_peak_r":0.20,"peak_lag_samples":-50,"frac_lag_samples":-50,"frac_lag_ms":{post_ms},"verdict":"{verdict}"}}]}},
             "residual":{{"chosen_pre_db":-42.0,"chosen_post_db":-41.0,"floor_pre_db":-40.0,"floor_post_db":-39.0,"informative":true}},
             "outcome":{{"plan_kind":"fillable","tier":"{tier}","seam_shape":""}}}}"#
@@ -237,7 +237,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let gap_json = r#"{"index":0,"tier":"full","sample_rate":48000,"channels":2,
             "geometry":{"duration_secs":1.8,"a_refined_start_secs":0},
-            "baseline_lag":{"pre_anchor":[{"peak_r":0.95,"peak_z":8.0,"prominence":0.6,"frac_lag_ms":-10.0,"verdict":"timing_offset"}],
+            "lag_decision":{"pre_anchor":[{"peak_r":0.95,"peak_z":8.0,"prominence":0.6,"frac_lag_ms":-10.0,"verdict":"timing_offset"}],
                     "post_anchor":[{"peak_r":0.95,"peak_z":15.0,"prominence":0.6,"frac_lag_ms":-5.0,"verdict":"timing_offset"}]},
             "outcome":{"tier":"skip"}}"#.to_string();
         write_corpus(
@@ -260,7 +260,7 @@ mod tests {
             format!(
                 r#"{{"index":{index},"tier":"full","sample_rate":48000,"channels":2,
                 "geometry":{{"duration_secs":1.8,"a_refined_start_secs":0}},
-                "baseline_lag":{{"pre_anchor":[{{"peak_r":0.95,"peak_z":16.0,"prominence":0.6,"frac_lag_ms":-16.0,"verdict":"timing_offset"}}],
+                "lag_decision":{{"pre_anchor":[{{"peak_r":0.95,"peak_z":16.0,"prominence":0.6,"frac_lag_ms":-16.0,"verdict":"timing_offset"}}],
                         "post_anchor":[{{"peak_r":0.95,"peak_z":15.0,"prominence":0.6,"frac_lag_ms":-8.0,"verdict":"timing_offset"}}]}},
                 "splice":{{"step_ms":8.0,"pre_peak_r":0.95,"post_peak_r":0.95,"pre_peak_z":16.0,"post_peak_z":15.0,"edge_pinned":false}},
                 "donor_interior_nominal":{{"rms_db":-80.0,"silence_fraction":{nominal_silence},"continuous":false}},
@@ -311,11 +311,13 @@ mod tests {
         // shoulder carries `peak_z`, so the two-sided robust uniqueness is `None`, not the pre value.
         let disagree = r#"{"index":0,"tier":"full","sample_rate":48000,"channels":2,
             "geometry":{"duration_secs":1.8,"a_refined_start_secs":0},
-            "baseline_lag":{"pre_anchor":[{"peak_r":0.95,"peak_z":16.0,"prominence":0.6,"frac_lag_ms":-16.0,"verdict":"timing_offset"}],
+            "lag_decision":{"pre_anchor":[{"peak_r":0.95,"peak_z":16.0,"prominence":0.6,"frac_lag_ms":-16.0,"verdict":"timing_offset"}],
                     "post_anchor":[{"peak_r":0.40,"frac_lag_ms":-8.0,"verdict":"decorrelated"}]},
             "outcome":{"tier":"skip"}}"#;
 
-        // g1: pre-A2 fingerprint — only the diagnostic `lag` block, no `baseline_lag`. C-harness-3: the
+        // g1: pre-A2 fingerprint — only the diagnostic `lag` block, no decision lag. Deliberately keeps the
+        // pre-2026-08-07 `lag` spelling: it is a legacy artifact, so it also exercises the serde alias.
+        // C-harness-3: the
         // legacy fallback must be flagged and the summary must warn about the schema mix.
         let legacy = r#"{"index":1,"tier":"full","sample_rate":48000,"channels":2,
             "geometry":{"duration_secs":1.8,"a_refined_start_secs":0},
@@ -344,7 +346,7 @@ mod tests {
         );
 
         // C-harness-3.
-        assert!(!g0.registration_from_legacy_lag, "g0 has baseline_lag");
+        assert!(!g0.registration_from_legacy_lag, "g0 has lag_decision");
         assert!(
             g1.registration_from_legacy_lag,
             "g1 fell back to legacy `lag`"
@@ -368,7 +370,7 @@ mod tests {
             format!(
                 r#"{{"index":{index},"tier":"full","sample_rate":48000,"channels":2,
                 "geometry":{{"duration_secs":1.8,"a_refined_start_secs":0}},
-                "baseline_lag":{{"pre_anchor":[{{"peak_r":0.95,"frac_lag_ms":-16.0,"verdict":"timing_offset"}}],
+                "lag_decision":{{"pre_anchor":[{{"peak_r":0.95,"frac_lag_ms":-16.0,"verdict":"timing_offset"}}],
                         "post_anchor":[{{"peak_r":0.95,"frac_lag_ms":-8.0,"verdict":"timing_offset"}}]}},
                 "donor_interior":{{"rms_db":-40.0,"silence_fraction":0.02,"continuous":{cont}}},
                 "donor_interior_nominal":{{"rms_db":-40.0,"silence_fraction":{nominal_sil},"continuous":{cont}}},
@@ -381,7 +383,7 @@ mod tests {
         // excluded — dual-fit never runs on patched gaps (B1/B11).
         let patched = r#"{"index":5,"tier":"full","sample_rate":48000,"channels":2,
             "geometry":{"duration_secs":1.8,"a_refined_start_secs":0},
-            "baseline_lag":{"pre_anchor":[{"peak_r":0.95,"frac_lag_ms":-16.0,"verdict":"timing_offset"}],
+            "lag_decision":{"pre_anchor":[{"peak_r":0.95,"frac_lag_ms":-16.0,"verdict":"timing_offset"}],
                     "post_anchor":[{"peak_r":0.95,"frac_lag_ms":-8.0,"verdict":"timing_offset"}]},
             "donor_interior":{"rms_db":-40.0,"silence_fraction":0.02,"continuous":true},
             "donor_interior_nominal":{"rms_db":-40.0,"silence_fraction":0.02,"continuous":true},

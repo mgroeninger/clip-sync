@@ -172,7 +172,7 @@ pub struct RepairConfig {
     /// interior trim, validated by the unchanged gate). On by default; `--no-dual-fit` to disable.
     #[serde(default = "default_true")]
     pub dual_fit: bool,
-    /// Tier-3 gap-fingerprint fields (`seam_probe`, `wide_envelope`, diagnostic `lag`, `b_levels`).
+    /// Tier-3 gap-fingerprint fields (`seam_probe`, `wide_envelope`, `lag_editorial`, `b_levels`).
     /// Off by default — `--gap-fingerprints` emits decision/repair (D/R) axes only unless enabled.
     #[serde(default)]
     pub fingerprint_diagnostics: bool,

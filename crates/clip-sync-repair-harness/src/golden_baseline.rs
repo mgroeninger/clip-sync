@@ -131,7 +131,7 @@ pub fn baseline_from_rows<'a>(rows: impl IntoIterator<Item = &'a GapRow>) -> Gol
                  *continuous/edge_pinned/brackets_*/fill_start_frame/fill_frames) assert BIT-EXACT. \
                  Tier-2 (gross_*/seamlocal_*/nominal_*/aligned_*/throat_*/fill_*_r continuous) assert \
                  WITHIN ε. \
-                 Tier-3 diagnostics (seam_probe/wide_envelope/b_levels/fp.lag) omitted. Field prefix = \
+                 Tier-3 diagnostics (seam_probe/wide_envelope/b_levels/fp.lag_editorial) omitted. Field prefix = \
                  measurement placement. fill_* are frame indices (integers) — Tier-1, not Tier-2."
             .into(),
         gap_count: gaps.len(),

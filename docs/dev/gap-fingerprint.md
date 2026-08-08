@@ -23,7 +23,7 @@ clip-sync-repair A.mkv B.m4v --gap-fingerprints gap-files/ [--fingerprint-gap 3]
   `manifest.json`.
 - `--fingerprint-gap N` (repeatable, or comma-separated: `--fingerprint-gap 1,3,12`) — characterize
   **only** these gaps. Omit it to characterize **all** gaps. Each characterized gap gets full
-  decision/repair detail (per-bracket gate `failure_stage`, `baseline_lag`, `splice_dualfit`, …).
+  decision/repair detail (per-bracket gate `failure_stage`, `lag_decision`, `splice_dualfit`, …).
   Unlike `--only-gaps` it takes **bare numbers only** — no `START-END` / `START..END` ranges, no
   timestamps.
   **`N` is 1-based**, matching the `#` column of the repair gap table (and every other user-facing gap
@@ -33,7 +33,7 @@ clip-sync-repair A.mkv B.m4v --gap-fingerprints gap-files/ [--fingerprint-gap 3]
   corpus dirs and the `equivalence-calibration` / `gap-fingerprint-stats` joins are unaffected. Locate
   a gap's file by the A-timeline timestamp already in the name (`…_t01-42-08_g002_…`), not by counting.
 - `--fingerprint-diagnostics` — also write the **Tier-3 X-set** (`seam_probe`, `wide_envelope`,
-  `b_levels`, diagnostic `lag`). Off by default (decision/repair fields only); slower. Needed for the
+  `b_levels`, `lag_editorial`). Off by default (decision/repair fields only); slower. Needed for the
   analyzer's seam-probe reports.
 
 **`--only-gaps` / `--skip-gaps` do not narrow a dump.** They filter the *repair* plan; the dump
@@ -191,8 +191,8 @@ approaches were refuted by measurement. Full analysis + cost hierarchy: that pla
 | `anchors` | **omitted on the production path** | pre/post candidates `{ time, source, prominence, rms_db }`. `Option` whole block |
 | `brackets` | full | feasible brackets `{ span, move, seam_*, structure_*, failure_stage, residual_margin_db? }`; `start_frame`/`fill_frames` only on brackets that pass the gate. On `structure_floor`, scores live in `structure_*` (not overloaded onto `seam_*`); on `residual`, `residual_margin_db` carries the applied headroom margin. Gap-level `structure`/`seams` blocks remain omitted under `skip_baseline_placement` (F1) |
 | `structure` / `seams` | **omitted on the production path** | intended: baseline scores; seams carry per-channel + selected channels. Suppressed by `skip_baseline_placement`; deferred as Finding F1 (`archive/TEMP-pipeline-perf-redesign-plan.md` §8g.4a) |
-| `baseline_lag` | full, B present | **decision** per-shoulder lag fingerprint registered at **`b_mapped`** (see *Registration & dual-fit*) |
-| `splice` | full, B present | first-class registration step derived from `baseline_lag` mono: `step_ms`, per-side `peak_r`/`peak_z`, `edge_pinned` |
+| `lag_decision` | full, B present | **decision** per-shoulder lag fingerprint registered at **`b_mapped`** (see *Registration & dual-fit*). Wire key was `baseline_lag` before 2026-08-07 (serde alias reads old corpora) |
+| `splice` | full, B present | first-class registration step derived from `lag_decision` mono: `step_ms`, per-side `peak_r`/`peak_z`, `edge_pinned` |
 | `donor_interior` | full, B present | B occupancy over the **aligned** bridge span (`b_mapped_start+L_pre … b_mapped_end+L_post`): `rms_db`, `silence_fraction`, `longest_silence_ms`, `continuous` |
 | `donor_interior_nominal` | full, B present | B occupancy over the **nominal** geometry span (no lag adjustment) — registration-independent; the D11 program-quiet signal |
 | `splice_dualfit` | full, B present | dual-fit viability: seams scored at per-shoulder placement + `gate_pass` / `trim_frames` / validators (see below) |
@@ -200,8 +200,8 @@ approaches were refuted by measurement. Full analysis + cost hierarchy: that pla
 | `outcome` | B present | plan_kind, tier, fit_path, signature_mode, skip_reason. On skip, `skip_reason` is the closest failing bracket's `failure_stage` (`structure_align` / `structure_floor` / `waveform_floor` / `residual`) — fingerprint-native, **not** a production `GapPatchSkipReason`. `seam_shape` is **omitted** on the production path (`None`). Legacy dumps may still say `correlation_below_threshold` |
 | `equivalence_diagnostic` | B present | **gap-equivalence class (diagnostic)** — does this gap need patching? (silence-character; see below) |
 | `equivalence_production` | scan classified | the **authoritative production** verdict for the same gap (`GapReport::gap_equivalence`; block size = the `scan_block_ms` knob), copied in so one dump holds both readings for calibration. **This is the authoritative one** — see below |
-| `lag` | diagnostics | **Tier-3** per pre/post anchor lag fingerprint at the best-energy bracket / structure throat — requires `--fingerprint-diagnostics` |
-| `wide_envelope` | diagnostics | **Tier-3** 100 ms-bin RMS-envelope lag peak at `b_mapped` — cross-scale confirmer of `baseline_lag` |
+| `lag_editorial` | diagnostics | **Tier-3** per pre/post anchor lag fingerprint at the best-energy **editorial** bracket / structure throat — a *diagnostic* placement, not the decision seam. Requires `--fingerprint-diagnostics`. Wire key was `lag` before 2026-08-07 (serde alias reads old corpora) |
+| `wide_envelope` | diagnostics | **Tier-3** 100 ms-bin RMS-envelope lag peak at `b_mapped` — cross-scale confirmer of `lag_decision` |
 | `seam_probe` | diagnostics | **Tier-3** encoding-robust seam metrics (R2/R4/spectrum/env/recovered); not used by any gate |
 | `b_levels` | diagnostics | **Tier-3** symmetric B-side `LevelProfile` (validation instrument for the program-quiet hypothesis) |
 
@@ -254,9 +254,9 @@ Several fields above are questions the production path does not ask. Since 2026�
   as absent (legacy dumps that wrote bare `−120` deserialize as `None`).
 
 `NOT_MEASURED_BY_PROJECTION` is therefore empty. The only remaining fabricated stand-ins are the
-conditional `baseline_lag.*` fields:
+conditional `lag_decision.*` fields:
 
-- `projected_lag_entry` (same file) builds each `baseline_lag` shoulder from four stored scalars —
+- `projected_lag_entry` (same file) builds each `lag_decision` shoulder from four stored scalars —
   `peak_r`, `frac_lag_ms`, `peak_z`, `prominence`, all real — and fabricates the rest of the row:
   `window_ms`/`max_lag_ms`/`peak_lag_samples`/`frac_lag_samples` at `0`, `lag0_r` as a **second copy
   of `peak_r`**, and `verdict` hardcoded `timing_offset`.
@@ -272,10 +272,10 @@ conditional `baseline_lag.*` fields:
   `LagFingerprint` to `spec_to_fingerprint_summary` via `MeasuredDetail` — the same pass-through
   brackets use. Only the oracle path (`GapRepairSpec` alone, no PCM) still projects, because the spec
   stores the four scalars and nothing else. So the declaration is **conditional**: the six
-  `baseline_lag.*` paths live in `PROJECTED_BASELINE_LAG_FIELDS` and are appended to `not_measured`
+  `lag_decision.*` paths live in `PROJECTED_LAG_DECISION_FIELDS` and are appended to `not_measured`
   only when some gap actually got a fabricated row.
 
-  Corpora dumped **before 2026‑08‑03** predate the pass-through: every `baseline_lag` row in them is
+  Corpora dumped **before 2026‑08‑03** predate the pass-through: every `lag_decision` row in them is
   projected, and none of them declare it. Any conclusion drawn from their verdict distribution or
   their apparent zero-lag registration needs re-deriving from a fresh dump.
 
@@ -642,17 +642,22 @@ parabolic-interpolated (fractional) peak, and a verdict:
 This is what distinguishes a sub-sample/timing offset (recoverable) from genuine A/B decorrelation
 (the seam gate is right to refuse) — see [seam-scoring.md](../seam-scoring.md) §3–4.
 
-The diagnostic `lag` field (Tier-3) is emitted only with `--fingerprint-diagnostics`. Decision
-registration is always in `baseline_lag` below.
+The diagnostic `lag_editorial` field (Tier-3) is emitted only with `--fingerprint-diagnostics`. Decision
+registration is always in `lag_decision` below.
 
 ## Registration & dual-fit measurements
 
-The diagnostic `lag` field sits at the **diagnostic** placement (best-energy bracket / structure throat)
-and can wander on quiet gaps. The **decision** registration lives in `baseline_lag`, and the dual-fit
-repair predicate is built from seam-local placement (not from `baseline_lag` itself). **Read each field
+The diagnostic `lag_editorial` field sits at the **diagnostic** placement (best-energy bracket / structure throat)
+and can wander on quiet gaps. The **decision** registration lives in `lag_decision`, and the dual-fit
+repair predicate is built from seam-local placement (not from `lag_decision` itself). **Read each field
 at the placement it defines — never compare across placements.**
 
-### `baseline_lag` — decision registration at `b_mapped`
+### `lag_decision` — decision registration at `b_mapped`
+
+> Renamed from `baseline_lag` on 2026-08-07. "Baseline" named the *placement pass* that produced it,
+> not its role, and readers took it for a reference/before value. Old corpora still deserialize via a
+> serde alias, but the dotted paths inside `source.not_measured` are **data**, not schema — readers
+> must fold `baseline_lag.*` onto `lag_decision.*` themselves (the harness health check does).
 
 Each shoulder is swept **mono** over ±600 ms centered on the geometry **`b_mapped`** nominal, and the post
 shoulder is registered **sequentially** (its search is centered on `S + D_A + round(L_pre)`, not the naive
@@ -670,7 +675,7 @@ shoulder is registered **sequentially** (its search is centered on `S + D_A + ro
 
 ### `splice` — the registration step
 
-Derived from `baseline_lag` mono: `step_ms = post_frac_lag − pre_frac_lag` (the length discontinuity the
+Derived from `lag_decision` mono: `step_ms = post_frac_lag − pre_frac_lag` (the length discontinuity the
 repair reconciles), plus per-side `peak_r`/`peak_z` and a combined **`edge_pinned`** (true if *either*
 shoulder was search-exhausted ⇒ `step_ms` is GIGO). A nonzero step is the normal signature of **both**
 patched and skipped gaps; what makes a gap skip is bracket-search exhaustion, not the step.
@@ -689,7 +694,7 @@ The **offline predictor** of the dual-fit repair (the repair algorithm itself is
 [seam-scoring.md](../seam-scoring.md) § 6 — Dual-fit repair). Computed on the scan's own decode: each
 shoulder is placed with `seam_local_peak` re-anchored on **nominal `b_mapped`** (pre butts at
 `b_mapped_start`, post at `b_mapped_start + gap_frames`, ±`SEAM_LOCAL_SEARCH_MS`) — **not** on the gross
-1 s `baseline_lag` (that older anchor clipped live seams whose lag diverged from the 1 s peak). Seams are
+1 s `lag_decision` (that older anchor clipped live seams whose lag diverged from the 1 s peak). Seams are
 scored at those placements against the **unchanged** gate thresholds:
 
 - `pre_seam_r` / `post_seam_r` and **`gate_pass`** — do both clear `min_fill_correlation` and
@@ -714,7 +719,7 @@ than being computed against a clipped template.
 
 ### Diagnostic-only fields
 
-`wide_envelope`, `seam_probe`, diagnostic `lag`, and `b_levels` are **Tier-3** — emitted only with
+`wide_envelope`, `seam_probe`, `lag_editorial`, and `b_levels` are **Tier-3** — emitted only with
 `--fingerprint-diagnostics`. They are **not gated on** by any repair decision; they explain decisions and
 validate hypotheses. See the analyzer's `legend_text()` for the authoritative placement/window of every
 field.

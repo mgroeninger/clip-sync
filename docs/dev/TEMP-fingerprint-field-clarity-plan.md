@@ -1,6 +1,6 @@
 # TEMP — Fingerprint field clarity (rename + co-located contracts)
 
-**Status:** **R1 + C1 shipped 2026-08-07**; R2 / R3 / C2 / C3 open. Working plan for making
+**Status:** **R1 + C1 + R2 shipped 2026-08-07**; R3 / C2 / C3 open. Working plan for making
 `--gap-fingerprints` dumps harder for agents (and humans) to misread by (1) renaming
 high-confusion wire fields, then (2) co-locating short measurement contracts next to the values
 they describe.
@@ -142,7 +142,7 @@ short “formerly known as” where a rename would strand search (`baseline_lag`
 | Phase | Scope | Exit |
 |-------|--------|------|
 | **R1** ✅ | Equivalence pair only (`equivalence` / `scan_equivalence`) | **Shipped 2026-08-07.** Serde aliases + fixture rewrite + live docs; calibration + divergence tests green |
-| **R2** | Lag pair (`lag` / `baseline_lag`) | Same pattern; legend + Registration section updated |
+| **R2** ✅ | Lag pair (`lag` / `baseline_lag`) | **Shipped 2026-08-07.** Aliases in all four parsers + `not_measured` path folding + fixture rewrite + live docs; workspace + calibration tests green, `curated.golden.json` bit-stable (see § 1.10) |
 | **R3** | `donor_interior` → `donor_interior_aligned` | Same pattern; golden axes already say `aligned_*` — keep that vocabulary consistent |
 
 R1 is the highest agent-damage fix and the smallest blast radius. Do not bundle R2/R3 into R1
@@ -180,7 +180,7 @@ All of §1.5 landed as written. Deviations and things worth knowing before R2/R3
   buys nothing.
 - **The harness's minimal parser needed its own alias.** `gap_fingerprint_corpus/check.rs` projects
   its own `GapEntry`, so the repair-crate alias does not cover it. R2/R3 must do the same for any
-  renamed field the harness reads (`baseline_lag` is one — `GapEntry::baseline_lag`).
+  renamed field the harness reads (`baseline_lag` was one — R2 found **four** such parsers, § 1.10).
 - **CLI cutover included the calibration *table*,** not just prose: the column headers are now
   `production(<block>ms)` / `diagnostic` / `Δ(diagnostic−production)` and the verdict strings read
   "production drops, diagnostic keeps". The production column was widened 16 → 18 to fit.
@@ -194,6 +194,35 @@ All of §1.5 landed as written. Deviations and things worth knowing before R2/R3
 - **The "no dual-write" assertion needs care.** `equivalence_diagnostic` *contains* the old key as a
   substring, so a naive `!json.contains("equivalence")` check can never pass — assert on the quoted
   key (`"equivalence"`) instead.
+
+### 1.10 R2 as shipped (2026-08-07)
+
+`lag` → `lag_editorial`, `baseline_lag` → `lag_decision`. R1's pattern held; the three things R2 hit
+that R1 did not are worth carrying into R3:
+
+- **Four parsers needed the alias, not one.** Beyond `GapFingerprint`, the harness has *two*
+  (`gap_fingerprint_corpus/analysis.rs`'s `GapEntry` and `check.rs`'s), and two integration tests
+  project their own minimal structs (`w5_timing_offset.rs`, `diag_splice_timescale.rs`). Only the
+  first was known from § 1.9. **Grep for the wire key across `tests/` too, not just `src/`** — a
+  missed one is a silent `None`, which `w5_timing_offset` caught only because it asserts presence.
+- **`source.not_measured` paths are *data*, and a serde alias cannot reach them.** The six
+  `baseline_lag.*` strings live inside committed corpora. `check.rs` now folds them via
+  `canonical_path()` before comparing, and `schema.rs` keeps
+  `LEGACY_PROJECTED_LAG_DECISION_FIELDS` as a frozen transcription of the old spelling. The failure
+  mode is the dangerous direction: an unrecognized declaration reads as *"this field was
+  measured"*, so the health check goes quiet exactly where it should shout.
+  **R3 has no equivalent** (`donor_interior` is not in `NOT_MEASURED_BY_PROJECTION`), but check
+  before assuming.
+- **Aliasing two keys onto two fields invites a copy-paste merge.** `legacy_lag_keys_...` asserts
+  each old key lands on its *own* field via distinct `peak_r` values — a test that merely
+  round-tripped would pass with both aliases pointing at one field.
+- **`projected_lag_decision_paths_name_keys_the_type_emits`** ties the dotted literals to keys the
+  types actually serialize, closing the gap the compiler leaves on string paths.
+- **`curated.golden.json` was again bit-stable** after the 14-fixture key rewrite, with no
+  `CURATED_GOLDEN_REGEN`. The fixtures were rewritten by **text splice** (key rename in place), not
+  a typed round trip, which also preserves float bytes.
+- **The pre-A2 legacy fixture in `gap_fingerprint_corpus/mod.rs` deliberately keeps `lag`.** It
+  models a pre-A2 dump, so leaving it un-rewritten both keeps it honest and exercises the alias.
 
 ---
 
@@ -390,7 +419,7 @@ the const contract table. What §2 did not anticipate, and what C2 inherits:
 
 1. Land **R1** (equivalence rename + aliases + fixtures + live docs).
 2. Land **C1** (contracts on the two equivalence objects) while the rename is fresh.
-3. Land **R2** / **R3**, then **C2**.
+3. Land **R3**, then **C2**.
 4. Promote durable bits into `gap-fingerprint.md`; archive this TEMP.
 
 ---

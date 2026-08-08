@@ -123,7 +123,7 @@ fn g003_real_fingerprint_is_timing_offset_exemplar() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(G003_FINGERPRINT);
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("read curated g003 fingerprint {}: {e}", path.display()));
-    // Parse only the fields the timing-offset class is about (`index`, `lag`, `outcome`) via a minimal
+    // Parse only the fields the timing-offset class is about (`index`, `lag_editorial`, `outcome`) via a minimal
     // struct, so the regression test is robust to unrelated schema drift in the full `GapCorpus` (the
     // committed exemplar predates a `seams.per_channel` schema change and no longer round-trips whole).
     #[derive(Deserialize)]
@@ -133,7 +133,9 @@ fn g003_real_fingerprint_is_timing_offset_exemplar() {
     #[derive(Deserialize)]
     struct G003Gap {
         index: usize,
-        lag: Option<LagFingerprint>,
+        // Wire key was `lag` before 2026-08-07; the alias keeps pre-rename exemplars readable.
+        #[serde(alias = "lag")]
+        lag_editorial: Option<LagFingerprint>,
         outcome: Option<GateOutcome>,
     }
 
@@ -144,7 +146,7 @@ fn g003_real_fingerprint_is_timing_offset_exemplar() {
     assert_eq!(gap.index, 3, "g003");
 
     let lag = gap
-        .lag
+        .lag_editorial
         .as_ref()
         .expect("full-tier g003 carries a lag fingerprint");
     assert!(

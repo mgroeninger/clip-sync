@@ -71,7 +71,7 @@ impl SeamDiag {
     }
 }
 
-/// Silence-splice classification from the **±600 ms** per-side `baseline_lag` peaks, sequentially
+/// Silence-splice classification from the **±600 ms** per-side `lag_decision` peaks, sequentially
 /// centered (ledger A2: post search is centered on `S + D_A + round(L_pre)`,
 /// not the naive `S + D_A`), not the ±25 ms `seam_probe.recovered_r`, which mislabels any step > 25 ms as
 /// "cross-codec". See `docs/dev/archive/TEMP-seam-splice-dualfit-plan.md` §1/§3. Decides whether a skipped gap is the
@@ -104,7 +104,7 @@ pub(crate) const SEAM_QUIET_SNR_DB: f64 = 6.0;
 pub(crate) const SEAM_RECOVER_R: f64 = 0.5;
 /// R2/R4 above this (with waveform dead) is the cross-codec validator-mismatch signal.
 pub(crate) const SEAM_ROBUST_R: f64 = 0.5;
-/// A shoulder must reach this `peak_r` at its own lag (over the ±600 ms `baseline_lag` sweep) to count as
+/// A shoulder must reach this `peak_r` at its own lag (over the ±600 ms `lag_decision` sweep) to count as
 /// cleanly recoverable — the both-sides-recoverable floor. Heuristic; calibrate against the corpus.
 pub(crate) const SPLICE_MIN_PEAK_R: f64 = 0.85;
 /// §3.6a robust-uniqueness floors (1 s window) — used when `peak_z` is present on the fingerprint.
@@ -176,18 +176,18 @@ pub struct GapRow {
     pub uniqueness_prom: Option<f64>,
     /// First-class splice step (`post_lag − pre_lag`) when the fingerprint carries `splice`.
     pub splice_step_ms: Option<f64>,
-    /// **`splice_step_ms` is search-exhausted** — a shoulder's `baseline_lag` peak was clipped at ±max_lag,
+    /// **`splice_step_ms` is search-exhausted** — a shoulder's `lag_decision` peak was clipped at ±max_lag,
     /// so the step (and dual-fit per-shoulder placement) is GIGO (ledger A5/C6). `None` predates the flag.
     pub splice_edge_pinned: Option<bool>,
     /// Registration came from the **legacy diagnostic `lag`** (pre-A2 fingerprint), not the decision-seam
-    /// `baseline_lag` — a *different* placement (structure throat vs `b_mapped`). Any `true` in a run means
+    /// `lag_decision` — a *different* placement (structure throat vs `b_mapped`). Any `true` in a run means
     /// the corpus mixes pre-/post-A2 schemas and the lag reads aren't comparable (C-harness-3).
     pub registration_from_legacy_lag: bool,
     /// Donor B bridges the gap interior without a sub-floor hole (from `donor_interior.continuous`).
     pub donor_continuous: Option<bool>,
     /// Donor-interior RMS (dBFS) over the gap-mapped B span.
     pub donor_rms_db: Option<f64>,
-    /// Wide-envelope (100 ms-bin) peak lag at the pre seam — cross-scale check vs `baseline_lag`.
+    /// Wide-envelope (100 ms-bin) peak lag at the pre seam — cross-scale check vs `lag_decision`.
     pub wide_env_pre_lag_ms: Option<f64>,
     pub wide_env_post_lag_ms: Option<f64>,
     /// **Residual headroom** (dB) = worst-side `chosen_db − floor_db`. ≤ 0 ⇒ B cancels A to the noise
@@ -323,7 +323,7 @@ impl GapRow {
         }
     }
 
-    /// **Silence-splice classification** from the ±600 ms per-side `baseline_lag` peaks — the
+    /// **Silence-splice classification** from the ±600 ms per-side `lag_decision` peaks — the
     /// authoritative read (the ±25 ms `seam_probe.recovered_r` mislabels any step > 25 ms). `Splice` =
     /// both shoulders clean & unique ⇒ addressable by independent fit + length reconciliation;
     /// `OneSidedDead` = a shoulder aligns at no lag ⇒ the only genuine cross-encoding candidate. `None`
@@ -364,7 +364,7 @@ impl GapRow {
         self.brackets_total > 0 && self.brackets_passing == 0
     }
 
-    /// The measured step (and its per-shoulder placement) is **search-exhausted** — a `baseline_lag` peak
+    /// The measured step (and its per-shoulder placement) is **search-exhausted** — a `lag_decision` peak
     /// was clipped at ±max_lag, so `splice_step_ms` and dual-fit shoulder lags are GIGO (ledger A5/C6).
     /// `false` when the flag is absent (older fingerprint) or explicitly clear; widen the sweep to resolve.
     pub fn step_edge_pinned(&self) -> bool {
