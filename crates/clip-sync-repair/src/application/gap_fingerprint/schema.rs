@@ -359,11 +359,15 @@ pub struct GapFingerprint {
     /// Wire key was `lag` before 2026-08-07; old corpora still deserialize via the serde alias. The
     /// bare name read as "the lag of this gap", which is what made it the wrong one to reach for.
     #[serde(alias = "lag", skip_serializing_if = "Option::is_none", default)]
-    pub lag_editorial: Option<LagFingerprint>,
-    /// Lag at the **decision placement** — the structure-slid throat (zero-move) seam the gate scores
-    /// for patch/skip — as opposed to `lag_editorial`, measured at the best-structure *editorial
-    /// bracket* (a diagnostic placement that can sit far from the throat). This is the
-    /// registration-relevant lag.
+    pub lag_editorial: Option<Contracted<LagFingerprint>>,
+    /// Lag at the **decision placement** — the geometry `b_mapped` nominal the gate registers on for
+    /// patch/skip (`lag_at_placement`, ±`lag_max_lag_ms`) — as opposed to `lag_editorial`, measured at
+    /// the best-structure *editorial bracket* / structure throat (a diagnostic placement that can sit
+    /// far from it). This is the registration-relevant lag.
+    ///
+    /// **Not the throat.** `residual` is the group measured at the gate's structure throat; this one
+    /// is deliberately *not* slid there (`measure.rs`: "Decision-seam lag at `b_mapped` nominal … not
+    /// structure throat"), and conflating the two is the misreading `_contract` exists to stop.
     ///
     /// Wire key was `baseline_lag` before 2026-08-07; old corpora still deserialize via the serde
     /// alias. "Baseline" named the *placement pass* that produced it, not the role, and readers took
@@ -373,14 +377,16 @@ pub struct GapFingerprint {
         skip_serializing_if = "Option::is_none",
         default
     )]
-    pub lag_decision: Option<LagFingerprint>,
-    /// Residual cancellation at the decision seam (the strong same-source confirm). Full tier, gate path.
+    pub lag_decision: Option<Contracted<LagFingerprint>>,
+    /// Residual cancellation at the gate's **structure throat** (the strong same-source confirm) — the
+    /// one group that is *not* read at `b_mapped`. Full tier, gate path.
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub residual: Option<ResidualInfo>,
-    /// Seam recovery / encoding-robust envelope / level at the decision seam — diagnoses *why* a
-    /// waveform seam is dead (mis-alignment vs cross-encoding vs quiet). Full tier, gate path.
+    pub residual: Option<Contracted<ResidualInfo>>,
+    /// Seam recovery / encoding-robust envelope / level at the **`b_mapped`** registration — diagnoses
+    /// *why* a waveform seam is dead (mis-alignment vs cross-encoding vs quiet). Full tier, gate path.
+    /// Read at a different placement than `residual`, so their numbers do not compare.
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub seam_probe: Option<SeamProbeFingerprint>,
+    pub seam_probe: Option<Contracted<SeamProbeFingerprint>>,
     /// Does donor B actually carry audio across the hole? Energy/continuity of B over the **aligned**
     /// gap-mapped span (shoulders at their own lags) — the donor half of the fill predicate (§3/§4).
     /// Full tier, gate path.
@@ -393,13 +399,13 @@ pub struct GapFingerprint {
         skip_serializing_if = "Option::is_none",
         default
     )]
-    pub donor_interior_aligned: Option<DonorInterior>,
+    pub donor_interior_aligned: Option<Contracted<DonorInterior>>,
     /// Donor occupancy at the **nominal** geometry `b_mapped` span (NO per-shoulder lag) — the
     /// registration-independent sibling of `donor_interior_aligned`, so it dodges the aliased-lag
     /// confound the aligned span inherits. `silence_fraction ≈ 1` ⇒ B is quiet at the same program time
     /// as A's gap ⇒ program-quiet, not a fillable dropout (D11). Full tier, gate path.
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub donor_interior_nominal: Option<DonorInterior>,
+    pub donor_interior_nominal: Option<Contracted<DonorInterior>>,
     /// Symmetric B-side level profile over the nominal `b_mapped` span + context — the counterpart to
     /// `levels` (A), computed by the same `level_profile` logic. Lets "quiet in both masters ⇒ not a
     /// dropout" compare B's gap level against B's *own* noise floor (D11). Full tier, gate path.
@@ -481,6 +487,42 @@ impl GapFingerprint {
         &self,
     ) -> Option<&crate::domain::gap_equivalence::GapEquivalenceVerdict> {
         self.equivalence_diagnostic.as_deref()
+    }
+
+    // C2 accessors. Same rule as the equivalence pair: **read sites should not know the wrapper
+    // exists.** `Contracted<T>` derefs, so most call sites compile either way — but a file that
+    // reaches through `.value` teaches the next reader that the wrapper is their problem, and a
+    // half-converted file is how that spreads. Prefer these everywhere.
+
+    /// The decision registration, unwrapped — the lag production actually gates on.
+    pub fn lag_decision_fingerprint(&self) -> Option<&LagFingerprint> {
+        self.lag_decision.as_deref()
+    }
+
+    /// The Tier-3 editorial lag, unwrapped. A *diagnostic* placement: never compare it against
+    /// [`Self::lag_decision_fingerprint`].
+    pub fn lag_editorial_fingerprint(&self) -> Option<&LagFingerprint> {
+        self.lag_editorial.as_deref()
+    }
+
+    /// Donor occupancy over the lag-adjusted bridge, unwrapped.
+    pub fn donor_interior_aligned_span(&self) -> Option<&DonorInterior> {
+        self.donor_interior_aligned.as_deref()
+    }
+
+    /// Donor occupancy at nominal program time, unwrapped — the registration-independent read.
+    pub fn donor_interior_nominal_span(&self) -> Option<&DonorInterior> {
+        self.donor_interior_nominal.as_deref()
+    }
+
+    /// Same-source cancellation at the throat, unwrapped.
+    pub fn residual_info(&self) -> Option<&ResidualInfo> {
+        self.residual.as_deref()
+    }
+
+    /// Tier-3 seam diagnosis, unwrapped. No gate reads this.
+    pub fn seam_probe_metrics(&self) -> Option<&SeamProbeFingerprint> {
+        self.seam_probe.as_deref()
     }
 }
 
@@ -787,7 +829,8 @@ pub struct LagFingerprint {
     pub post_anchor: Vec<LagSummary>,
 }
 
-/// Seam diagnostic at the **decision (throat) placement**, one per side. Built to separate *why* a
+/// Seam diagnostic at the **`b_mapped` registration** (the post side shifted by the measured pre lag),
+/// one per side — *not* the structure throat `residual` uses. Built to separate *why* a
 /// waveform seam is dead: **recovery** (does sample-level Pearson come back under a fine lag → residual
 /// mis-alignment, fixable) vs **encoding-robust** envelope agreement (same content present despite the
 /// raw waveform differing → cross-encoding) vs **level/SNR** (is the seam just too quiet to score?).
@@ -812,7 +855,7 @@ pub struct SeamProbe {
     pub snr_db: f64,
 }
 
-/// Per-side seam probes at the decision placement (mono; one entry per measured side).
+/// Per-side seam probes at the `b_mapped` registration (mono; one entry per measured side).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct SeamProbeFingerprint {
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -1142,6 +1185,9 @@ pub struct GateOutcome {
 
 #[cfg(test)]
 mod tests {
+    use super::super::contract::{
+        stamp, DONOR_INTERIOR_ALIGNED_CONTRACT, RESIDUAL_CONTRACT, SEAM_PROBE_CONTRACT,
+    };
     use super::*;
 
     /// The `bit_depth` token set is pinned: consumers stratify on these strings, so a rename is a
@@ -1548,39 +1594,48 @@ mod tests {
             }),
             lag_editorial: None,
             lag_decision: None,
-            residual: Some(ResidualInfo {
-                chosen_pre_db: Some(-42.0),
-                chosen_post_db: Some(-38.0),
-                floor_pre_db: Some(-40.0),
-                floor_post_db: Some(-39.0),
-                floor_source_pre: Some(SeamFloorSource::Border),
-                floor_source_post: Some(SeamFloorSource::Border),
-                informative: true,
-                uninformative_pre: None,
-                uninformative_post: None,
-                placement_slide_frames: Some(0),
-                max_lag_frames: Some(0),
-            }),
-            seam_probe: Some(SeamProbeFingerprint {
-                pre: Some(SeamProbe {
-                    waveform_r: 0.04,
-                    recovered_r: 0.95,
-                    recovered_lag_ms: -8.0,
-                    bandlimited_r: 0.8,
-                    spectrum_r: 0.85,
-                    envelope_r: 0.9,
-                    rms_db: -30.0,
-                    snr_db: 20.0,
+            residual: stamp(
+                Some(ResidualInfo {
+                    chosen_pre_db: Some(-42.0),
+                    chosen_post_db: Some(-38.0),
+                    floor_pre_db: Some(-40.0),
+                    floor_post_db: Some(-39.0),
+                    floor_source_pre: Some(SeamFloorSource::Border),
+                    floor_source_post: Some(SeamFloorSource::Border),
+                    informative: true,
+                    uninformative_pre: None,
+                    uninformative_post: None,
+                    placement_slide_frames: Some(0),
+                    max_lag_frames: Some(0),
                 }),
-                post: None,
-            }),
-            donor_interior_aligned: Some(DonorInterior {
-                rms_db: -28.0,
-                silence_fraction: 0.0,
-                longest_silence_ms: 0.0,
-                continuous: true,
-                basis: None,
-            }),
+                RESIDUAL_CONTRACT,
+            ),
+            seam_probe: stamp(
+                Some(SeamProbeFingerprint {
+                    pre: Some(SeamProbe {
+                        waveform_r: 0.04,
+                        recovered_r: 0.95,
+                        recovered_lag_ms: -8.0,
+                        bandlimited_r: 0.8,
+                        spectrum_r: 0.85,
+                        envelope_r: 0.9,
+                        rms_db: -30.0,
+                        snr_db: 20.0,
+                    }),
+                    post: None,
+                }),
+                SEAM_PROBE_CONTRACT,
+            ),
+            donor_interior_aligned: stamp(
+                Some(DonorInterior {
+                    rms_db: -28.0,
+                    silence_fraction: 0.0,
+                    longest_silence_ms: 0.0,
+                    continuous: true,
+                    basis: None,
+                }),
+                DONOR_INTERIOR_ALIGNED_CONTRACT,
+            ),
             splice: Some(SpliceSummary {
                 step_ms: 4.2,
                 pre_peak_r: 0.99,
@@ -1773,6 +1828,73 @@ mod tests {
         assert!(!json.contains("\"donor_interior\""));
 
         let back: GapFingerprint = serde_json::from_str(&json).expect("new keys deserialize");
+        assert_eq!(fp, back);
+    }
+
+    /// C2 wrapped six groups in [`Contracted`], whose `#[serde(flatten)]` deserializes through
+    /// serde's buffered `Content` instead of each struct's own field visitor. That is a real change in
+    /// how the bytes are read, so it is pinned rather than assumed: an old corpus (no `_contract`
+    /// anywhere) must come back with every value intact, `None` contracts, and — since these dumps are
+    /// not dual-write — no `_contract` on re-serialization either.
+    ///
+    /// `lag_editorial` and `seam_probe` are covered *here* rather than in
+    /// `tests/equivalence_divergence.rs`: both are Tier-3, so no committed fixture carries them.
+    #[test]
+    fn contract_wrapped_groups_round_trip_a_contract_free_corpus() {
+        let old = r#"{
+            "index": 0,
+            "tier": "full",
+            "sample_rate": 48000,
+            "channels": 2,
+            "geometry": {
+                "a_start_secs": 1.0,
+                "a_end_secs": 2.0,
+                "a_refined_start_secs": 1.0,
+                "a_refined_end_secs": 2.0,
+                "duration_secs": 1.0
+            },
+            "levels": {"noise_floor_db": -60.0, "gap_floor_db": -70.0},
+            "lag": {"pre_anchor": [{"window_ms": 1000, "max_lag_ms": 600,
+                                    "channel": {"selected": 1},
+                                    "lag0_r": 0.02, "peak_r": 0.97, "peak_lag_samples": -12,
+                                    "frac_lag_samples": -12.5, "frac_lag_ms": -0.26,
+                                    "verdict": "timing_offset"}],
+                    "post_anchor": []},
+            "seam_probe": {"pre": {"waveform_r": 0.04, "recovered_r": 0.95,
+                                   "recovered_lag_ms": -8.0, "bandlimited_r": 0.8,
+                                   "spectrum_r": 0.85, "envelope_r": 0.9,
+                                   "rms_db": -30.0, "snr_db": 20.0}}
+        }"#;
+        let fp: GapFingerprint = serde_json::from_str(old).expect("contract-free corpus");
+
+        // Values survive the buffered read, reached through the accessors read sites should use.
+        // `channel` is deliberately the **newtype** variant: `Content` buffering resolves an
+        // externally-tagged enum differently from a plain unit variant, and `"mono"` alone would
+        // leave that path unexercised.
+        assert_eq!(
+            fp.lag_editorial_fingerprint()
+                .map(|l| (l.pre_anchor[0].peak_r, l.pre_anchor[0].channel)),
+            Some((0.97, LagChannel::Selected(1)))
+        );
+        assert_eq!(
+            fp.seam_probe_metrics()
+                .and_then(|p| p.pre.as_ref())
+                .map(|p| p.snr_db),
+            Some(20.0)
+        );
+        // Absent on the wire ⇒ absent in the wrapper. Never fabricated on read.
+        assert!(fp
+            .lag_editorial
+            .as_ref()
+            .is_some_and(|w| w.contract.is_none()));
+        assert!(fp.seam_probe.as_ref().is_some_and(|w| w.contract.is_none()));
+
+        let json = serde_json::to_string(&fp).expect("serialize");
+        assert!(
+            !json.contains("_contract"),
+            "reading an old corpus must not invent contracts: {json}"
+        );
+        let back: GapFingerprint = serde_json::from_str(&json).expect("re-read");
         assert_eq!(fp, back);
     }
 

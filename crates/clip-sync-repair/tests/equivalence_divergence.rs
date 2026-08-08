@@ -98,7 +98,19 @@ fn wrapping_in_contracted_did_not_disturb_the_verdict_wire_shape() {
     let corpus: GapCorpus = serde_json::from_str(&text).expect("typed parse");
     let after = serde_json::to_value(&corpus).expect("re-serialize");
 
-    for key in ["equivalence_diagnostic", "equivalence_production"] {
+    // C1 wrapped the two equivalence verdicts; C2 wrapped four more groups this fixture carries
+    // (`lag_editorial` / `seam_probe` are Tier-3 and absent here — they are covered by the schema
+    // round-trip unit tests instead). Every one of these now round-trips through serde's buffered
+    // `Content` rather than the struct's own field visitor, which is exactly why each needs pinning
+    // against the committed bytes rather than trusting flatten by inspection.
+    for key in [
+        "equivalence_diagnostic",
+        "equivalence_production",
+        "lag_decision",
+        "donor_interior_aligned",
+        "donor_interior_nominal",
+        "residual",
+    ] {
         let orig = before["gaps"][0][key]
             .as_object()
             .unwrap_or_else(|| panic!("fixture must carry {key}"));
@@ -117,13 +129,21 @@ fn wrapping_in_contracted_did_not_disturb_the_verdict_wire_shape() {
                 "{key}.{k} drifted across the flatten round trip"
             );
         }
-        for k in orig.keys() {
+        for (k, v) in orig {
             assert!(
-                round.contains_key(k) || DEAD_KEYS.contains(&k.as_str()),
-                "{key}.{k} was dropped and is not a known dead key"
+                round.contains_key(k) || DEAD_KEYS.contains(&k.as_str()) || is_silence_sentinel(v),
+                "{key}.{k} was dropped and is neither a known dead key nor a -120 sentinel"
             );
         }
     }
+}
+
+/// `residual`'s per-side dB fields deliberately normalize the `SILENCE_FLOOR_DB` (−120) sentinel and
+/// JSON `null` to **absent** on re-serialization — "this side had no usable floor" is an absence, not a
+/// number (`docs/dev/gap-fingerprint.md` § *Not measured*). That predates the `Contracted` wrapper and
+/// is not flatten dropping data, so the round-trip check has to allow exactly this and nothing wider.
+fn is_silence_sentinel(v: &serde_json::Value) -> bool {
+    v.is_null() || v.as_f64().is_some_and(|f| f == -120.0)
 }
 
 fn both(fp: &GapFingerprint) -> (&GapEquivalenceVerdict, &GapEquivalenceVerdict) {

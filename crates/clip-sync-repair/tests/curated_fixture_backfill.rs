@@ -38,8 +38,8 @@ fn derived_dual_fit_rescue(gap: &GapFingerprint) -> Option<bool> {
         patched: gap.outcome.as_ref().is_some_and(|o| o.tier == "patch"),
         brackets: &gap.brackets,
         splice_dualfit: gap.splice_dualfit.as_ref(),
-        donor_aligned: gap.donor_interior_aligned.as_ref(),
-        donor_nominal: gap.donor_interior_nominal.as_ref(),
+        donor_aligned: gap.donor_interior_aligned_span(),
+        donor_nominal: gap.donor_interior_nominal_span(),
     })
 }
 

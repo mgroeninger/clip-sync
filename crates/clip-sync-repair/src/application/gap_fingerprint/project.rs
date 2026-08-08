@@ -5,6 +5,12 @@
 //! `RegionMeasurements`); both funnel through the shared `tags_from_fields` core here so the oracle
 //! (8f) and from-decode (8g.3b) paths read specs through one mapping. See the module-split plan.
 
+// Explicit, not a glob: `contract::*` would pull every future contract const into this module's
+// namespace, and the point of the write sites is that each names the one contract it stamps.
+use super::contract::{
+    stamp, DONOR_INTERIOR_ALIGNED_CONTRACT, DONOR_INTERIOR_NOMINAL_CONTRACT, LAG_DECISION_CONTRACT,
+    LAG_EDITORIAL_CONTRACT, RESIDUAL_CONTRACT, SEAM_PROBE_CONTRACT,
+};
 use super::schema::*;
 use crate::domain::gap_repair_spec::{GapRepairSpec, GapRepairVerdict, LevelTags};
 
@@ -219,12 +225,12 @@ pub fn spec_to_fingerprint_summary(
         brackets,
         structure,
         seams,
-        lag_editorial: x.lag_editorial,
-        lag_decision,
-        residual,
-        seam_probe: x.seam_probe,
-        donor_interior_aligned: tags.donor_aligned,
-        donor_interior_nominal: tags.donor_nominal,
+        lag_editorial: stamp(x.lag_editorial, LAG_EDITORIAL_CONTRACT),
+        lag_decision: stamp(lag_decision, LAG_DECISION_CONTRACT),
+        residual: stamp(residual, RESIDUAL_CONTRACT),
+        seam_probe: stamp(x.seam_probe, SEAM_PROBE_CONTRACT),
+        donor_interior_aligned: stamp(tags.donor_aligned, DONOR_INTERIOR_ALIGNED_CONTRACT),
+        donor_interior_nominal: stamp(tags.donor_nominal, DONOR_INTERIOR_NOMINAL_CONTRACT),
         b_levels: x.b_levels,
         splice,
         wide_envelope: x.wide_envelope,
@@ -512,16 +518,16 @@ pub(crate) fn tags_from_fields(
 /// Extract the D/R tag payload from an oracle [`GapFingerprint`] (8f). Thin wrapper over [`tags_from_fields`].
 pub fn tags_from_fingerprint(fp: &GapFingerprint) -> crate::domain::gap_repair_spec::GapRepairTags {
     tags_from_fields(
-        fp.lag_decision.as_ref(),
-        fp.lag_editorial.as_ref(),
+        fp.lag_decision_fingerprint(),
+        fp.lag_editorial_fingerprint(),
         fp.splice.as_ref(),
         fp.splice_dualfit,
         &fp.brackets,
         fp.structure.as_ref(),
         fp.seams.as_ref(),
-        fp.residual,
-        fp.donor_interior_aligned,
-        fp.donor_interior_nominal,
+        fp.residual_info().copied(),
+        fp.donor_interior_aligned_span().copied(),
+        fp.donor_interior_nominal_span().copied(),
         Some(crate::domain::gap_repair_spec::LevelTags {
             a_gap_floor_db: f64::from(fp.levels.gap_floor_db),
             a_noise_floor_db: f64::from(fp.levels.noise_floor_db),
@@ -591,6 +597,7 @@ pub fn fingerprint_to_spec(fp: &GapFingerprint) -> crate::domain::gap_repair_spe
 
 #[cfg(test)]
 mod tests {
+    use super::super::contract::Contracted;
     use super::*;
     use crate::domain::gap_repair_spec::{
         BExtractWindow, GapRepairCell, GapRepairSpec, GapRepairTags, GapRepairVerdict, GateTags,
@@ -781,6 +788,190 @@ mod tests {
                 .count(),
             0
         );
+    }
+
+    /// C2: this projection is the **only** write site for four of the six contracted groups, so a
+    /// dropped `stamp(...)` here would ship a contract-free dump with nothing failing. C1 pinned its
+    /// own write side (`from_decode_dump_stamps_a_contract_on_both_equivalence_verdicts`); this is the
+    /// C2 counterpart.
+    ///
+    /// It asserts the *right* contract landed on each group, not merely that some contract did:
+    /// four of the six are sibling pairs over a shared type (`LagFingerprint`, `DonorInterior`), so a
+    /// swapped pair of `stamp` arguments is both easy to write and invisible to a presence check. Each
+    /// contract's `not` names its sibling, which makes a swap detectable from the text alone.
+    #[test]
+    fn projection_stamps_each_c2_group_with_its_own_contract() {
+        use crate::domain::policies::{SeamFloorSource, SeamResidualVerdict};
+
+        let donor = |rms_db: f64| crate::domain::donor::DonorInterior {
+            rms_db,
+            silence_fraction: 0.05,
+            longest_silence_ms: 0.0,
+            continuous: true,
+            basis: None,
+        };
+        let lag = |peak_r: f64| LagFingerprint {
+            pre_anchor: vec![LagSummary {
+                window_ms: 1000,
+                max_lag_ms: 600,
+                channel: LagChannel::Mono,
+                lag0_r: 0.02,
+                peak_r,
+                second_peak_r: None,
+                peak_z: None,
+                prominence: None,
+                top2_spacing_ms: None,
+                peak_lag_samples: -12,
+                frac_lag_samples: -12.5,
+                frac_lag_ms: -0.26,
+                edge_pinned: Some(false),
+                verdict: LagVerdict::TimingOffset,
+            }],
+            post_anchor: vec![],
+        };
+
+        let tags = GapRepairTags {
+            donor_aligned: Some(donor(-22.0)),
+            donor_nominal: Some(donor(-25.0)),
+            gate: GateTags {
+                residual: Some(SeamResidualVerdict {
+                    chosen_pre_db: -42.0,
+                    chosen_post_db: -38.0,
+                    floor_pre_db: -40.0,
+                    floor_post_db: -39.0,
+                    floor_source_pre: SeamFloorSource::Border,
+                    floor_source_post: SeamFloorSource::Border,
+                    informative: true,
+                    placement_slide_frames: 0,
+                    max_lag_frames: 0,
+                    uninformative_pre: None,
+                    uninformative_post: None,
+                }),
+                ..GateTags::default()
+            },
+            ..GapRepairTags::default()
+        };
+        let spec = GapRepairSpec {
+            gap_index: 0,
+            a_start_secs: 10.0,
+            a_end_secs: 10.5,
+            gap_offset_secs: 0.25,
+            refined: RefinedGapFrames {
+                start_frame: 480_000,
+                end_frame: 504_000,
+            },
+            b_extract: BExtractWindow {
+                start_frame: 0,
+                end_frame: 0,
+                b_mapped_start_frame: 0,
+            },
+            crossfade_secs: 0.01,
+            verdict: GapRepairVerdict::Skip {
+                cell: GapRepairCell::SilenceSplice,
+                reason: GapPatchSkipReason::CorrelationBelowThreshold {
+                    pre_correlation: 0.97,
+                    post_correlation: 0.95,
+                    min_correlation: 0.5,
+                    best_attempt: None,
+                },
+            },
+            tags_ctx: tags,
+        };
+        let x = FingerprintXSet {
+            seam_probe: Some(SeamProbeFingerprint {
+                pre: Some(SeamProbe {
+                    waveform_r: 0.04,
+                    recovered_r: 0.95,
+                    recovered_lag_ms: -8.0,
+                    bandlimited_r: 0.8,
+                    spectrum_r: 0.85,
+                    envelope_r: 0.9,
+                    rms_db: -30.0,
+                    snr_db: 20.0,
+                }),
+                post: None,
+            }),
+            lag_editorial: Some(lag(0.80)),
+            ..FingerprintXSet::default()
+        };
+
+        let fp = spec_to_fingerprint_summary(
+            &spec,
+            48_000,
+            2,
+            Some(x),
+            MeasuredDetail {
+                lag_decision: Some(lag(0.97)),
+                ..MeasuredDetail::default()
+            },
+        );
+
+        // Each group carries a contract whose `not` names its sibling — the swap detector.
+        let sibling = |group: &str| -> String {
+            let got = match group {
+                "lag_decision" => &fp.lag_decision,
+                "lag_editorial" => &fp.lag_editorial,
+                _ => unreachable!(),
+            };
+            got.as_ref()
+                .unwrap_or_else(|| panic!("{group} projected"))
+                .contract
+                .as_ref()
+                .unwrap_or_else(|| panic!("{group} stamped on write"))
+                .not
+                .clone()
+                .unwrap_or_else(|| panic!("{group} contract has a `not`"))
+                .to_string()
+        };
+        assert!(sibling("lag_decision").starts_with("lag_editorial"));
+        assert!(sibling("lag_editorial").starts_with("lag_decision"));
+
+        let donor_not = |g: &Option<Contracted<crate::domain::donor::DonorInterior>>| {
+            g.as_ref()
+                .expect("donor group projected")
+                .contract
+                .as_ref()
+                .expect("donor contract stamped on write")
+                .not
+                .clone()
+                .expect("donor contract has a `not`")
+                .to_string()
+        };
+        assert!(donor_not(&fp.donor_interior_aligned).starts_with("donor_interior_nominal"));
+        assert!(donor_not(&fp.donor_interior_nominal).starts_with("donor_interior_aligned"));
+
+        assert!(fp
+            .residual
+            .as_ref()
+            .and_then(|r| r.contract.as_ref())
+            .and_then(|c| c.not.as_deref())
+            .is_some_and(|n| n.starts_with("seam_probe")));
+        assert!(fp
+            .seam_probe
+            .as_ref()
+            .and_then(|p| p.contract.as_ref())
+            .and_then(|c| c.not.as_deref())
+            .is_some_and(|n| n.starts_with("residual")));
+
+        // Flatten: `_contract` sits beside each group's own keys, and displaces none of them.
+        let json = serde_json::to_value(&fp).expect("serialize");
+        for (group, key) in [
+            ("lag_decision", "pre_anchor"),
+            ("lag_editorial", "pre_anchor"),
+            ("donor_interior_aligned", "rms_db"),
+            ("donor_interior_nominal", "rms_db"),
+            ("residual", "informative"),
+            ("seam_probe", "pre"),
+        ] {
+            assert!(
+                json[group]["_contract"]["measures"].is_string(),
+                "{group} lost its contract on the wire"
+            );
+            assert!(
+                !json[group][key].is_null(),
+                "{group}.{key} was displaced by the wrapper"
+            );
+        }
     }
 
     /// Real brackets win over a production-shaped placeholder verdict: dump `skip_reason` is the

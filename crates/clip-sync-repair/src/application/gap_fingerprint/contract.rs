@@ -99,6 +99,16 @@ impl<T> Contracted<T> {
     }
 }
 
+/// Stamp a contract onto an optional metric group, leaving `None` as `None`.
+///
+/// Every C2 group is an `Option` that is absent on the tiers that do not measure it, and `None` must
+/// stay `None`: a `_contract` with no values beside it would assert that something was measured. This
+/// is the whole write-side API — sites say `stamp(value, THE_CONTRACT)` and never build the wrapper
+/// by hand.
+pub fn stamp<T>(value: Option<T>, contract: MetricContract) -> Option<Contracted<T>> {
+    value.map(|v| Contracted::new(v, contract))
+}
+
 impl<T> std::ops::Deref for Contracted<T> {
     type Target = T;
 
@@ -161,6 +171,54 @@ contracts! {
         placement: "the scan verdict's own a_span_secs / donor_span_secs - adopted, not re-derived",
         window: "scan blocks of `scan_recipe.scan_block_ms`; bin lattice phased differently than scan's",
         not: "equivalence_production, the verdict skip_equivalent_gaps acts on; not a 'fine' reading of it",
+    }
+
+    /// Contract for `lag_decision` — the registration the patch/skip decision is made on.
+    LAG_DECISION_CONTRACT for "lag_decision" {
+        measures: "per-shoulder waveform lag the gate decides patch/skip on: peak_r, frac_lag_ms, peak_z, prominence",
+        placement: "b_mapped nominal, not the throat; post shoulder centered sequentially on S + D_A + round(L_pre)",
+        window: "recorded per shoulder as window_ms / max_lag_ms (defaults 1000 / 600); mono; gross-relative to b_mapped_end",
+        not: "lag_editorial (Tier-3 diagnostic placement); never compare lag values across placements",
+    }
+
+    /// Contract for `lag_editorial` — the Tier-3 diagnostic placement nothing decides on.
+    LAG_EDITORIAL_CONTRACT for "lag_editorial" {
+        measures: "same lag sweep as lag_decision but at a diagnostic placement; nothing gates, plans, or skips on it",
+        placement: "best-energy editorial bracket / structure throat, which can sit far from the seam the gate scores",
+        window: "recorded per shoulder as window_ms / max_lag_ms; Tier-3, only with --fingerprint-diagnostics",
+        not: "lag_decision (the registration production acts on); this is not a refinement of it",
+    }
+
+    /// Contract for `donor_interior_aligned` — B occupancy over the lag-adjusted bridge.
+    DONOR_INTERIOR_ALIGNED_CONTRACT for "donor_interior_aligned" {
+        measures: "B occupancy over the span a fill would take: rms_db, silence_fraction, longest_silence_ms, continuous",
+        placement: "aligned bridge [b_mapped_start + L_pre, b_mapped_end + L_post) - each shoulder at its own lag",
+        window: "the bridge span itself; continuous = no sub-floor run longer than 150ms",
+        not: "donor_interior_nominal (registration-independent); this span carries the aliased-lag confound",
+    }
+
+    /// Contract for `donor_interior_nominal` — the registration-independent program-quiet read.
+    DONOR_INTERIOR_NOMINAL_CONTRACT for "donor_interior_nominal" {
+        measures: "is B quiet at the same program time as A's gap? silence_fraction ~1 => program-quiet, not a dropout",
+        placement: "nominal b_mapped span with NO lag adjustment - registration-independent by construction",
+        window: "the nominal gap span; continuous = no sub-floor run longer than 150ms",
+        not: "donor_interior_aligned (the lag-adjusted bridge); silence here is not a fill failure",
+    }
+
+    /// Contract for `residual` — the same-source cancellation confirm at the throat.
+    RESIDUAL_CONTRACT for "residual" {
+        measures: "least-squares same-source cancellation depth, dB below the local floor - the strong confirm",
+        placement: "the gate's structure throat (`gate_structure_align`), per shoulder - NOT b_mapped nominal",
+        window: "seam window = fill_seam_search_secs (default 250ms); a side is absent when it has no usable floor",
+        not: "seam_probe (Tier-3, gates nothing); deeper dB is better here - it is not a correlation",
+    }
+
+    /// Contract for `seam_probe` — Tier-3 seam diagnosis, read by no gate.
+    SEAM_PROBE_CONTRACT for "seam_probe" {
+        measures: "encoding-robust seam metrics (R2, R4, envelope, recovered lag, snr) - why a dead seam is dead",
+        placement: "b_mapped, not the throat - so these do not compare against residual's numbers",
+        window: "10ms envelope bins; recovery +/-25ms pre and +/-max_lag_ms post, sequentially centered",
+        not: "residual (the gate's same-source confirm at the throat); no gate reads seam_probe",
     }
 }
 
@@ -250,6 +308,163 @@ mod tests {
                 assert!(
                     !w.contains("scan_recipe.") || w.contains("scan_recipe.scan_block_ms"),
                     "{group}: quotes a `scan_recipe.` path this test does not pin: {w:?}"
+                );
+            }
+        }
+    }
+
+    /// C2's contracts quote four more numbers as prose. Same rule as
+    /// [`quoted_constants_still_match_the_code`]: if the code moves and the string does not, the
+    /// contract lies to exactly the readers who trust it most.
+    ///
+    /// Two of these are **config defaults, not consts** — `lag_max_lag_ms`, `lag_window_secs` and
+    /// `fill_seam_search_secs` are tunable. The contracts therefore say *"defaults"* and name the
+    /// recorded wire fields (`window_ms` / `max_lag_ms`) that carry the value actually used, rather
+    /// than asserting a number that an override would falsify. Do not "simplify" that wording away.
+    #[test]
+    fn quoted_c2_constants_still_match_the_code() {
+        use crate::domain::donor::DONOR_CONTINUITY_MS;
+
+        assert_eq!(
+            DONOR_CONTINUITY_MS, 150.0,
+            "DONOR_CONTINUITY_MS moved; both donor contracts quote `150ms`"
+        );
+        for key in ["donor_interior_aligned", "donor_interior_nominal"] {
+            let c = shipped(key);
+            assert!(
+                c.window.as_deref().is_some_and(|w| w.contains("150ms")),
+                "{key} stopped quoting the continuity threshold"
+            );
+        }
+
+        assert_eq!(
+            super::super::measure::SEAM_PROBE_ENV_BIN_MS,
+            10.0,
+            "SEAM_PROBE_ENV_BIN_MS moved; the seam_probe contract quotes `10ms`"
+        );
+        assert_eq!(
+            super::super::measure::SEAM_PROBE_FINE_LAG_MS,
+            25.0,
+            "SEAM_PROBE_FINE_LAG_MS moved; the seam_probe contract quotes `+/-25ms`"
+        );
+        let probe = shipped("seam_probe");
+        let probe_window = probe.window.as_deref().expect("seam_probe window");
+        assert!(probe_window.contains("10ms") && probe_window.contains("+/-25ms"));
+
+        // Config *defaults*, quoted as defaults. A changed default silently makes the parenthetical
+        // wrong even though nothing is renamed.
+        let defaults = super::super::measure::FingerprintConfig::default();
+        assert_eq!(
+            defaults.lag_window_secs, 1.0,
+            "lag_window_secs default moved"
+        );
+        assert_eq!(defaults.lag_max_lag_ms, 600, "lag_max_lag_ms default moved");
+        assert_eq!(
+            defaults.fill_seam_search_secs, 0.25,
+            "fill_seam_search_secs default moved; the residual contract quotes `default 250ms`"
+        );
+        assert!(shipped("lag_decision")
+            .window
+            .as_deref()
+            .is_some_and(|w| w.contains("defaults 1000 / 600")));
+        assert!(shipped("residual")
+            .window
+            .as_deref()
+            .is_some_and(|w| w.contains("default 250ms")));
+    }
+
+    /// Contracts also quote **wire keys** (`window_ms`, `rms_db`, …). Those are renameable, and R2/R3
+    /// showed a rename sails straight past prose. Serialize each type and confirm the keys the
+    /// contracts name are still the keys it emits.
+    #[test]
+    fn quoted_wire_keys_are_still_emitted_by_their_types() {
+        // Built by hand, with the `Option` axes populated: `peak_z` / `prominence` are
+        // `skip_serializing_if`, so a zero-value stand-in would omit exactly the keys under test and
+        // the assertion would pass for the wrong reason.
+        let lag = serde_json::to_value(super::super::LagSummary {
+            window_ms: 1000,
+            max_lag_ms: 600,
+            channel: super::super::LagChannel::Mono,
+            lag0_r: 0.1,
+            peak_r: 0.9,
+            second_peak_r: Some(0.4),
+            peak_z: Some(14.0),
+            prominence: Some(0.5),
+            top2_spacing_ms: Some(30.0),
+            peak_lag_samples: 12,
+            frac_lag_samples: 12.5,
+            frac_lag_ms: 0.26,
+            edge_pinned: Some(false),
+            verdict: super::super::LagVerdict::TimingOffset,
+        })
+        .expect("lag summary");
+        for key in ["peak_r", "frac_lag_ms", "peak_z", "prominence"] {
+            assert!(
+                lag.get(key).is_some(),
+                "`{key}` is quoted by the lag contracts but LagSummary no longer emits it"
+            );
+        }
+        for key in ["window_ms", "max_lag_ms"] {
+            assert!(
+                lag.get(key).is_some(),
+                "`{key}` is quoted by both lag contracts as where the real window is recorded"
+            );
+        }
+
+        let donor = serde_json::to_value(crate::domain::donor::DonorInterior {
+            rms_db: -60.0,
+            silence_fraction: 0.5,
+            longest_silence_ms: 120.0,
+            continuous: true,
+            basis: None,
+        })
+        .expect("donor");
+        for key in [
+            "rms_db",
+            "silence_fraction",
+            "longest_silence_ms",
+            "continuous",
+        ] {
+            assert!(
+                donor.get(key).is_some(),
+                "`{key}` is quoted by donor_interior_aligned's contract but DonorInterior dropped it"
+            );
+        }
+    }
+
+    /// Look a contract up by its wire key, failing loudly if the registry lost it.
+    fn shipped(group: &str) -> &'static MetricContract {
+        SHIPPED_CONTRACTS
+            .iter()
+            .find(|(g, _)| *g == group)
+            .map(|(_, c)| c)
+            .unwrap_or_else(|| panic!("{group} is not registered in SHIPPED_CONTRACTS"))
+    }
+
+    /// Every group the plan lists for C2 actually ships text — the registry sweep proves the
+    /// contracts it *has* are well-formed, not that C2 finished.
+    #[test]
+    fn every_c2_group_ships_a_contract() {
+        for key in [
+            "lag_decision",
+            "lag_editorial",
+            "donor_interior_aligned",
+            "donor_interior_nominal",
+            "residual",
+            "seam_probe",
+        ] {
+            let c = shipped(key);
+            // Presence is the point (the registry sweep only validates the contracts that exist), but
+            // a half-filled entry would pass a bare presence check while telling the reader nothing.
+            for (axis, text) in [
+                ("measures", &c.measures),
+                ("placement", &c.placement),
+                ("window", &c.window),
+                ("not", &c.not),
+            ] {
+                assert!(
+                    text.as_deref().is_some_and(|s| !s.trim().is_empty()),
+                    "{key}: `{axis}` is empty — all four axes are the contract"
                 );
             }
         }

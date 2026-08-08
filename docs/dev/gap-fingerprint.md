@@ -196,7 +196,7 @@ approaches were refuted by measurement. Full analysis + cost hierarchy: that pla
 | `donor_interior_aligned` | full, B present | B occupancy over the **aligned** bridge span (`b_mapped_start+L_pre … b_mapped_end+L_post`): `rms_db`, `silence_fraction`, `longest_silence_ms`, `continuous`. Wire key was `donor_interior` before 2026-08-07 (serde alias reads old corpora) |
 | `donor_interior_nominal` | full, B present | B occupancy over the **nominal** geometry span (no lag adjustment) — registration-independent; the D11 program-quiet signal |
 | `splice_dualfit` | full, B present | dual-fit viability: seams scored at per-shoulder placement + `gate_pass` / `trim_frames` / validators (see below) |
-| `residual` | full, B present | least-squares same-source cancellation (dB) vs noise floor; per-side dB values are `Option` (absent for non-finite / −120 sentinel). `uninformative_pre`/`_post` name *why* a side carries no usable floor (`no_reference_window` / `probe_non_finite` / `floor_above_ok_db`), and `placement_slide_frames` / `max_lag_frames` carry the lag reach so a replayed verdict abstains where production did — all four absent on pre-2026-08-05 dumps |
+| `residual` | full, B present | least-squares same-source cancellation (dB) vs noise floor, measured at the gate's **structure throat** — the one decision group *not* read at `b_mapped`, so its numbers do not compare against `seam_probe`'s; per-side dB values are `Option` (absent for non-finite / −120 sentinel). `uninformative_pre`/`_post` name *why* a side carries no usable floor (`no_reference_window` / `probe_non_finite` / `floor_above_ok_db`), and `placement_slide_frames` / `max_lag_frames` carry the lag reach so a replayed verdict abstains where production did — all four absent on pre-2026-08-05 dumps |
 | `outcome` | B present | plan_kind, tier, fit_path, signature_mode, skip_reason. On skip, `skip_reason` is the closest failing bracket's `failure_stage` (`structure_align` / `structure_floor` / `waveform_floor` / `residual`) — fingerprint-native, **not** a production `GapPatchSkipReason`. `seam_shape` is **omitted** on the production path (`None`). Legacy dumps may still say `correlation_below_threshold` |
 | `equivalence_diagnostic` | B present | **gap-equivalence class (diagnostic)** — does this gap need patching? (silence-character; see below) |
 | `equivalence_production` | scan classified | the **authoritative production** verdict for the same gap (`GapReport::gap_equivalence`; block size = the `scan_block_ms` knob), copied in so one dump holds both readings for calibration. **This is the authoritative one** — see below |
@@ -236,10 +236,25 @@ too easy to skip, and too far from the value it explains.
 | **Goldens** | Not a Tier-1/2 axis. Curated fixtures stay contract-free until an intentional harvest |
 | **Repetition** | Repeated per gap, deliberately: these are diagnostic dumps, and a definition beside the value beats a smaller file |
 
-Carried today by `equivalence_diagnostic` and `equivalence_production` (C1, 2026-08-07). The lag,
-donor, `residual` and `seam_probe` groups are queued for C2 — see
-[TEMP-fingerprint-field-clarity-plan.md](TEMP-fingerprint-field-clarity-plan.md) § 2. Source of truth
-for the strings is `application/gap_fingerprint/contract.rs`; do not retype them elsewhere.
+Carried today by eight groups: `equivalence_diagnostic` and `equivalence_production` (C1,
+2026-08-07), then `lag_decision`, `lag_editorial`, `donor_interior_aligned`,
+`donor_interior_nominal`, `residual` and `seam_probe` (C2, 2026-08-08) — the four confusable pairs
+this corpus is actually misread on. Source of truth for the strings is
+`application/gap_fingerprint/contract.rs`; do not retype them elsewhere.
+
+Two things the contract strings deliberately do **not** do:
+
+- **They never quote a tunable as if it were fixed.** `lag_window_secs`, `lag_max_lag_ms` and
+  `fill_seam_search_secs` are `FingerprintConfig` fields, not consts, so those contracts say
+  *defaults* and name the per-shoulder wire fields (`window_ms` / `max_lag_ms`) that record what the
+  run actually used. A contract that flatly asserted "1000 ms" would lie under `--lag-window-secs`.
+- **They never re-describe a stamped value.** A group is stamped at measurement only; nothing
+  reconstructs a contract on read, so an old corpus round-trips contract-free
+  (`contract_wrapped_groups_round_trip_a_contract_free_corpus`).
+
+Numbers the contracts *do* quote as prose (a `const` table cannot `format!`) are pinned against the
+code by `quoted_c2_constants_still_match_the_code`, and the wire keys they name by
+`quoted_wire_keys_are_still_emitted_by_their_types`.
 
 ### Not measured — the fields a production dump does *not* fill
 

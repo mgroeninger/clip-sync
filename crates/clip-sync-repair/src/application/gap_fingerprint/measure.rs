@@ -1025,8 +1025,11 @@ fn seam_probe_side(
     })
 }
 
-const SEAM_PROBE_FINE_LAG_MS: f64 = 25.0;
-const SEAM_PROBE_ENV_BIN_MS: f64 = 10.0;
+// `pub(super)` so `contract.rs`'s drift guard can pin them: the `seam_probe` contract quotes both
+// numbers as prose (a `const` table cannot `format!`), and a contract that lies about its window is
+// worse than no contract.
+pub(super) const SEAM_PROBE_FINE_LAG_MS: f64 = 25.0;
+pub(super) const SEAM_PROBE_ENV_BIN_MS: f64 = 10.0;
 
 /// Pre/post [`SeamProbe`]s at a placement (mono). Built at **`b_mapped`** registration to diagnose a dead
 /// waveform seam: recovery (mis-alignment) vs encoding-robust envelope (cross-encoding) vs level/SNR.
@@ -1745,8 +1748,8 @@ pub fn build_gap_fingerprint(
         brackets,
         structure,
         seams,
-        lag_editorial,
-        lag_decision,
+        lag_editorial: stamp(lag_editorial, LAG_EDITORIAL_CONTRACT),
+        lag_decision: stamp(lag_decision, LAG_DECISION_CONTRACT),
         residual: None,
         seam_probe: None,
         donor_interior_aligned: None,
@@ -5092,25 +5095,28 @@ mod tests {
             brackets: vec![],
             structure: None,
             seams: None,
-            lag_editorial: full.then(|| LagFingerprint {
-                pre_anchor: vec![LagSummary {
-                    window_ms: 250,
-                    max_lag_ms: 200,
-                    channel: LagChannel::Mono,
-                    lag0_r: 0.02,
-                    peak_r: 0.99,
-                    second_peak_r: Some(0.20),
-                    peak_z: Some(12.5),
-                    prominence: Some(0.79),
-                    top2_spacing_ms: Some(40.0),
-                    peak_lag_samples: -778,
-                    frac_lag_samples: -778.0,
-                    frac_lag_ms: -16.2,
-                    edge_pinned: Some(false),
-                    verdict: LagVerdict::TimingOffset,
-                }],
-                post_anchor: vec![],
-            }),
+            lag_editorial: stamp(
+                full.then(|| LagFingerprint {
+                    pre_anchor: vec![LagSummary {
+                        window_ms: 250,
+                        max_lag_ms: 200,
+                        channel: LagChannel::Mono,
+                        lag0_r: 0.02,
+                        peak_r: 0.99,
+                        second_peak_r: Some(0.20),
+                        peak_z: Some(12.5),
+                        prominence: Some(0.79),
+                        top2_spacing_ms: Some(40.0),
+                        peak_lag_samples: -778,
+                        frac_lag_samples: -778.0,
+                        frac_lag_ms: -16.2,
+                        edge_pinned: Some(false),
+                        verdict: LagVerdict::TimingOffset,
+                    }],
+                    post_anchor: vec![],
+                }),
+                LAG_EDITORIAL_CONTRACT,
+            ),
             lag_decision: None,
             residual: None,
             seam_probe: None,

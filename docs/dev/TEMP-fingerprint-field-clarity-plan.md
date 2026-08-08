@@ -1,6 +1,7 @@
 # TEMP — Fingerprint field clarity (rename + co-located contracts)
 
-**Status:** **R1 + C1 + R2 + R3 shipped 2026-08-07**; C2 / C3 open. Working plan for making
+**Status:** **R1 + C1 + R2 + R3 shipped 2026-08-07; C2 shipped 2026-08-08**; only C3 (optional)
+open — every group § 2.4 prioritised now carries a contract. Working plan for making
 `--gap-fingerprints` dumps harder for agents (and humans) to misread by (1) renaming
 high-confusion wire fields, then (2) co-locating short measurement contracts next to the values
 they describe.
@@ -363,7 +364,7 @@ Do **not** put contracts only in a sidecar unless a consumer workflow *forces* o
 |-------|------|
 | **C0** ✅ | Spec only (this section); no code |
 | **C1** ✅ | **Shipped 2026-08-07.** `MetricContract` + generic `Contracted<T>` + `_contract` on the two equivalence verdict objects — see § 2.11 |
-| **C2** | After **R2/R3**: contracts on lag + donor groups (+ `residual` / `seam_probe` as listed) |
+| **C2** ✅ | **Shipped 2026-08-08.** Contracts on lag + donor groups + `residual` / `seam_probe` — see § 2.12 |
 | **C3** | Optional: share string table with `legend_text()`; optional `--fingerprint-contracts` knob |
 
 Do not ship C1 before R1 if the contract `not:` strings would still cite old field names —
@@ -440,6 +441,52 @@ the const contract table. What §2 did not anticipate, and what C2 inherits:
   regen, confirming contracts are not a Tier-1/2 axis.
 - **Not yet done (C3):** the strings are not shared with `legend_text()`, and there is no
   `--fingerprint-contracts` knob. Default is effectively `always`.
+
+### 2.12 C2 as shipped (2026-08-08)
+
+Six groups stamped — `lag_decision`, `lag_editorial`, `donor_interior_aligned`,
+`donor_interior_nominal`, `residual`, `seam_probe` — via six `contracts!` entries and a field-type
+change per group, exactly as § 2.11 predicted. What C1 did **not** anticipate:
+
+- **Three of the numbers C2 wanted to quote are config, not consts.** `lag_window_secs` /
+  `lag_max_lag_ms` (the lag windows) and `fill_seam_search_secs` (the residual seam window) are
+  tunable `FingerprintConfig` fields. § 2.11's drift-guard advice ("pin any quoted constant") does not
+  apply — pinning a *default* to a test would not stop `--lag-window-secs 2.0` from making the
+  contract lie on that run. Resolution: the contracts label those numbers as **defaults** and name the
+  per-shoulder wire fields (`window_ms` / `max_lag_ms`) that record what the run actually used, so the
+  contract points at the truth instead of asserting it. `quoted_c2_constants_still_match_the_code`
+  therefore pins two kinds of thing with different force: hard consts (`DONOR_CONTINUITY_MS` 150,
+  `SEAM_PROBE_ENV_BIN_MS` 10, `SEAM_PROBE_FINE_LAG_MS` 25) *and* the three defaults, so a moved
+  default is at least surfaced. `SEAM_PROBE_*` were widened to `pub(super)` for this.
+- **A contract can also lie by naming a key the type stopped emitting.**
+  `quoted_wire_keys_are_still_emitted_by_their_types` hand-builds a `LagSummary` and a `DonorInterior`
+  and asserts the keys the strings name (`peak_r`, `frac_lag_ms`, `peak_z`, `prominence`, `window_ms`,
+  `max_lag_ms`, `rms_db`, `silence_fraction`, `longest_silence_ms`, `continuous`) are still on the
+  wire. Neither type derives `Default` and `peak_z`/`prominence` are `skip_serializing_if`, so the
+  fixtures populate every axis by hand — a zero stand-in would omit exactly the keys under test.
+- **`stamp()` is the whole write-side API.** Every C2 group is `Option`, absent on tiers that do not
+  measure it, and `None` must stay `None`: a `_contract` with no values beside it would assert
+  something was measured. `stamp(value, CONTRACT)` maps over the `Option` and is the only way sites
+  build the wrapper.
+- **C1's read-site prediction held.** The six-field type change produced 9 compile errors, all
+  *construction* sites; `Deref` absorbed every read. Six accessors were added and readers converted,
+  per § 2.11's "read sites should not know the wrapper exists".
+- **The flatten pin found a real pre-existing normalization.** Extending
+  `wrapping_in_contracted_did_not_disturb_the_verdict_wire_shape` to the four C2 groups
+  `band_donor.json` carries went red on `residual.chosen_pre_db` / `floor_pre_db`: both are the
+  `SILENCE_FLOOR_DB` (−120) sentinel, which round-trips to **absent** by design ("no usable floor" is
+  an absence, not a number). That predates the wrapper. Allowed narrowly via `is_silence_sentinel()`
+  rather than by blanket-listing the keys, so a genuine flatten drop still fails.
+- **Tier-3 groups needed their own pin.** No committed fixture carries `lag_editorial` or
+  `seam_probe`, so `contract_wrapped_groups_round_trip_a_contract_free_corpus` (`schema.rs`) covers
+  them at the schema level: an old contract-free corpus deserializes with values intact and
+  `contract: None`, and — since dumps are not dual-write — re-serializes with **no** `_contract`
+  anywhere. It also exercises the R2 `lag` → `lag_editorial` alias, which has zero media coverage.
+- **Fixtures and goldens untouched again.** `golden_baseline_invariance`,
+  `gap_repair_spec_diff`, `curated_fixture_backfill` and `equivalence_divergence` all green with no
+  regen; workspace tests green.
+- **Still C3:** strings are not shared with `legend_text()`, and there is no
+  `--fingerprint-contracts` knob.
 
 ## 3. Suggested ship order
 
