@@ -1168,22 +1168,22 @@ impl CorpusReport {
     /// placement), so the numbers are never read without their definition.
     pub fn legend_text(&self) -> String {
         "=== measurement provenance ===\n\
-         structure (envelope) : bucketed 50 ms-bin envelope correlation · ~3 s context each side · at the structure/envelope placement\n\
-         seam (waveform)      : sample-level Pearson · ~250 ms seam border · at the throat placement · scored at lag 0\n\
-         lag_decision         : waveform correlation sweep · 1 s border · ±600 ms search, post sequentially\n\
-                                 centered on pre lag (S + D_A + round(L_pre), not the naive S + D_A) · at\n\
-                                 b_mapped (not the throat) · mono; reported gross-relative to b_mapped_end\n\
-         splice               : first-class step + per-side peak_r / peak_z from lag_decision (post − pre);\n\
-                                 ≈ bridge-length mismatch (D_B − D_A) once sequential centering is in effect\n\
-         wide_envelope        : 100 ms-bin RMS envelope · 2 s window · ±400 ms pre / ±600 ms sequentially-\n\
-                                 centered post · segment-identity confirmer · at b_mapped\n\
-         offset/step          : (pre+post)/2 and post−pre of lag_decision (or splice.step_ms), ms\n\
-         residual headroom    : sample-level least-squares cancellation (dB vs floor) · ~250 ms seam · at the throat\n\
-         uniqueness           : peak_z + prominence at 1 s window (≥12 / ≥0.45); legacy margin = peak_r − 2nd peak\n\
-         donor_interior       : B RMS / continuity over the sequentially-aligned bridge span [S + L_pre,\n\
-                                 b_mapped_end + L_post_gross) (bridges the hole?) · at b_mapped\n\
-         seam probe           : at b_mapped (not the throat) — wav (Pearson@0) · R2 · R4 · env (10 ms-bin) ·\n\
-                                 recov (±25 ms pre / ±600 ms sequentially-centered post) · snr (energy-weighted downmix)\n"
+         structure (envelope)  : bucketed 50 ms-bin envelope correlation · ~3 s context each side · at the structure/envelope placement\n\
+         seam (waveform)       : sample-level Pearson · ~250 ms seam border · at the throat placement · scored at lag 0\n\
+         lag_decision          : waveform correlation sweep · 1 s border · ±600 ms search, post sequentially\n\
+                                  centered on pre lag (S + D_A + round(L_pre), not the naive S + D_A) · at\n\
+                                  b_mapped (not the throat) · mono; reported gross-relative to b_mapped_end\n\
+         splice                : first-class step + per-side peak_r / peak_z from lag_decision (post − pre);\n\
+                                  ≈ bridge-length mismatch (D_B − D_A) once sequential centering is in effect\n\
+         wide_envelope         : 100 ms-bin RMS envelope · 2 s window · ±400 ms pre / ±600 ms sequentially-\n\
+                                  centered post · segment-identity confirmer · at b_mapped\n\
+         offset/step           : (pre+post)/2 and post−pre of lag_decision (or splice.step_ms), ms\n\
+         residual headroom     : sample-level least-squares cancellation (dB vs floor) · ~250 ms seam · at the throat\n\
+         uniqueness            : peak_z + prominence at 1 s window (≥12 / ≥0.45); legacy margin = peak_r − 2nd peak\n\
+         donor_interior_aligned: B RMS / continuity over the sequentially-aligned bridge span [S + L_pre,\n\
+                                  b_mapped_end + L_post_gross) (bridges the hole?) · at b_mapped\n\
+         seam probe            : at b_mapped (not the throat) — wav (Pearson@0) · R2 · R4 · env (10 ms-bin) ·\n\
+                                  recov (±25 ms pre / ±600 ms sequentially-centered post) · snr (energy-weighted downmix)\n"
             .to_string()
     }
 

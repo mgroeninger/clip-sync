@@ -1,5 +1,5 @@
 {
-  "schema": "perf §4 golden baseline. Tier-1 (tier/patched/dual_fit_rescue/*target/*quiet/*exhausted/gate_pass/*continuous/edge_pinned/brackets_*/fill_start_frame/fill_frames) assert BIT-EXACT. Tier-2 (gross_*/seamlocal_*/nominal_*/aligned_*/throat_*/fill_*_r continuous) assert WITHIN ε. Tier-3 diagnostics (seam_probe/wide_envelope/b_levels/fp.lag) omitted. Field prefix = measurement placement. fill_* are frame indices (integers) — Tier-1, not Tier-2.",
+  "schema": "perf §4 golden baseline. Tier-1 (tier/patched/dual_fit_rescue/*target/*quiet/*exhausted/gate_pass/*continuous/edge_pinned/brackets_*/fill_start_frame/fill_frames) assert BIT-EXACT. Tier-2 (gross_*/seamlocal_*/nominal_*/aligned_*/throat_*/fill_*_r continuous) assert WITHIN ε. Tier-3 diagnostics (seam_probe/wide_envelope/b_levels/fp.lag_editorial) omitted. Field prefix = measurement placement. fill_* are frame indices (integers) — Tier-1, not Tier-2.",
   "gap_count": 12,
   "dualfit_targets": [
     "03_silence_splice_dualfit_target·g3",

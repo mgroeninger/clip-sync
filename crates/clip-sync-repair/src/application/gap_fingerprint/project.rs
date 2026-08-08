@@ -223,7 +223,7 @@ pub fn spec_to_fingerprint_summary(
         lag_decision,
         residual,
         seam_probe: x.seam_probe,
-        donor_interior: tags.donor_aligned,
+        donor_interior_aligned: tags.donor_aligned,
         donor_interior_nominal: tags.donor_nominal,
         b_levels: x.b_levels,
         splice,
@@ -398,7 +398,7 @@ pub(crate) fn tags_from_fields(
     structure: Option<&StructureScores>,
     seams: Option<&SeamScores>,
     residual: Option<ResidualInfo>,
-    donor_interior: Option<DonorInterior>,
+    donor_interior_aligned: Option<DonorInterior>,
     donor_interior_nominal: Option<DonorInterior>,
     levels: Option<crate::domain::gap_repair_spec::LevelTags>,
 ) -> crate::domain::gap_repair_spec::GapRepairTags {
@@ -503,7 +503,7 @@ pub(crate) fn tags_from_fields(
         registration,
         seam_local,
         donor_nominal: donor_interior_nominal,
-        donor_aligned: donor_interior,
+        donor_aligned: donor_interior_aligned,
         gate,
         levels,
     }
@@ -520,7 +520,7 @@ pub fn tags_from_fingerprint(fp: &GapFingerprint) -> crate::domain::gap_repair_s
         fp.structure.as_ref(),
         fp.seams.as_ref(),
         fp.residual,
-        fp.donor_interior,
+        fp.donor_interior_aligned,
         fp.donor_interior_nominal,
         Some(crate::domain::gap_repair_spec::LevelTags {
             a_gap_floor_db: f64::from(fp.levels.gap_floor_db),
@@ -769,7 +769,7 @@ mod tests {
         assert_eq!(df.trim_frames, 480);
 
         // donor blocks round-trip whole.
-        assert_eq!(fp.donor_interior.unwrap().silence_fraction, 0.03);
+        assert_eq!(fp.donor_interior_aligned.unwrap().silence_fraction, 0.03);
         assert_eq!(fp.donor_interior_nominal.unwrap().silence_fraction, 0.10);
 
         // brackets: synthesized to read back total=4, passing=0 (bracket-exhausted).

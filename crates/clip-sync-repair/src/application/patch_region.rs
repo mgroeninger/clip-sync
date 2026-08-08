@@ -1582,7 +1582,7 @@ fn gate_structure_align(
 
 /// Read the gate's zero-move **throat** placement (B haystack frame) for a gap — the placement the
 /// decision **seam** (waveform @ lag 0) scores at. Registration metrics (`lag_decision`, `seam_probe`,
-/// `donor_interior`, `wide_envelope`, `splice`) are measured separately at **`b_mapped`**, not here.
+/// `donor_interior_aligned`, `wide_envelope`, `splice`) are measured separately at **`b_mapped`**, not here.
 /// `None` when the structure search finds no placement.
 pub(crate) fn oracle_throat_structure_frame(
     params: &SeamGateParams<'_>,

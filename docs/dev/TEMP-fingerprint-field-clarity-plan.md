@@ -1,6 +1,6 @@
 # TEMP — Fingerprint field clarity (rename + co-located contracts)
 
-**Status:** **R1 + C1 + R2 shipped 2026-08-07**; R3 / C2 / C3 open. Working plan for making
+**Status:** **R1 + C1 + R2 + R3 shipped 2026-08-07**; C2 / C3 open. Working plan for making
 `--gap-fingerprints` dumps harder for agents (and humans) to misread by (1) renaming
 high-confusion wire fields, then (2) co-locating short measurement contracts next to the values
 they describe.
@@ -143,7 +143,7 @@ short “formerly known as” where a rename would strand search (`baseline_lag`
 |-------|--------|------|
 | **R1** ✅ | Equivalence pair only (`equivalence` / `scan_equivalence`) | **Shipped 2026-08-07.** Serde aliases + fixture rewrite + live docs; calibration + divergence tests green |
 | **R2** ✅ | Lag pair (`lag` / `baseline_lag`) | **Shipped 2026-08-07.** Aliases in all four parsers + `not_measured` path folding + fixture rewrite + live docs; workspace + calibration tests green, `curated.golden.json` bit-stable (see § 1.10) |
-| **R3** | `donor_interior` → `donor_interior_aligned` | Same pattern; golden axes already say `aligned_*` — keep that vocabulary consistent |
+| **R3** ✅ | `donor_interior` → `donor_interior_aligned` | **Shipped 2026-08-07.** Aliases in both parsers + fixture rewrite + live docs; golden axes already said `aligned_*`, so the wire now agrees. Workspace + calibration green (see § 1.11) |
 
 R1 is the highest agent-damage fix and the smallest blast radius. Do not bundle R2/R3 into R1
 unless review wants one schema bump.
@@ -223,6 +223,32 @@ that R1 did not are worth carrying into R3:
   a typed round trip, which also preserves float bytes.
 - **The pre-A2 legacy fixture in `gap_fingerprint_corpus/mod.rs` deliberately keeps `lag`.** It
   models a pre-A2 dump, so leaving it un-rewritten both keeps it honest and exercises the alias.
+
+### 1.11 R3 as shipped (2026-08-07)
+
+`donor_interior` → `donor_interior_aligned`; `donor_interior_nominal` unchanged. The smallest of the
+three renames, and the only one where the *code* already spoke the new vocabulary
+(`tags.donor_aligned`, `donor_aligned_silence`, golden axes `aligned_donor_*`) — R3 only made the wire
+agree.
+
+- **The substring trap runs the opposite way from R1/R2.** There the new name contained the old one;
+  here the **un-renamed sibling** `donor_interior_nominal` contains the old key. serde matches whole
+  keys so the alias is safe, but a naive fixture rewrite would have silently renamed 12 nominal spans
+  into a field that does not exist. Every rewrite anchored on `"donor_interior":` **with the colon**,
+  and the key census was taken before and after (13 aligned / 12 nominal, unchanged).
+  `legacy_donor_interior_key_deserializes_without_swallowing_its_nominal_sibling` gives the two spans
+  distinct `rms_db` so a merge or a swap fails loudly.
+- **Two parsers, not four** (`GapFingerprint`, harness `analysis.rs`). `check.rs` does not read donor
+  at all, and `donor_interior` is in no `not_measured` list — so none of R2's dotted-path folding was
+  needed. Confirmed by grep before starting, not assumed.
+- **`curated_fixture_backfill.rs` was a non-event.** It splices on `"outcome": {`, never on donor
+  keys; its donor reference is a compile-visible typed read.
+- **`legend_text()` needed re-alignment**, unlike R1/R2. `donor_interior_aligned` is 22 chars against
+  a 21-char label column, so every label and continuation line was re-padded to 22.
+- **Golden data is bit-stable.** A deliberate `CURATED_GOLDEN_REGEN` produced a **one-line** diff —
+  the prose `schema` description, catching up to R2's `fp.lag` → `fp.lag_editorial`. Every measured
+  axis was byte-identical. Note the invariance test does **not** compare that string, so stale prose
+  in the golden is invisible to CI; check it by eye after a rename.
 
 ---
 
@@ -419,7 +445,7 @@ the const contract table. What §2 did not anticipate, and what C2 inherits:
 
 1. Land **R1** (equivalence rename + aliases + fixtures + live docs).
 2. Land **C1** (contracts on the two equivalence objects) while the rename is fresh.
-3. Land **R3**, then **C2**.
+3. Land **C2**.
 4. Promote durable bits into `gap-fingerprint.md`; archive this TEMP.
 
 ---

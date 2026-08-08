@@ -210,7 +210,7 @@ pub const PROJECTED_LAG_DECISION_FIELDS: &[&str] = &[
     "lag_decision.verdict",
 ];
 
-/// The same declaration as written by dumps predating the 2026-08-07 `lag_decision` → `lag_decision`
+/// The same declaration as written by dumps predating the 2026-08-07 `baseline_lag` → `lag_decision`
 /// rename.
 ///
 /// Unlike a struct field, these paths are **data**: they are strings inside `source.not_measured` on
@@ -365,7 +365,7 @@ pub struct GapFingerprint {
     /// bracket* (a diagnostic placement that can sit far from the throat). This is the
     /// registration-relevant lag.
     ///
-    /// Wire key was `lag_decision` before 2026-08-07; old corpora still deserialize via the serde
+    /// Wire key was `baseline_lag` before 2026-08-07; old corpora still deserialize via the serde
     /// alias. "Baseline" named the *placement pass* that produced it, not the role, and readers took
     /// it for a reference/before value.
     #[serde(
@@ -381,14 +381,23 @@ pub struct GapFingerprint {
     /// waveform seam is dead (mis-alignment vs cross-encoding vs quiet). Full tier, gate path.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub seam_probe: Option<SeamProbeFingerprint>,
-    /// Does donor B actually carry audio across the hole? Energy/continuity of B over the gap-mapped span
-    /// — the donor half of the fill predicate (§3/§4). Full tier, gate path.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub donor_interior: Option<DonorInterior>,
+    /// Does donor B actually carry audio across the hole? Energy/continuity of B over the **aligned**
+    /// gap-mapped span (shoulders at their own lags) — the donor half of the fill predicate (§3/§4).
+    /// Full tier, gate path.
+    ///
+    /// Wire key was `donor_interior` before 2026-08-07; old corpora still deserialize via the serde
+    /// alias. The bare name read as "the donor interior", which hid that it is one of *two* spans and
+    /// that this one carries the registration confound `donor_interior_nominal` exists to dodge.
+    #[serde(
+        alias = "donor_interior",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub donor_interior_aligned: Option<DonorInterior>,
     /// Donor occupancy at the **nominal** geometry `b_mapped` span (NO per-shoulder lag) — the
-    /// registration-independent sibling of `donor_interior`, so it dodges the aliased-lag confound the
-    /// aligned span inherits. `silence_fraction ≈ 1` ⇒ B is quiet at the same program time as A's gap ⇒
-    /// program-quiet, not a fillable dropout (D11). Full tier, gate path.
+    /// registration-independent sibling of `donor_interior_aligned`, so it dodges the aliased-lag
+    /// confound the aligned span inherits. `silence_fraction ≈ 1` ⇒ B is quiet at the same program time
+    /// as A's gap ⇒ program-quiet, not a fillable dropout (D11). Full tier, gate path.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub donor_interior_nominal: Option<DonorInterior>,
     /// Symmetric B-side level profile over the nominal `b_mapped` span + context — the counterpart to
@@ -1565,7 +1574,7 @@ mod tests {
                 }),
                 post: None,
             }),
-            donor_interior: Some(DonorInterior {
+            donor_interior_aligned: Some(DonorInterior {
                 rms_db: -28.0,
                 silence_fraction: 0.0,
                 longest_silence_ms: 0.0,
@@ -1712,6 +1721,56 @@ mod tests {
         assert!(!json.contains("\"baseline_lag\""));
         // `lag_*` contains `lag`, so check for the bare old key exactly (the R1 substring trap).
         assert!(!json.contains("\"lag\""));
+
+        let back: GapFingerprint = serde_json::from_str(&json).expect("new keys deserialize");
+        assert_eq!(fp, back);
+    }
+
+    /// R3 rename: pre-2026-08-07 corpora wrote `donor_interior` for the **aligned** span.
+    ///
+    /// The trap here is the reverse of R1/R2's. `donor_interior_nominal` *starts with* the old key,
+    /// and its sibling was **not** renamed — so an old dump carries both `donor_interior` and
+    /// `donor_interior_nominal` side by side. serde matches whole keys, so the alias cannot swallow
+    /// the nominal one, but a fixture rewrite done by naive substring replace absolutely can. Both
+    /// spans are given distinct `rms_db` so a merge or a swap fails loudly rather than round-tripping.
+    #[test]
+    fn legacy_donor_interior_key_deserializes_without_swallowing_its_nominal_sibling() {
+        let old = r#"{
+            "index": 0,
+            "tier": "full",
+            "sample_rate": 48000,
+            "channels": 2,
+            "geometry": {
+                "a_start_secs": 1.0,
+                "a_end_secs": 2.0,
+                "a_refined_start_secs": 1.0,
+                "a_refined_end_secs": 2.0,
+                "duration_secs": 1.0
+            },
+            "levels": {"noise_floor_db": -60.0, "gap_floor_db": -70.0},
+            "donor_interior": {"rms_db": -40.0, "silence_fraction": 0.02,
+                               "longest_silence_ms": 12.0, "continuous": true},
+            "donor_interior_nominal": {"rms_db": -80.0, "silence_fraction": 0.97,
+                                       "longest_silence_ms": 940.0, "continuous": false}
+        }"#;
+        let fp: GapFingerprint = serde_json::from_str(old).expect("legacy key deserializes");
+
+        assert_eq!(
+            fp.donor_interior_aligned.as_ref().map(|d| d.rms_db),
+            Some(-40.0),
+            "`donor_interior` must land on the aligned span"
+        );
+        assert_eq!(
+            fp.donor_interior_nominal.as_ref().map(|d| d.rms_db),
+            Some(-80.0),
+            "the nominal sibling must survive the alias untouched"
+        );
+
+        let json = serde_json::to_string(&fp).expect("serialize");
+        assert!(json.contains("\"donor_interior_aligned\""));
+        assert!(json.contains("\"donor_interior_nominal\""));
+        // `donor_interior_*` contains `donor_interior`, so check for the bare old key exactly.
+        assert!(!json.contains("\"donor_interior\""));
 
         let back: GapFingerprint = serde_json::from_str(&json).expect("new keys deserialize");
         assert_eq!(fp, back);

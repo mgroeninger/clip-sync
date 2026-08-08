@@ -183,7 +183,7 @@ pub struct GapRow {
     /// `lag_decision` — a *different* placement (structure throat vs `b_mapped`). Any `true` in a run means
     /// the corpus mixes pre-/post-A2 schemas and the lag reads aren't comparable (C-harness-3).
     pub registration_from_legacy_lag: bool,
-    /// Donor B bridges the gap interior without a sub-floor hole (from `donor_interior.continuous`).
+    /// Donor B bridges the gap interior without a sub-floor hole (from `donor_interior_aligned.continuous`).
     pub donor_continuous: Option<bool>,
     /// Donor-interior RMS (dBFS) over the gap-mapped B span.
     pub donor_rms_db: Option<f64>,
@@ -244,7 +244,7 @@ pub struct GapRow {
     /// at the same program time as A's gap ⇒ program-quiet, not a fillable dropout.
     pub donor_nominal_silence: Option<f64>,
     pub donor_nominal_cont: Option<bool>,
-    /// Donor occupancy at the *aligned* span (from `donor_interior`) — disagreement with the nominal one
+    /// Donor occupancy at the *aligned* span (from `donor_interior_aligned`) — disagreement with the nominal one
     /// flags a registration that moved the span onto different content (alias signal).
     pub donor_aligned_silence: Option<f64>,
     /// B-side gap floor and noise floor (symmetric `b_levels`) — is B's gap quiet vs B's *own* floor?

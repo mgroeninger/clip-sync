@@ -59,7 +59,7 @@ pub enum Placement {
     SeamLocal,
     /// Nominal `b_mapped .. + gap_frames` span — `donor_interior_nominal`.
     NominalSpan,
-    /// Aligned bridge span — `donor_interior`.
+    /// Aligned bridge span — `donor_interior_aligned`.
     AlignedBridge,
     /// Structure-slid throat (zero-move) — gate decision / residual / bracket counts.
     GateThroat,

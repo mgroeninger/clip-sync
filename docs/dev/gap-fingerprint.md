@@ -193,7 +193,7 @@ approaches were refuted by measurement. Full analysis + cost hierarchy: that pla
 | `structure` / `seams` | **omitted on the production path** | intended: baseline scores; seams carry per-channel + selected channels. Suppressed by `skip_baseline_placement`; deferred as Finding F1 (`archive/TEMP-pipeline-perf-redesign-plan.md` §8g.4a) |
 | `lag_decision` | full, B present | **decision** per-shoulder lag fingerprint registered at **`b_mapped`** (see *Registration & dual-fit*). Wire key was `baseline_lag` before 2026-08-07 (serde alias reads old corpora) |
 | `splice` | full, B present | first-class registration step derived from `lag_decision` mono: `step_ms`, per-side `peak_r`/`peak_z`, `edge_pinned` |
-| `donor_interior` | full, B present | B occupancy over the **aligned** bridge span (`b_mapped_start+L_pre … b_mapped_end+L_post`): `rms_db`, `silence_fraction`, `longest_silence_ms`, `continuous` |
+| `donor_interior_aligned` | full, B present | B occupancy over the **aligned** bridge span (`b_mapped_start+L_pre … b_mapped_end+L_post`): `rms_db`, `silence_fraction`, `longest_silence_ms`, `continuous`. Wire key was `donor_interior` before 2026-08-07 (serde alias reads old corpora) |
 | `donor_interior_nominal` | full, B present | B occupancy over the **nominal** geometry span (no lag adjustment) — registration-independent; the D11 program-quiet signal |
 | `splice_dualfit` | full, B present | dual-fit viability: seams scored at per-shoulder placement + `gate_pass` / `trim_frames` / validators (see below) |
 | `residual` | full, B present | least-squares same-source cancellation (dB) vs noise floor; per-side dB values are `Option` (absent for non-finite / −120 sentinel). `uninformative_pre`/`_post` name *why* a side carries no usable floor (`no_reference_window` / `probe_non_finite` / `floor_above_ok_db`), and `placement_slide_frames` / `max_lag_frames` carry the lag reach so a replayed verdict abstains where production did — all four absent on pre-2026-08-05 dumps |
@@ -680,9 +680,15 @@ repair reconciles), plus per-side `peak_r`/`peak_z` and a combined **`edge_pinne
 shoulder was search-exhausted ⇒ `step_ms` is GIGO). A nonzero step is the normal signature of **both**
 patched and skipped gaps; what makes a gap skip is bracket-search exhaustion, not the step.
 
-### `donor_interior` / `donor_interior_nominal` — is there anything to fill?
+### `donor_interior_aligned` / `donor_interior_nominal` — is there anything to fill?
 
-B occupancy over the span it would fill. `donor_interior` uses the **aligned** bridge (shoulders at their
+> The aligned span was renamed from `donor_interior` on 2026-08-07; the nominal one is unchanged.
+> The bare name hid that this is one of *two* spans, and that this one carries exactly the
+> registration confound its sibling exists to dodge. Old corpora deserialize via a serde alias.
+> Note the two keys are **not** interchangeable in a text search: `donor_interior_nominal` starts
+> with the old name, so a substring rewrite corrupts it.
+
+B occupancy over the span it would fill. `donor_interior_aligned` uses the **aligned** bridge (shoulders at their
 own lags); `donor_interior_nominal` uses the **nominal** program-time span with **no lag adjustment**, so it
 is registration-independent — the read used to classify a gap as **program-quiet** (B silent at the same
 program time ⇒ nothing to fill, not a dropout; ledger D11). Both carry `rms_db`, `silence_fraction`,

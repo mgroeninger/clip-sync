@@ -606,7 +606,7 @@
           "snr_db": 11.277347564697266
         }
       },
-      "donor_interior": {
+      "donor_interior_aligned": {
         "rms_db": -63.90612030029297,
         "silence_fraction": 1.0,
         "longest_silence_ms": 2250.0,

@@ -50,7 +50,7 @@ struct GapEntry {
     lag_editorial: Option<Lag>,
     /// Lag at the **decision** placement (structure-slid throat) — the registration-relevant one (#2).
     ///
-    /// Wire key was `lag_decision` before 2026-08-07; the alias keeps old corpora readable.
+    /// Wire key was `baseline_lag` before 2026-08-07; the alias keeps old corpora readable.
     #[serde(default, alias = "baseline_lag")]
     lag_decision: Option<Lag>,
     /// Residual cancellation at the decision seam (the strong same-source confirm).
@@ -68,9 +68,11 @@ struct GapEntry {
     /// Seam recovery / encoding-robust envelope / level at the decision seam (diagnoses dead seams).
     #[serde(default)]
     seam_probe: Option<SeamProbeFp>,
-    /// Donor B energy across the gap-mapped span (bridges the hole?).
-    #[serde(default)]
-    donor_interior: Option<DonorInterior>,
+    /// Donor B energy across the **aligned** gap-mapped span (bridges the hole?).
+    ///
+    /// Wire key was `donor_interior` before 2026-08-07; the alias keeps old corpora readable.
+    #[serde(default, alias = "donor_interior")]
+    donor_interior_aligned: Option<DonorInterior>,
     /// Donor occupancy at the **nominal** geometry span (no lag) — registration-independent (D11).
     #[serde(default)]
     donor_interior_nominal: Option<DonorInterior>,
@@ -578,8 +580,8 @@ fn gap_row(pair: &str, source: &SourceMeta, gap: &GapEntry, eps: f64, tail_secs:
         splice_step_ms,
         splice_edge_pinned,
         registration_from_legacy_lag,
-        donor_continuous: gap.donor_interior.as_ref().map(|d| d.continuous),
-        donor_rms_db: gap.donor_interior.as_ref().map(|d| d.rms_db),
+        donor_continuous: gap.donor_interior_aligned.as_ref().map(|d| d.continuous),
+        donor_rms_db: gap.donor_interior_aligned.as_ref().map(|d| d.rms_db),
         wide_env_pre_lag_ms: gap
             .wide_envelope
             .as_ref()
@@ -660,7 +662,10 @@ fn gap_row(pair: &str, source: &SourceMeta, gap: &GapEntry, eps: f64, tail_secs:
             .as_ref()
             .map(|d| d.silence_fraction),
         donor_nominal_cont: gap.donor_interior_nominal.as_ref().map(|d| d.continuous),
-        donor_aligned_silence: gap.donor_interior.as_ref().map(|d| d.silence_fraction),
+        donor_aligned_silence: gap
+            .donor_interior_aligned
+            .as_ref()
+            .map(|d| d.silence_fraction),
         b_gap_floor_db: gap.b_levels.as_ref().map(|l| l.gap_floor_db),
         b_noise_floor_db: gap.b_levels.as_ref().map(|l| l.noise_floor_db),
         a_gap_floor_db: gap.levels.as_ref().map(|l| l.gap_floor_db),

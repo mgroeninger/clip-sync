@@ -272,7 +272,7 @@ fn tags_from_measurements(
         None,
         None,
         m.residual,
-        m.donor_interior,
+        m.donor_interior_aligned,
         m.donor_interior_nominal,
         levels,
     )
@@ -1749,7 +1749,7 @@ pub fn build_gap_fingerprint(
         lag_decision,
         residual: None,
         seam_probe: None,
-        donor_interior: None,
+        donor_interior_aligned: None,
         donor_interior_nominal: None,
         b_levels: None,
         splice: None,
@@ -1894,7 +1894,7 @@ struct RegionMeasurements {
     lag_decision: Option<LagFingerprint>,
     splice: Option<SpliceSummary>,
     seam_probe: Option<SeamProbeFingerprint>,
-    donor_interior: Option<DonorInterior>,
+    donor_interior_aligned: Option<DonorInterior>,
     donor_interior_nominal: Option<DonorInterior>,
     b_levels: Option<LevelProfile>,
     splice_dualfit: Option<SpliceDualfit>,
@@ -2131,7 +2131,7 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
     let b_post_aligned = post_gross_frames
         .map(|g| (b_mapped_start as i64 + gap_frames as i64 + g).max(0) as usize)
         .unwrap_or(b_mapped_start + gap_frames);
-    let donor_interior = donor_interior_at(
+    let donor_interior_aligned = donor_interior_at(
         &b_mono,
         b_pre_aligned,
         b_post_aligned,
@@ -2181,7 +2181,7 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
         patched,
         brackets: &infos,
         splice_dualfit: splice_dualfit.as_ref(),
-        donor_aligned: donor_interior.as_ref(),
+        donor_aligned: donor_interior_aligned.as_ref(),
         donor_nominal: donor_interior_nominal.as_ref(),
     });
     let wide_envelope = if include_diagnostics {
@@ -2263,7 +2263,7 @@ fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurement
         lag_decision,
         splice,
         seam_probe,
-        donor_interior,
+        donor_interior_aligned,
         donor_interior_nominal,
         b_levels,
         splice_dualfit,
@@ -3378,7 +3378,7 @@ mod tests {
                 edge_pinned: Some(false),
             }),
             seam_probe: None,
-            donor_interior: Some(donor(0.05, true)),
+            donor_interior_aligned: Some(donor(0.05, true)),
             donor_interior_nominal: Some(donor(0.10, false)),
             b_levels: None,
             splice_dualfit: Some(SpliceDualfit {
@@ -5114,7 +5114,7 @@ mod tests {
             lag_decision: None,
             residual: None,
             seam_probe: None,
-            donor_interior: None,
+            donor_interior_aligned: None,
             splice: None,
             wide_envelope: None,
             splice_dualfit: None,
