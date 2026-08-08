@@ -8,8 +8,8 @@
 //! F15 closed the three diagnostic-path sensor defects; I1 converged the equivalence bin size onto
 //! `scan_block_ms`. This file pins the resulting contract media-free:
 //!
-//! - **`band_donor.json`** is a **regression** fixture for g4 of the F15 pair (re-harvested from
-//!   `silence-floor/fp_i1_bin_convergence/`). The paths now **agree** on this gap. The pre-fix band
+//! - **`band_donor.json`** is a **regression** fixture for g4 of the F15 pair (re-harvested after the
+//!   I1 bin-convergence fix). The paths now **agree** on this gap. The pre-fix band
 //!   arithmetic is kept as constants so the closed mechanism stays documented — never swap in a
 //!   still-diverging gap to restore a diverge assertion.
 //! - a change that flipped any remaining divergence into the **dangerous** direction (scan drops what
@@ -27,8 +27,10 @@ use clip_sync_repair::domain::gap_equivalence::{
     classify_gap_equivalence, GapEquivalenceClass, GapEquivalenceParams, GapEquivalenceVerdict,
 };
 
-/// Pre-fix (`fp_post_F14_fix`) numbers for the band mechanism this fixture closed. The re-harvested
-/// artifact no longer carries them; they stay here so the mechanism cannot be forgotten.
+/// Pre-fix (post-F14, pre-F15) numbers for the band mechanism this fixture closed. The re-harvested
+/// artifact no longer carries them, and the `gap-files/` dump they came from is ephemeral and now
+/// deleted — **these constants are the record of that run**, which is why they are transcribed here
+/// rather than cited by path.
 mod pre_fix {
     pub const SCAN_FLOOR_DB: f64 = -79.500_993_053_487_4;
     pub const FINE_FLOOR_DB: f64 = -58.394_107_818_603_5;

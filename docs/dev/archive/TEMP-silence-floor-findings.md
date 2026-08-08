@@ -450,8 +450,8 @@ the more serious of the two.
 ## 6. 2026-07-30 media follow-ups
 
 Three runs on the HEAD binary (`--features calibration,he-aac`; see §7 for why the feature is
-mandatory). Raw output in gitignored `gap-files/silence-floor/{fp,fp10}/` and
-`gap-files/silence-floor-diff/`.
+mandatory). Raw output went to gitignored `gap-files/` and has since been deleted (2026-08-08); the
+numbers quoted in this section are the record of those runs.
 
 ### 6a. Three-way fingerprint differential — PASSED
 

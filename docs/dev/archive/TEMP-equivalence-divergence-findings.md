@@ -60,17 +60,19 @@ gitignored `gap-files/`.
 **Verification rule.** Re-read any `file:line` reference before acting on it — the references below
 were read 2026-07-30 and some have already moved.
 
-## Where the data lives — and why it is inlined here
+## Where the data lived — and why it is inlined here
 
-Artifacts sit under gitignored `gap-files/silence-floor/`: `fp_post_F14_fix/` (**current reference** —
-post-F14-fix full-pair run; both floors *and* both noise floors on all ten characterized gaps),
-`fp_F15_question/` (the pre-fix run the Answer was first derived from), `fp6/` / `fp/` (earlier
-single-gap dumps),
-`scan-postfix.json`, `preview-debug.log`, plus a `*-scan.json` and `*.log` per run.
-**`gap-files/` is ephemeral and deletable** — it is licensed-media-derived and not a durable
-reference. Every number these findings depend on is therefore quoted inline below, so the findings
-survive the directory being cleared. Re-deriving them costs one ~15 GB run per finding (see the
-reproduction section).
+> **The source dumps are gone (deleted 2026-08-08), as always intended.** `gap-files/` is
+> licensed-media-derived, gitignored, ephemeral and deletable — never a durable reference. **The
+> numbers quoted inline below are the record of those runs**; cite them, not any `gap-files/` path.
+> Run names are kept below only to label *which* run a number came from.
+
+The findings were derived from runs formerly under `gap-files/silence-floor/`: **post-F14-fix**
+(the primary full-pair run — both floors *and* both noise floors on all ten characterized gaps),
+**F15-question** (the pre-fix run the Answer was first derived from), and two earlier single-gap
+dumps. Every number these findings depend on is quoted inline below, so the findings survive the
+directory being cleared — which has now happened. Re-deriving them would cost one ~15 GB run per
+finding (see the reproduction section).
 
 The pair is the same one throughout: gap indices are **0-based in filenames, 1-based in the gap
 table and in `--fingerprint-gap`**. F15's gap is table `#6` / file `g005`; F14's is table `#2` /
@@ -959,7 +961,7 @@ is why this only surfaced on a fingerprint run.
 **Severity: medium-high (calibration-oracle integrity). Status: FIXED AND MEDIA-VALIDATED
 2026-07-30** — field wired, then flag refuted on media (A-border skew), then `splice_dualfit_at`
 aligned to production's raw `mono(refined ± w)`, then **confirmed on a post-fix run of the same pair**
-(`gap-files/silence-floor/fp_post_F14_fix/`): the flag flips to `true` on the rescued gap and
+(the **post-F14-fix** run): the flag flips to `true` on the rescued gap and
 `trim_frames` lands on production's value exactly. Found 2026-07-30.
 
 The gap at **1050.82 s**, fingerprinted and previewed from the **same binary with the same flags**:
@@ -1102,7 +1104,7 @@ The shoulder cannot be matched without first matching the border. The two live o
 
 ### Post-fix re-run 2026-07-30 — validated, and the skew was pair-wide
 
-Same pair, post-fix binary (`gap-files/silence-floor/fp_post_F14_fix/`), against the same
+Same pair, post-fix binary (the **post-F14-fix** run), against the same
 `--repair-preview` numbers. The prediction held on `g1`:
 
 | | pre-fix dump | post-fix dump | production preview |
@@ -1234,7 +1236,7 @@ donor axis and part of the A-side split.
 
 ### Post-F14-fix re-run 2026-07-30 — the mechanism is now measured, and one framing is refuted
 
-`gap-files/silence-floor/fp_post_F14_fix/` is the first run carrying **both** floors and both noise
+The **post-F14-fix** run is the first carrying **both** floors and both noise
 floors on all ten characterized gaps (the "safe to do now" provenance item). Four results.
 
 **1. The band hypothesis is confirmed directly, not inferred.** Testing the nominal donor's `rms_db`
@@ -1418,7 +1420,7 @@ heading rests on.
 
 ### Combined re-dump, 2026-07-30 — sensors converged, classes did not
 
-Corpus `silence-floor/fp_band_donor_mechanism_now_classifies_as_repairable_check`, same pair, 10 gaps,
+The **band-donor re-check** run (same pair, 10 gaps),
 all three fixes live. This is the confirming run the paragraph above called for.
 
 **The sensors closed.** Median `|fine − scan|`, pre-fix → post-fix:

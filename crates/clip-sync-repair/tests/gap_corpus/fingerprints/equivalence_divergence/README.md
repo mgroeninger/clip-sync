@@ -18,7 +18,7 @@ paths' `gap_floor_db` definitions, so the same donor read silent to one path and
 other. That mechanism is **closed**. This artifact now records the post-F15 + post-I1 verdicts, where
 the two paths **agree**.
 
-### Current (re-harvested from `silence-floor/fp_i1_bin_convergence/`)
+### Current (post-I1 harvest, 2026-07-31)
 
 | | scan | diagnostic |
 |---|---|---|
@@ -31,12 +31,15 @@ Floors match exactly. Donor fractions differ by one block of window alignment (s
 The residual noise-floor split (~0.78 dB) is the accepted I2 context-window term — safe direction,
 does not flip the class.
 
-Provenance: corpus `silence-floor/fp_i1_bin_convergence`, same pair / gap index 4, original filename
-`0c47aa95_6548_t00-42-53_g004_full_patch.json`. Background:
+Provenance: g4 of the F15 pair, harvested after the I1 bin-convergence fix. **The tables above and the
+constants in `tests/equivalence_divergence.rs` are the record of that run** — the `gap-files/` corpus it
+was taken from is gitignored, ephemeral, and has since been deleted, so do not cite it as a source.
+That is the standing rule for this tree: a harvested fixture must carry its measured values in the
+committed record, never a pointer to a scratch dump. Background:
 `docs/dev/archive/TEMP-equivalence-divergence-findings.md` § F15;
 `docs/dev/archive/TEMP-equivalence-instrument-convergence.md` § I1.
 
-### Pre-fix numbers (retained as documentation — `fp_post_F14_fix`)
+### Pre-fix numbers (retained as documentation — the post-F14 / pre-F15 harvest)
 
 | | scan | diagnostic |
 |---|---|---|
