@@ -1,13 +1,30 @@
 # TEMP — Fingerprint field clarity (rename + co-located contracts)
 
-**Status:** **R1 + C1 + R2 + R3 shipped 2026-08-07; C2 shipped 2026-08-08**; only C3 (optional)
-open — every group § 2.4 prioritised now carries a contract. Working plan for making
+> # ARCHIVED 2026-08-08 — closed, do not update
+>
+> **R1 + C1 + R2 + R3 shipped 2026-08-07; C2 shipped 2026-08-08.** Every group § 2.4 prioritised
+> carries a contract. **C3 (optional) was deferred, not built** — moved to
+> [BACKLOG.md](../../../BACKLOG.md) § *Fingerprint contract follow-ups (C3)* with the trigger each half
+> needs; the reasoning for deferring is there, not here.
+>
+> Durable behaviour lives in [gap-fingerprint.md](../gap-fingerprint.md) § *`_contract`* (shape,
+> the eight contracted groups, the two "deliberately do not" rules) and § *Shape* (the renamed keys
+> with their "formerly known as" provenance), plus the module doc on
+> `application/gap_fingerprint/contract.rs` (why contracts travel inside the object). Kept here for
+> the rationale: why the wrapper was mandatory rather than stylistic (§ 2.11), why three C2 numbers
+> are config and not consts (§ 2.12), the `not_measured`-paths-are-data finding (§ 1.10), and the
+> three substring traps each rename hit (§ 1.9 / § 1.10 / § 1.11).
+>
+> One § 2.9 exit criterion was **never run**: the manual agent smoke test (interpret one gap from
+> JSON alone, confirm it cites `_contract` placement/window rather than inventing "baseline").
+
+Working plan for making
 `--gap-fingerprints` dumps harder for agents (and humans) to misread by (1) renaming
 high-confusion wire fields, then (2) co-locating short measurement contracts next to the values
 they describe.
 
-Companion: [gap-fingerprint.md](gap-fingerprint.md) § Shape / § *`equivalence_diagnostic` vs
-`equivalence_production`*, [gap-vocabulary.md](gap-vocabulary.md), harness
+Companion: [gap-fingerprint.md](../gap-fingerprint.md) § Shape / § *`equivalence_diagnostic` vs
+`equivalence_production`*, [gap-vocabulary.md](../gap-vocabulary.md), harness
 `gap_fingerprint_corpus/report.rs` `legend_text()`, curated fixtures under
 `crates/clip-sync-repair/tests/gap_corpus/fingerprints/`.
 
@@ -126,10 +143,10 @@ Execute in this order so round-trips stay green.
 
 | Doc | Edit |
 |-----|------|
-| [gap-fingerprint.md](gap-fingerprint.md) | Shape table; rename § *`equivalence` vs `scan_equivalence`* → *`equivalence_diagnostic` vs `equivalence_production`* **(R1 done)**; Registration & dual-fit subsections for lag/donor; any “formerly `baseline_lag`” note for one release cycle |
-| [gap-vocabulary.md](gap-vocabulary.md) | Silence-character pre-gate / fixture mapping that cites the old pair **(R1 done)** |
-| [json-output.md](../json-output.md) | Fingerprint dump note that names the authoritative field **(R1 done)** |
-| [docs/dev/README.md](README.md) | Link text that still says `` `equivalence` vs `scan_equivalence` `` **(R1 done)** |
+| [gap-fingerprint.md](../gap-fingerprint.md) | Shape table; rename § *`equivalence` vs `scan_equivalence`* → *`equivalence_diagnostic` vs `equivalence_production`* **(R1 done)**; Registration & dual-fit subsections for lag/donor; any “formerly `baseline_lag`” note for one release cycle |
+| [gap-vocabulary.md](../gap-vocabulary.md) | Silence-character pre-gate / fixture mapping that cites the old pair **(R1 done)** |
+| [json-output.md](../../json-output.md) | Fingerprint dump note that names the authoritative field **(R1 done)** |
+| [docs/dev/README.md](../README.md) | Link text that still says `` `equivalence` vs `scan_equivalence` `` **(R1 done)** |
 | Binary module docs | `equivalence_calibration.rs` header **(R1 done)**; `listen_registration.rs` comments **(R1 done)** |
 | Harness `legend_text()` | Use new names so agent-facing text matches dumps — R1: `legend_text()` never named the equivalence pair, so nothing to change; the health-check messages in `check.rs` did and were updated |
 | This TEMP | Mark §1 done when shipped; archive after durable docs absorb it |
@@ -365,7 +382,7 @@ Do **not** put contracts only in a sidecar unless a consumer workflow *forces* o
 | **C0** ✅ | Spec only (this section); no code |
 | **C1** ✅ | **Shipped 2026-08-07.** `MetricContract` + generic `Contracted<T>` + `_contract` on the two equivalence verdict objects — see § 2.11 |
 | **C2** ✅ | **Shipped 2026-08-08.** Contracts on lag + donor groups + `residual` / `seam_probe` — see § 2.12 |
-| **C3** | Optional: share string table with `legend_text()`; optional `--fingerprint-contracts` knob |
+| **C3** ⏸ | **Deferred 2026-08-08, not built.** Optional: share string table with `legend_text()`; optional `--fingerprint-contracts` knob. Parked with triggers in [BACKLOG.md](../../../BACKLOG.md) § *Fingerprint contract follow-ups (C3)* |
 
 Do not ship C1 before R1 if the contract `not:` strings would still cite old field names —
 rename first, then freeze contract text against the new names.
@@ -486,14 +503,17 @@ change per group, exactly as § 2.11 predicted. What C1 did **not** anticipate:
   `gap_repair_spec_diff`, `curated_fixture_backfill` and `equivalence_divergence` all green with no
   regen; workspace tests green.
 - **Still C3:** strings are not shared with `legend_text()`, and there is no
-  `--fingerprint-contracts` knob.
+  `--fingerprint-contracts` knob. **Deferred at archive time** — see
+  [BACKLOG.md](../../../BACKLOG.md) § *Fingerprint contract follow-ups (C3)* for why each half is
+  waiting on a trigger rather than scheduled.
 
 ## 3. Suggested ship order
 
 1. Land **R1** (equivalence rename + aliases + fixtures + live docs).
 2. Land **C1** (contracts on the two equivalence objects) while the rename is fresh.
 3. Land **C2**.
-4. Promote durable bits into `gap-fingerprint.md`; archive this TEMP.
+4. Promote durable bits into `gap-fingerprint.md`; archive this TEMP. **Done 2026-08-08** — C3
+   deferred to `BACKLOG.md` rather than shipped, per the banner above.
 
 ---
 

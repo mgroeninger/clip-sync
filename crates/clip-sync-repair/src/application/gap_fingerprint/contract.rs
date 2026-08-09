@@ -4,8 +4,10 @@
 //! what window, and what is this *not*?". Readers (agents especially) treat names as the schema and
 //! invent the rest, and this corpus's real failure mode is wrong placement / wrong window, not wrong
 //! field. A corpus-root notes map is too easy to skip and too far from the number it explains, so the
-//! contract travels **inside the same JSON object as the values**. See
-//! `docs/dev/TEMP-fingerprint-field-clarity-plan.md` § 2.
+//! contract travels **inside the same JSON object as the values**. Current shape and the eight
+//! contracted groups: `docs/dev/gap-fingerprint.md` § `_contract`. Design rationale (why the
+//! `Contracted<T>` wrapper was mandatory rather than stylistic, and why some quoted numbers are
+//! config rather than consts): `docs/dev/archive/TEMP-fingerprint-field-clarity-plan.md` § 2.
 //!
 //! **Not authoritative.** Nothing gates, classifies, or diffs on `_contract`. It is write-time reader
 //! metadata: absent on old corpora, absent from golden Tier-1/2 axes, and always `Option`. A consumer

@@ -2,7 +2,7 @@
 
 Open follow-up work for `clip-sync`. See [PLAN.md](PLAN.md) for architecture, [docs/pipeline.md](docs/pipeline.md) for the repair pipeline (phase by phase), [docs/dev/corpus-validation.md](docs/dev/corpus-validation.md) for the test corpus, and [docs/error-mapping.md](docs/error-mapping.md) for error handling. Shipped work is recorded in `docs/dev/archive/*` and git history.
 
-Last updated: 2026-08-06.
+Last updated: 2026-08-08.
 
 **How this doc works**
 
@@ -80,6 +80,18 @@ trigger — none is a known defect. Shipped behaviour: [gap-fingerprint.md](docs
 | Row-level "no provenance" flag on `GapRow` | Deferred: `check.rs`'s health Warn plus the census's `(absent)` bucket already make an unanswerable corpus say so, and the pattern to mirror is `registration_from_legacy_lag`. Trigger: a report that needs to **filter** rows on it — nothing does today |
 | `bit_depth` string → `BitDepth` parser | Deferred: the forward pin (`bit_depth_tokens_are_pinned`) is what protects corpora already on disk; a parser is dead code until a consumer reads the token, and none does. `bit_depth` is stored-for-later by design |
 
+
+### Fingerprint contract follow-ups (C3)
+
+Leftovers from [archive/TEMP-fingerprint-field-clarity-plan.md](docs/dev/archive/TEMP-fingerprint-field-clarity-plan.md)
+§ 2.8 (R1–R3 + C1 + C2 shipped 2026-08-07/08; all eight § 2.4 groups carry a contract).
+**Deferred, not refused** — neither has a demonstrated need. Shipped behaviour:
+[gap-fingerprint.md](docs/dev/gap-fingerprint.md) § *`_contract`*.
+
+| Item | Direction |
+|------|-----------|
+| Share the contract string table with harness `legend_text()` | The stated goal was "dump and analyzer legend cannot drift" (§ 2.5). Cost is real: `legend_text()` is a human CLI roll-up on a **22-char label column** — R3 had to re-pad every label and continuation line for one 22-char field name — while contracts are ≤120-char prose read beside the numbers. Sharing couples the two formats, and the four axes do not fit a legend line. Trigger: an *observed* drift between a legend string and a contract, not the possibility of one |
+| `--fingerprint-contracts=once\|always\|off` write flag | § 2.6 chose repeat-per-gap ("clarity beats bytes") for diagnostic dumps and deferred the knob to "if size becomes an issue". Nobody has measured the size cost of the eight contracts on a real corpus. Trigger: a corpus where `_contract` repetition is a measured problem — until then `always` is the only behaviour, and a knob is an untested branch |
 
 ### Donor registration leftovers
 
