@@ -8,9 +8,10 @@
 #
 # WHAT THE OUTPUT IS FOR. Named for `fill_level` when that was the only reason to run it; the
 # reports carry every per-gap patch outcome, and the rest has since proved more informative than the
-# level did. `align_adjustment_secs` is where the 2026-08-06 per-gap alignment drift was found
-# (BACKLOG.md § "Per-gap alignment drift") — one pair re-applying a ~1.11 s correction on every gap,
-# producing a fill that duplicated the shoulder, accepted at `confidence: high`. `pre_correlation` /
+# level did. `align_adjustment_secs` is where the 2026-08-06 placement defect was found
+# (BACKLOG.md § "Fill placement is accepted without checking local registration") — a backward slide
+# accepted without checking the local shoulder registration, producing a fill that duplicated the
+# shoulder, accepted at `confidence: high`. `pre_correlation` /
 # `post_correlation`, the tier and confidence, and the `tags` block are all here too. The rolled-up
 # CSV covers `fill_level` only; for anything else, read the JSON.
 #
@@ -492,7 +493,7 @@ Write-Host ''
 Write-Host ("Ear-check the top edge_delta_db rows with --gap-listen / --fingerprint-gap. No " +
     "threshold is proposed: a cut on edge_delta_db alone is refuted (a correct +9.83 dB " +
     "restoration), and two of ten labelled clips carry placement damage this pass cannot see " +
-    'at all — see BACKLOG.md § "Per-gap alignment drift".') -ForegroundColor DarkGray
+    'at all — see BACKLOG.md § "Fill placement is accepted without checking local registration".') -ForegroundColor DarkGray
 Write-Host "Docs: docs/pipeline.md § Fill-level check; docs/json-output.md § FillLevelCheck" -ForegroundColor DarkGray
 
 $failed = @($results | Where-Object { $_.ExitCode -ne 0 })

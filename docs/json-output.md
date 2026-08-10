@@ -359,7 +359,7 @@ more crossfade-sensitive of the two deltas. `reference_at_floor` rows must be dr
 histogram. And **this pass measures level, not placement**: two of the ten labelled clips carried
 damage it cannot see — a fill that duplicated the shoulder before the missing content, and one
 running seconds longer than the gap — both at unremarkable deltas. A clean `fill_level` is not a
-clean repair. See BACKLOG.md § *Per-gap alignment drift*.
+clean repair. See BACKLOG.md § *Fill placement is accepted without checking local registration*.
 
 A third field, `reference_spread_db` (the reference shoulder's loudest bin minus its median), was
 recorded here briefly on 2026-08-06 and **removed the same day**: two rounds of labels showed no
