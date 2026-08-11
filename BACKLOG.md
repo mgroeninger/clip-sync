@@ -2,7 +2,7 @@
 
 Open follow-up work for `clip-sync`. See [PLAN.md](PLAN.md) for architecture, [docs/pipeline.md](docs/pipeline.md) for the repair pipeline (phase by phase), [docs/dev/corpus-validation.md](docs/dev/corpus-validation.md) for the test corpus, and [docs/error-mapping.md](docs/error-mapping.md) for error handling. Shipped work is recorded in `docs/dev/archive/*` and git history.
 
-Last updated: 2026-08-10.
+Last updated: 2026-08-11.
 
 **How this doc works**
 
@@ -17,6 +17,7 @@ Last updated: 2026-08-10.
 
 | Plan | Covers |
 |------|--------|
+| [TEMP-fill-placement-registration-plan.md](docs/dev/TEMP-fill-placement-registration-plan.md) | Fill placement accepted without checking local registration — defect characterized, candidate guard measured; Phase A (source vs gate) not started |
 | [TEMP-nway-donor-alignment-plan.md](docs/dev/TEMP-nway-donor-alignment-plan.md) | N-way donor alignment: repair one damaged copy from multiple donors — draft, not started |
 | [TEMP-flac-output-plan.md](docs/dev/TEMP-flac-output-plan.md) | In-process `--flac` lossless output (peer of `--wav`, no ffmpeg) — draft, not started |
 
@@ -24,57 +25,22 @@ Last updated: 2026-08-10.
 
 ### Fill placement is accepted without checking local registration (defect)
 
-**The corpus's only ear-confirmed wrong repairs: pair 26 gap 7 and pair 31 gap 8.** Both are
-shoulder duplications — the fill leads with a repeat of the material immediately before the gap —
-and both were accepted at `patch_tier: high` / `confidence: high`. Found by ear, not by any gate.
-Gap numbers throughout are the repair table's 1-based `#`, as `--fingerprint-gap` takes them
-(`resolve_fingerprint_gap_select`, `composition.rs`); corpus dumps index the same gaps 0-based.
-Data: `gap-files/2026-08-07-fill-level-shape/` (38 pairs, 227 patched gaps) for the reports,
-`gap-files/2026-08-09-drift-listen/` (`listen.csv` + `listen-round2.csv`, 12 patched gaps
-rendered and labelled 2026-08-09) for the ear pass.
+**Plan: [TEMP-fill-placement-registration-plan.md](docs/dev/TEMP-fill-placement-registration-plan.md).**
 
-**The mechanism.** Each fill carries an `align_adjustment_secs`. Measured against the *true* local
-registration — envelope Pearson over the 2.6 s of pre-gap context in the rendered `_a_surround` /
-`_b_surround` clips, 10 ms bins, r 0.929–0.998 on all 12 — the adjustment is **correct on 10 of
-12**, faithfully tracking a real misregistration that ranges from 0 to −1.16 s:
+The corpus's only ear-confirmed wrong repairs — pair 26 gap 7 and pair 31 gap 8 — are shoulder
+duplications, both accepted at `patch_tier: high` / `confidence: high`, found by ear and by no gate.
+Each fill carries an `align_adjustment_secs` that is correct on 10 of 12 labelled gaps; on these two
+it slides **backward** by 0.94–1.45 s where the local shoulders were already registered, landing the
+donor window on material A has already played. The defect is not the size of the adjustment — it is
+that a large displacement is accepted without being checked against what the shoulders say the
+offset should be, because **no component owns the question "is this placement plausible?"**
 
-| | \|applied − true registration\| |
-|---|---|
-| the 10 clean gaps | ≤ 0.056 s (median 0.038) |
-| 26/#7 (stutter) | **1.410 s** (applied −1.450, true −0.040) |
-| 31/#8 (stutter) | **0.937 s** (applied −0.977, true −0.040) |
-
-No overlap; a 17× margin. Both failures slid **backward** where the shoulders were already
-registered. A backward slide with no drift to correct lands the donor window on material A has
-already played — a shoulder repeat by construction. A forward slide cannot duplicate. So the
-defect is not the size of the adjustment, it is that **a large displacement is accepted without
-being checked against what the local shoulders say the offset should be.**
-
-**What this refutes.** The previous reading of this item — "a pair-level drift the per-gap search
-re-discovers instead of correcting once" — is wrong, and acting on it would make things worse.
-Pair 31's ≈ −1.11 s at gaps 9/11/12 is *genuine*: those gaps really are misregistered by −1.15 s
-and are correctly placed and clean by ear. Re-fitting the pair alignment once would break them and
-would not help #8, which needs ≈ 0. Within pair 31 the true registration *steps* from −0.04 s at
-#8 (28 min) to −1.15 s at #9 (86 min); #8's failure is the post-step value applied one gap early.
-Also refuted as discriminators, each by a labelled counterexample: seam correlation and
-`splice_dualfit.gate_pass` (pair 31's broken seams sound fine; clean-seam gaps stutter),
-`confidence` / `patch_tier` (both `high` on both failures), donor-envelope self-similarity
-(26/#7 = 0.366 vs clean median 0.160 — wrong direction) and spectral flux (26/#7 = 2.91, inside
-the clean range 1.13–3.50).
-
-| Item | Direction |
-|------|-----------|
-| **Build the guard around registration, not magnitude** | The discriminating quantity is `align_adjustment_secs` minus the locally measured shoulder registration. Nothing in the pipeline computes the latter today. The pre-gap shoulders are already decoded at placement time, so a coarse envelope correlation there is cheap; the open question is whether it can be made robust enough to *veto* (false positive = an unrepaired hole, the same asymmetry that kept fill-level record-only) or should start record-only |
-| **`donor_registration` is a partial proxy, not the answer** | `equivalence_production.donor_registration.lag_ms` already measures shoulder registration at 100 ms bins, and agrees with the true value on 9 of 12. It is **wrong exactly where it matters**: −1000 ms at 31/#8 against a true −40 ms. Its `peak_r` does flag trouble (0.576 / 0.370 / 0.369 vs 0.746–0.998 elsewhere), but a `peak_r ≥ 0.7` abstain catches 26/#7 and misses 31/#8. Understand why it fails at #8 before reusing it — the 10 ms leading-context measurement got r = 0.987 on the same gap |
-| **Screen the corpus by signed backward magnitude** | `\|align_adjustment\| / gap_length` was the wrong screen (it is what put the four clean pair-31 gaps at the top). Of 227 patched gaps: 53 backward, 92 forward, 82 zero. Backward ≥ 0.9 s is exactly 5 gaps, with a natural break down to 0.382 s. 14 backward gaps in the 0.20–0.38 s band are unheard, concentrated in pairs 13, 22, 37 — render those to find where duplication starts becoming audible, and to confirm the guard's negative side (24/#91, backward 0.377 s and correctly placed, is already rendered and clean) |
-| **Do not pursue correlation gain** | `post − pre` was the previous candidate signal and it does not separate these cases: 31/#8 is flat (+0.0001, 0.4368 → 0.4369) and *bad*, 31/#12 *falls* 0.574 → 0.376 and is correctly placed and clean, 7/#7 goes 0.993 → 0.354 and sounds clean. Corpus-wide 67% of patched gaps move it by less than 0.001. It is not a quality measure |
-
-**Caveat: n = 2.** Two labelled failures against ten labelled clean gaps is enough to identify the
-mechanism and to kill the old framing, not enough to fix a threshold. The corpus screen above is
-what turns it into a number. Selection lesson from the round-2 render: the fingerprint dump's
-`manifest.json` `outcome: patch` is the *fingerprint's own* gate simulation and does not predict
-production — 6 of 11 gaps chosen that way produced no patch because the scan-time equivalence gate
-declined them. Select on the scan report's `patch.gaps[i].status.patched`.
+A candidate discriminator (`applied − frac_lag_ms`, signed backward, gated on shoulder confidence)
+fires on exactly those two gaps and nothing else in 227. Before it can ship, the plan has to settle
+whether the fix belongs in the placement search or in a new guard (Phase A), and whether the
+`applied = 0` cohort is in the guard's domain (Phase B). Several readings have already been measured
+and **withdrawn** — see the plan before re-proposing pair-level drift correction, correlation gain,
+a prominence floor, or a level threshold.
 
 ### Gap-selection parked debt (do not fold into thin v1)
 
