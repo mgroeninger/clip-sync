@@ -83,12 +83,18 @@ S1–S4; each sub-item lands alone.** Every wrong turn in §3.3b/§4.2 came from
 as if field names were the schema. The patch record carries **no `_contract` block at all** — the
 system exists only in the fingerprint dump (`application/gap_fingerprint/contract.rs`, eight groups).
 
-- **Delete `waveform_adjustment_secs`** (`patch_audio/region.rs:1087`) with the `waveform_slide_secs`
-  local (`:1074`) and its unreachable formatter branch (`cli/output.rs:527-529`). It is identically
-  `0.0` by construction on 227/227 — the unified search has no second stage for it to name — and its
-  only effect to date was to make a reader (twice) conclude the placement was decided in the
-  structure domain. If the chosen candidate's `structure_combined` / `waveform_min` are in reach at
-  that emit site, emit those instead; they are the terms the argmax actually ranked.
+- ~~**Delete `waveform_adjustment_secs`**~~ **DONE 2026-08-12.** Removed from `GapPatchStatus::Patched`
+  and `RegionPatchOutcome::Patched`, both emit sites collapsed to
+  `align_adjustment_secs = (alignment_start − offset_nominal) / sr` (one subtraction, not a sum of two),
+  and `format_patch_slide_suffix`'s unreachable `(wf …)` branch deleted. Two further dead artifacts fell
+  out with it: `ExecuteBracketOutputCtx.structure_start_frame` (carried *only* to compute the split) and
+  the verbose log's `structure slide … , waveform slide …` pair, now one `slide`. `docs/json-output.md`
+  records the removal. **`structure_combined` / `waveform_min` were NOT emitted in its place — they are
+  not in scope.** `unified_fit_score` (`gap_fill_fit.rs:399`) computes both as locals and returns a bare
+  `f64`; `FillAlignment` (`policies/gap_borders.rs:15`) carries only `start_frame` / `fill_frames` /
+  `pre_correlation` / `post_correlation`, so not even the winning scalar survives the search. Emitting
+  the terms means changing that return type and threading them through — a separate change, not a
+  deletion. Filed as its own §7 item.
 - **Always serialize `dual_fit_used` and `anchor_seam_used`** (drop `skip_serializing_if = "is_false"`,
   `gap_tags.rs:297-304`). Absence currently means *declined* but reads as *disabled* — the error that
   produced the first version of S2b. Two bools per gap is not a size argument.
@@ -98,15 +104,43 @@ system exists only in the fingerprint dump (`application/gap_fingerprint/contrac
   `fit_path` (names the **boundary grid**, not the fit path — `baseline_only` does not mean dual-fit
   was off; `gap_tags.rs:325`), `pre/post_correlation` (seam scores at the chosen placement, min-reduced
   into the objective — §4.2).
+- ~~**Emit `normalize_gain` on the patch record.**~~ **Moved 2026-08-12** into
+  [TEMP-fill-normalize-boost-only-plan.md](TEMP-fill-normalize-boost-only-plan.md), which edits the
+  site that computes it. It belongs to S5's family — the gain is on the spec
+  (`gap_repair_spec.rs:197`) but serialized nowhere, so [pipeline.md](../pipeline.md) § Fill-level
+  check can say `fill_level` measures `gained_fill` (*gain applied*) while nothing records what the
+  gain was — but it is not this plan's to land. Tracked here only so the foot-gun audit stays complete.
 - **Contract `prominence` in `lag_decision`.** It has a block already, but `peak_r − second_peak_r`
   with **no exclusion radius** (`measure.rs:366`) is unreadable without `top2_spacing_ms`; the `not`
   key should say so (§2.2 withdrew a conclusion for want of it).
 
-*Exit:* the four bullets land or are declined with a reason. No new measurement is required for any
-of them.
+*Exit:* the four bullets that remain here land or are declined with a reason (the fifth moved to the
+normalize PR). No new measurement is required for any of them.
 
 **Not doing yet:** δ calibration (§6) — n = 2 cannot fix a threshold, and S1 makes waiting free; a
 prominence floor (§2.2 constraint); anything corrective from the residual (§2.1).
+
+**Sequencing against the normalize boost-only change (settled 2026-08-12).**
+[TEMP-fill-normalize-boost-only-plan.md](TEMP-fill-normalize-boost-only-plan.md) stops
+`compute_fill_gain` from ever attenuating. **It does not block S1 / S2 / S2b / S3 / S5** — the gain is
+computed at `region.rs:2056`, strictly *after* the placement search and seam reconciliation, its only
+consumers are `gained_fill` and `spec.normalize_gain`, and seam scores are Pearson (scale-invariant),
+so this plan's whole axis is gain-invariant. What it does change, confined to fills currently
+attenuated (whole-fill RMS above A-border RMS; boosted fills untouched):
+
+- `peak_delta_db` / `edge_delta_db` on that subset — `gap-files/2026-08-07-fill-level-shape/` becomes
+  a different-policy baseline. (Nothing in §0–§7 reasons from those fields, so no conclusion here moves.)
+- **§5 / S4's ear labels.** `--gap-listen` renders through the normal patch path, so `normalize_fill`
+  applies to `_a_patched`: a loud-fill gap rendered after the change is different audio from one
+  labelled before it. Existing `2026-08-09-drift-listen/` renders remain valid as files; a re-render
+  will not match its own label.
+
+**Decision: the normalize change ships first, before S4 renders anything new** — S4 is conditional and
+has not started, so landing it first keeps the forward label set under one policy rather than
+straddling it. If S4 is ever run *before* that change lands, record which policy each label was taken
+under. That PR also carries the `normalize_gain` emit (folded in 2026-08-12), so by the time S4 runs
+the affected subpopulation is visible in the patch record — which is what makes any before/after
+fill-level comparison readable at all.
 
 ---
 
@@ -659,12 +693,13 @@ threshold.
 - **`max_fill_align_adjustment_secs` appears to be a dead knob** (§4.1) — plumbed and CLI-settable,
   never read. Either wire it to the placement search or delete it; a documented 0.5 s bound that
   silently does nothing is worse than neither.
-- **`waveform_adjustment_secs` is a dead field** (§3.3b) — identically zero by construction, reported
-  on every patched gap, with an unreachable `(wf …)` formatter behind it (`cli/output.rs:528`). Give
-  it a real definition (slide attributable to the waveform term of the unified score) or delete it
-  with its formatter. Same failure mode as the dead knob above, and it already produced one wrong
-  conclusion in this document — a field that always reads zero is indistinguishable from a real
-  measurement that happens to be zero, which is why it misled.
+- ~~**`waveform_adjustment_secs` is a dead field**~~ — **deleted 2026-08-12** (§0 S5). What it *should*
+  have reported is now its own open item: **surface the winning candidate's `structure_combined` and
+  `waveform_min`.** Both are locals inside `unified_fit_score` (`gap_fill_fit.rs:391-399`), which
+  returns only the blended `f64`; `FillAlignment` keeps neither, so nothing downstream can say which
+  term carried a placement. §4.2's min-reduction diagnosis had to be reconstructed from dumps for
+  exactly this reason. Cost: a return-type change on `unified_fit_score` plus threading through the
+  bracket search. Not a deletion — schedule separately.
 - **Audit for other structurally-constant reported fields — first pass run 2026-08-11.** Distinct
   value counts over the 227 patched gaps, counting *presence* separately (fields omitted when false
   look constant otherwise — this is what made `dual_fit_used` read as "always true" on first pass
@@ -672,7 +707,7 @@ threshold.
 
   | field | present | value |
   |---|---|---|
-  | `status.patched.waveform_adjustment_secs` | 227/227 | 0.0 — dead by construction (§3.3b) |
+  | `status.patched.waveform_adjustment_secs` | 227/227 | 0.0 — dead by construction (§3.3b); **field deleted 2026-08-12** |
   | `status.patched.structure_trusted` | 227/227 | false — **unexplained, check next** |
   | `fill_level.reference_at_floor` | 227/227 | false — **unexplained, check next** |
   | `tags.fit_path` | 227/227 | `baseline_only` — boundary grid never used in these runs? |

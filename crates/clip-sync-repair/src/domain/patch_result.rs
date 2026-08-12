@@ -392,8 +392,12 @@ pub enum GapPatchStatus {
         headroom_db: Option<f64>,
         /// Run metadata: placement won at an editorial anchor seam, not the scan throat alone
         /// (anchor-seam search rescued this gap). Mirrors `structure_trusted` as a path fact —
-        /// not a `GapTags` characteristic. Serialized only when `true` (absent ⇒ baseline throat).
-        #[serde(default, skip_serializing_if = "is_false")]
+        /// not a `GapTags` characteristic.
+        ///
+        /// **Always serialized, including when `false`** (since 2026-08-12; omitted-when-false
+        /// before that). `false` means baseline-throat placement — it does not mean the field is
+        /// unavailable, which is how the old absence read.
+        #[serde(default)]
         anchor_seam_used: bool,
         /// Frames the winning anchor bracket moved from the scan-refined baseline; 0 unless
         /// `anchor_seam_used` (the displacement of the editorial seam from the silence throat).
@@ -401,8 +405,12 @@ pub enum GapPatchStatus {
         anchor_bracket_move_frames: usize,
         /// Run metadata: this fill was rescued by the A3 dual-fit path (G6) after the bracket
         /// search exhausted, not by ordinary bracket-search fitting. Mirrors `anchor_seam_used`
-        /// as a path fact — not a `GapTags` characteristic. Serialized only when `true`.
-        #[serde(default, skip_serializing_if = "is_false")]
+        /// as a path fact — not a `GapTags` characteristic.
+        ///
+        /// **Always serialized, including when `false`.** `false` means dual-fit did not carry
+        /// this gap — it ran and declined, or was never reached. It has never meant "dual-fit was
+        /// disabled", though the old omitted-when-false encoding was read that way.
+        #[serde(default)]
         dual_fit_used: bool,
     },
     Skipped {
@@ -422,11 +430,6 @@ pub enum GapPatchStatus {
 /// Skip serializing `anchor_bracket_move_frames` for non-anchor patches (the common case).
 fn is_zero_move_frames(frames: &usize) -> bool {
     *frames == 0
-}
-
-/// Skip serializing `anchor_seam_used` when `false` (the common baseline-throat case).
-fn is_false(b: &bool) -> bool {
-    !*b
 }
 
 /// Skip serializing `not_applied_count` on healthy runs (the only expected value is 0).

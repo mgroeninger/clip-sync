@@ -294,13 +294,21 @@ pub struct GapTags {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub residual_uninformative: Option<ResidualUninformative>,
     /// Editorial anchor seam won (not scan-throat placement alone).
-    #[serde(default, skip_serializing_if = "is_false")]
+    ///
+    /// **Always serialized, including when `false`** (since 2026-08-12). It was omitted-when-false
+    /// until then, which made `false` (the path was available and lost) indistinguishable from
+    /// "this build does not emit the field" — a reader took an absent `dual_fit_used` as proof that
+    /// dual-fit had been disabled for the run, when it had run and declined for cause.
+    #[serde(default)]
     pub anchor_seam_used: bool,
     /// Frames the winning anchor bracket moved from scan-refined baseline; omitted when 0.
     #[serde(default, skip_serializing_if = "is_zero_frames")]
     pub anchor_bracket_move_frames: usize,
     /// Rescued by the A3 dual-fit path (G6), not ordinary bracket-search fitting.
-    #[serde(default, skip_serializing_if = "is_false")]
+    ///
+    /// Always serialized — see [`GapTags::anchor_seam_used`]. `false` means the dual-fit path ran
+    /// and declined, or was never reached; it never means the path was off.
+    #[serde(default)]
     pub dual_fit_used: bool,
 }
 
@@ -564,10 +572,6 @@ pub fn derive_gap_tags_from_status(
             dual_fit_used: false,
         },
     }
-}
-
-fn is_false(b: &bool) -> bool {
-    !*b
 }
 
 fn is_zero_frames(frames: &usize) -> bool {

@@ -128,7 +128,9 @@
             "structure_trusted": true,
             "confidence": "high",
             "gap_start_adjust_frames": 0,
-            "gap_end_adjust_frames": 0
+            "gap_end_adjust_frames": 0,
+            "anchor_seam_used": false,
+            "dual_fit_used": false
           }
         },
         "tags": {
@@ -136,7 +138,9 @@
           "patch_tier": "high",
           "seam_shape": "balanced",
           "fit_path": "baseline_only",
-          "signature_mode": "bool"
+          "signature_mode": "bool",
+          "anchor_seam_used": false,
+          "dual_fit_used": false
         }
       },
       {
@@ -158,7 +162,9 @@
           "patch_tier": "dead_zone",
           "seam_shape": "symmetric_weak",
           "fit_path": "baseline_only",
-          "signature_mode": "bool"
+          "signature_mode": "bool",
+          "anchor_seam_used": false,
+          "dual_fit_used": false
         }
       },
       {
@@ -173,7 +179,9 @@
           "plan_kind": "unfillable",
           "plan_skip_reason": "not_fillable",
           "patch_tier": "not_applicable",
-          "seam_shape": "not_applicable"
+          "seam_shape": "not_applicable",
+          "anchor_seam_used": false,
+          "dual_fit_used": false
         }
       }
     ]
