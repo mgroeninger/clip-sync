@@ -612,3 +612,103 @@ fn unplanned_gap_still_gets_an_a_only_clip() {
         "an unmapped gap has no donor window to export, got {names:?}"
     );
 }
+
+fn read_listen_manifest(dir: &Path) -> serde_json::Value {
+    let path = dir.join("listen.json");
+    serde_json::from_reader(
+        std::fs::File::open(&path).unwrap_or_else(|e| panic!("open {}: {e}", path.display())),
+    )
+    .expect("parse listen.json")
+}
+
+/// A WAV directory must say what **production** decided, without opening the gap JSON — and without
+/// the reader inferring it from a missing file. Before `listen.json` the only available read was
+/// "`_a_patched.wav` exists ⇒ patched", which collapses gate refusal, plan drop and not-applied
+/// into one bucket.
+#[test]
+fn the_listen_manifest_records_productions_disposition_beside_the_clips() {
+    let fixture = build_fixture(&[(6.0, 9.0)]);
+    let _ = run_listen(&fixture, GapSelectionMode::All);
+
+    let manifest = read_listen_manifest(&fixture.wav_dir);
+    let entries = manifest["entries"].as_array().expect("entries array");
+    assert_eq!(entries.len(), 1, "one exported gap, one entry");
+    let entry = &entries[0];
+
+    assert_eq!(entry["disposition"], "patched");
+    assert_eq!(entry["index"], 0, "0-based, same key as the corpus entry");
+    assert_eq!(
+        entry["a_patched_wav"], true,
+        "the patched clip was written, and the manifest must report the file that exists"
+    );
+    assert_eq!(
+        entry["a_window_unchanged"], false,
+        "a real splice changed the window; `true` here is the reports-Patched-sounds-identical trap"
+    );
+    assert!(
+        entry["confidence"].is_string(),
+        "a patch carries its fit confidence, got {entry}"
+    );
+
+    // The stem is the join, in both directions: to the clips it describes and to the fingerprint.
+    let stem = entry["stem"].as_str().expect("stem");
+    assert!(
+        fixture
+            .fingerprint_dir
+            .join(format!("{stem}.json"))
+            .is_file(),
+        "manifest stem {stem} has no corpus JSON"
+    );
+    for suffix in ["_a_surround.wav", "_b_surround.wav", "_a_patched.wav"] {
+        assert!(
+            fixture.wav_dir.join(format!("{stem}{suffix}")).is_file(),
+            "manifest stem {stem} has no {suffix}"
+        );
+    }
+
+    // The contract names the confusion the file exists to end: this is the patch gate, not the
+    // fingerprint's bracket-gate `outcome.tier`.
+    let contract = manifest["_contract"].as_str().expect("_contract");
+    assert!(
+        contract.contains("outcome.tier"),
+        "the contract must distinguish itself from the fingerprint tier, got {contract}"
+    );
+
+    // A sibling file, not a rewrite: the corpus manifest describes the fingerprint dump and is
+    // written before any patch exists, so it must carry no disposition.
+    let corpus_manifest: serde_json::Value = serde_json::from_reader(
+        std::fs::File::open(fixture.fingerprint_dir.join("manifest.json")).expect("manifest.json"),
+    )
+    .expect("parse corpus manifest");
+    assert!(
+        corpus_manifest["entries"][0]["disposition"].is_null(),
+        "the corpus manifest must stay a fingerprint artifact, got {}",
+        corpus_manifest["entries"][0]
+    );
+}
+
+/// The empty-plan short-circuit returns before the patch executor, and it is the path most likely
+/// to be forgotten: a listen directory with no `listen.json` would be indistinguishable from one
+/// written by an older binary. The reason must survive too — "not planned" without it is the same
+/// dead end as the missing file.
+#[test]
+fn the_listen_manifest_is_written_on_the_empty_plan_path_with_its_reason() {
+    let mut fixture = build_fixture(&[(6.0, 9.0)]);
+    fixture.report.gaps[0].video_b_start_secs = None;
+    fixture.report.gaps[0].video_b_end_secs = None;
+
+    let _ = run_listen(&fixture, GapSelectionMode::All);
+
+    let manifest = read_listen_manifest(&fixture.wav_dir);
+    let entry = &manifest["entries"][0];
+    assert_eq!(entry["disposition"], "not_planned");
+    assert_eq!(entry["a_patched_wav"], false);
+    assert!(
+        entry["a_window_unchanged"].is_null(),
+        "no patched window was compared, so the field must be absent rather than false"
+    );
+    assert!(
+        entry["reason"].as_str().is_some_and(|r| !r.is_empty()),
+        "a drop must carry the plan's own reason, got {entry}"
+    );
+}

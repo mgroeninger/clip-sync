@@ -43,7 +43,9 @@ pub struct Args {
 
     /// Diagnostic: also write listenable WAVs for each characterized gap — the gap + context from A,
     /// the mapped donor span from B, and (when the production gate patches) the same A window after
-    /// the splice. Requires --gap-fingerprints; select gaps with --fingerprint-gap. With no value,
+    /// the splice. Also writes listen.json beside the WAVs: production's disposition (patched /
+    /// skipped / not_planned / not_applied) per exported gap, so it need not be inferred from
+    /// which clips exist. Requires --gap-fingerprints; select gaps with --fingerprint-gap. With no value,
     /// WAVs go beside the fingerprint corpus. Rejected with --wav / --mux / --repair-preview, and
     /// with --only-gaps / --skip-gaps (one selector drives both the corpus and the patch plan).
     #[cfg(feature = "calibration")]

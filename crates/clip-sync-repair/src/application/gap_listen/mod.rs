@@ -6,6 +6,10 @@
 //! gate patches — the identical A window after the splice. The three clips share a filename stem
 //! with the gap's fingerprint JSON, so ears and numbers join.
 //!
+//! A `listen.json` beside the WAVs records **production's** disposition for each exported gap, so a
+//! WAV directory answers "what was decided here" without opening the corpus and without inferring a
+//! verdict from which clips exist. See [`manifest`].
+//!
 //! **The patched clip must come from the production engine.** The audio is produced by
 //! `characterize_region` → `execute_region_spec` → `splice_into_a`, the same path `--wav` uses to
 //! decide patch vs skip. The fingerprint oracle is a *diagnostic* characterization whose `any_ok`
@@ -21,6 +25,7 @@
 //! `docs/dev/archive/TEMP-gap-listen-wav-plan.md`.
 
 mod export;
+mod manifest;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -40,10 +45,11 @@ use crate::application::ports::PatchedAudioWriter;
 use crate::domain::gap_fill::build_gap_fill_plan;
 use crate::domain::gap_tags::format_plan_skip_reason;
 use crate::domain::patch_result::{
-    format_gap_patch_not_applied_reason, format_gap_patch_skip_reason, GapPatchStatus,
+    format_gap_patch_not_applied_reason, format_gap_patch_skip_reason, GapPatchStatus, PatchSummary,
 };
 
 use export::{frame_range, slice_window, window_digest, write_window_wav, FrameRange};
+use manifest::{write_listen_manifest, ListenEntry};
 
 const A_SURROUND_SUFFIX: &str = "_a_surround.wav";
 const B_SURROUND_SUFFIX: &str = "_b_surround.wav";
@@ -102,6 +108,33 @@ struct PendingWindow {
     /// Digest of the pre-splice A window, so the patched window can be checked for having changed
     /// nothing. See the `Patched` arm of the post-patch loop for why that is possible at all.
     a_pre_digest: u64,
+}
+
+/// Production's disposition for every exported gap, keyed by the stem its WAVs and JSON share.
+///
+/// Read off the run's own [`PatchSummary`] rather than re-derived, so `listen.json` and the gap
+/// table the caller prints cannot disagree. `patched_windows` maps a gap index to whether its
+/// patched A window came back byte-identical to the pre-splice one; a gap absent from that map got
+/// no `_a_patched.wav` — either a non-`Patched` status or an early return before the post-splice
+/// pass, which is why the file records `a_patched_wav` separately from `disposition`.
+fn listen_entries(
+    pending: &[PendingWindow],
+    summary: &PatchSummary,
+    patched_windows: &HashMap<usize, bool>,
+) -> Vec<ListenEntry> {
+    pending
+        .iter()
+        .map(|window| {
+            // `outcomes_in_report_order` emits one outcome per report gap in report order, so the
+            // report index keys the summary directly — the same lookup the post-splice pass makes.
+            let status = summary.gaps.get(window.gap_index).map(|o| &o.status);
+            let entry = ListenEntry::new(window.stem.clone(), window.gap_index, status);
+            match patched_windows.get(&window.gap_index) {
+                Some(&unchanged) => entry.with_patched_wav(unchanged),
+                None => entry,
+            }
+        })
+        .collect()
 }
 
 /// Scan → one decode → fingerprint JSON → A/B WAVs → production patch → patched WAVs.
@@ -203,7 +236,7 @@ pub fn run_gap_listen<MR: MediaReader, PW: PatchedAudioWriter>(
         ));
     }
 
-    // The stem is a function of the built fingerprint (tier / verdict / refined start), not of the
+    // The stem is a function of the built fingerprint (detail tier / refined start), not of the
     // gap, so it can only be looked up — never derived from the index.
     let stems: HashMap<usize, String> = corpus
         .gaps
@@ -349,10 +382,18 @@ pub fn run_gap_listen<MR: MediaReader, PW: PatchedAudioWriter>(
         // "every gap NotPlanned, with its reason" is precisely what the run found. Built by the same
         // helper the executor's own empty-plan path uses, so skipping the executor here cannot make
         // the table disagree with the one a full run would print.
-        return Ok(crate::application::patch_audio::empty_plan_write_result(
-            &patch_request,
-            &plan,
-        ));
+        let result =
+            crate::application::patch_audio::empty_plan_write_result(&patch_request, &plan);
+        // The manifest is written on this path too, for the same reason the summary is returned:
+        // an all-`NotPlanned` run is a finding, and a WAV directory with no `listen.json` would be
+        // indistinguishable from one written by an older binary.
+        write_listen_manifest(
+            &listen.wav_dir,
+            &corpus.source.a_source.id,
+            &corpus.source.b_source.id,
+            listen_entries(&pending, &result.summary, &HashMap::new()),
+        )?;
+        return Ok(result);
     }
 
     // ── Step 6: the PRODUCTION patch, on the decode we already own ─────────────────────────────
@@ -371,6 +412,15 @@ pub fn run_gap_listen<MR: MediaReader, PW: PatchedAudioWriter>(
     // ── Step 7: post-splice windows, at the frame ranges recorded in step 5 ────────────────────
     if patch_result.pcm.is_none() {
         progress.phase("gap-listen: patch returned no PCM; no patched WAVs");
+        // `a_patched_wav: false` on every entry, including any the gate patched — which is exactly
+        // the distinction between "production refused this" and "production patched it but this
+        // run produced no clip to hear it in".
+        write_listen_manifest(
+            &listen.wav_dir,
+            &corpus.source.a_source.id,
+            &corpus.source.b_source.id,
+            listen_entries(&pending, &patch_result.summary, &HashMap::new()),
+        )?;
         return Ok(patch_result);
     }
     let patched = patch_result
@@ -380,6 +430,9 @@ pub fn run_gap_listen<MR: MediaReader, PW: PatchedAudioWriter>(
 
     let mut patched_count = 0usize;
     let mut unchanged_count = 0usize;
+    // gap index → was the patched window byte-identical to the pre-splice one. Recorded as the
+    // WAVs are written, so `listen.json` reports files that exist rather than files that should.
+    let mut patched_windows: HashMap<usize, bool> = HashMap::new();
     for window in &pending {
         // `outcomes_in_report_order` emits exactly one outcome per report gap, in report order, so
         // the report index is a valid key here.
@@ -449,7 +502,8 @@ pub fn run_gap_listen<MR: MediaReader, PW: PatchedAudioWriter>(
         // clip is simply the "before" clip, which is the single most misleading thing a listening
         // test can hand you — so it is checked rather than assumed. The window is still written:
         // the identical file *is* the evidence.
-        if window_digest(&pcm.samples) == window.a_pre_digest {
+        let unchanged = window_digest(&pcm.samples) == window.a_pre_digest;
+        if unchanged {
             unchanged_count += 1;
             // `eprintln!`, not `progress.phase`: phase output is suppressible
             // (`StderrProgressReporter::new(config.logging.progress)`), and this says the engine's
@@ -470,11 +524,20 @@ pub fn run_gap_listen<MR: MediaReader, PW: PatchedAudioWriter>(
             A_PATCHED_SUFFIX,
             &pcm,
         )?;
+        patched_windows.insert(window.gap_index, unchanged);
         patched_count += 1;
     }
 
+    write_listen_manifest(
+        &listen.wav_dir,
+        &corpus.source.a_source.id,
+        &corpus.source.b_source.id,
+        listen_entries(&pending, &patch_result.summary, &patched_windows),
+    )?;
+
     progress.phase(&format!(
-        "gap-listen: wrote {} gap clip set(s) ({patched_count} with a patched window{}) to {}",
+        "gap-listen: wrote {} gap clip set(s) ({patched_count} with a patched window{}) \
+         + listen.json to {}",
         pending.len(),
         if unchanged_count == 0 {
             String::new()

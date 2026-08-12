@@ -73,6 +73,49 @@ the gap and the splice then failed, leaving A unchanged across it. The file is w
 written identical, because an "after" clip that is really the "before" clip is the one artifact that
 would invert a listening finding.
 
+#### `listen.json` — what production decided, per exported gap
+
+One `listen.json` is written at the **WAV root** (not the JSON root) alongside the clips:
+
+```json
+{
+  "_contract": "disposition is production's GapPatchStatus for this run (the patch gate that wrote the WAVs) — NOT the fingerprint's outcome.tier …",
+  "a_id": "aaaaaaaa", "b_id": "bbbb",
+  "exported_gap_count": 1,
+  "entries": [
+    { "stem": "aaaaaaaa_bbbb_t00-00-06_g000_full", "index": 0,
+      "disposition": "patched", "confidence": "high",
+      "a_patched_wav": true, "a_window_unchanged": false }
+  ]
+}
+```
+
+- `disposition` mirrors [`GapPatchStatus`]'s variants — `patched` / `skipped` / `not_planned` /
+  `not_applied`, plus `absent` when the run recorded no outcome for the gap — read straight off the
+  summary the run returns, so this file and the printed gap table cannot grow separate vocabularies.
+  `reason` carries the gate's own words wherever the status has one; `confidence` (`high` /
+  `marginal`) appears on patches.
+- `a_patched_wav` is **not** redundant with `disposition`: an early return (empty plan, or a patch
+  that produced no PCM) can leave a `patched` gap with no clip to hear it in. `a_window_unchanged`
+  reports the byte-identical-before-and-after check that also warns on stderr; it is absent when no
+  patched window was compared.
+- Written on every path that exports clips, including the empty-plan short-circuit — a listen
+  directory without `listen.json` means an older binary, not "nothing was decided".
+- Entries cover the **exported** gaps only. A gap with no fingerprint entry has no stem to key on
+  and is reported on stderr instead.
+
+**Why it exists.** The clips alone said only *that* a gap did or didn't get patched, and the only
+available read was inference from absence — `_a_patched.wav` exists ⇒ production patched it — which
+collapses gate refusal, plan drop and not-applied into one bucket. **Why it is a sibling** and not
+part of the corpus `manifest.json`: that manifest is written before the patch runs (dispositions do
+not exist yet) and describes the fingerprint dump, which is valid with no patch at all. **Why not
+in the filename:** `entry_stem` is the single naming authority for the ears ↔ JSON join, and a
+disposition encoded there would be a second source of truth — the same drift that got the verdict
+token removed from stems (see *Library file names* below).
+
+`listen.json` holds ids, stems and verdicts only — no titles or paths — so it is quotable even
+though the WAVs beside it are not.
+
 **The patched clip comes from the production engine** (`characterize_region` → `execute_region_spec`
 → `splice_into_a`), not from the fingerprint oracle. The oracle's `any_ok` can disagree with the
 production gate by design, so splicing from it would answer a different question than "is the repair

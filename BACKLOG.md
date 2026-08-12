@@ -135,9 +135,14 @@ each was a "safe because…": the stem *was* parsed — `check.rs` cross-checked
 `write_corpus_dir` test asserted the token. New dumps are not name-comparable with existing
 `gap-files/` dirs (gitignored, regenerable, self-consistent within a dir).
 
-| Item | Direction |
-|------|-----------|
-| **Record production's disposition in the listen manifest** | Now the only open half, and the more valuable one: a listen dir gives no way to see whether production patched a gap without opening the JSON. `gap_listen` already holds the real `GapPatchStatus` when it decides whether to write `_a_patched.wav` (`gap_listen/mod.rs:391-437`), so the manifest entry can carry it. Do **not** encode it in the stem — `entry_stem`'s own doc calls itself the single naming authority for the ears↔JSON join, and a second source of truth is how the two namings drift (which is what the dropped verdict token was). Today's only reliable read is *`_a_patched.wav` exists ⇒ production patched it*, since the exporter refuses that file on `Skipped` / `NotPlanned` / `NotApplied` |
+**Disposition manifest shipped 2026-08-12** — `listen.json` at the WAV root
+(`gap_listen/manifest.rs`), one entry per exported gap: `disposition` mirroring `GapPatchStatus`
+(`patched` / `skipped` / `not_planned` / `not_applied` / `absent`), the gate's `reason`, patch
+`confidence`, `a_patched_wav`, and `a_window_unchanged`. A **sibling**, not a rewrite of the corpus
+`manifest.json`: that one is written pre-patch and describes the fingerprint dump, which is valid
+with no patch at all. Written on the empty-plan and no-PCM early returns too, so a missing
+`listen.json` means an older binary rather than "nothing was decided". Both halves of this section
+are now closed.
 
 ### Donor registration leftovers
 
