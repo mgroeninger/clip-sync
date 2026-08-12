@@ -1,10 +1,25 @@
 # Fill placement vs local registration — plan
 
-Status: **investigation, Phase A first pass done (2026-08-11), B and C not started.** The defect is
-characterized and a candidate discriminator is measured; what is *not* settled is whether the fix
-belongs in the placement search or in a new guard, and that fork gates everything downstream. Phase A
-now has real evidence (§4) and it does not point the same way on both failures. **Read §0 first** —
-it names the actual deliverables; §1–§7 are the evidence behind them.
+Status: **investigation → delivery. S3 and S5 done (2026-08-12); S2 and S2b unblocked; S1 blocked on
+re-scoping; S4 conditional and unstarted.**
+
+**The source-vs-gate fork is retired — the answer was "both, on different gaps".** Earlier drafts of
+this document (and §4's exit, since rewritten) treated a single verdict as gating everything
+downstream. It does not: §4's first pass and §4.3's sweep together establish **two distinct defects**
+that need two distinct fixes and share only a symptom.
+
+| | 26/g6 | 31/g7 |
+|---|---|---|
+| what went wrong | a near-nominal placement existed and **lost on score** | **nothing near nominal was ever scored** — 18 of 20 brackets died at `structure_floor` |
+| reads as | **source** | **gate** / scoring-objective |
+| the fix | **S2** — a near-nominal search prior | **S2b** — the `min` reduction over shoulders |
+| aliasing? | surface *is* periodic (480.5 ms comb, §4.3) but the true peak still ranks first | no — flat floor, 9.6× margin (§4.3) |
+
+Consequences for sequencing, all already reflected in §0: **S1 is correct to record under either
+verdict** (and is blocked on its own precondition, not on this fork); **Phase B/C are not voided by a
+"source" answer** — Phase B was demoted to the separate `applied = 0` domain question and Phase C's δ
+remains blocked on it. **Read §0 first** — it names the actual deliverables; §1–§7 are the evidence
+behind them, and where an older section still argues the fork, §0 and §4.3 win.
 
 Split out of [BACKLOG.md](../../BACKLOG.md) on 2026-08-11 (the section had grown to ~270 lines).
 Successor to the archived [TEMP-fill-placement-axis-plan.md](archive/TEMP-fill-placement-axis-plan.md),
@@ -36,7 +51,25 @@ change to the code. Phases A/B/C are *diagnostics*, and each has been answered w
 steps below are the deliverables; the phases are inputs to them, not substitutes. If a step's
 precondition fails, the step is dropped — none of them may be replaced with a further investigation.
 
-**S1 — Record the registration residual. No threshold, no veto. Unblocked; do first.**
+**S1 — Record the registration residual. No threshold, no veto. ~~Unblocked; do first.~~ Blocked —
+its precondition is false (found 2026-08-12).**
+
+> **`lag_decision` is not computed on the production path.** §1.2's "emitted on every Tier-`full` gap —
+> 227/227 of the patched corpus" is true *of the dump corpus*, which is a different run than the scan
+> reports S1 would write into. `lag_at_placement` is reached only via `build_gap_fingerprint`
+> (`measure.rs:1460`) ← `characterize_gaps_from_decode`, whose only production-binary callers are
+> `composition.rs:241` (inside `--gap-fingerprints`) and `gap_listen/mod.rs:161`. `GapRepairTags`
+> states it outright (`gap_repair_spec.rs:129`): *"production doesn't compute the full D/R set until
+> step 8; both spec-build sites use `GapRepairTags::default()`"* — so `registration` is all-`None` on a
+> plain repair run, and there is no `frac_lag_ms` to difference against `applied`.
+>
+> S1 is therefore **"run a new measurement in production"**, not "add a field". **Cost is not the
+> obstacle:** `lag_side_sweep` calls `lag_correlation_curve_auto` (`measure.rs:774`), the FFT
+> auto-selector, so the ±600 ms / 1 s sweep is two FFTs per gap, not a naive 57 601-lag scan. The work
+> is *plumbing* — lifting the shoulder-lag measurement out of `application/gap_fingerprint/` so the
+> patch path can call it, and deciding whether it runs on every patched gap or only where a slide was
+> applied. Re-scope before starting; do **not** start it as written.
+
 Emit the §2 quantity (`applied − frac_lag_ms`, reduced by minimum absolute value over shoulders with
 `peak_r ≥ τ`, abstain when none) as a field on the patch record, alongside the shoulder `peak_r` /
 `prominence` / `top2_spacing_ms` it was reduced from. Record-only: no gate reads it. This needs
@@ -45,8 +78,14 @@ either answer, and it converts "found by ear" into "visible in the output", whic
 actually failed. Precedent: the fill-level fields shipped record-only for the same reason.
 *Exit:* the field appears on all 227 patched gaps; the two known-bad gaps are its extremes.
 
-**S2 — Resolve `max_fill_align_adjustment_secs` (§4.1). Blocked only on confirming it is dead.**
-A documented 0.5 s bound that no code reads is a defect regardless of this investigation. Two
+**S2 — Resolve `max_fill_align_adjustment_secs` (§4.1). ~~Blocked only on confirming it is dead.~~
+Confirmed dead 2026-08-12 — unblocked.** Workspace-wide search: the value flows config → `AppConfig`
+(`config.rs:118`) → `patch_audio/request.rs:71` and **stops at that field definition — no read, in any
+crate**. It is nonetheless validated (`config.rs:922`), CLI-settable (`cli/mod.rs:111`), harness-settable
+(`repair-harness/src/patch_audio.rs:332`), and documented as live in `README.md:535` and
+`docs/gap-fill-modes.md:562`. The only mention inside a placement-search file is `gap_structure.rs:294`,
+a comment *declining* to use it. A documented 0.5 s bound that no code reads is a defect regardless of
+this investigation. Two
 outcomes, both terminal: wire it, or delete it. **Do not wire it as a veto** — pair 31's genuine
 −1.15 s placements at #9/#11/#12 are correct and a bare cap would refuse them, converting two bad
 repairs into three unrepaired holes. Wire it as a **search prior** (penalize distant candidates so a
@@ -67,12 +106,14 @@ rather than dominate it. Either way this is a **scoring-objective** change, dist
 *Exit:* 31/g7 places at ≈ −47 ms, and the change is checked against the 227-gap corpus for placements
 it moves.
 
-**S3 — Find or refute the rival peak at −977 / −1450 ms (§4.2). No re-run needed.**
-`gap-files/2026-08-09-drift-listen/` already holds `_a_surround` / `_b_surround` / `_a_patched`
-renders **for both failing gaps** (and 10 more). Correlating A's pre-gap shoulder against
-`_b_surround` over ±2 s and reading the whole curve answers it offline — the same method §2.1 used to
-locate the fill. The widened `lag_max_lag_ms` re-run (§7) becomes a confirmation, not the experiment.
-*Exit:* a rival peak at −977 / −1450 ms is found or refuted, with its height against the true-lag peak.
+**S3 — ~~Find or refute~~ the rival peak at −977 / −1450 ms (§4.2). DONE 2026-08-12 — REFUTED on both.
+No re-run needed, and none is now warranted.** Full curves and method in **§4.3**. Headline: at both
+failures the pre-shoulder's true-registration peak is the tallest thing in a ±2000 ms sweep, and the
+predicted rival is **0.214 lower (26/g6)** and **0.742 lower (31/g7)**. The §7 widened-`lag_max_lag_ms`
+re-run is **retired as an experiment** — it would confirm a settled answer at the cost of a full
+per-bracket oracle pass. Its second, independent half (`edge_pinned` for §1.2's saturation hypothesis)
+is dump-only and survives.
+*Exit:* met — rival refuted at both, with heights recorded against the true-lag peak (§4.3).
 
 **S4 — Phase B's render (§5), only if S1–S3 leave a decision that labels would change.** This is the
 expensive step and the plan has reached for it repeatedly without establishing what it would decide.
@@ -169,11 +210,15 @@ registration — envelope Pearson over the 2.6 s of pre-gap context in the rende
 
 | | \|applied − true registration\| |
 |---|---|
-| the 10 clean gaps | ≤ 0.056 s (median 0.038) |
+| the 10 clean-by-ear gaps — **9 informative, see §2.3** | ≤ 0.056 s (median 0.038) |
 | 26/#7 (stutter) | **1.410 s** (applied −1.450, true −0.040) |
 | 31/#8 (stutter) | **0.937 s** (applied −0.977, true −0.040) |
 
-No overlap; a 17× margin. Both failures slid **backward** where the shoulders were already
+No overlap; a 17× margin. (**The "10 of 12" is this measurement's own count and stands**, but 3/g9 is
+later reclassified *uninformative* — §2.3 — so only **9** of them can corroborate anything. Every
+downstream count in this document is 9.)
+
+Both failures slid **backward** where the shoulders were already
 registered. A backward slide with no drift to correct lands the donor window on material A has
 already played — a shoulder repeat by construction. A forward slide cannot duplicate. So the
 defect is not the size of the adjustment, it is that **a large displacement is accepted without
@@ -207,7 +252,16 @@ the search toward building a new envelope correlation that already exists.
 over a 1000 ms shoulder window at ±600 ms max lag, with `peak_r` / `peak_z` / `prominence` /
 `second_peak_r` / `edge_pinned` attached. Emitted on every Tier-`full` gap — 227/227 of the patched
 corpus, no gaps missing. Commensurability with `align_adjustment_secs` is empirical, not assumed: on
-the 10 labelled-clean gaps the two agree to ≤ 33 ms, same sign convention.
+the **8 labelled-clean gaps that have a confident shoulder** the two agree to ≤ 33 ms, same sign
+convention.
+
+> **Corrected 2026-08-12.** This read "on the 10 labelled-clean gaps the two agree to ≤ 33 ms", which
+> **contradicted §2's own table** and was the stronger claim of the two. Only 8 of the 10 have a
+> shoulder at `peak_r ≥ τ`; the other two (31/g8, 31/g11) are clean by ear yet disagree by ≈ 1100 ms,
+> and §2 excludes them by confidence alone. Commensurability is therefore established on **8** gaps,
+> not 10 — and after §2.3 the informative clean cohort is **9**, so the two numbers are not the same
+> subset either. The claim survives at the size that was actually measured; nothing downstream rested
+> on the larger count.
 
 `equivalence_production.donor_registration.lag_ms` measures the same thing at 100 ms bins and agrees
 on 9 of 12; it reads −1000 ms at 31/#8 against a true −40 ms. **Cheap hypothesis to check:** pair
@@ -362,19 +416,42 @@ measure" abstentions), and `policies/seam_residual.rs:980` gives the reason — 
 `chosen − floor`, the floor is anchored at the **nominal** placement and measured within a lag radius
 around it, so a chosen placement outside that radius has no valid reference to subtract.
 
-**The coupling to slide magnitude is definitional, not statistical.**
-`placement_slide = alignment_start_frame.abs_diff(offset_nominal_start)`
-(`application/patch_region.rs:1139`, in `measure_fit_residual_verdict`) is exactly
-`align_adjustment_secs` in samples. **Corrected 2026-08-11:** earlier text cited
-`harness/seam_residual.rs:326` for this, which is the *fixture* harness — it computes the same
-formula from `fixture.true_fill_start` and zeroes the slide unless the floor anchor matches
-production, so it cannot support a claim about the dumps. The identity is no longer a two-gap
-numeric coincidence either; it is derived in §3.1. With `DEFAULT_RESIDUAL_LAG_SECS = 0.010`
+**The coupling to slide magnitude is definitional in *form*, but the two quantities do not share a
+nominal — corrected 2026-08-12.** Earlier text here read "`placement_slide` … is exactly
+`align_adjustment_secs` in samples … the identity is derived in §3.1". **Withdrawn:** §3.3's caveat
+already showed it fails on **82 of 227** gaps, and the reason is now traced.
+
+Both are `chosen − nominal`, but they take *different* values of each:
+
+| | chosen | nominal |
+|---|---|---|
+| `placement_slide` (`patch_region.rs:1139`) | `outcome.structure_start_frame` (`:519`) | `fit_residual_geometry` (`:455-471`) |
+| `align_adjustment_secs` (`patch_audio/region.rs`) | `alignment.start_frame` | `ctx.offset_nominal_start` |
+
+The *chosen* operands do agree — S5 established `structure_start_frame = alignment.start_frame` on
+both gate paths (that assignment is what made `waveform_adjustment_secs` identically zero, §3.3b). The
+**nominals do not**: `fit_residual_geometry` shifts the B nominal by
+`refined.start_frame − baseline.start_frame` (`:466-468`), so it **tracks gap refinement**, while
+`align_adjustment_secs`'s nominal is the mapped one and does not move. The two coincide exactly when
+refinement moved nothing — 145 of 227.
+
+That predicts §3.3's counterexample rather than merely tolerating it: **31/g6 has
+`align_adjustment_secs` exactly 0.0 with `placement_slide_frames` 1734 (36 ms)** — a 36 ms refinement
+move, comfortably inside `GAP_EDGE_REFINE_SECS` (0.75 s). It is very likely the same cause as §7's two
+frame-672000 outliers (589 and 4245 frames); worth confirming when that item is picked up.
+
+**Scope the implication accordingly.** With `DEFAULT_RESIDUAL_LAG_SECS = 0.010`
 (`residual_gate.rs:44`) → 480 frames, and `beyond_lag_reach = slide > max_lag` (`:972`) feeding
 `gate_abstains = !informative || beyond_lag_reach` (`:986`):
 
-> **`beyond_lag_reach` ⟺ `|align_adjustment| > 10 ms`.** The residual gate's domain is fills that
-> were placed within 10 ms of the nominal map.
+> **`beyond_lag_reach` ⟺ the *refinement-relative* slide exceeds 10 ms** — which equals
+> `|align_adjustment| > 10 ms` only on the 145/227 where refinement moved nothing. It holds on both
+> failures (§3.1). The residual gate's domain is fills placed within 10 ms of **its own**
+> refinement-tracking nominal, not of the mapped one.
+
+*(The earlier `harness/seam_residual.rs:326` citation was already corrected on 2026-08-11: that is the
+*fixture* harness, which computes the same formula from `fixture.true_fill_start` and zeroes the slide
+unless the floor anchor matches production, so it never supported a claim about the dumps.)*
 
 The table below is therefore a tautology, not a finding — the non-`beyond_lag_reach` bucket tops out
 at 8.0 ms, under the 10 ms line, as the definition requires. Kept only to size the population
@@ -478,8 +555,12 @@ S2's prior therefore belongs in that unified score, not in "the structure stage"
 **Caveat: `placement_slide_frames` ≠ `|align_adjustment| × 48000` in general.** It holds on 145 of 227
 patched gaps and fails on the rest — e.g. 31/g6 has `align_adjustment_secs` exactly 0.0 but
 `placement_slide_frames` 1734 (36 ms). The two coincide on the failures (§3.1) but the identity in §3
-is not corpus-wide; the divergent set overlaps the §5 `applied = 0` cohort and should be understood
-before either quantity is used as a proxy for the other.
+is not corpus-wide. **Explained 2026-08-12 — §3 now carries the mechanism:** the two use *different
+nominals*, and `placement_slide`'s tracks gap refinement (`fit_residual_geometry`,
+`patch_region.rs:466-468`) while `align_adjustment_secs`'s does not, so they agree exactly when
+refinement moved nothing. 31/g6's 1734 frames is a 36 ms refinement move. What remains open is only
+the overlap with the §5 `applied = 0` cohort — the *explanation* no longer blocks using either
+quantity, provided the reader knows which nominal each is relative to.
 
 Also useful here: only **5** of 227 gaps have `|align_adjustment| > 0.5 s`, so S2's bound — if wired
 as a veto rather than a prior — would touch five placements, of which three are believed correct.
@@ -502,11 +583,28 @@ max +726 ms. Only **3** gaps slide beyond −500 ms, and the two failures are tw
 **It is not a saturation issue.** The placement search radius is
 `max(fill_border_search_secs, fill_align_margin_secs) = 10.0 s`; a 1.45 s slide sits at 14% of reach,
 nowhere near an edge. (Contrast §1.2's `donor_registration` hypothesis, where ±600 ms against a true
-−1150 ms *is* a saturation candidate — different search, different window.) The shape here is an
-**argmax/aliasing failure**: the score surface has a competing peak ~1–1.45 s back that outranks the
-true one, which §2.2 already established independently for 26/g6 (`prominence` 0.025, material
-self-similar on a ≈ 2.9 s cycle). Correct estimator, ambiguous evidence, no tie-break. The fix shape
-is therefore a prior or a uniqueness term, **not** a wider or narrower window.
+−1150 ms *is* a saturation candidate — different search, different window.) **The fix shape is
+therefore a prior or a uniqueness term, not a wider or narrower window** — that conclusion survives
+everything below.
+
+> **Corrected 2026-08-12, twice over.** This paragraph read: *"The shape here is an **argmax/aliasing
+> failure**: the score surface has a competing peak ~1–1.45 s back that outranks the true one, which
+> §2.2 already established independently for 26/g6 (`prominence` 0.025, material self-similar on a
+> ≈ 2.9 s cycle)."* Both halves are dead.
+>
+> - **The citation was withdrawn before it was written.** §2.2 explicitly retracts the dump-only
+>   `prominence` reading: `secondary_peak` (`measure.rs:366`) has **no exclusion radius**, and
+>   26/g6's runner-up sits `top2_spacing_ms` **0.104** away — the same lobe. That 0.025 measures peak
+>   width, not long-range uniqueness, and cannot establish aliasing.
+> - **The claim itself is now refuted by measurement.** §4.3's ±2000 ms sweep finds **no competing
+>   peak that outranks the true one at either failure** — the true registration is the tallest peak
+>   in the sweep on both, by 0.214 (26/g6) and 0.742 (31/g7).
+>
+> What replaces it is *two* mechanisms, not one (see the status table at the top). 26/g6's surface
+> **is** periodic — a 480.5 ms comb, and the applied placement sits on its third tooth (§4.3) — but
+> the pre-shoulder still ranks the true tooth first, so the information to reject it was present and
+> unused: **source**, and S2's prior is the fix. 31/g7 is not periodic at all (flat floor, 9.6×
+> margin); its defect is the `min` reduction (§4.2): **S2b**.
 
 ### 4.1 A slide cap exists in config and is not enforced
 
@@ -518,19 +616,37 @@ place that mentions it declines to use it: `domain/gap_structure.rs:294` notes t
 structure polish radius "caused multi-second exhaustive loops per fit candidate". Both failures run
 `signature_mode: energy` (§3), i.e. the structure/energy path — which this knob was never wired to.
 
-Verify this before building on it (a dead knob is a strong claim), but if it holds, Phase A's answer
-is **source**, and the first candidate fix is enforcing an existing documented bound rather than
-adding a new guard. Note this does not retire the §2 residual guard: a magnitude cap refuses large
-slides indiscriminately, whereas the guard asks whether the slide *disagrees with local
-registration* — pair 31's genuine −1.15 s gaps are exactly the population a bare cap would break.
+**Confirmed dead 2026-08-12** (S2's precondition — workspace-wide search: the value stops at the
+`request.rs:71` field definition, read by nothing in any crate).
 
-**Original question, still the fork.** Two readings, with different fixes:
+**Do not read this as "Phase A's answer is source, so enforce the bound".** Earlier text here did, and
+it is wrong twice: the fork is retired (both answers occur — see the status table), and **S2 supersedes
+the "enforce it" framing**. A bare magnitude cap is the wrong instrument in either direction:
 
-- **Source.** The search should not have made that choice — it lacked a prior favouring small slides,
-  or its scores genuinely preferred the wrong spot. Then the fix belongs in the search and a guard is
-  a band-aid over it.
+- it would refuse **both** failures (2.9× and 2.0× over) — but also pair 31's **genuine** −1.15 s
+  placements at #9/#11/#12, which are correct and clean by ear, converting two bad repairs into three
+  unrepaired holes;
+- and it does nothing for 31/g7's actual defect, which is the `min` reduction (§4.2/S2b) — nothing
+  near nominal was ever *scored* there, so bounding the slide only removes the one candidate that
+  survived.
+
+**S2's resolution is therefore: wire it as a search prior, or delete it — never as a veto.** The
+mechanism already exists in shape (`fill_anchor_search_prior_weight`); as a prior it fixes 26/g6, where
+a placement at −15.8 ms scored 0.378 against the applied 0.366, and stays inert where nothing near
+nominal scores at all.
+
+This also does not retire the §2 residual guard: a cap refuses large slides indiscriminately, whereas
+the guard asks whether the slide *disagrees with local registration* — again, pair 31's genuine
+−1.15 s gaps are the population a bare cap breaks.
+
+**Original question — retired, kept for provenance.** Two readings were posed, with different fixes;
+§4.3 showed the corpus contains **both**, one per failure, which is why §0 carries two deliverables:
+
+- **Source.** The search should not have made that choice — it lacked a prior favouring small slides.
+  *This is 26/g6 → **S2**.*
 - **Gate.** The search did its job on the evidence available, and the wrongness is only visible from
-  shoulder registration the search never consults. Then a guard (or a new search term) is right.
+  shoulder registration the search never consults. *This is 31/g7 → **S2b** (the reduction, more
+  precisely, than a guard).*
 
 **Method.** Answerable from the existing dumps, no new media run: read each bracket's signed slide as
 `start_frame − 672000` (§3.1) and its `min(seam_pre, seam_post)`, then ask whether a near-nominal
@@ -614,13 +730,80 @@ should anchor on the shoulder that is trustworthy and ignore the other. The gate
 of this shape for a different case (`short_gap_one_strong_seam_fallback`, true in the recipe), which
 is the natural place to look for a generalization.
 
-**Settled by:** the widened lag sweep in §7 — if no rival appears at −977 ms, aliasing is refuted for
-31/g7 and the structure-signature reading is what remains.
+**Settled by:** ~~the widened lag sweep in §7~~ — **settled 2026-08-12 by §4.3, offline.** No rival
+appears at −977 ms (r 0.087 against 0.829 at the truth), so **aliasing is refuted for 31/g7** and the
+min-reduction reading above is what remains.
 
-**Exit.** A written verdict. If *source*, phases B and C are void and this plan becomes a
-placement-search change. If *gate*, continue to B. Remaining to close it: confirm the production
-selection rule (so `min(seam)` is not a stand-in), confirm §4.1's dead knob, and decide whether
-26/g6 and 31/g7 are one defect or two.
+### 4.3 S3 — the ±2000 ms sweep: no rival at either failure (2026-08-12)
+
+**Method.** Both surround renders are padded by `gap_signature_context_secs` = 3.0 s per side
+(`gap_listen/mod.rs:281,304`) — A around `[a_start, a_end]`, B around `[b_mapped_start, b_mapped_end]`
+— so the nominal throat sits at exactly 3.0 s in *both* clips and **lag 0 of this sweep is the nominal
+map**. Template = A's last 1.0 s before the throat (`lag_window_secs`); haystack = `_b_surround`;
+mono downmix, sample-domain Pearson at every integer lag in ±2000 ms, matching `lag_side_sweep`
+(`measure.rs:746`). Peak picking uses a **250 ms exclusion radius** — deliberately the thing
+`lag_decision.prominence` lacks (§2.2).
+
+**Cross-validated against production before use:** the offline curve reproduces
+`lag_decision.pre_anchor[0]` to **≤ 0.003 in `peak_r`** on both gaps (0.9949 vs 0.997 at 26/g6;
+0.8287 vs 0.829 at 31/g7), at lags within 18 ms. The widening is the only difference; ±600 ms cannot
+see −977 ms, which is why the dumps could not answer this.
+
+*31/g7 — rival refuted outright.* The curve is a single spike on a flat floor:
+
+| lag | r | |
+|---|---|---|
+| **−38.1 ms** | **0.8287** | true registration (`frac_lag` −47.5 ms) |
+| +1835.5 ms | 0.0979 | |
+| −301.0 ms | 0.0974 | |
+| +740.9 ms | 0.0924 | |
+| **−925.1 ms** | **0.0867** | **the predicted rival — 9.6× below the truth** |
+
+Nothing outside nominal clears 0.10. There is no competing peak to mistake, at −977 ms or anywhere in
+±2 s. **§4.2's min-reduction pathology is what remains, and S2b is well-posed.**
+
+*26/g6 — the predicted rival is refuted, but the surface is genuinely periodic.* Nominal still wins by
+0.214, so the pre-shoulder alone disambiguates it — yet unlike 31/g7 the floor is not flat:
+
+| lag | r | |
+|---|---|---|
+| **−41.8 ms** | **0.9949** | true registration (`frac_lag` −59.8 ms) |
+| +1880.1 ms | 0.9190 | |
+| −522.2 ms | 0.8669 | |
+| −1002.7 ms | 0.8301 | |
+| +1399.7 ms | 0.8233 | |
+| −1963.6 ms | 0.8088 | |
+| −1483.2 ms | 0.7806 | best within ±120 ms of the applied −1450 ms |
+
+**Those peaks are a comb with a 480.5 ms tooth spacing** — successive gaps 480.4 / 480.5 / 480.4 /
+1441.5 (= 3×) / 480.4 / 960.9 (= 2×). The applied placement is not an arbitrary slide: **−1483.3 ms is
+exactly the third tooth** (−41.8 − 3 × 480.5), 33 ms from the −1450 ms actually applied.
+
+- **Reconciles §2.2/§2.4's "≈ 2.9 s cycle" rather than contradicting it.** Those peaks (+2953 /
+  −2816 / +2472) came from a *different* measurement (fill vs A). 6 × 480.5 = 2883 ms, so 2.9 s is
+  plausibly the 6th tooth of this same comb and 480.5 ms is the fundamental. Offered as a
+  reconciliation, not a proof — it was not measured on the A-side autocorrelation.
+- **This does not resurrect aliasing as 26/g6's defect.** The comb is real, but the 1 s pre-shoulder
+  ranks the true tooth first by a clear margin, so the information needed to reject −1450 ms was
+  present and unused. That is §4's **source** reading, and it is what S2's near-nominal prior is for.
+  The distinction that matters: 31/g7's search had no good answer available; 26/g6's search had one
+  and lost it on score.
+
+**Exit — met 2026-08-12. The verdict is *two defects*, one of each kind.** 26/g6 reads **source**
+(S2's prior); 31/g7 reads **gate**/scoring-objective (S2b's reduction). Of the three items left open
+here, two are closed and one survives:
+
+- ~~decide whether 26/g6 and 31/g7 are one defect or two~~ — **two** (§4.3, and the status table).
+- ~~confirm §4.1's dead knob~~ — **confirmed dead** (§4.1).
+- **confirm the production selection rule** — still open. §4's first-pass tables rank by
+  `min(seam_pre, seam_post)`, which is *this plan's* reduction, not a verified production rule; the
+  real objective is `structure_weight × structure_combined + waveform_weight × waveform_min`
+  (§3.3b), and neither term survives the search (§7). Treat those two tables as indicative. **This
+  gates S2b's validation, not its diagnosis** — §4.2/§4.3 establish the mechanism independently.
+
+**The old "if *source*, phases B and C are void" rule is withdrawn.** It presumed a single verdict.
+Phase B was demoted (§0/S4) to the separate `applied = 0` domain question, which a source answer does
+not touch, and Phase C's δ stays blocked on B regardless.
 
 **Why first.** Phase C (δ) presupposes a gate with a threshold. Sequencing it before A would encode
 an answer the evidence has not given — the same failure mode as the refuted readings in §1.1.
@@ -689,12 +872,13 @@ threshold.
 
 ## 7. Loose ends (not blocking, don't lose)
 
-- **Widened lag sweep on 26/g6 + 31/g7 (one run, answers two questions).** `lag_max_lag_ms` is a
-  config default, not a const (`gap_fingerprint/contract.rs:322`), so re-fingerprinting just these two
-  gaps at ~1500 ms shows (a) whether a rival peak exists at −977 / −1450 ms and how tall it stands
-  against the true-lag peak — settling §4.2 — and (b) `edge_pinned` on the `lag_decision` anchors,
-  testing the ±600 ms saturation hypothesis for `donor_registration` (§1.2). The `edge_pinned` half is
-  dump-only and free; the rival half needs the re-run.
+- ~~**Widened lag sweep on 26/g6 + 31/g7**~~ — **half done, half retired 2026-08-12.** (a) The rival
+  question is **settled offline by §4.3** at zero cost; re-running the fingerprint at
+  `lag_max_lag_ms` ≈ 1500 would now buy a confirmation of a settled answer in exchange for a full
+  per-bracket oracle pass, so **do not run it**. (b) The `edge_pinned` half stands and is still free:
+  it is dump-only, and it tests §1.2's ±600 ms saturation hypothesis for `donor_registration`. Note
+  the two failures already read `edge_pinned: false` (§4.3's dumps), but they are the wrong gaps for
+  it — the hypothesis is about pair 31 **#9–#12**, whose true registration is ≈ −1150 ms.
 - **The +39 ms systematic bias** in fill-start detection (§2.1). Cosmetic for a discriminator;
   required before any absolute claim about delivered position.
 - **The `applied = 0` cohort at large** — 26 gaps corpus-wide placed at nominal while confident
@@ -702,9 +886,13 @@ threshold.
 - **Two gaps break the frame-672000 identity** (§3.1) by 589 and 4245 frames. Candidates: gap
   refinement moving `refined.start_frame` away from the reported gap start, or the `.max(0.0)` clamp
   on `pad_lead` near track start. Dump-only; needed before the join is used unconditionally.
-- **`max_fill_align_adjustment_secs` appears to be a dead knob** (§4.1) — plumbed and CLI-settable,
-  never read. Either wire it to the placement search or delete it; a documented 0.5 s bound that
-  silently does nothing is worse than neither.
+- ~~**`max_fill_align_adjustment_secs` appears to be a dead knob**~~ — **confirmed dead 2026-08-12**
+  (§4.1): plumbed, validated, CLI- and harness-settable, documented as live in `README.md:535` and
+  `docs/gap-fill-modes.md:562`, and **read by nothing**. Not a loose end any more — it is **S2**, and
+  S2's rule is narrower than the "wire it to the placement search or delete it" this bullet used to
+  say: **wire it as a search prior or delete it, never as a veto** (a bare cap would break pair 31's
+  genuine −1.15 s placements). A documented 0.5 s bound that silently does nothing is still worse
+  than neither.
 - ~~**`waveform_adjustment_secs` is a dead field**~~ — **deleted 2026-08-12** (§0 S5). What it *should*
   have reported is now its own open item: **surface the winning candidate's `structure_combined` and
   `waveform_min`.** Both are locals inside `unified_fit_score` (`gap_fill_fit.rs:391-399`), which
