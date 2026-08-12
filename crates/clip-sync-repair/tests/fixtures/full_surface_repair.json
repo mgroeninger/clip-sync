@@ -130,7 +130,8 @@
             "gap_start_adjust_frames": 0,
             "gap_end_adjust_frames": 0,
             "anchor_seam_used": false,
-            "dual_fit_used": false
+            "dual_fit_used": false,
+            "normalize_gain": 1.0
           }
         },
         "tags": {

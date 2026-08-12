@@ -1,6 +1,6 @@
 # TEMP — Fill normalize: boost-only (never attenuate)
 
-**Status:** draft / not started (2026-08-07).
+**Status:** implemented 2026-08-12 (code + docs + tests landed; ear spot-check outstanding).
 **One deliverable:** change A-border fill loudness matching so it may **raise** a quiet B fill
 toward A's borders, but must **never attenuate** a louder fill.
 
@@ -136,6 +136,7 @@ gain = clamp(raw, 1.0, max_boost)   // was clamp(raw, 1/max_boost, max_boost)
 | Characterize | Bracket path keeps calling `compute_fill_gain` unchanged. `region.rs:2065` is the **only** production caller — silence-splice and dual-fit hard-code `gain: 1.0` (`region.rs:1395`, `region.rs:2526`), so "all callers stay consistent" is already true |
 | Invariant | `debug_assert!(gain >= 1.0)` where the gain enters the spec (`region.rs:2161`, `normalize_gain: gain`) — turns § 5's acceptance criterion into a checked invariant for free |
 | Reporting | **Emit `normalize_gain`** (record-only). It exists on the spec (`gap_repair_spec.rs:197`) and as `RegionPatch.gain` (`region.rs:51`), but neither `RegionPatchOutcome::Patched` (`region.rs:81-95`) nor `GapPatchStatus::Patched` (`patch_result.rs:364`) carries it — add the `f32` to both and thread it at the conversion (`region.rs:239`). Serialize **unconditionally**, no `skip_serializing_if`: `1.0` must read as *unity*, not as *unavailable* — the exact error S5 of the placement plan fixed for `dual_fit_used` / `anchor_seam_used`. Document in [json-output.md](../json-output.md) alongside FillLevelCheck, since it is what makes `gained_fill`-based fields interpretable |
+| Mixed-vintage dumps | **Corrected 2026-08-12 during implementation.** An earlier draft of this row called for `#[serde(default = …)]` returning `1.0` so old corpus JSON would still deserialize. `GapPatchStatus` is **`Serialize`-only** (`patch_result.rs:361`) — nothing reads a report back, and the `#[serde(default)]` attributes already on its sibling fields are inert. So no default is needed and none was added. The hazard is real but lands entirely **consumer-side**: gaps in `gap-files/2026-08-07-fill-level-shape/` and `2026-08-08-v0.5.2-full-corpus/` carry no `normalize_gain` at all, and absence means *pre-emit run*, never *unity measured* — a roll-up must hold those out rather than coerce them. Recorded on the field's doc comment |
 | Integration | Keep quiet-B boost test green (`patch_audio_normalizes_fill_loudness_to_a_border`); add loud-B / would-have-attenuated case |
 | Docs | `compute_fill_gain`'s own doc comment (`silence.rs:360-361`) says "clamped to ±`max_gain_db` dB" and becomes **actively false** — fix first. Then `config.rs:169` (`normalize_fill`) and `config.rs:183` (`max_fill_gain_db`), `README.md:184` (`--no-normalize` row) and the config block near `README.md:577`, and [pipeline.md](../pipeline.md). Archive write-path wording is historical — leave it |
 | CLI | No new flag required for v1 (`--no-normalize` still disables entirely) |
@@ -169,12 +170,13 @@ Acceptance: no production path applies `normalize_gain < 1.0` when `normalize_fi
 
 ## 6. Implement checklist
 
-- [ ] Update `compute_fill_gain` to floor at 1.0 (`silence.rs:369`); add the loud-B → `1.0` unit test
-- [ ] `debug_assert!(gain >= 1.0)` at the spec construction (`region.rs:2161`)
-- [ ] Thread `normalize_gain` onto `RegionPatchOutcome::Patched` → `GapPatchStatus::Patched`, serialized unconditionally; document in json-output.md
-- [ ] Add integration coverage for the would-attenuate (loud fill) case, asserting bit-equality with `--no-normalize`; keep quiet-boost test
-- [ ] Doc note: `compute_fill_gain` doc comment first (it becomes false), then config field docs, README, pipeline → boost-only
-- [ ] Run lib + touched integration tests; confirm goldens unmoved
+- [x] Update `compute_fill_gain` to floor at 1.0 (`silence.rs:380`); add the loud-B → `1.0` unit test (`compute_fill_gain_never_attenuates_a_loud_fill`)
+- [x] `debug_assert!(gain >= 1.0)` at the spec construction (`region.rs:2087`)
+- [x] Thread `normalize_gain` onto `RegionPatchOutcome::Patched` → `GapPatchStatus::Patched`, serialized unconditionally; documented in json-output.md. No `#[serde(default)]` — see § 4 Mixed-vintage row
+- [x] Add integration coverage for the would-attenuate (loud fill) case, asserting bit-equality with `--no-normalize`; keep quiet-boost test (`patch_audio_never_attenuates_a_fill_louder_than_a_border`)
+- [x] Doc note: `compute_fill_gain` doc comment first (it becomes false), then config field docs, README, pipeline → boost-only
+- [x] Run lib + touched integration tests; goldens confirmed unmoved — the fixtures do set `normalize_fill: false` (`gap_corpus_fixtures.rs:844`/`:1139`, `energy_signature_production.rs:433`), so the **only** golden change is the additive `"normalize_gain": 1.0` line in `tests/fixtures/full_surface_repair.json` (regenerated via `write_full_surface_repair_golden`; explicit contract revision). Full workspace green, `cargo fmt`/`clippy` clean
+- [x] **Vacuity check:** temporarily restoring the old symmetric clamp makes the new integration test fail on the `debug_assert` (`got 0.57142836`), confirming the test is not passing by accident
 - [ ] (Optional) Quick `--patch-only` / listen spot-check on a known loud-mid-gap patch
 - [ ] Archive this TEMP when shipped; durable behaviour lives in pipeline / json-output companion notes
 

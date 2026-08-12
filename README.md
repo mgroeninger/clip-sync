@@ -181,7 +181,7 @@ clip-sync-repair [OPTIONS] <VIDEO_A> <VIDEO_B>
 | `--wav <PATH>` | — | Write patched multi-channel WAV (implies write mode) |
 | `--mux <PATH>` | — | Mux patched audio into video A via ffmpeg (implies write mode; requires build with `--features ffmpeg-mux` and `ffmpeg` on `PATH`). AAC is re-encoded; bitrate defaults to the lower measured rate of A and B (see `mux_audio_bitrate` below) |
 | `--patch-only` | — | Run the full patch (splice included) and report it, writing no audio. The way to collect splice-time measurements such as `fill_level` — `--repair-preview` stops before the splice. Mutually exclusive with `--wav` / `--mux` / `--repair-preview` |
-| `--no-normalize` | — | Disable loudness normalization of fill segments |
+| `--no-normalize` | — | Disable loudness normalization of fill segments. Normalization is **boost-only**: it raises a quiet fill toward A's borders (up to `max_fill_gain_db`) and never attenuates a louder one, so this flag only turns off the boost |
 | `--no-dual-fit` | — | Disable dual-fit rescue (G6); bracket-only skip path for regression (D6) |
 | `--dual-fit` | on | Re-enable dual-fit after TOML/override; default is on — omit both flags for normal repair |
 | `--gap-fingerprints <DIR>` | — | After repair, write licensing-safe gap-fingerprint corpus (`corpus.json`, per-gap JSON, `manifest.json`) |
@@ -574,9 +574,9 @@ fingerprint_diagnostics = false             # true only meaningful with --gap-fi
 # anchor_seam_min_xcorr_peak = 0.5
 # anchor_seam_xcorr_ambiguous_band = 0.15
 crossfade_ms = 10
-normalize_fill = true
+normalize_fill = true            # boost-only: raises a quiet fill, never attenuates a loud one
 normalize_window_secs = 5.0
-max_fill_gain_db = 12.0
+max_fill_gain_db = 12.0          # max BOOST; there is no attenuation side
 dry_run = true
 
 [repair.output]

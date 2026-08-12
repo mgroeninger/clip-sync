@@ -26,7 +26,9 @@ use clip_sync_repair::domain::{CompatibilityVerdict, TrackCompatibility};
 use clip_sync_repair::domain::{
     FillMode, FillOffsetMode, FitBoundarySearch, GapSelectionMode, GapSignatureMode, RepairProfile,
 };
-use clip_sync_repair::domain::{GapFillSkipReason, GapPatchSkipReason, GapPatchStatus};
+use clip_sync_repair::domain::{
+    GapFillSkipReason, GapPatchSkipReason, GapPatchStatus, PatchSummary,
+};
 use clip_sync_repair::infrastructure::aligner::SymphoniaAligner;
 use clip_sync_repair::infrastructure::wav_writer::WavPatchedAudioWriter;
 use clip_sync_repair_fixtures::energy_signature_fixtures::{
@@ -767,12 +769,23 @@ fn expect_pcm(result: &clip_sync_repair::application::PatchAudioResult) -> &Mult
 }
 
 fn patch_to_samples(request: PatchAudioRequest, crossfade_ms: u64) -> (Vec<f32>, u32, u16) {
+    let (samples, rate, channels, _) = patch_to_samples_and_summary(request, crossfade_ms);
+    (samples, rate, channels)
+}
+
+/// As [`patch_to_samples`], but also hands back the summary — needed by the normalize tests, which
+/// assert on the written audio *and* on the `normalize_gain` recorded for the gap.
+fn patch_to_samples_and_summary(
+    request: PatchAudioRequest,
+    crossfade_ms: u64,
+) -> (Vec<f32>, u32, u16, PatchSummary) {
     let progress = FakeProgressReporter;
     let media_reader = SymphoniaMediaReader;
 
     let result = PatchAudio::new(&media_reader, &progress)
         .execute(request, crossfade_ms)
         .expect("patch should succeed");
+    let summary = result.summary.clone();
 
     let temp = tempfile::tempdir().expect("tempdir");
     let path_out = temp.path().join("out.wav");
@@ -786,7 +799,15 @@ fn patch_to_samples(request: PatchAudioRequest, crossfade_ms: u64) -> (Vec<f32>,
         .samples::<i16>()
         .map(|s| s.expect("read sample") as f32 / 32767.0)
         .collect();
-    (samples, spec.sample_rate, spec.channels)
+    (samples, spec.sample_rate, spec.channels, summary)
+}
+
+/// The `normalize_gain` recorded for a single-gap patch run.
+fn only_gap_normalize_gain(summary: &PatchSummary) -> f32 {
+    match &summary.gaps[0].status {
+        GapPatchStatus::Patched { normalize_gain, .. } => *normalize_gain,
+        other => panic!("expected a patched gap, got {other:?}"),
+    }
 }
 
 struct SineGapFixture {
@@ -980,7 +1001,7 @@ fn patch_audio_normalizes_fill_loudness_to_a_border() {
         ),
         10,
     );
-    let (normalized, _, _) = patch_to_samples(
+    let (normalized, _, _, summary) = patch_to_samples_and_summary(
         patch_request(
             make_report(
                 fixture.path_a,
@@ -1025,6 +1046,80 @@ fn patch_audio_normalizes_fill_loudness_to_a_border() {
     assert!(
         gap_norm > pre_rms * 0.55,
         "normalized gap should be close to A border level (pre={pre_rms}, gap={gap_norm})"
+    );
+
+    // The boost is recorded, not just applied: `fill_level` is measured on the gained fill, so a
+    // reader cannot interpret those numbers without knowing what gain produced them.
+    let gain = only_gap_normalize_gain(&summary);
+    assert!(
+        gain > 1.0,
+        "quiet B fill should record the boost it received, got {gain}"
+    );
+}
+
+/// Boost-only: a fill *louder* than A's borders keeps its own level. The whole-fill RMS is what the
+/// ratio sees, so before 2026-08-12 this case was attenuated toward A's shoulders — crushing exactly
+/// the intentional dynamics a same-master donor exists to restore (the gunshot-in-conversation
+/// shape). Now the gain floors at unity, which makes the normalized run *bit-identical* to the
+/// `--no-normalize` run: `gained_fill` multiplies by exactly 1.0, so there is no tolerance to allow.
+#[test]
+fn patch_audio_never_attenuates_a_fill_louder_than_a_border() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    // A's own sine is written at 16_000; B is well above it and inside i16 range.
+    let fixture = sine_gap_fixture(temp.path(), SAMPLE_RATE, SAMPLE_RATE, 440.0, 28_000.0);
+
+    let (unnormalized, _, _) = patch_to_samples(
+        patch_request(
+            make_report(
+                fixture.path_a.clone(),
+                fixture.path_b.clone(),
+                stereo_identical_compat(SAMPLE_RATE),
+            ),
+            false,
+            2.0,
+            0.35,
+        ),
+        10,
+    );
+    let (normalized, _, _, summary) = patch_to_samples_and_summary(
+        patch_request(
+            make_report(
+                fixture.path_a,
+                fixture.path_b,
+                stereo_identical_compat(SAMPLE_RATE),
+            ),
+            true,
+            2.0,
+            0.35,
+        ),
+        10,
+    );
+
+    let gain = only_gap_normalize_gain(&summary);
+    assert_eq!(
+        gain, 1.0,
+        "loud B fill must not be attenuated (boost-only), got gain {gain}"
+    );
+    assert_eq!(
+        normalized, unnormalized,
+        "with gain exactly 1.0 the normalized run must be sample-identical to --no-normalize"
+    );
+
+    // Guard the property the bit-equality is standing in for, in case a future change makes the two
+    // runs differ for an unrelated reason: the gap interior keeps B's louder level.
+    const GAP_INNER_START: f64 = 3.5;
+    const GAP_INNER_END: f64 = 5.5;
+    let pre_rms = rms_region(&normalized, SAMPLE_RATE, CHANNELS, 0.0, 2.0);
+    let gap_rms = rms_region(
+        &normalized,
+        SAMPLE_RATE,
+        CHANNELS,
+        GAP_INNER_START,
+        GAP_INNER_END,
+    );
+    assert!(
+        gap_rms > pre_rms,
+        "loud fill should stay louder than A's borders (pre={pre_rms}, gap={gap_rms})"
     );
 }
 

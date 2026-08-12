@@ -92,6 +92,11 @@ pub(super) enum RegionPatchOutcome {
         anchor_seam_used: bool,
         anchor_bracket_move_frames: usize,
         dual_fit_used: bool,
+        /// The gain actually applied to this fill (`1.0` when `normalize_fill` is off, or when the
+        /// boost-only policy declined to move a fill at or above A's border level). Carried to the
+        /// patch record so `fill_level`'s `gained_fill`-based fields can be read across gain-policy
+        /// changes — see [`policies::compute_fill_gain`].
+        normalize_gain: f32,
     },
     Skipped {
         reason: GapPatchSkipReason,
@@ -229,6 +234,7 @@ pub(super) fn outcomes_in_report_order(
                 anchor_seam_used,
                 anchor_bracket_move_frames,
                 dual_fit_used,
+                normalize_gain,
                 ..
             } => {
                 if let Some(verdict) = residual {
@@ -237,6 +243,7 @@ pub(super) fn outcomes_in_report_order(
                 let (residual_db, floor_db, headroom_db) =
                     residual_summary_scalar_fields(residual.as_ref());
                 GapPatchStatus::Patched {
+                    normalize_gain: *normalize_gain,
                     pre_correlation: *pre_correlation,
                     post_correlation: *post_correlation,
                     align_adjustment_secs: *align_adjustment_secs,
@@ -1090,6 +1097,7 @@ fn execute_bracket_output(ctx: ExecuteBracketOutputCtx) -> (RegionPatch, RegionP
         anchor_seam_used: ctx.anchor_seam_used,
         anchor_bracket_move_frames: ctx.anchor_bracket_move_frames,
         dual_fit_used: false,
+        normalize_gain: ctx.gain,
     };
     (patch, outcome)
 }
@@ -1220,14 +1228,14 @@ pub(super) fn outcome_from_spec(spec: &GapRepairSpec, sample_rate: u32) -> Regio
             fit_used_boundary_grid,
             fit_boundary_grid_cells,
             residual,
+            normalize_gain,
             ..
         }) => {
             let offset_nominal_start = spec.b_extract.b_mapped_start_frame;
             RegionPatchOutcome::Patched {
                 pre_correlation: *seam_pre,
                 post_correlation: *seam_post,
-                align_adjustment_secs: (alignment.start_frame as f64
-                    - offset_nominal_start as f64)
+                align_adjustment_secs: (alignment.start_frame as f64 - offset_nominal_start as f64)
                     / sample_rate as f64,
                 structure_trusted: *structure_trusted,
                 confidence: *confidence,
@@ -1239,6 +1247,7 @@ pub(super) fn outcome_from_spec(spec: &GapRepairSpec, sample_rate: u32) -> Regio
                 anchor_seam_used: *anchor_seam_used,
                 anchor_bracket_move_frames: *anchor_bracket_move_frames,
                 dual_fit_used: false,
+                normalize_gain: *normalize_gain,
             }
         }
         GapRepairVerdict::Patch(GapRepairStrategy::SilenceSplice {
@@ -1261,6 +1270,9 @@ pub(super) fn outcome_from_spec(spec: &GapRepairSpec, sample_rate: u32) -> Regio
             anchor_seam_used: false,
             anchor_bracket_move_frames: 0,
             dual_fit_used: true,
+            // Dual-fit never normalizes — the SilenceSplice strategy carries no gain and the
+            // executor splices its fill unity (`region.rs` SilenceSplice arm, `gain: 1.0`).
+            normalize_gain: 1.0,
         },
         GapRepairVerdict::Skip { reason, .. } => {
             skip_outcome_from_fields(reason, spec.tags_ctx.gate.residual)
@@ -1411,6 +1423,8 @@ pub(super) fn execute_region_spec(
                 anchor_seam_used: false,
                 anchor_bracket_move_frames: 0,
                 dual_fit_used: true,
+                // Unity by construction — matches the `gain: 1.0` on the patch just above.
+                normalize_gain: 1.0,
             };
             (Some(patch), outcome)
         }
@@ -2066,6 +2080,13 @@ pub(super) fn characterize_region(
     } else {
         1.0f32
     };
+    // Boost-only: no production path may quiet a fill below the level it was assembled at. The
+    // clamp lives in `compute_fill_gain`; this pins the property at the one site that can violate
+    // it, so a future edit to the policy cannot silently reintroduce attenuation here.
+    debug_assert!(
+        gain >= 1.0,
+        "normalize gain must never attenuate (boost-only policy), got {gain}"
+    );
 
     log_gap_fill_result_verbose(
         progress,
@@ -2934,6 +2955,7 @@ mod tests {
             anchor_seam_used: false,
             anchor_bracket_move_frames: 0,
             dual_fit_used: false,
+            normalize_gain: 1.0,
         };
         let tags_for =
             |status: &GapPatchStatus| derive_gap_tags_from_status(status, fill_mode, thresholds);
@@ -3049,6 +3071,7 @@ mod tests {
             anchor_seam_used: false,
             anchor_bracket_move_frames: 0,
             dual_fit_used: false,
+            normalize_gain: 1.0,
         };
         let tags = derive_gap_tags_from_status(
             &GapPatchStatus::NotPlanned {

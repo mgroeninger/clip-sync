@@ -1107,6 +1107,7 @@ mod tests {
                     anchor_seam_used: false,
                     anchor_bracket_move_frames: 0,
                     dual_fit_used: false,
+                    normalize_gain: 1.0,
                 },
             ),
             gap_patch_outcome(
@@ -1311,6 +1312,7 @@ mod tests {
                 anchor_seam_used: false,
                 anchor_bracket_move_frames: 0,
                 dual_fit_used: false,
+                normalize_gain: 1.0,
             },
         )]);
         let payload = RepairJsonOutput {
@@ -1351,6 +1353,7 @@ mod tests {
                     anchor_seam_used: false,
                     anchor_bracket_move_frames: 0,
                     dual_fit_used: false,
+                    normalize_gain: 1.0,
                 },
             ),
             gap_patch_outcome(
@@ -1610,6 +1613,7 @@ mod tests {
                 anchor_seam_used: false,
                 anchor_bracket_move_frames: 0,
                 dual_fit_used: false,
+                normalize_gain: 1.0,
             },
         )]);
 
@@ -1644,6 +1648,7 @@ mod tests {
             anchor_seam_used: true,
             anchor_bracket_move_frames: 48_000,
             dual_fit_used: false,
+            normalize_gain: 1.0,
         };
         let tags = derive_gap_tags_from_patch_outcome(
             &GapPatchTierInput::Patched {
@@ -1722,6 +1727,7 @@ mod tests {
             anchor_seam_used: false,
             anchor_bracket_move_frames: 0,
             dual_fit_used: true,
+            normalize_gain: 1.0,
         };
         let tags = derive_gap_tags_from_patch_outcome(
             &GapPatchTierInput::Patched {
@@ -1791,6 +1797,7 @@ mod tests {
                 anchor_seam_used: false,
                 anchor_bracket_move_frames: 0,
                 dual_fit_used: false,
+                normalize_gain: 1.0,
             },
         )]);
 
@@ -1919,6 +1926,7 @@ mod tests {
                     anchor_seam_used: false,
                     anchor_bracket_move_frames: 0,
                     dual_fit_used: false,
+                    normalize_gain: 1.0,
                 },
             ),
             gap_patch_outcome(
@@ -1997,6 +2005,7 @@ mod tests {
                     anchor_seam_used: false,
                     anchor_bracket_move_frames: 0,
                     dual_fit_used: false,
+                    normalize_gain: 1.0,
                 },
             ),
             gap_patch_outcome(

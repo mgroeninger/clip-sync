@@ -358,15 +358,26 @@ fn block_rms_db(block: &[f32]) -> f64 {
 
 /// Compute a gain factor to match `b_segment_rms` to `a_border_rms`.
 ///
-/// The gain is clamped to ±`max_gain_db` dB. Returns `1.0` when either RMS is zero.
+/// **Boost-only**: the gain is clamped to `[1.0, +max_gain_db]` — a quiet fill is raised toward A's
+/// borders, a louder fill is left alone. It is never `< 1.0`, so `max_gain_db` bounds the **boost**
+/// and has no attenuating counterpart. Returns `1.0` when either RMS is zero.
+///
+/// The floor is deliberate. `b_segment_rms` is the RMS of the *whole* assembled fill, so a loud
+/// mid-gap event (the canonical case: a gunshot inside a conversation) inflates it and the ratio
+/// would drag the entire patch down to talking-level A borders — destroying intentional dynamics
+/// that a same-master donor is supposed to restore. Attenuation was the damaging direction; boosting
+/// a genuinely quiet fill remains useful, so only the lower half was removed.
+///
+/// Consequence, accepted: attenuation also pulled a loud fill's *edges* toward A, so unity can leave
+/// a real level step at the seams. That step is program dynamics, not damage — and level is the wrong
+/// axis to gate on regardless (see [`crate::domain::fill_level`]).
 pub fn compute_fill_gain(a_border_rms: f32, b_segment_rms: f32, max_gain_db: f64) -> f32 {
     if a_border_rms == 0.0 || b_segment_rms == 0.0 {
         return 1.0;
     }
     let gain = a_border_rms / b_segment_rms;
     let max_gain = 10f32.powf((max_gain_db / 20.0) as f32);
-    let min_gain = 1.0 / max_gain;
-    gain.clamp(min_gain, max_gain)
+    gain.clamp(1.0, max_gain)
 }
 
 /// Returns `true` when a single interleaved frame passes [`is_silent_interleaved`].
@@ -742,6 +753,15 @@ mod tests {
             (gain - expected_max).abs() < 0.001,
             "gain should be clamped to {expected_max}, got {gain}"
         );
+    }
+
+    #[test]
+    fn compute_fill_gain_never_attenuates_a_loud_fill() {
+        // a=1, b=1000 => raw ratio 0.001. Boost-only floors it at unity rather than crushing the
+        // fill to A's border level: the loud mid-gap event is the content we are restoring.
+        assert_eq!(compute_fill_gain(1.0, 1000.0, 12.0), 1.0);
+        // Just-louder-than-A is the common case, and must be left untouched, not nudged.
+        assert_eq!(compute_fill_gain(500.0, 501.0, 12.0), 1.0);
     }
 
     #[test]

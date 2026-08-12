@@ -412,6 +412,22 @@ pub enum GapPatchStatus {
         /// disabled", though the old omitted-when-false encoding was read that way.
         #[serde(default)]
         dual_fit_used: bool,
+        /// Loudness gain applied to this fill before the splice — `1.0` when `normalize_fill` is
+        /// off, and `1.0` whenever the boost-only policy declined to touch a fill already at or
+        /// above A's border level. **Never below 1.0** since 2026-08-12 (see
+        /// `policies::compute_fill_gain`); older runs could attenuate down to `-max_fill_gain_db`.
+        ///
+        /// **Always serialized.** It exists to make the `fill_level` fields interpretable: those are
+        /// measured on `gained_fill`, so without the gain there is no way to tell a loud fill from a
+        /// boosted quiet one, or to compare `peak_delta_db` / `edge_delta_db` across a gain-policy
+        /// change.
+        ///
+        /// Absence on a record means **the run predates the field** (before 2026-08-12), not
+        /// "unity". This type is `Serialize`-only — nothing here reads a report back — so the
+        /// hazard is entirely on the consumer side: `gap-files/` dumps of mixed vintage will have
+        /// gaps with no `normalize_gain` at all, and a roll-up must hold those out rather than
+        /// coerce them to a value.
+        normalize_gain: f32,
     },
     Skipped {
         reason: GapPatchSkipReason,

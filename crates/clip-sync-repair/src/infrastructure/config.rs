@@ -165,7 +165,9 @@ pub struct RepairConfig {
     /// Crossfade duration at gap boundaries (ms).
     #[serde(default = "default_crossfade_ms")]
     pub crossfade_ms: u64,
-    /// Normalize fill segment loudness to match A's border.
+    /// Raise fill segment loudness toward A's border. **Boost-only** since 2026-08-12 — a fill
+    /// louder than A's borders keeps its own level (see `policies::compute_fill_gain`), so this
+    /// never quiets a patch.
     #[serde(default = "default_true")]
     pub normalize_fill: bool,
     /// **A3 dual-fit repair** — fallback fill for bracket-exhausted skips (independent per-shoulder fit +
@@ -179,7 +181,8 @@ pub struct RepairConfig {
     /// Window size (seconds) for computing A's border RMS.
     #[serde(default = "default_normalize_window_secs")]
     pub normalize_window_secs: f64,
-    /// Maximum gain (dB) applied during normalization.
+    /// Maximum **boost** (dB) applied during normalization. There is no attenuating counterpart:
+    /// the gain is clamped to `[1.0, +max_fill_gain_db]`.
     #[serde(default = "default_max_fill_gain_db")]
     pub max_fill_gain_db: f64,
     /// Output configuration (paths for writing repaired audio/video).
