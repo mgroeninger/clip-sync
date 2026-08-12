@@ -82,7 +82,6 @@ pub(super) enum RegionPatchOutcome {
         pre_correlation: f64,
         post_correlation: f64,
         align_adjustment_secs: f64,
-        waveform_adjustment_secs: f64,
         structure_trusted: bool,
         confidence: FillConfidence,
         gap_start_adjust_frames: i64,
@@ -222,7 +221,6 @@ pub(super) fn outcomes_in_report_order(
                 pre_correlation,
                 post_correlation,
                 align_adjustment_secs,
-                waveform_adjustment_secs,
                 structure_trusted,
                 confidence,
                 gap_start_adjust_frames,
@@ -242,7 +240,6 @@ pub(super) fn outcomes_in_report_order(
                     pre_correlation: *pre_correlation,
                     post_correlation: *post_correlation,
                     align_adjustment_secs: *align_adjustment_secs,
-                    waveform_adjustment_secs: *waveform_adjustment_secs,
                     structure_trusted: *structure_trusted,
                     confidence: *confidence,
                     gap_start_adjust_frames: *gap_start_adjust_frames,
@@ -1057,7 +1054,8 @@ struct ExecuteBracketOutputCtx {
     // Slide geometry — recomputed here from EXACT frame values (no float round-trip). `offset_nominal_start`
     // is the nominal gap start within the B extract window, stored on the spec as `b_extract.b_mapped_start_frame`
     // (deriving it back from `b_extract_start_secs` would be lossy by up to 1/sr — a byte-parity break).
-    structure_start_frame: usize,
+    // `structure_start_frame` was carried here until 2026-08-12 to split the slide into structure and
+    // waveform halves; the unified search assigns `start_frame` once, so that split was always 0.
     alignment_start_frame: usize,
     offset_nominal_start: usize,
     sample_rate: u32,
@@ -1068,11 +1066,9 @@ struct ExecuteBracketOutputCtx {
 /// for a bracket. **The authoritative bracket output path since 6b.3b** (was shadow-validated byte-identical
 /// across the full suite in 6b.3a before the inline construction was removed).
 fn execute_bracket_output(ctx: ExecuteBracketOutputCtx) -> (RegionPatch, RegionPatchOutcome) {
-    let structure_slide_secs = (ctx.structure_start_frame as f64 - ctx.offset_nominal_start as f64)
+    let align_adjustment_secs = (ctx.alignment_start_frame as f64
+        - ctx.offset_nominal_start as f64)
         / ctx.sample_rate as f64;
-    let waveform_slide_secs = (ctx.alignment_start_frame as f64 - ctx.structure_start_frame as f64)
-        / ctx.sample_rate as f64;
-    let align_adjustment_secs = structure_slide_secs + waveform_slide_secs;
     let patch = RegionPatch {
         b_samples: ctx.fill,
         gain: ctx.gain,
@@ -1084,7 +1080,6 @@ fn execute_bracket_output(ctx: ExecuteBracketOutputCtx) -> (RegionPatch, RegionP
         pre_correlation: ctx.final_pre,
         post_correlation: ctx.final_post,
         align_adjustment_secs,
-        waveform_adjustment_secs: waveform_slide_secs,
         structure_trusted: ctx.structure_trusted,
         confidence: ctx.final_confidence,
         gap_start_adjust_frames: ctx.gap_start_adjust_frames,
@@ -1214,7 +1209,6 @@ pub(super) fn outcome_from_spec(spec: &GapRepairSpec, sample_rate: u32) -> Regio
     match &spec.verdict {
         GapRepairVerdict::Patch(GapRepairStrategy::Bracket {
             alignment,
-            structure_start_frame,
             structure_trusted,
             anchor_seam_used,
             anchor_bracket_move_frames,
@@ -1229,15 +1223,12 @@ pub(super) fn outcome_from_spec(spec: &GapRepairSpec, sample_rate: u32) -> Regio
             ..
         }) => {
             let offset_nominal_start = spec.b_extract.b_mapped_start_frame;
-            let structure_slide_secs =
-                (*structure_start_frame as f64 - offset_nominal_start as f64) / sample_rate as f64;
-            let waveform_slide_secs =
-                (alignment.start_frame as f64 - *structure_start_frame as f64) / sample_rate as f64;
             RegionPatchOutcome::Patched {
                 pre_correlation: *seam_pre,
                 post_correlation: *seam_post,
-                align_adjustment_secs: structure_slide_secs + waveform_slide_secs,
-                waveform_adjustment_secs: waveform_slide_secs,
+                align_adjustment_secs: (alignment.start_frame as f64
+                    - offset_nominal_start as f64)
+                    / sample_rate as f64,
                 structure_trusted: *structure_trusted,
                 confidence: *confidence,
                 gap_start_adjust_frames: *gap_start_adjust_frames,
@@ -1260,7 +1251,6 @@ pub(super) fn outcome_from_spec(spec: &GapRepairSpec, sample_rate: u32) -> Regio
             pre_correlation: *pre_seam_r,
             post_correlation: *post_seam_r,
             align_adjustment_secs: 0.0,
-            waveform_adjustment_secs: 0.0,
             structure_trusted: false,
             confidence: *confidence,
             gap_start_adjust_frames: 0,
@@ -1322,7 +1312,6 @@ pub(super) fn execute_region_spec(
         GapRepairVerdict::Patch(GapRepairStrategy::Bracket {
             alignment,
             window_gap_frames,
-            structure_start_frame,
             structure_trusted,
             anchor_seam_used,
             anchor_bracket_move_frames,
@@ -1385,7 +1374,6 @@ pub(super) fn execute_region_spec(
                 residual,
                 anchor_seam_used,
                 anchor_bracket_move_frames,
-                structure_start_frame,
                 alignment_start_frame: alignment.start_frame,
                 offset_nominal_start: b_extract.b_mapped_start_frame,
                 sample_rate,
@@ -1413,7 +1401,6 @@ pub(super) fn execute_region_spec(
                 pre_correlation: pre_seam_r,
                 post_correlation: post_seam_r,
                 align_adjustment_secs: 0.0,
-                waveform_adjustment_secs: 0.0,
                 structure_trusted: false,
                 confidence,
                 gap_start_adjust_frames: 0,
@@ -1907,12 +1894,10 @@ pub(super) fn characterize_region(
     let offset_nominal_start =
         ((refined_b_start_secs - b_extract_start_secs) * sample_rate as f64).round() as usize;
 
-    let structure_slide_secs =
-        (structure_start_frame as f64 - offset_nominal_start as f64) / sample_rate as f64;
-    let waveform_slide_secs =
-        (alignment.start_frame as f64 - structure_start_frame as f64) / sample_rate as f64;
-    // `align_adjustment_secs` (= structure + waveform slide) is recomputed inside `execute_bracket_output`
-    // from the placement fields; `structure_slide_secs`/`waveform_slide_secs` remain for the verbose log.
+    // The same slide `execute_bracket_output` recomputes from the placement fields; kept here for the
+    // verbose log, which runs before the spec is built.
+    let slide_secs =
+        (alignment.start_frame as f64 - offset_nominal_start as f64) / sample_rate as f64;
 
     // The executor derives the fill's target length from `spec.refined` rather than storing it. That is only
     // sound while the gate's reported `gap_frames` *is* its reported gap — pin it here so a future gate that
@@ -2090,8 +2075,7 @@ pub(super) fn characterize_region(
             channels,
             fill_start_sample,
             fill_end_sample: b_fill_end_sample,
-            structure_slide_secs,
-            waveform_slide_secs,
+            slide_secs,
             fit_used_boundary_grid,
             fit_boundary_grid_cells,
             fit_haystack_secs,
@@ -2940,7 +2924,6 @@ mod tests {
             pre_correlation: 0.2,
             post_correlation: 0.9,
             align_adjustment_secs: 0.01,
-            waveform_adjustment_secs: 0.0,
             structure_trusted: true,
             confidence: FillConfidence::High,
             gap_start_adjust_frames: 0,
@@ -3056,7 +3039,6 @@ mod tests {
             pre_correlation: 0.2,
             post_correlation: 0.95,
             align_adjustment_secs: 0.0,
-            waveform_adjustment_secs: 0.0,
             structure_trusted: true,
             confidence: FillConfidence::High,
             gap_start_adjust_frames: 0,

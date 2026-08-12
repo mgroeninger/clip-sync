@@ -125,7 +125,6 @@
             "pre_correlation": 0.91,
             "post_correlation": 0.88,
             "align_adjustment_secs": 0.02,
-            "waveform_adjustment_secs": 0.0,
             "structure_trusted": true,
             "confidence": "high",
             "gap_start_adjust_frames": 0,

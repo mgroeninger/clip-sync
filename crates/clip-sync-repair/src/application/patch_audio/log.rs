@@ -40,8 +40,9 @@ pub(crate) struct GapFillResultLog {
     pub channels: usize,
     pub fill_start_sample: usize,
     pub fill_end_sample: usize,
-    pub structure_slide_secs: f64,
-    pub waveform_slide_secs: f64,
+    /// Signed slide of the chosen fill start off mapped nominal. One number: the unified fit search
+    /// has no separable structure/waveform stage to split it across.
+    pub slide_secs: f64,
     pub fit_used_boundary_grid: bool,
     pub fit_boundary_grid_cells: Option<u32>,
     pub fit_haystack_secs: f64,
@@ -85,13 +86,7 @@ pub(crate) fn format_gap_fill_result_line(result: &GapFillResultLog) -> String {
     let to_secs = |sample: usize| sample as f64 / ch as f64 / f64::from(result.sample_rate);
     let fill_start = result.b_search_start_secs + to_secs(result.fill_start_sample);
     let fill_end = result.b_search_start_secs + to_secs(result.fill_end_sample);
-    let mut slide = format!("structure slide {:+.3}s", result.structure_slide_secs);
-    if result.waveform_slide_secs.abs() > 0.000_5 {
-        slide.push_str(&format!(
-            ", waveform slide {:+.3}s",
-            result.waveform_slide_secs
-        ));
-    }
+    let slide = format!("slide {:+.3}s", result.slide_secs);
     let fit_path = if result.fit_used_boundary_grid {
         if let Some(cells) = result.fit_boundary_grid_cells {
             format!(
@@ -315,8 +310,7 @@ mod tests {
             channels: 6,
             fill_start_sample: 48_000 * 6,
             fill_end_sample: 96_000 * 6,
-            structure_slide_secs: -0.02,
-            waveform_slide_secs: 0.01,
+            slide_secs: -0.02,
             fit_used_boundary_grid: false,
             fit_boundary_grid_cells: None,
             fit_haystack_secs: 12.0,
@@ -325,8 +319,7 @@ mod tests {
             confidence: FillConfidence::Marginal,
         });
         assert!(line.contains("B fill source:"));
-        assert!(line.contains("structure slide -0.020s"));
-        assert!(line.contains("waveform slide +0.010s"));
+        assert!(line.contains("slide -0.020s"));
         assert!(line.contains("0:51.000 – 0:52.000"));
         assert!(line.contains("baseline only (marginal, pre=0.31 post=1.00)"));
     }
@@ -339,8 +332,7 @@ mod tests {
             channels: 2,
             fill_start_sample: 0,
             fill_end_sample: 96_000,
-            structure_slide_secs: 0.0,
-            waveform_slide_secs: 0.0,
+            slide_secs: 0.0,
             fit_used_boundary_grid: true,
             fit_boundary_grid_cells: Some(143),
             fit_haystack_secs: 36.0,

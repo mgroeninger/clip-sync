@@ -524,19 +524,10 @@ fn format_unified_gap_header(
     }
 }
 
-fn format_patch_slide_suffix(align_adjustment_secs: f64, waveform_adjustment_secs: f64) -> String {
-    if waveform_adjustment_secs.abs() > 0.000_5 {
-        format!("slide={align_adjustment_secs:+.3}s (wf {waveform_adjustment_secs:+.3}s)")
-    } else {
-        format!("slide={align_adjustment_secs:+.3}s")
-    }
-}
-
 struct PatchedGapDetail<'a> {
     pre_correlation: f64,
     post_correlation: f64,
     align_adjustment_secs: f64,
-    waveform_adjustment_secs: f64,
     structure_trusted: bool,
     anchor_seam_used: bool,
     dual_fit_used: bool,
@@ -552,7 +543,6 @@ fn format_patched_gap_detail(detail: &PatchedGapDetail<'_>) -> String {
         pre_correlation,
         post_correlation,
         align_adjustment_secs,
-        waveform_adjustment_secs,
         structure_trusted,
         anchor_seam_used,
         dual_fit_used,
@@ -562,7 +552,7 @@ fn format_patched_gap_detail(detail: &PatchedGapDetail<'_>) -> String {
         patched_label_spacing,
     } = *detail;
 
-    let slide = format_patch_slide_suffix(align_adjustment_secs, waveform_adjustment_secs);
+    let slide = format!("slide={align_adjustment_secs:+.3}s");
     let marginal = if confidence == crate::domain::FillConfidence::Marginal {
         "! "
     } else {
@@ -614,7 +604,6 @@ fn format_unified_gap_status(
             pre_correlation,
             post_correlation,
             align_adjustment_secs,
-            waveform_adjustment_secs,
             structure_trusted,
             confidence,
             anchor_seam_used,
@@ -624,7 +613,6 @@ fn format_unified_gap_status(
             pre_correlation: *pre_correlation,
             post_correlation: *post_correlation,
             align_adjustment_secs: *align_adjustment_secs,
-            waveform_adjustment_secs: *waveform_adjustment_secs,
             structure_trusted: *structure_trusted,
             anchor_seam_used: *anchor_seam_used,
             dual_fit_used: *dual_fit_used,
@@ -884,7 +872,6 @@ pub fn format_patch_summary(summary: &PatchSummary) -> String {
                 pre_correlation,
                 post_correlation,
                 align_adjustment_secs,
-                waveform_adjustment_secs,
                 structure_trusted,
                 confidence,
                 anchor_seam_used,
@@ -894,7 +881,6 @@ pub fn format_patch_summary(summary: &PatchSummary) -> String {
                 pre_correlation: *pre_correlation,
                 post_correlation: *post_correlation,
                 align_adjustment_secs: *align_adjustment_secs,
-                waveform_adjustment_secs: *waveform_adjustment_secs,
                 structure_trusted: *structure_trusted,
                 anchor_seam_used: *anchor_seam_used,
                 dual_fit_used: *dual_fit_used,
@@ -1111,7 +1097,6 @@ mod tests {
                     pre_correlation: 0.91,
                     post_correlation: 0.88,
                     align_adjustment_secs: 0.02,
-                    waveform_adjustment_secs: 0.0,
                     structure_trusted: true,
                     confidence: crate::domain::FillConfidence::High,
                     gap_start_adjust_frames: 0,
@@ -1316,7 +1301,6 @@ mod tests {
                 pre_correlation: 0.91,
                 post_correlation: 0.88,
                 align_adjustment_secs: 0.02,
-                waveform_adjustment_secs: 0.0,
                 structure_trusted: false,
                 confidence: crate::domain::FillConfidence::High,
                 gap_start_adjust_frames: 0,
@@ -1357,7 +1341,6 @@ mod tests {
                     pre_correlation: 0.92,
                     post_correlation: 0.90,
                     align_adjustment_secs: 0.01,
-                    waveform_adjustment_secs: 0.0,
                     structure_trusted: true,
                     confidence: crate::domain::FillConfidence::High,
                     gap_start_adjust_frames: 0,
@@ -1617,7 +1600,6 @@ mod tests {
                 pre_correlation: 0.98,
                 post_correlation: 1.0,
                 align_adjustment_secs: 0.0,
-                waveform_adjustment_secs: 0.0,
                 structure_trusted: true,
                 confidence: crate::domain::FillConfidence::High,
                 gap_start_adjust_frames: 0,
@@ -1652,7 +1634,6 @@ mod tests {
             pre_correlation: 0.31,
             post_correlation: 0.29,
             align_adjustment_secs: 0.0,
-            waveform_adjustment_secs: 0.0,
             structure_trusted: false,
             confidence: crate::domain::FillConfidence::Marginal,
             gap_start_adjust_frames: 0,
@@ -1731,7 +1712,6 @@ mod tests {
             pre_correlation: 0.31,
             post_correlation: 0.29,
             align_adjustment_secs: 0.0,
-            waveform_adjustment_secs: 0.0,
             structure_trusted: false,
             confidence: crate::domain::FillConfidence::Marginal,
             gap_start_adjust_frames: 0,
@@ -1801,7 +1781,6 @@ mod tests {
                 pre_correlation: 0.92,
                 post_correlation: 0.90,
                 align_adjustment_secs: 0.01,
-                waveform_adjustment_secs: 0.0,
                 structure_trusted: true,
                 confidence: crate::domain::FillConfidence::High,
                 gap_start_adjust_frames: 0,
@@ -1930,7 +1909,6 @@ mod tests {
                     pre_correlation: 0.9,
                     post_correlation: 0.9,
                     align_adjustment_secs: 0.0,
-                    waveform_adjustment_secs: 0.0,
                     structure_trusted: true,
                     confidence: crate::domain::FillConfidence::High,
                     gap_start_adjust_frames: 0,
@@ -2009,7 +1987,6 @@ mod tests {
                     pre_correlation: 0.9,
                     post_correlation: 0.9,
                     align_adjustment_secs: 0.0,
-                    waveform_adjustment_secs: 0.0,
                     structure_trusted: true,
                     confidence: crate::domain::FillConfidence::High,
                     gap_start_adjust_frames: 0,

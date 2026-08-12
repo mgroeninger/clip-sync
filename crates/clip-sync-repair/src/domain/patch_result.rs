@@ -365,10 +365,12 @@ pub enum GapPatchStatus {
         /// Seam score used for the patch decision (structure or waveform Pearson).
         pre_correlation: f64,
         post_correlation: f64,
-        /// Total B slide from mapped nominal (structure + waveform).
+        /// Signed B slide of the chosen fill start off mapped nominal. **Not** a lag: it is the
+        /// placement the unified fit search won, not a measured A→B offset. The unified search
+        /// (structure + waveform in one objective) has no separable "waveform slide" to report
+        /// alongside it — a `waveform_adjustment_secs` field existed until 2026-08-12 and was
+        /// identically `0.0` by construction.
         align_adjustment_secs: f64,
-        /// Additional slide from waveform search after structure match.
-        waveform_adjustment_secs: f64,
         /// `true` when placement was accepted from structure match without a waveform gate.
         structure_trusted: bool,
         /// Fit-mode waveform tier (`high` confident, `marginal` warn-patch band).
