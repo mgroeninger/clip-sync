@@ -512,6 +512,39 @@ fn assert_fit_interpolated_only_patches_bridge_gaps(
         summary.gaps
     );
     assert_hard_gap_skipped_interpolated_only(summary);
+    assert_fit_terms_reported_on_bracket_patches(summary);
+}
+
+/// End-to-end proof that `fit_terms` is POPULATED, not merely declared. The unit tests cover the
+/// breakdown's arithmetic and the golden covers its serialized shape; neither would notice if the value
+/// stopped reaching the report — the field is `skip_serializing_if = "Option::is_none"`, so a break
+/// looks exactly like the dual-fit path's legitimate absence. These are fit-mode bracket patches, so
+/// every one of them must carry terms.
+fn assert_fit_terms_reported_on_bracket_patches(summary: &clip_sync_repair::domain::PatchSummary) {
+    for (index, outcome) in summary.gaps.iter().enumerate() {
+        let GapPatchStatus::Patched {
+            dual_fit_used,
+            fit_terms,
+            ..
+        } = &outcome.status
+        else {
+            continue;
+        };
+        if *dual_fit_used {
+            continue; // dual-fit never runs the unified objective — absence is correct there
+        }
+        let terms = fit_terms.unwrap_or_else(|| {
+            panic!(
+                "gap #{} is a bracket patch but reports no fit_terms",
+                index + 1
+            )
+        });
+        assert!(
+            terms.total.is_finite(),
+            "gap #{} reported an unrankable total: {terms:?}",
+            index + 1
+        );
+    }
 }
 
 fn assert_patch_anchors_exclude_structure_trusted(

@@ -13,7 +13,7 @@ use crate::domain::{
     gap_fill::{FillRegion, GapFillPlan},
     gap_fill_fit::{
         classify_fill_waveform_confidence, fit_fill_length_for_gap, fit_fill_to_gap_frames,
-        FillConfidence,
+        FillConfidence, UnifiedFitBreakdown,
     },
     gap_repair_spec::{
         BExtractWindow, GapRepairSpec, GapRepairStrategy, GapRepairTags, GapRepairVerdict,
@@ -97,6 +97,9 @@ pub(super) enum RegionPatchOutcome {
         /// patch record so `fill_level`'s `gained_fill`-based fields can be read across gain-policy
         /// changes — see [`policies::compute_fill_gain`].
         normalize_gain: f32,
+        /// The unified fit objective's terms at the applied placement; `None` on paths that never ran
+        /// it (dual-fit, splice). Carried through to `GapPatchStatus::Patched::fit_terms`.
+        fit_terms: Option<UnifiedFitBreakdown>,
     },
     Skipped {
         reason: GapPatchSkipReason,
@@ -235,6 +238,7 @@ pub(super) fn outcomes_in_report_order(
                 anchor_bracket_move_frames,
                 dual_fit_used,
                 normalize_gain,
+                fit_terms,
                 ..
             } => {
                 if let Some(verdict) = residual {
@@ -257,6 +261,7 @@ pub(super) fn outcomes_in_report_order(
                     anchor_seam_used: *anchor_seam_used,
                     anchor_bracket_move_frames: *anchor_bracket_move_frames,
                     dual_fit_used: *dual_fit_used,
+                    fit_terms: *fit_terms,
                 }
             }
             RegionPatchOutcome::Skipped { reason, residual } => {
@@ -1066,6 +1071,9 @@ struct ExecuteBracketOutputCtx {
     alignment_start_frame: usize,
     offset_nominal_start: usize,
     sample_rate: u32,
+    /// Read straight off the spec — the terms are decided at characterize time with the placement and
+    /// are never recomputed here, for the same single-authority reason as the seam correlations.
+    fit_terms: Option<UnifiedFitBreakdown>,
 }
 
 /// The executor's bracket `(RegionPatch, RegionPatchOutcome)` assembly. Recomputes the geometry slides
@@ -1097,6 +1105,7 @@ fn execute_bracket_output(ctx: ExecuteBracketOutputCtx) -> (RegionPatch, RegionP
         anchor_seam_used: ctx.anchor_seam_used,
         anchor_bracket_move_frames: ctx.anchor_bracket_move_frames,
         dual_fit_used: false,
+        fit_terms: ctx.fit_terms,
         normalize_gain: ctx.gain,
     };
     (patch, outcome)
@@ -1229,6 +1238,7 @@ pub(super) fn outcome_from_spec(spec: &GapRepairSpec, sample_rate: u32) -> Regio
             fit_boundary_grid_cells,
             residual,
             normalize_gain,
+            fit_terms,
             ..
         }) => {
             let offset_nominal_start = spec.b_extract.b_mapped_start_frame;
@@ -1247,6 +1257,7 @@ pub(super) fn outcome_from_spec(spec: &GapRepairSpec, sample_rate: u32) -> Regio
                 anchor_seam_used: *anchor_seam_used,
                 anchor_bracket_move_frames: *anchor_bracket_move_frames,
                 dual_fit_used: false,
+                fit_terms: *fit_terms,
                 normalize_gain: *normalize_gain,
             }
         }
@@ -1270,6 +1281,8 @@ pub(super) fn outcome_from_spec(spec: &GapRepairSpec, sample_rate: u32) -> Regio
             anchor_seam_used: false,
             anchor_bracket_move_frames: 0,
             dual_fit_used: true,
+            // Dual-fit does not run the unified objective at all — there is no placement search to report.
+            fit_terms: None,
             // Dual-fit never normalizes — the SilenceSplice strategy carries no gain and the
             // executor splices its fill unity (`region.rs` SilenceSplice arm, `gain: 1.0`).
             normalize_gain: 1.0,
@@ -1336,6 +1349,7 @@ pub(super) fn execute_region_spec(
             fit_boundary_grid_cells,
             residual,
             normalize_gain,
+            fit_terms,
             ..
         }) => {
             // F1: re-derive the fill from the spec alone. The window trio comes from the *pre*-gate
@@ -1386,6 +1400,7 @@ pub(super) fn execute_region_spec(
                 residual,
                 anchor_seam_used,
                 anchor_bracket_move_frames,
+                fit_terms,
                 alignment_start_frame: alignment.start_frame,
                 offset_nominal_start: b_extract.b_mapped_start_frame,
                 sample_rate,
@@ -1423,6 +1438,8 @@ pub(super) fn execute_region_spec(
                 anchor_seam_used: false,
                 anchor_bracket_move_frames: 0,
                 dual_fit_used: true,
+                // No unified search on this path — see the preview arm.
+                fit_terms: None,
                 // Unity by construction — matches the `gain: 1.0` on the patch just above.
                 normalize_gain: 1.0,
             };
@@ -1881,6 +1898,7 @@ pub(super) fn characterize_region(
         anchor_seam_used,
         anchor_bracket_move_frames,
         anchor_trusted,
+        fit_terms,
         ..
     } = gate_outcome;
     tag_ctx.fit_used_boundary_grid = fit_used_boundary_grid;
@@ -2180,6 +2198,7 @@ pub(super) fn characterize_region(
             fit_boundary_grid_cells,
             residual: residual_verdict,
             normalize_gain: gain,
+            fit_terms,
         }),
         tags_ctx: GapRepairTags::default(),
     };
@@ -2956,6 +2975,7 @@ mod tests {
             anchor_bracket_move_frames: 0,
             dual_fit_used: false,
             normalize_gain: 1.0,
+            fit_terms: None,
         };
         let tags_for =
             |status: &GapPatchStatus| derive_gap_tags_from_status(status, fill_mode, thresholds);
@@ -3072,6 +3092,7 @@ mod tests {
             anchor_bracket_move_frames: 0,
             dual_fit_used: false,
             normalize_gain: 1.0,
+            fit_terms: None,
         };
         let tags = derive_gap_tags_from_status(
             &GapPatchStatus::NotPlanned {

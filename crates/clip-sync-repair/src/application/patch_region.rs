@@ -12,8 +12,8 @@ use crate::domain::gap_fill_fit::{
     anchor_trust_applies, apply_residual_to_confidence, boundary_search_step_frames,
     classify_fill_waveform_confidence, fit_anchor_candidate_ranking_score,
     fit_candidate_ranking_score, match_gap_fill_unified_in_b_with_timeline, FillConfidence,
-    ResidualGateError, UnifiedFillMatch, UnifiedFillSearchInput, UnifiedFitWeights,
-    WaveformSeamContext,
+    ResidualGateError, UnifiedFillMatch, UnifiedFillSearchInput, UnifiedFitBreakdown,
+    UnifiedFitWeights, WaveformSeamContext,
 };
 use crate::domain::gap_seam_extend::{
     post_seam_extension_candidate, pre_seam_extension_candidate, short_gap_one_strong_seam_passes,
@@ -58,6 +58,10 @@ pub(crate) struct SeamGateOutcome {
     pub anchor_bracket_move_frames: usize,
     /// Structure-trusted patch at editorial anchors with weak throat Pearson (fit mode).
     pub anchor_trusted: bool,
+    /// The unified fit objective's terms at `alignment.start_frame` — `None` on the structure-only gate
+    /// path (`evaluate_seam_gate_structure_candidate`), which reaches a placement without the unified
+    /// search and so has no terms to report.
+    pub fit_terms: Option<UnifiedFitBreakdown>,
 }
 
 /// Run-constant, non-policy seam-gate inputs: sample rate / channels, secs→frames, scan peak
@@ -1740,6 +1744,7 @@ fn evaluate_seam_gate_fit_candidate(
             anchor_seam_used: false,
             anchor_bracket_move_frames: 0,
             anchor_trusted,
+            fit_terms: unified.fit_breakdown,
         },
         ranking_score,
     ))
@@ -1904,6 +1909,9 @@ fn evaluate_seam_gate_legacy(
         anchor_seam_used: false,
         anchor_bracket_move_frames: 0,
         anchor_trusted: false,
+        // Legacy gate path reaches its placement through `match_gap_structure_in_b`, not the unified
+        // objective — there are no fit terms to report, and a zeroed breakdown would read as one.
+        fit_terms: None,
     })
 }
 
@@ -2353,6 +2361,7 @@ mod tests {
             anchor_seam_used: false,
             anchor_bracket_move_frames: 0,
             anchor_trusted: false,
+            fit_terms: None,
         }
     }
 

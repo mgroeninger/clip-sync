@@ -372,6 +372,47 @@ fn fill_bracket_placement(
     }
 }
 
+/// The objective's terms for one candidate, not just its argmax.
+///
+/// **Why this exists** (`TEMP-fill-placement-registration-plan.md` §7). `unified_fit_score` used to return
+/// a bare `f64`, so `structure_combined`, `waveform_min` and all three placement priors were locals that
+/// died with the call: nothing downstream could say *which term carried a placement*. §4.2's min-reduction
+/// diagnosis had to be reconstructed from fingerprint dumps for exactly that reason, and both remaining
+/// deliverables (S2's prior, S2b's reduction) edit this function — a scoring change nobody can see in the
+/// output can only be validated by ear.
+///
+/// `total` is the value the search ranks on and is **byte-identical** to what the old `f64` return produced;
+/// every other field is a report of a term already computed on that path. The penalties are stored as the
+/// **positive amount subtracted**, so `total` = weighted terms − `late_start_penalty` − `anchor_penalty` −
+/// `repeat_penalty`. A declined candidate carries `total: NEG_INFINITY` with terms left at zero — read
+/// `total.is_finite()` before attributing anything.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize)]
+pub struct UnifiedFitBreakdown {
+    /// The ranked score. The only field the search itself reads.
+    pub total: f64,
+    /// `combined_structure_score` — already includes `nominal_bias_scale`.
+    pub structure_combined: f64,
+    /// `min(wave_pre, wave_post)` — the reduction S2b is about.
+    pub waveform_min: f64,
+    /// `LATE_START_PENALTY` — subtracted only when `start > nominal_start` (forward slides). Backward
+    /// slides are unpenalized, which §4.1a flags as pointing away from the defect.
+    pub late_start_penalty: f64,
+    /// `AnchorSearchPrior::penalty_at_start`. Zero unless anchored-retry pass 2 supplied a prior.
+    pub anchor_penalty: f64,
+    /// Weighted shoulder-repeat penalty (`repeat_penalty_weight × waveform_weight × penalty`).
+    pub repeat_penalty: f64,
+}
+
+impl UnifiedFitBreakdown {
+    /// A declined candidate: unrankable, with no terms to attribute.
+    fn declined() -> Self {
+        Self {
+            total: f64::NEG_INFINITY,
+            ..Self::default()
+        }
+    }
+}
+
 /// Combined objective for one B fill bracket candidate.
 pub fn unified_fit_score(
     structure_pre: f64,
@@ -380,13 +421,13 @@ pub fn unified_fit_score(
     placement: FillBracketPlacement,
     params: &StructureMatchParams,
     weights: UnifiedFitWeights,
-) -> f64 {
+) -> UnifiedFitBreakdown {
     if !structure_pre.is_finite() || !structure_post.is_finite() {
-        return f64::NEG_INFINITY;
+        return UnifiedFitBreakdown::declined();
     }
     let weights = weights.normalized();
     if weights.waveform_weight > 0.0 && !waveform_min.is_finite() {
-        return f64::NEG_INFINITY;
+        return UnifiedFitBreakdown::declined();
     }
     let structure_combined = combined_structure_score(
         structure_pre,
@@ -397,12 +438,20 @@ pub fn unified_fit_score(
     );
     let mut score =
         weights.structure_weight * structure_combined + weights.waveform_weight * waveform_min;
+    let mut late_start_penalty = 0.0;
     if placement.start > placement.nominal_start {
         let late_frac =
             (placement.start - placement.nominal_start) as f64 / params.gap_frames.max(1) as f64;
-        score -= LATE_START_PENALTY * late_frac * weights.late_start_penalty_scale;
+        late_start_penalty = LATE_START_PENALTY * late_frac * weights.late_start_penalty_scale;
+        score -= late_start_penalty;
     }
-    score
+    UnifiedFitBreakdown {
+        total: score,
+        structure_combined,
+        waveform_min,
+        late_start_penalty,
+        ..UnifiedFitBreakdown::default()
+    }
 }
 
 /// The repeat-window correlation pair at one placement — the **expensive** half of the repeat penalty, and the
@@ -537,8 +586,8 @@ fn unified_fit_score_with_repeat(
     anchor_prior: Option<AnchorSearchPrior>,
     repeat_source: RepeatPenaltySource,
     timers: &CandidateTimers,
-) -> f64 {
-    let mut score = unified_fit_score(
+) -> UnifiedFitBreakdown {
+    let mut breakdown = unified_fit_score(
         candidate.structure_pre,
         candidate.structure_post,
         candidate.wave_pre.min(candidate.wave_post),
@@ -546,8 +595,10 @@ fn unified_fit_score_with_repeat(
         params,
         weights,
     );
+    let mut score = breakdown.total;
     if let Some(prior) = anchor_prior {
-        score -= prior.penalty_at_start(candidate.placement.start);
+        breakdown.anchor_penalty = prior.penalty_at_start(candidate.placement.start);
+        score -= breakdown.anchor_penalty;
     }
     let wf = weights.normalized().waveform_weight;
     if wf > 0.0 && score.is_finite() {
@@ -564,9 +615,11 @@ fn unified_fit_score_with_repeat(
                 timers,
             ),
         };
-        score -= waveform.repeat_penalty_weight * wf * penalty;
+        breakdown.repeat_penalty = waveform.repeat_penalty_weight * wf * penalty;
+        score -= breakdown.repeat_penalty;
     }
-    score
+    breakdown.total = score;
+    breakdown
 }
 
 pub(crate) fn waveform_min_at_start(
@@ -655,6 +708,11 @@ pub struct UnifiedFillMatch {
     pub alignment: FillAlignment,
     pub structure_pre: f64,
     pub structure_post: f64,
+    /// The objective's terms at the **applied** placement — see [`UnifiedFitBreakdown`]. Re-derived once
+    /// after every stage that can move the start, so it describes the bracket actually returned rather than
+    /// any intermediate winner. `None` only if the re-derivation declined (a placement the search accepted
+    /// but that scores as unrankable here would itself be a finding worth seeing as a missing field).
+    pub fit_breakdown: Option<UnifiedFitBreakdown>,
 }
 
 /// Locate a B fill bracket by jointly ranking structure and waveform seam scores.
@@ -803,10 +861,42 @@ pub(crate) fn match_gap_fill_unified_in_b_with_timeline(
         params,
     );
 
+    // §7 instrumentation: score the FINAL bracket one more time, purely to report its terms. Every earlier
+    // evaluation belongs to a candidate that a later stage was still allowed to overrule — the end search,
+    // the fine polish, and `snap_fill_to_gap` each move `start_frame` — so the only breakdown that describes
+    // the applied placement is one taken here, after all of them. The seam pair is recomputed at the final
+    // start for the same reason: `wave_pre`/`wave_post` above were measured before `snap_fill_to_gap` ran.
+    //
+    // One extra candidate evaluation per gap, against the thousands the search itself runs, and it feeds
+    // nothing back into selection — `alignment` is already fixed when this executes.
+    let (final_wave_pre, final_wave_post) =
+        waveform_seams_at_start(input.waveform, alignment.start_frame, &score_channels);
+    let fit_breakdown = unified_fit_score_with_repeat(
+        UnifiedFitCandidate {
+            structure_pre,
+            structure_post,
+            wave_pre: final_wave_pre,
+            wave_post: final_wave_post,
+            placement: fill_bracket_placement(
+                alignment.start_frame,
+                alignment.start_frame + alignment.fill_frames,
+                input.nominal_fill_start,
+                input.nominal_fill_end,
+            ),
+        },
+        params,
+        weights,
+        input.waveform,
+        anchor_prior,
+        RepeatPenaltySource::PerCandidate,
+        &CandidateTimers::default(),
+    );
+
     Some(UnifiedFillMatch {
         alignment,
         structure_pre,
         structure_post,
+        fit_breakdown: fit_breakdown.total.is_finite().then_some(fit_breakdown),
     })
 }
 
@@ -942,11 +1032,16 @@ fn unified_search_best_fill_start(
                 )
             },
         );
-        let better = score > *best_score + SCORE_TIE_EPSILON
-            || (score >= *best_score - SCORE_TIE_EPSILON
+        // Rank on `.total` only — the search never reads the other terms, so widening the return type
+        // cannot move a placement. The winner's breakdown is re-derived once at the FINAL start in
+        // `match_gap_fill_unified_in_b_with_timeline`, not captured here: this `best_start` is not the
+        // applied placement (the end search, `unified_fine_polish_start` and `snap_fill_to_gap` all still
+        // get to move it), and a report of a superseded candidate is worse than no report.
+        let better = score.total > *best_score + SCORE_TIE_EPSILON
+            || (score.total >= *best_score - SCORE_TIE_EPSILON
                 && prefer_start(start, *best_start, nominal_start));
         if better {
-            *best_score = score;
+            *best_score = score.total;
             *best_start = start;
         }
     };
@@ -1224,6 +1319,7 @@ fn unified_search_best_fill_end(
                     RepeatPenaltySource::Fixed(const_repeat_penalty),
                     &timers,
                 )
+                .total
             },
         );
         let better = score > *best_score + SCORE_TIE_EPSILON
@@ -1356,6 +1452,7 @@ fn unified_fine_polish_start(
                     RepeatPenaltySource::PerCandidate,
                     &timers,
                 )
+                .total
             },
         );
         let better = score > best_score + SCORE_TIE_EPSILON
@@ -2417,7 +2514,8 @@ mod tests {
             fill_bracket_placement(nominal_start, nominal_end, nominal_start, nominal_end),
             &params,
             weights,
-        );
+        )
+        .total;
         let score_true = unified_fit_score(
             0.88,
             0.88,
@@ -2425,11 +2523,106 @@ mod tests {
             fill_bracket_placement(100, 140, nominal_start, nominal_end),
             &params,
             weights,
-        );
+        )
+        .total;
         assert!(
             score_true > score_wrong,
             "waveform-heavy score should prefer true cycle (true={score_true}, wrong={score_wrong})"
         );
+    }
+
+    /// The instrumentation's one real invariant: the reported terms must ACCOUNT for the ranked score,
+    /// not merely accompany it. A term that is computed but never subtracted (or subtracted twice) would
+    /// leave `total` intact and the attribution silently wrong — which is exactly the failure mode this
+    /// breakdown exists to rule out, since the fields are what S2/S2b will be judged by.
+    ///
+    /// The candidate is deliberately built to make every term non-zero: a LATE start (forward slide) so
+    /// `late_start_penalty` fires, weak seams over a duplicated border so the repeat penalty fires, and
+    /// an anchor prior placed away from the candidate so its penalty fires.
+    #[test]
+    fn fit_breakdown_terms_reconstruct_the_total() {
+        use crate::domain::gap_structure::StructureMatchParams;
+
+        let params = StructureMatchParams {
+            gap_frames: 40,
+            bin_frames: 20,
+            search_radius_frames: 100,
+            fill_length_slack_frames: 0,
+            max_fine_adjustment_frames: 0,
+            silence_peak_fraction: 0.01,
+            absolute_silence_rms: 0.0,
+        };
+        let weights = UnifiedFitWeights {
+            structure_weight: 0.4,
+            waveform_weight: 0.6,
+            ..Default::default()
+        };
+
+        // A repeating tone: the fill window duplicates its own borders, so the repeat penalty is real.
+        let b_mono: Vec<f64> = (0..400)
+            .map(|i| ((i % 20) as f64 / 20.0 * std::f64::consts::TAU).sin())
+            .collect();
+        let b_ch = vec![b_mono.clone()];
+        let a_pre: Vec<f64> = b_mono[80..96].to_vec();
+        let a_post: Vec<f64> = b_mono[136..152].to_vec();
+        let templates = SeamTemplates {
+            a_pre: &a_pre,
+            a_post: &a_post,
+            a_pre_ch: std::slice::from_ref(&a_pre),
+            a_post_ch: std::slice::from_ref(&a_post),
+            b_mono: &b_mono,
+            b_ch: &b_ch,
+        };
+        let waveform = WaveformSeamContext {
+            templates: &templates,
+            gap_frames: 40,
+            pre_window: 16,
+            post_window: 16,
+            b_total_frames: b_mono.len(),
+            repeat_window_frames: 16,
+            repeat_penalty_weight: 1.0,
+        };
+
+        let nominal_start = 100usize;
+        let start = 140usize; // strictly late ⇒ `LATE_START_PENALTY` applies
+        let prior = AnchorSearchPrior {
+            predicted_start_frame: nominal_start,
+            weight: 0.5,
+            search_radius_frames: params.search_radius_frames,
+        };
+        let breakdown = unified_fit_score_with_repeat(
+            UnifiedFitCandidate {
+                structure_pre: 0.9,
+                structure_post: 0.9,
+                wave_pre: 0.2,
+                wave_post: 0.2,
+                placement: fill_bracket_placement(start, start + 40, nominal_start, 140),
+            },
+            &params,
+            weights,
+            &waveform,
+            Some(prior),
+            RepeatPenaltySource::PerCandidate,
+            &CandidateTimers::default(),
+        );
+
+        let normalized = weights.normalized();
+        let reconstructed = normalized.structure_weight * breakdown.structure_combined
+            + normalized.waveform_weight * breakdown.waveform_min
+            - breakdown.late_start_penalty
+            - breakdown.anchor_penalty
+            - breakdown.repeat_penalty;
+        assert!(
+            (reconstructed - breakdown.total).abs() < 1e-12,
+            "terms must account for the total: {reconstructed} vs {} ({breakdown:?})",
+            breakdown.total
+        );
+
+        // Guard against the test degenerating into "0 == 0" if a default changes: each penalty has to be
+        // doing work for the reconstruction above to mean anything.
+        assert!(breakdown.late_start_penalty > 0.0, "{breakdown:?}");
+        assert!(breakdown.anchor_penalty > 0.0, "{breakdown:?}");
+        assert!(breakdown.repeat_penalty > 0.0, "{breakdown:?}");
     }
 
     #[test]
@@ -2477,7 +2670,8 @@ mod tests {
             None,
             RepeatPenaltySource::PerCandidate,
             &CandidateTimers::default(),
-        );
+        )
+        .total;
         let no_penalty = WaveformSeamContext {
             repeat_penalty_weight: 0.0,
             ..waveform
@@ -2490,7 +2684,8 @@ mod tests {
             None,
             RepeatPenaltySource::PerCandidate,
             &CandidateTimers::default(),
-        );
+        )
+        .total;
         assert!(
             without > base,
             "repeat penalty should lower score when fill duplicates borders (with={without}, base={base})"
@@ -2569,7 +2764,8 @@ mod tests {
                 None,
                 RepeatPenaltySource::PerCandidate,
                 &timers,
-            );
+            )
+            .total;
             let fixed = unified_fit_score_with_repeat(
                 candidate(),
                 &params,
@@ -2578,7 +2774,8 @@ mod tests {
                 None,
                 RepeatPenaltySource::Fixed(hoisted),
                 &timers,
-            );
+            )
+            .total;
             assert_eq!(
                 per_candidate.to_bits(),
                 fixed.to_bits(),
@@ -2788,7 +2985,8 @@ mod tests {
             None,
             RepeatPenaltySource::PerCandidate,
             &CandidateTimers::default(),
-        );
+        )
+        .total;
         let without_penalty = unified_fit_score_with_repeat(
             fit_candidate(
                 0.9,
@@ -2805,7 +3003,8 @@ mod tests {
             None,
             RepeatPenaltySource::PerCandidate,
             &CandidateTimers::default(),
-        );
+        )
+        .total;
         assert!(
             without_penalty > with_penalty,
             "repeat penalty should lower score (with={with_penalty}, without={without_penalty})"
@@ -2878,6 +3077,7 @@ mod tests {
                 RepeatPenaltySource::PerCandidate,
                 &CandidateTimers::default(),
             )
+            .total
         };
 
         let speech_score = score_for(&b_speech, 0.31);

@@ -390,11 +390,25 @@ Orthogonal gap classification tags. `plan_skip_reason`, `fit_path`, and `signatu
 
 Externally tagged (serde default): exactly one of the following keys.
 
-- `{"patched": {"pre_correlation": number, "post_correlation": number, "align_adjustment_secs": number, "structure_trusted": bool, "confidence": "high"|"marginal", "gap_start_adjust_frames": number, "gap_end_adjust_frames": number, "residual_db": number, "floor_db": number, "headroom_db": number, "anchor_seam_used": bool, "anchor_bracket_move_frames": number, "dual_fit_used": bool, "normalize_gain": number}}`
+- `{"patched": {"pre_correlation": number, "post_correlation": number, "align_adjustment_secs": number, "structure_trusted": bool, "confidence": "high"|"marginal", "gap_start_adjust_frames": number, "gap_end_adjust_frames": number, "residual_db": number, "floor_db": number, "headroom_db": number, "anchor_seam_used": bool, "anchor_bracket_move_frames": number, "dual_fit_used": bool, "normalize_gain": number, "fit_terms": {"total": number, "structure_combined": number, "waveform_min": number, "late_start_penalty": number, "anchor_penalty": number, "repeat_penalty": number}}}`
 
 Optional `residual_db`, `floor_db`, `headroom_db` (worst-side scalars) are present when residual was measured; omitted otherwise. `anchor_seam_used` and `dual_fit_used` are **always serialized, including when `false`** (changed 2026-08-12; both were omitted-when-false before that). `false` on `dual_fit_used` means the A3 dual-fit path (G6) did not carry this gap — it ran and declined, or was never reached — and has never meant the path was disabled; the old absence was read that way at least once. `false` on `anchor_seam_used` means baseline-throat placement. When `dual_fit_used` is `true`, this gap was rescued by dual-fit after the bracket search exhausted — see [gap-fill-modes.md](gap-fill-modes.md) § Dual-fit rescue. `anchor_bracket_move_frames` is still omitted when 0. Full per-side detail is in `GapPatchOutcome.residual`.
 
 `normalize_gain` (added 2026-08-12) is the loudness gain the splice applied to this fill: `1.0` when `normalize_fill` is off, when dual-fit produced the fill (never normalized), or when the **boost-only** policy declined to touch a fill already at or above A's border level; `> 1.0` when a quiet fill was raised (bounded by `max_fill_gain_db`). It is **never below 1.0** — runs before 2026-08-12 could attenuate down to `-max_fill_gain_db`, and this field is how you tell the two vintages apart. It exists to make `fill_level` readable: those fields are measured on the *gained* fill, so without the gain a loud fill and a boosted quiet one are indistinguishable, and `peak_delta_db` / `edge_delta_db` cannot be compared across a gain-policy change. **Absence means the run predates the field, not unity** — dumps in `gap-files/` written before 2026-08-12 carry no `normalize_gain` at all, and a roll-up must hold those rows out rather than default them. See [pipeline.md](pipeline.md) § Fill normalization.
+
+`fit_terms` (added 2026-08-12) breaks the unified fit objective into the terms that produced the applied
+placement, so a placement can be explained rather than only located. `total` is the score the bracket search
+ranked on; `structure_combined` and `waveform_min` are the two weighted terms (`total` = `structure_weight ×
+structure_combined` + `waveform_weight × waveform_min`, minus the three penalties); `late_start_penalty`,
+`anchor_penalty` and `repeat_penalty` are each recorded as the **positive amount subtracted**, so a zero means
+that prior did not fire. Two asymmetries matter when reading them: `late_start_penalty` applies only to
+*forward* slides (a backward slide is unpenalized), and `waveform_min` is a **min over the two shoulders**, so
+a placement can improve it by degrading the better shoulder. The terms are measured at the placement that was
+actually applied — after the end search, the fine polish and the gap snap — not at any intermediate winner.
+
+`fit_terms` is **omitted** when the placement did not come from the unified objective: dual-fit / silence-splice
+rescues (`dual_fit_used: true`) and the legacy structure-only gate path. Absence on a bracket patch means the
+run predates the field.
 
 `align_adjustment_secs` is the signed slide of the chosen fill start off mapped nominal — the placement the unified fit search won, **not** a measured A→B lag. A companion `waveform_adjustment_secs` ("additional slide from waveform search after structure match") was removed 2026-08-12: the unified search assigns the placement once, so the field was identically `0.0` on every patched gap and read as evidence that placement had been decided in the structure domain.
 

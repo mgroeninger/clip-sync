@@ -271,6 +271,7 @@ mod tests {
             fit_boundary_grid_cells: None,
             residual: None,
             normalize_gain: 1.0,
+            fit_terms: None,
         }
     }
 

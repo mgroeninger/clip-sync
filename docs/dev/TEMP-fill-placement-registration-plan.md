@@ -94,6 +94,17 @@ near-nominal candidate wins ties), for which the mechanism already exists in sha
 from patch-anchor prediction", 0 = off). A prior fixes 26/g6 — a placement at −15.8 ms scored 0.378
 against the applied 0.366 (§4) — and is inert where nothing near nominal scores at all, which is
 exactly pair 31's correct large slides.
+
+> **Re-scoped 2026-08-12 (§4.1a).** `fill_anchor_search_prior_weight` is a **template, not a switch**:
+> it is fully plumbed but gated behind `AnchoredRetryPass::Second` + a populated anchor table + a
+> non-default `--fill-offset`, and it anchors on the editorial anchor-table prediction rather than on
+> nominal — the pair-level drift model §1.1 refuted. Separately, the objective's one hard-coded
+> directional prior (`LATE_START_PENALTY`) penalizes **forward** slides only, i.e. the direction that
+> §1 says cannot cause this defect. **Extending that penalty to the backward side is the cheaper first
+> experiment** than building a new prior. ~~**Do §7's score-term instrumentation first**~~ — **done
+> 2026-08-12**: the terms and all three subtractive priors now ship as `status.patched.fit_terms`
+> (§7), so an S2 experiment is checkable against a repair report rather than by ear. S2 is unblocked.
+
 *Exit:* the knob is enforced or removed, and 26/g6 is re-run to confirm the prior moves it.
 
 **S2b — Fix the `min` reduction when one shoulder is unmatchable (§4.2). 31/g7's actual defect.**
@@ -630,10 +641,45 @@ the "enforce it" framing**. A bare magnitude cap is the wrong instrument in eith
   near nominal was ever *scored* there, so bounding the slide only removes the one candidate that
   survived.
 
-**S2's resolution is therefore: wire it as a search prior, or delete it — never as a veto.** The
-mechanism already exists in shape (`fill_anchor_search_prior_weight`); as a prior it fixes 26/g6, where
-a placement at −15.8 ms scored 0.378 against the applied 0.366, and stays inert where nothing near
-nominal scores at all.
+**S2's resolution is therefore: wire it as a search prior, or delete it — never as a veto.** As a prior
+it fixes 26/g6, where a placement at −15.8 ms scored 0.378 against the applied 0.366, and stays inert
+where nothing near nominal scores at all.
+
+#### 4.1a What the objective already contains (read 2026-08-12, before S2 starts)
+
+`unified_fit_score` (`gap_fill_fit.rs:376-406`) already carries **three** placement priors. None of
+them is visible in any output (§7), which is why this had to be read out of the source.
+
+| prior | where | anchored on | live by default? |
+|---|---|---|---|
+| `nominal_bias_scale` | `:396`, into `combined_structure_score` | nominal | yes (1.0) |
+| `LATE_START_PENALTY` = 0.08 | `:28`, applied `:400-403` | nominal | yes (scale 1.0) |
+| `AnchorSearchPrior` | `:342`, built `region.rs:155-175` | **patch-anchor table prediction** | **no** |
+
+**(a) `fill_anchor_search_prior_weight` is fully plumbed but unreachable on a default run.** The chain
+is complete — `config.rs:269` → `request.rs:146` → `geometry.rs:15` → `region.rs:155` →
+`patch_region.rs:99` → `gap_fill_fit.rs:342` — and it is *not* the "just set a weight" fix an earlier
+draft of S2 assumed. Four independent gates (`region.rs:156-161`): `FillMode::Fit`, weight > 0
+(default **0.0**, `config.rs:599`), a non-empty `PatchAnchorTable`, **and
+`anchored_retry_pass == AnchoredRetryPass::Second`**. `repair_profile.rs:289` says the same in user
+terms: *"only applies with `--fill-offset anchored-retry`"*. The corpus runs are default
+`FillOffsetMode::Recommended`, so this prior was **off for every gap in this investigation**.
+>
+> More important than the gating: **it is anchored on the wrong thing for S2.** `predicted_start_frame`
+> comes from `interpolate_anchored_offset_secs` over the editorial anchor table — the *pair-level
+> drift prediction*, not the nominal map. §1.1 already established that pair-level drift is the wrong
+> model here (pair 31's steps from −0.04 s to −1.15 s between adjacent gaps). So S2 must either move
+> the corpus to anchored-retry *and* accept an anchor-table-anchored prior, or add a **nominal**-anchored
+> prior in the same shape. The existing code is a **template**, not a switch.
+
+**(b) The one hard-coded directional prior points away from the defect.** `LATE_START_PENALTY` fires
+only `if placement.start > placement.nominal_start` — it penalizes **late/forward** starts and leaves
+backward slides free. §1: *"A backward slide … lands the donor window on material A has already played
+— a shoulder repeat by construction. A forward slide cannot duplicate."* Both failures slid backward.
+**The objective penalizes the safe direction and not the dangerous one.** Whether the right S2 is a new
+symmetric prior or simply extending this penalty to the backward side is now an open design question —
+and the backward extension is the cheaper experiment, since the term, its scale knob
+(`late_start_penalty_scale`) and its normalization already exist.
 
 This also does not retire the §2 residual guard: a cap refuses large slides indiscriminately, whereas
 the guard asks whether the slide *disagrees with local registration* — again, pair 31's genuine
@@ -900,6 +946,42 @@ threshold.
   term carried a placement. §4.2's min-reduction diagnosis had to be reconstructed from dumps for
   exactly this reason. Cost: a return-type change on `unified_fit_score` plus threading through the
   bracket search. Not a deletion — schedule separately.
+
+  **Promoted 2026-08-12 to "do before S2/S2b".** Both remaining deliverables *edit this function*, and
+  nothing it computes is observable: not the two score terms, and not any of the **three priors**
+  §4.1a found (`nominal_bias_scale`, `LATE_START_PENALTY`, `AnchorSearchPrior`). A scoring change that
+  cannot be seen in the output can only be validated by ear or by re-deriving dumps — which is how
+  §4.2 had to be argued, and what S5 spent a session removing elsewhere. Scope: the winning
+  candidate's `structure_combined`, `waveform_min`, and the applied prior deltas. **`waveform_min` is
+  already an input parameter** (`:379`), so only `structure_combined` and the penalty terms need
+  lifting; the return-type change is confined to this function plus its bracket-search callers.
+
+  **DONE 2026-08-12.** `UnifiedFitBreakdown` (`gap_fill_fit.rs`) now carries `total`,
+  `structure_combined`, `waveform_min`, and each prior as the **positive amount subtracted**
+  (`late_start_penalty`, `anchor_penalty`, `repeat_penalty`); `unified_fit_score` and
+  `unified_fit_score_with_repeat` return it. It reaches the production report as
+  `status.patched.fit_terms` (documented in `docs/json-output.md`, pinned in the
+  `full_surface_repair.json` golden), so **S2/S2b are now verifiable from a repair run instead of by
+  ear.** Four things worth knowing before reading the field:
+
+  - **Selection is untouched.** The search ranks on `.total` and never reads the other fields, so
+    widening the return type cannot move a placement. The whole suite passes unchanged.
+  - **The breakdown is re-derived at the APPLIED placement**, once, at the end of
+    `match_gap_fill_unified_in_b_with_timeline` — not captured from the start search's winner. The end
+    search, `unified_fine_polish_start` and `snap_fill_to_gap` each still move `start_frame` after the
+    start search decides, so an in-search capture would describe a superseded candidate. Costs one
+    extra candidate evaluation per gap against the thousands the search runs.
+  - **`nominal_bias_scale` is not a separate field** — it is folded inside `combined_structure_score`,
+    so it shows up in `structure_combined`, not as a fourth penalty. Only the three subtractive priors
+    are separable.
+  - **Omitted, not zeroed, where the objective did not run**: dual-fit / silence-splice rescues and the
+    legacy structure-only gate path write no `fit_terms` at all. A zeroed breakdown there would read as
+    "the objective ran and every term was 0".
+
+  Guarded by `fit_breakdown_terms_reconstruct_the_total`, which asserts the terms **account for**
+  `total` (not merely accompany it) on a candidate built so all three penalties are non-zero — the
+  failure mode being a term that is computed but never subtracted, which leaves `total` correct and the
+  attribution silently wrong.
 - **Audit for other structurally-constant reported fields — first pass run 2026-08-11.** Distinct
   value counts over the 227 patched gaps, counting *presence* separately (fields omitted when false
   look constant otherwise — this is what made `dual_fit_used` read as "always true" on first pass

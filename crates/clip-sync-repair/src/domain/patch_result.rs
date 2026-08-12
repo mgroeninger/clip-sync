@@ -428,6 +428,15 @@ pub enum GapPatchStatus {
         /// gaps with no `normalize_gain` at all, and a roll-up must hold those out rather than
         /// coerce them to a value.
         normalize_gain: f32,
+        /// The unified fit objective's terms at the placement that was applied — `structure_combined`,
+        /// `waveform_min`, and each prior's subtracted amount (see
+        /// [`crate::domain::gap_fill_fit::UnifiedFitBreakdown`]).
+        ///
+        /// This is the *why* behind `align_adjustment_secs`: that field says where the fill landed, this
+        /// one says which term paid for it. Absent on non-bracket paths (dual-fit, splice), which do not
+        /// run the unified objective, and on runs predating 2026-08-12.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fit_terms: Option<crate::domain::gap_fill_fit::UnifiedFitBreakdown>,
     },
     Skipped {
         reason: GapPatchSkipReason,

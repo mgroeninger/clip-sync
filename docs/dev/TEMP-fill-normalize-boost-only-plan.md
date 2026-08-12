@@ -1,6 +1,7 @@
 # TEMP — Fill normalize: boost-only (never attenuate)
 
-**Status:** implemented 2026-08-12 (code + docs + tests landed; ear spot-check outstanding).
+**Status:** implemented + ear-checked 2026-08-12 (code, docs, tests, and a first listen on the
+affected set all landed; ready to commit and archive).
 **One deliverable:** change A-border fill loudness matching so it may **raise** a quiet B fill
 toward A's borders, but must **never attenuate** a louder fill.
 
@@ -81,6 +82,15 @@ audible change. It ships **record-only**; no gate reads it, matching the fill-le
 - Residual seam `g` for true master-level mismatch without mid-gap RMS.
 - B-relative matching as a possible full replacement for A-border RMS.
 - Ear-pass whether boost-only leaves any quiet-donor regressions worth a second policy.
+- **The boost half is now the ear-confirmed defect** (2026-08-12, after this PR was written) —
+  [BACKLOG.md](../../BACKLOG.md) § *Fill normalize boosts against a non-local reference*. The corpus's
+  only "audible — too loud" clip is a +11.78 dB **unclamped boost** that renders clean with
+  `--no-normalize`; cause is `compute_a_border_rms`'s 5 s + 5 s energy-pooled window against −52 dB
+  local shoulders. That is the same wrong statistic this PR fixed on the attenuating side, so **this
+  PR is half of a two-sided defect** — sound on its own, but not the audible half. It also means the
+  non-goal "flipping default `normalize_fill` to `false`" was written without that evidence and is
+  now a live option. Do not design the boost fix from n=1: size it first with a `--patch-only`
+  `normalize_gain` sweep.
 
 ---
 
@@ -164,6 +174,31 @@ Optional later (not required to ship): TOML comment that `max_fill_gain_db` is m
 6. **Lib/clippy:** `cargo test -p clip-sync-repair --lib` + the touched integration test(s).
 7. **Ear / corpus (manual, if media handy):** known gunshot-in-talk (or fill-level shape listen set under `gap-files/`) with `--patch-only` / listen — mid-gap event should no longer sound dragged down; spot-check that quiet-donor boosts still sound intentional, and listen at the **seams** for the step § 1 accepts.
 
+   **Done 2026-08-12 — pair 19, both affected gaps. No audible defect in either direction.** The
+   patched interior was indistinguishable from the donor B capture (expected: at `normalize_gain =
+   1.0` the fill *is* the donor samples ×1.0, the ear form of § 5.3's bit-equality assertion), and no
+   seam step was audible against the A context at either boundary. So § 1's accepted consequence did
+   not materialize here — consistent with its own reasoning: attenuation is what pushed the fill away
+   from program level, and removing it left the shoulders continuous.
+
+   **Scope, stated so it is not over-read:** n = 2 gaps, one pair, and that pair is quiet-donor
+   (its other two patched gaps sit at +11.78 dB and +12.00 dB, i.e. on the boost clamp). It is the
+   first ear pass on the affected set, not a corpus result. No before/after A/B exists for these two
+   gaps — the only pre-change render for pair 19 (`gap-files/2026-08-06-fill-level-listen/19/`) is
+   its `g013`, which reads `normalize_gain = 3.88` and is therefore **unaffected** by this PR. To
+   manufacture a true A/B, restore the symmetric clamp + drop the `region.rs` assert, render to a
+   `-before` dir, revert.
+
+   **Method note (a proxy that failed, so it is not retried).** `peak_delta_db` was used to shortlist
+   candidates and is **not** a predictor of the gain's sign. An unclamped gain sets fill RMS equal to
+   border RMS, so the measured peak delta collapses toward the fill's own crest factor whichever way
+   the gain went; and `fill_level`'s 100 ms shoulder bins are not the same measurement as normalize's
+   `normalize_window_secs` = 5 s border window. The corpus top-peak-delta gap (pair 19 g013, 15.9 dB)
+   turned out to be a +11.8 dB **boost**. The only direct read on the affected set is
+   `normalize_gain` itself, via `--patch-only --format json` — full patch path through the splice, no
+   fingerprint/oracle cost. Caveat when reading it: `compute_fill_gain` also returns exactly `1.0`
+   when either RMS is zero, so `1.0` means *would-have-attenuated* **or** *degenerate measurement*.
+
 Acceptance: no production path applies `normalize_gain < 1.0` when `normalize_fill` is on.
 
 ---
@@ -177,7 +212,7 @@ Acceptance: no production path applies `normalize_gain < 1.0` when `normalize_fi
 - [x] Doc note: `compute_fill_gain` doc comment first (it becomes false), then config field docs, README, pipeline → boost-only
 - [x] Run lib + touched integration tests; goldens confirmed unmoved — the fixtures do set `normalize_fill: false` (`gap_corpus_fixtures.rs:844`/`:1139`, `energy_signature_production.rs:433`), so the **only** golden change is the additive `"normalize_gain": 1.0` line in `tests/fixtures/full_surface_repair.json` (regenerated via `write_full_surface_repair_golden`; explicit contract revision). Full workspace green, `cargo fmt`/`clippy` clean
 - [x] **Vacuity check:** temporarily restoring the old symmetric clamp makes the new integration test fail on the `debug_assert` (`got 0.57142836`), confirming the test is not passing by accident
-- [ ] (Optional) Quick `--patch-only` / listen spot-check on a known loud-mid-gap patch
+- [x] (Optional) Quick `--patch-only` / listen spot-check on a known loud-mid-gap patch — done on pair 19's two affected gaps, clean interior **and** clean seams; see § 5.7 for scope and for the `peak_delta_db` proxy that failed
 - [ ] Archive this TEMP when shipped; durable behaviour lives in pipeline / json-output companion notes
 
 ---

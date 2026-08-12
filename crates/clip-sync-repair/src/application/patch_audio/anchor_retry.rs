@@ -266,6 +266,7 @@ mod tests {
                     anchor_bracket_move_frames: 0,
                     dual_fit_used: false,
                     normalize_gain: 1.0,
+                    fit_terms: None,
                 },
                 dummy_region_tags(),
             ),
@@ -286,6 +287,7 @@ mod tests {
                     anchor_bracket_move_frames: 0,
                     dual_fit_used: false,
                     normalize_gain: 1.0,
+                    fit_terms: None,
                 },
                 dummy_region_tags(),
             ),
@@ -324,6 +326,7 @@ mod tests {
             anchor_bracket_move_frames: 0,
             dual_fit_used: false,
             normalize_gain: 1.0,
+            fit_terms: None,
         };
         let high = RegionPatchOutcome::Patched {
             pre_correlation: 0.5,
@@ -340,6 +343,7 @@ mod tests {
             anchor_bracket_move_frames: 0,
             dual_fit_used: false,
             normalize_gain: 1.0,
+            fit_terms: None,
         };
         assert!(should_apply_anchored_retry_outcome(&skip, &high));
         assert!(should_apply_anchored_retry_outcome(&marginal, &high));

@@ -21,7 +21,7 @@
 
 use crate::domain::donor::DonorInterior;
 use crate::domain::gap_fill::GapFillSkipped;
-use crate::domain::gap_fill_fit::FillConfidence;
+use crate::domain::gap_fill_fit::{FillConfidence, UnifiedFitBreakdown};
 use crate::domain::patch_result::GapPatchSkipReason;
 use crate::domain::policies::{FillAlignment, RefinedGapFrames, SeamResidualVerdict};
 
@@ -195,6 +195,10 @@ pub enum GapRepairStrategy {
         residual: Option<SeamResidualVerdict>,
         /// 1.0, or the RMS gain computed at characterize time (needs the sliced B).
         normalize_gain: f32,
+        /// The unified fit objective's terms at `alignment.start_frame` — decided at characterize time
+        /// alongside the placement itself, because only the search knows them. `None` when the gate
+        /// reached its placement without the unified search (structure-only gate mode).
+        fit_terms: Option<UnifiedFitBreakdown>,
     },
     SilenceSplice {
         /// Filled, length-reconciled interleaved PCM (`gap_frames × channels`).
@@ -495,6 +499,7 @@ mod tests {
             fit_boundary_grid_cells: None,
             residual: None,
             normalize_gain: 1.0,
+            fit_terms: None,
         }
     }
 

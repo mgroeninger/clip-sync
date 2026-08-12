@@ -1108,6 +1108,18 @@ mod tests {
                     anchor_bracket_move_frames: 0,
                     dual_fit_used: false,
                     normalize_gain: 1.0,
+                    // Populated on the golden's one patched gap so the nested `fit_terms` object is
+                    // part of the pinned contract, not just its absence. Every penalty is non-zero for
+                    // the same reason the unit test makes them non-zero: an all-default breakdown would
+                    // pin the shape while hiding a field that stopped being written.
+                    fit_terms: Some(crate::domain::gap_fill_fit::UnifiedFitBreakdown {
+                        total: 0.71,
+                        structure_combined: 0.82,
+                        waveform_min: 0.64,
+                        late_start_penalty: 0.03,
+                        anchor_penalty: 0.01,
+                        repeat_penalty: 0.02,
+                    }),
                 },
             ),
             gap_patch_outcome(
@@ -1313,6 +1325,7 @@ mod tests {
                 anchor_bracket_move_frames: 0,
                 dual_fit_used: false,
                 normalize_gain: 1.0,
+                fit_terms: None,
             },
         )]);
         let payload = RepairJsonOutput {
@@ -1354,6 +1367,7 @@ mod tests {
                     anchor_bracket_move_frames: 0,
                     dual_fit_used: false,
                     normalize_gain: 1.0,
+                    fit_terms: None,
                 },
             ),
             gap_patch_outcome(
@@ -1614,6 +1628,7 @@ mod tests {
                 anchor_bracket_move_frames: 0,
                 dual_fit_used: false,
                 normalize_gain: 1.0,
+                fit_terms: None,
             },
         )]);
 
@@ -1649,6 +1664,7 @@ mod tests {
             anchor_bracket_move_frames: 48_000,
             dual_fit_used: false,
             normalize_gain: 1.0,
+            fit_terms: None,
         };
         let tags = derive_gap_tags_from_patch_outcome(
             &GapPatchTierInput::Patched {
@@ -1728,6 +1744,7 @@ mod tests {
             anchor_bracket_move_frames: 0,
             dual_fit_used: true,
             normalize_gain: 1.0,
+            fit_terms: None,
         };
         let tags = derive_gap_tags_from_patch_outcome(
             &GapPatchTierInput::Patched {
@@ -1798,6 +1815,7 @@ mod tests {
                 anchor_bracket_move_frames: 0,
                 dual_fit_used: false,
                 normalize_gain: 1.0,
+                fit_terms: None,
             },
         )]);
 
@@ -1927,6 +1945,7 @@ mod tests {
                     anchor_bracket_move_frames: 0,
                     dual_fit_used: false,
                     normalize_gain: 1.0,
+                    fit_terms: None,
                 },
             ),
             gap_patch_outcome(
@@ -2006,6 +2025,7 @@ mod tests {
                     anchor_bracket_move_frames: 0,
                     dual_fit_used: false,
                     normalize_gain: 1.0,
+                    fit_terms: None,
                 },
             ),
             gap_patch_outcome(
