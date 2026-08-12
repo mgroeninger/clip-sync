@@ -806,9 +806,17 @@ different result). So identity is **per file**, not per logical source:
 - **No paths or titles** appear anywhere in the committed output.
 
 **Library file names** (from `--gap-fingerprints`):
-`<a8>_<b4>_t<hh-mm-ss>_g<idx>_<tier>_<verdict>.json` — opaque-id prefixed, sorted by A start time,
-tagged by tier and lag/outcome verdict (e.g. `…_full_timing_offset.json`). Each file is a complete
-single-gap `GapCorpus`. A `manifest.json` indexes them (ids, times, tiers, verdicts).
+`<a8>_<b4>_t<hh-mm-ss>_g<idx>_<tier>.json` — opaque-id prefixed, sorted by A start time, tagged by
+**detail** tier (e.g. `…_g002_full.json`). Each file is a complete single-gap `GapCorpus`. A
+`manifest.json` indexes them (ids, times, tiers, verdicts).
+
+> **No verdict token** (removed 2026-08-12). Names carried one until then — the lag verdict if
+> measured, else `outcome.tier`, else `na` — and it misled: `outcome.tier` is the *bracket gate's*
+> result, so a file named `…_skip` is routinely **patched** by production's `skip_or_dual_fit`
+> (see `outcome` above). It was also not flag-stable, since the lag verdict only exists under
+> `--fingerprint-diagnostics`. Read the verdicts where they are structured: `outcome.tier` /
+> `lag_editorial` in the gap JSON, `outcome` / `lag_verdict` in `manifest.json`. Dumps predating
+> the change keep their longer names; nothing parses either form.
 
 The **committed** instance of this library is the curated per-gap-**type** fixture set at
 `crates/clip-sync-repair/tests/gap_corpus/fingerprints/curated/` — one representative single-gap `GapCorpus`

@@ -2957,18 +2957,16 @@ fn hms(secs: f64) -> String {
     format!("{:02}-{:02}-{:02}", s / 3600, (s % 3600) / 60, s % 60)
 }
 
-/// Headline tag for a gap's filename: the lag verdict if measured, else the gate outcome, else `na`.
-#[cfg(any(feature = "calibration", test))]
-fn entry_verdict(gap: &GapFingerprint) -> String {
-    gap.lag_editorial
-        .as_ref()
-        .and_then(|l| l.pre_anchor.first().or_else(|| l.post_anchor.first()))
-        .map(|s| lag_verdict_str(s.verdict).to_string())
-        .or_else(|| gap.outcome.as_ref().map(|o| o.tier.clone()))
-        .unwrap_or_else(|| "na".to_string())
-}
-
-/// `<a8>_<b4>_t<hh-mm-ss>_g<idx>_<tier>_<verdict>` — non-leaking, sortable, classifiable.
+/// `<a8>_<b4>_t<hh-mm-ss>_g<idx>_<tier>` — non-leaking, sortable, classifiable.
+///
+/// **No verdict token.** The stem carried one until 2026-08-12 (the lag verdict if measured, else
+/// `outcome.tier`, else `na`). It was removed because it read as production's disposition and is
+/// not: `outcome.tier` is the bracket-gate result, and a `skip` gap is routinely patched by
+/// production's `skip_or_dual_fit` (`schema.rs`, `outcome`). It was also not flag-stable — the same
+/// gap took a different suffix with vs without `--fingerprint-diagnostics`, since the lag verdict
+/// only exists on diagnostic runs. Both verdicts remain structured data: `outcome.tier` and
+/// `lag_editorial` in the gap JSON, `outcome` / `lag_verdict` in `manifest.json`. The `full` /
+/// `summary` detail tier stays — it is accurate, flag-stable, and says how much is in the file.
 ///
 /// **Extension-free on purpose.** This is the single naming authority for everything a gap emits:
 /// `write_corpus_dir` appends `.json`, and the `--gap-listen` export appends `_a_surround.wav` /
@@ -2977,18 +2975,17 @@ fn entry_verdict(gap: &GapFingerprint) -> String {
 /// before 2026-08-02) would force the exporter to reconstruct the format string and let the two
 /// namings drift apart silently.
 ///
-/// Note the stem is a function of the **built** fingerprint (`tier`, `verdict`, refined start), not
-/// of the gap alone — so an exporter must look its gap up in the corpus by `index`.
+/// Note the stem is a function of the **built** fingerprint (`tier`, refined start), not of the gap
+/// alone — so an exporter must look its gap up in the corpus by `index`.
 #[cfg(any(feature = "calibration", test))]
 pub(crate) fn entry_stem(source: &SourceMeta, gap: &GapFingerprint) -> String {
     let a8: String = source.a_source.id.chars().take(8).collect();
     let b4: String = source.b_source.id.chars().take(4).collect();
     format!(
-        "{a8}_{b4}_t{}_g{:03}_{}_{}",
+        "{a8}_{b4}_t{}_g{:03}_{}",
         hms(gap.geometry.a_refined_start_secs),
         gap.index,
         detail_tier_str(gap.tier),
-        entry_verdict(gap),
     )
 }
 
@@ -5178,13 +5175,15 @@ mod tests {
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
+        // Named by detail tier only. The verdict token was removed 2026-08-12: it read as
+        // production's disposition (it is the bracket gate's) and was not flag-stable.
         assert!(
-            names.iter().any(|f| f.contains("g003_full_timing_offset")),
-            "full gap named by verdict: {names:?}"
+            names.iter().any(|f| f.ends_with("g003_full.json")),
+            "full gap named by detail tier, no verdict token: {names:?}"
         );
         assert!(
-            names.iter().any(|f| f.contains("g000_summary_na")),
-            "summary gap named na: {names:?}"
+            names.iter().any(|f| f.ends_with("g000_summary.json")),
+            "summary gap named by detail tier, no verdict token: {names:?}"
         );
         // No leaking identifiers; per-gap files are opaque-id prefixed.
         assert!(names.iter().all(|f| f == "manifest.json"

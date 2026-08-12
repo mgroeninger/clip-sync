@@ -321,35 +321,10 @@ fn check_corpus(
     check_equivalence_production_coverage(label, corpus, report);
     check_donor_within_b(label, corpus, report);
 
-    // Filename ↔ outcome when the library used patch/skip as the verdict suffix.
-    for path in &lib_files {
-        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-            continue;
-        };
-        let Some(single) = read_json::<CorpusFile>(path) else {
-            continue;
-        };
-        let Some(gap) = single.gaps.first() else {
-            continue;
-        };
-        let Some(tier) = gap.outcome.as_ref().map(|o| o.tier.as_str()) else {
-            continue;
-        };
-        if name.ends_with("_patch.json") && tier != "patch" {
-            report.issues.push(HealthIssue {
-                severity: IssueSeverity::Error,
-                pair: label.to_string(),
-                message: format!("{name}: filename says patch but outcome.tier={tier}"),
-            });
-        }
-        if name.ends_with("_skip.json") && tier != "skip" {
-            report.issues.push(HealthIssue {
-                severity: IssueSeverity::Error,
-                pair: label.to_string(),
-                message: format!("{name}: filename says skip but outcome.tier={tier}"),
-            });
-        }
-    }
+    // A filename ↔ `outcome.tier` cross-check lived here until 2026-08-12, when the verdict token
+    // was dropped from `entry_stem`. Deliberately not replaced: the token was removed *because* a
+    // stem must not be read as a disposition, so re-deriving one from the name would reintroduce
+    // the second source of truth. `outcome.tier` in the gap JSON and `manifest.json` is the read.
 }
 
 fn check_gap(
@@ -1117,12 +1092,12 @@ mod tests {
         write(dir, "corpus.json", &corpus);
         write(
             dir,
-            "aaaaaaaa_bbbb_t00-00-00_g000_full_patch.json",
+            "aaaaaaaa_bbbb_t00-00-00_g000_full.json",
             &single_gap(&corpus, 0),
         );
         write(
             dir,
-            "aaaaaaaa_bbbb_t00-00-10_g001_full_skip.json",
+            "aaaaaaaa_bbbb_t00-00-10_g001_full.json",
             &single_gap(&corpus, 1),
         );
         write(
@@ -1133,8 +1108,8 @@ mod tests {
               "scan_recipe":{"min_gap_ms":500,"silence_peak_fraction":0.01,"absolute_silence_rms":0.0,"scan_block_ms":100},
               "gap_count":2,
               "entries":[
-                {"file":"aaaaaaaa_bbbb_t00-00-00_g000_full_patch.json","index":0,"a_start_secs":0,"tier":"full","outcome":"patch"},
-                {"file":"aaaaaaaa_bbbb_t00-00-10_g001_full_skip.json","index":1,"a_start_secs":10,"tier":"full","outcome":"skip"}
+                {"file":"aaaaaaaa_bbbb_t00-00-00_g000_full.json","index":0,"a_start_secs":0,"tier":"full","outcome":"patch"},
+                {"file":"aaaaaaaa_bbbb_t00-00-10_g001_full.json","index":1,"a_start_secs":10,"tier":"full","outcome":"skip"}
               ]
             }"#,
         );

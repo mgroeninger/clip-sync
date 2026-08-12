@@ -114,24 +114,30 @@ Leftovers from [archive/TEMP-fingerprint-field-clarity-plan.md](docs/dev/archive
 | `--fingerprint-contracts=once\|always\|off` write flag | § 2.6 chose repeat-per-gap ("clarity beats bytes") for diagnostic dumps and deferred the knob to "if size becomes an issue". Nobody has measured the size cost of the eight contracts on a real corpus. Trigger: a corpus where `_contract` repetition is a measured problem — until then `always` is the only behaviour, and a knob is an untested branch |
 | **Contract `status.patched` on the production report** | Raised 2026-08-12 from [TEMP-fill-placement-registration-plan.md](docs/dev/TEMP-fill-placement-registration-plan.md) § 0 S5, where misread patch-record fields produced two withdrawn conclusions. The production `--json` surface carries **no `_contract` anywhere**; the fields that misled want one — `align_adjustment_secs` (signed slide of the chosen fill start off nominal, **not** a lag), `placement_slide_frames` (unsigned, and **≠ `\|align_adjustment\| × 48000` on 82/227 gaps**), `fit_path` (names the **boundary grid**, not the fit path — `gap_tags.rs`'s `FitPathTag::from_boundary_grid_used`), `pre/post_correlation` (min-reduced into the placement objective). **Two design questions come first, which is why this is deferred and not just unwritten.** (a) `Contracted<T>` needs a `T` to flatten; `GapPatchStatus::Patched` is an enum variant with inline fields, so stamping it means extracting them into a named struct — and `contract.rs`'s own rationale deliberately keeps reader metadata *out of* domain types, which `patch_result.rs` is. (b) Per-gap stamping does not transfer: a dump is one gap per file, a report is all gaps in one, so a 227-gap report repeats the same four strings 227 times (~90 KB against files that run 78–574 KB today) — the same measurement the row above is waiting on, and the cheap alternative (one `_contracts` map at the report root) is exactly what § 2.6 rejected as "too easy to skip and too far from the number it explains". That rejection was reasoned about a per-gap file; whether it survives a report-shaped one is the open question. **Already landed separately** (no contract needed): `dual_fit_used` / `anchor_seam_used` are now always serialized, so absence no longer reads as "disabled" |
 
-### Fingerprint dump naming says "skip" for gaps production patches
+### Fingerprint dump naming (verdict token dropped; listen-manifest disposition open)
 
-Raised 2026-08-12 while ear-checking the boost-only normalize PR: two pair-19 gaps whose files are
+Raised 2026-08-12 while ear-checking the boost-only normalize PR: two pair-19 gaps whose files were
 named `..._full_skip` are **patched in a normal run**, and the name caused a wrong inference about
 production behaviour before the schema was re-read. Not a repair defect — a diagnostics-ergonomics
 one — but it cost real time, so it is written down rather than remembered.
 
-The trailing token comes from `entry_verdict` (`measure.rs:2962`), which resolves to
+The trailing token came from `entry_verdict`, which resolved to
 `gap.outcome.tier`: the bracket-gate `any_ok` result. That is *correct for what the fingerprint
 measures* and is contractually documented as not-the-production-gate
 (`schema.rs:1158-1169`: "a `tier: \"skip\"` fingerprint can correspond to a *patched* production
 gap"). Production runs `skip_or_dual_fit` after the same failure class and often patches anyway.
 
+**Token dropped 2026-08-12.** Stems are now `{a8}_{b4}_t{hms}_g{idx}_{detail_tier}` — `entry_verdict`
+deleted (`lag_verdict_str` kept: `manifest.json` still records both verdicts), the flag-stability
+axis resolved with it. Two claims in the original entry were wrong and are recorded here because
+each was a "safe because…": the stem *was* parsed — `check.rs` cross-checked `_patch.json` /
+`_skip.json` against `outcome.tier` (removed, deliberately not replaced), and `measure.rs`'s
+`write_corpus_dir` test asserted the token. New dumps are not name-comparable with existing
+`gap-files/` dirs (gitignored, regenerable, self-consistent within a dir).
+
 | Item | Direction |
 |------|-----------|
-| **Drop the verdict token from `entry_stem`** | Remove the final `_{}` from the format string (`measure.rs:2986`), delete `entry_verdict`, and check whether `lag_verdict_str` keeps a caller. Safe: `{a8}_{b4}_t{hms}_g{idx}` is already unique and sortable, `entry_stem` has only two callers and both *generate* names, nothing parses the stem, and the rollup CSVs store whole paths. The ears↔JSON join is unaffected and stays guarded by `gap_listen_integration.rs:278`. Nothing is lost: the verdict is already structured data in the gap JSON (`outcome.tier`) and in `manifest.json` (`outcome`). Keep the `full`/`summary` detail-tier token — accurate, flag-stable, and it tells you how much is in the file before you open it. Cost: new dumps stop being name-comparable with existing `gap-files/` dirs (cheap — gitignored, regenerable, self-consistent within a dir) |
-| Record production's disposition in the listen manifest | Still worth doing after the token is gone: a listen dir gives no way to see whether production patched a gap without opening the JSON. `gap_listen` already holds the real `GapPatchStatus` when it decides whether to write `_a_patched.wav` (`gap_listen/mod.rs:391-437`), so the manifest entry can carry it. Do **not** encode it in the stem — `entry_stem`'s own doc calls itself the single naming authority for the ears↔JSON join, and a second source of truth is how the two namings drift. Today's only reliable read is *`_a_patched.wav` exists ⇒ production patched it*, since the exporter refuses that file on `Skipped` / `NotPlanned` / `NotApplied` |
-| (Same defect, separate axis) The verdict token is not flag-stable | `entry_verdict` prefers `lag_editorial`'s verdict and only falls back to `outcome.tier`, so the same gap gets a different suffix with vs without `--fingerprint-diagnostics`. Dropping the token resolves this too; noted in case the token is kept instead of removed. Related: the stem says "tier" twice for unrelated axes — `detail_tier_str(gap.tier)` (detail) then `gap.outcome.tier` (gate) |
+| **Record production's disposition in the listen manifest** | Now the only open half, and the more valuable one: a listen dir gives no way to see whether production patched a gap without opening the JSON. `gap_listen` already holds the real `GapPatchStatus` when it decides whether to write `_a_patched.wav` (`gap_listen/mod.rs:391-437`), so the manifest entry can carry it. Do **not** encode it in the stem — `entry_stem`'s own doc calls itself the single naming authority for the ears↔JSON join, and a second source of truth is how the two namings drift (which is what the dropped verdict token was). Today's only reliable read is *`_a_patched.wav` exists ⇒ production patched it*, since the exporter refuses that file on `Skipped` / `NotPlanned` / `NotApplied` |
 
 ### Donor registration leftovers
 

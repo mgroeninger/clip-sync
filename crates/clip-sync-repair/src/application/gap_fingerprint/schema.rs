@@ -30,7 +30,7 @@ pub(crate) const SILENCE_FLOOR_DB: f32 = -120.0;
 /// dump does not pretend B was A-layout. The `native_*` fields are the per-side **source** readings
 /// taken at probe time, before any conversion. When `native_sample_rate` disagrees with `sample_rate`
 /// for B, the dump was measured on a rate-converted signal; see [`FileSource::was_resampled`]. `id`
-/// and `duration_secs` are derived from the decoded PCM and must stay that way — `entry_filename`
+/// and `duration_secs` are derived from the decoded PCM and must stay that way — `entry_stem`
 /// builds every per-gap filename from `id`.
 ///
 /// Provenance fields are raw container/track observations, never verdicts: what could be concluded
