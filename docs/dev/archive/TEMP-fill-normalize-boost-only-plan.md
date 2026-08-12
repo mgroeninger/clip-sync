@@ -5,10 +5,10 @@ affected set all landed; ready to commit and archive).
 **One deliverable:** change A-border fill loudness matching so it may **raise** a quiet B fill
 toward A's borders, but must **never attenuate** a louder fill.
 
-Companion: [fill_level.rs](../../crates/clip-sync-repair/src/domain/fill_level.rs) module docs,
-[json-output.md](../json-output.md) § FillLevelCheck (gunshot-in-conversation counter-example),
-[pipeline.md](../pipeline.md) § Fill-level check, archive
-[repair-write-path-plan.md](archive/repair-write-path-plan.md) § Normalization.
+Companion: [fill_level.rs](../../../crates/clip-sync-repair/src/domain/fill_level.rs) module docs,
+[json-output.md](../../json-output.md) § FillLevelCheck (gunshot-in-conversation counter-example),
+[pipeline.md](../../pipeline.md) § Fill-level check, archive
+[repair-write-path-plan.md](repair-write-path-plan.md) § Normalization.
 
 ---
 
@@ -39,7 +39,7 @@ Companion: [fill_level.rs](../../crates/clip-sync-repair/src/domain/fill_level.r
   orthogonal, no ordering to get right, and § 5's bit-equality test holds at any crossfade value.
   It matters only for reasoning: it is the mitigation dial that **already exists** for a seam step
   (lengthen the ramp), so do not propose a new knob. Note also that `fill_level` measures the fill
-  with the crossfade **ignored** ([pipeline.md](../pipeline.md) § Fill-level check), so
+  with the crossfade **ignored** ([pipeline.md](../../pipeline.md) § Fill-level check), so
   `edge_delta_db` systematically *overstates* the audible step — true today, larger after this change
   on the affected gaps.
 
@@ -53,7 +53,7 @@ Companion: [fill_level.rs](../../crates/clip-sync-repair/src/domain/fill_level.r
 
 **Sequencing against the fill-placement investigation (settled 2026-08-12)**
 
-Ship this **before** [TEMP-fill-placement-registration-plan.md](TEMP-fill-placement-registration-plan.md)
+Ship this **before** [TEMP-fill-placement-registration-plan.md](../TEMP-fill-placement-registration-plan.md)
 § 5 (Phase B / S4) renders any new ear-label set. The two plans touch disjoint quantities and the
 placement axis is **gain-invariant** — the gain is computed at `region.rs:2056`, strictly after the
 placement search and seam reconciliation, its only consumers are `gained_fill` and
@@ -83,7 +83,7 @@ audible change. It ships **record-only**; no gate reads it, matching the fill-le
 - B-relative matching as a possible full replacement for A-border RMS.
 - Ear-pass whether boost-only leaves any quiet-donor regressions worth a second policy.
 - **The boost half is now the ear-confirmed defect** (2026-08-12, after this PR was written) —
-  [BACKLOG.md](../../BACKLOG.md) § *Fill normalize boosts against a non-local reference*. The corpus's
+  [BACKLOG.md](../../../BACKLOG.md) § *Fill normalize boosts against a non-local reference*. The corpus's
   only "audible — too loud" clip is a +11.78 dB **unclamped boost** that renders clean with
   `--no-normalize`; cause is `compute_a_border_rms`'s 5 s + 5 s energy-pooled window against −52 dB
   local shoulders. That is the same wrong statistic this PR fixed on the attenuating side, so **this
@@ -107,7 +107,7 @@ scaler attenuates the entire patch toward talking-level A borders. That is the w
 same-master restore: intentional dynamics inside the hole should survive.
 
 Corpus ear labels already treat “loud event inside a quiet/talk gap, quiet at the seams” as often
-**correct** ([json-output.md](../json-output.md) § FillLevelCheck — gunshot in a conversation).
+**correct** ([json-output.md](../../json-output.md) § FillLevelCheck — gunshot in a conversation).
 A-border whole-fill normalize fights that case. The damaging direction is **gain &lt; 1**.
 
 Boosting quiet fills toward A remains useful (existing
@@ -145,10 +145,10 @@ gain = clamp(raw, 1.0, max_boost)   // was clamp(raw, 1/max_boost, max_boost)
 | Domain unit tests | **Add** a loud-B → exactly `1.0` case. Nothing to refresh: the only clamp test, `compute_fill_gain_clamps_to_max_db` (`silence.rs:737`), exercises the **boost** side and stays green unchanged; `compute_fill_gain_unity_when_rms_zero` is likewise unaffected |
 | Characterize | Bracket path keeps calling `compute_fill_gain` unchanged. `region.rs:2065` is the **only** production caller — silence-splice and dual-fit hard-code `gain: 1.0` (`region.rs:1395`, `region.rs:2526`), so "all callers stay consistent" is already true |
 | Invariant | `debug_assert!(gain >= 1.0)` where the gain enters the spec (`region.rs:2161`, `normalize_gain: gain`) — turns § 5's acceptance criterion into a checked invariant for free |
-| Reporting | **Emit `normalize_gain`** (record-only). It exists on the spec (`gap_repair_spec.rs:197`) and as `RegionPatch.gain` (`region.rs:51`), but neither `RegionPatchOutcome::Patched` (`region.rs:81-95`) nor `GapPatchStatus::Patched` (`patch_result.rs:364`) carries it — add the `f32` to both and thread it at the conversion (`region.rs:239`). Serialize **unconditionally**, no `skip_serializing_if`: `1.0` must read as *unity*, not as *unavailable* — the exact error S5 of the placement plan fixed for `dual_fit_used` / `anchor_seam_used`. Document in [json-output.md](../json-output.md) alongside FillLevelCheck, since it is what makes `gained_fill`-based fields interpretable |
+| Reporting | **Emit `normalize_gain`** (record-only). It exists on the spec (`gap_repair_spec.rs:197`) and as `RegionPatch.gain` (`region.rs:51`), but neither `RegionPatchOutcome::Patched` (`region.rs:81-95`) nor `GapPatchStatus::Patched` (`patch_result.rs:364`) carries it — add the `f32` to both and thread it at the conversion (`region.rs:239`). Serialize **unconditionally**, no `skip_serializing_if`: `1.0` must read as *unity*, not as *unavailable* — the exact error S5 of the placement plan fixed for `dual_fit_used` / `anchor_seam_used`. Document in [json-output.md](../../json-output.md) alongside FillLevelCheck, since it is what makes `gained_fill`-based fields interpretable |
 | Mixed-vintage dumps | **Corrected 2026-08-12 during implementation.** An earlier draft of this row called for `#[serde(default = …)]` returning `1.0` so old corpus JSON would still deserialize. `GapPatchStatus` is **`Serialize`-only** (`patch_result.rs:361`) — nothing reads a report back, and the `#[serde(default)]` attributes already on its sibling fields are inert. So no default is needed and none was added. The hazard is real but lands entirely **consumer-side**: gaps in `gap-files/2026-08-07-fill-level-shape/` and `2026-08-08-v0.5.2-full-corpus/` carry no `normalize_gain` at all, and absence means *pre-emit run*, never *unity measured* — a roll-up must hold those out rather than coerce them. Recorded on the field's doc comment |
 | Integration | Keep quiet-B boost test green (`patch_audio_normalizes_fill_loudness_to_a_border`); add loud-B / would-have-attenuated case |
-| Docs | `compute_fill_gain`'s own doc comment (`silence.rs:360-361`) says "clamped to ±`max_gain_db` dB" and becomes **actively false** — fix first. Then `config.rs:169` (`normalize_fill`) and `config.rs:183` (`max_fill_gain_db`), `README.md:184` (`--no-normalize` row) and the config block near `README.md:577`, and [pipeline.md](../pipeline.md). Archive write-path wording is historical — leave it |
+| Docs | `compute_fill_gain`'s own doc comment (`silence.rs:360-361`) says "clamped to ±`max_gain_db` dB" and becomes **actively false** — fix first. Then `config.rs:169` (`normalize_fill`) and `config.rs:183` (`max_fill_gain_db`), `README.md:184` (`--no-normalize` row) and the config block near `README.md:577`, and [pipeline.md](../../pipeline.md). Archive write-path wording is historical — leave it |
 | CLI | No new flag required for v1 (`--no-normalize` still disables entirely) |
 
 Optional later (not required to ship): TOML comment that `max_fill_gain_db` is max **boost** only.
@@ -213,12 +213,12 @@ Acceptance: no production path applies `normalize_gain < 1.0` when `normalize_fi
 - [x] Run lib + touched integration tests; goldens confirmed unmoved — the fixtures do set `normalize_fill: false` (`gap_corpus_fixtures.rs:844`/`:1139`, `energy_signature_production.rs:433`), so the **only** golden change is the additive `"normalize_gain": 1.0` line in `tests/fixtures/full_surface_repair.json` (regenerated via `write_full_surface_repair_golden`; explicit contract revision). Full workspace green, `cargo fmt`/`clippy` clean
 - [x] **Vacuity check:** temporarily restoring the old symmetric clamp makes the new integration test fail on the `debug_assert` (`got 0.57142836`), confirming the test is not passing by accident
 - [x] (Optional) Quick `--patch-only` / listen spot-check on a known loud-mid-gap patch — done on pair 19's two affected gaps, clean interior **and** clean seams; see § 5.7 for scope and for the `peak_delta_db` proxy that failed
-- [ ] Archive this TEMP when shipped; durable behaviour lives in pipeline / json-output companion notes
+- [x] Archive this TEMP when shipped; durable behaviour lives in pipeline / json-output companion notes — archived 2026-08-12. Every follow-up in § 1 is carried in [BACKLOG.md](../../../BACKLOG.md) § *Fill normalize boosts against a non-local reference* (residual seam `g`, B-relative matching, the owed roll-up re-run, and the fact that the attenuation half was never ear-validated); § 7's guidance and the mixed-vintage hazard live in [json-output.md](../../json-output.md) and [pipeline.md](../../pipeline.md)
 
 ---
 
 ## 7. Out of scope reminders
 
 Do not treat high `peak_delta_db` or whole-fill RMS vs A as “too loud → attenuate.” If a later plan
-gates on level, use registration-conditioned **edge** shape ([json-output.md](../json-output.md)),
+gates on level, use registration-conditioned **edge** shape ([json-output.md](../../json-output.md)),
 not this normalize path.

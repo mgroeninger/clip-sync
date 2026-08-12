@@ -335,6 +335,17 @@ repairs. What separated them was where the excess lived, which is what `edge_del
 | uniformly hot fill | `edge_delta_db` ≈ `peak_delta_db`, both large | the +15.93 dB clip heard as too loud — above A's ongoing material at the seams too, so the ear has a direct comparison |
 | loud event inside a quiet gap | `peak_delta_db` large, `edge_delta_db` ≈ 0 | the +24.34 dB corpus maximum, heard as clean — meets A at both seams, loud only in its middle, which is what the missing content was |
 
+**Amended 2026-08-12 — what made that clip uniformly hot was our own gain.** The +15.93 dB row
+carries `normalize_gain = 3.88` (+11.78 dB) and renders clean with `--no-normalize`, so it was
+normalize boosting a fill against a non-local reference, not a donor-level mismatch (BACKLOG.md
+§ *Fill normalize boosts against a non-local reference*). Two consequences for reading this section.
+The table's conclusion **strengthens**: a uniform gain error is exactly the shape `edge_delta_db`
+catches and `peak_delta_db` cannot. But the **numbers are gain-contaminated** — every delta here is
+measured on `gained_fill` against ungained shoulders, so each row is inflated by its own gap's boost
+(0–12 dB, and not recorded at all before 2026-08-12). Backing this one out gives ≈4.15 dB, the
+*lowest* in the labelled set rather than the second-highest. Do not compare these deltas across gaps
+without dividing out `normalize_gain` first.
+
 `edge_delta_db` takes the **quieter** seam, so it takes both seams sitting high to read as hot — the
 same conservatism as `reference_db` taking the louder shoulder. On a one-bin fill the head, tail and
 peak are the same bin and it degenerates to `peak_delta_db`.

@@ -165,7 +165,7 @@ system exists only in the fingerprint dump (`application/gap_fingerprint/contrac
   repeats four strings 227× (~90 KB) in a whole-corpus report, while the cheap root-level `_contracts`
   map is exactly what § 2.6 rejected. The fields that want the contract are recorded there verbatim.
 - ~~**Emit `normalize_gain` on the patch record.**~~ **Moved 2026-08-12** into
-  [TEMP-fill-normalize-boost-only-plan.md](TEMP-fill-normalize-boost-only-plan.md), which edits the
+  [TEMP-fill-normalize-boost-only-plan.md](archive/TEMP-fill-normalize-boost-only-plan.md), which edits the
   site that computes it. It belongs to S5's family — the gain is on the spec
   (`gap_repair_spec.rs:197`) but serialized nowhere, so [pipeline.md](../pipeline.md) § Fill-level
   check can say `fill_level` measures `gained_fill` (*gain applied*) while nothing records what the
@@ -185,7 +185,7 @@ new measurement was required for any of them, and none of it touched S1–S4.
 prominence floor (§2.2 constraint); anything corrective from the residual (§2.1).
 
 **Sequencing against the normalize boost-only change (settled 2026-08-12).**
-[TEMP-fill-normalize-boost-only-plan.md](TEMP-fill-normalize-boost-only-plan.md) stops
+[TEMP-fill-normalize-boost-only-plan.md](archive/TEMP-fill-normalize-boost-only-plan.md) stops
 `compute_fill_gain` from ever attenuating. **It does not block S1 / S2 / S2b / S3 / S5** — the gain is
 computed at `region.rs:2056`, strictly *after* the placement search and seam reconciliation, its only
 consumers are `gained_fill` and `spec.normalize_gain`, and seam scores are Pearson (scale-invariant),
