@@ -596,9 +596,17 @@ fn unified_fit_score_with_repeat(
         weights,
     );
     let mut score = breakdown.total;
+    // A declined candidate returns with every term at zero — see [`UnifiedFitBreakdown`]. Both penalties
+    // are therefore gated on `score.is_finite()`, not just the repeat one: subtracting from NEG_INFINITY
+    // leaves `total` correct either way, but it would leave a non-zero `anchor_penalty` sitting on a
+    // breakdown that has no candidate to attribute it to. Today the only reader filters on
+    // `total.is_finite()` first; the type is public and serialized, so the invariant has to hold in the
+    // value, not in one call site's convention.
     if let Some(prior) = anchor_prior {
-        breakdown.anchor_penalty = prior.penalty_at_start(candidate.placement.start);
-        score -= breakdown.anchor_penalty;
+        if score.is_finite() {
+            breakdown.anchor_penalty = prior.penalty_at_start(candidate.placement.start);
+            score -= breakdown.anchor_penalty;
+        }
     }
     let wf = weights.normalized().waveform_weight;
     if wf > 0.0 && score.is_finite() {
@@ -709,9 +717,17 @@ pub struct UnifiedFillMatch {
     pub structure_pre: f64,
     pub structure_post: f64,
     /// The objective's terms at the **applied** placement — see [`UnifiedFitBreakdown`]. Re-derived once
-    /// after every stage that can move the start, so it describes the bracket actually returned rather than
-    /// any intermediate winner. `None` only if the re-derivation declined (a placement the search accepted
-    /// but that scores as unrankable here would itself be a finding worth seeing as a missing field).
+    /// after every stage that can move the bracket, so it describes the bracket actually returned rather
+    /// than any intermediate winner. `None` only if the re-derivation declined (a placement the search
+    /// accepted but that scores as unrankable here would itself be a finding worth seeing as a missing
+    /// field).
+    ///
+    /// **`total` is not the score the winner was ranked on**, and the two are not interchangeable.
+    /// `snap_fill_to_gap` can change `fill_frames` after ranking, which moves the bracket end and so both
+    /// `structure_post` and the placement fed to `combined_structure_score`. The value here is the
+    /// objective at the placement that was *applied*; the ranking score belongs to the placement that was
+    /// *chosen*, and on a snapped gap those are different candidates. Comparable across gaps and across
+    /// runs (that is what an S2/S2b before/after diff needs); not comparable to any score the search logged.
     pub fit_breakdown: Option<UnifiedFitBreakdown>,
 }
 
@@ -862,21 +878,32 @@ pub(crate) fn match_gap_fill_unified_in_b_with_timeline(
     );
 
     // §7 instrumentation: score the FINAL bracket one more time, purely to report its terms. Every earlier
-    // evaluation belongs to a candidate that a later stage was still allowed to overrule — the end search,
-    // the fine polish, and `snap_fill_to_gap` each move `start_frame` — so the only breakdown that describes
-    // the applied placement is one taken here, after all of them. The seam pair is recomputed at the final
-    // start for the same reason: `wave_pre`/`wave_post` above were measured before `snap_fill_to_gap` ran.
+    // evaluation inside the search belongs to a candidate that a later stage was still allowed to overrule
+    // (the end search and `unified_fine_polish_start` both move `best_start`), and `snap_fill_to_gap` can
+    // still change `fill_frames` after that — which moves the bracket END, and so both the placement passed
+    // to `combined_structure_score` and `structure_post`, which is why those two are read off `alignment`
+    // above rather than reused from the search.
+    //
+    // The seam pair is NOT re-measured. `snap_fill_to_gap` never writes `start_frame` (it only adjusts
+    // `fill_frames`/`post_correlation` — `gap_structure::snap_structure_fill_to_gap`, and it is a no-op
+    // outside the Bool signature), and `waveform_seams_at_start` keys off `start` and `waveform.gap_frames`,
+    // never `alignment.fill_frames`. So a re-measurement here is bit-identical to `wave_pre`/`wave_post` by
+    // construction; an earlier revision paid for one anyway on the strength of a wrong comment.
     //
     // One extra candidate evaluation per gap, against the thousands the search itself runs, and it feeds
     // nothing back into selection — `alignment` is already fixed when this executes.
-    let (final_wave_pre, final_wave_post) =
-        waveform_seams_at_start(input.waveform, alignment.start_frame, &score_channels);
+    //
+    // The `CandidateTimers` here are deliberately thrown away: this call is outside the search's spans, so
+    // there is no bucket to fold them into, and under `CLIP_SYNC_SPAN_TIMING` its cost lands in NO span.
+    // That is a fair trade at one evaluation per gap — but it means the span totals are a floor, not a
+    // total, so if `repeat_penalty_at_placement` ever gets materially dearer, look here before concluding
+    // a profile accounts for the whole phase.
     let fit_breakdown = unified_fit_score_with_repeat(
         UnifiedFitCandidate {
             structure_pre,
             structure_post,
-            wave_pre: final_wave_pre,
-            wave_post: final_wave_post,
+            wave_pre,
+            wave_post,
             placement: fill_bracket_placement(
                 alignment.start_frame,
                 alignment.start_frame + alignment.fill_frames,
@@ -2623,6 +2650,28 @@ mod tests {
         assert!(breakdown.late_start_penalty > 0.0, "{breakdown:?}");
         assert!(breakdown.anchor_penalty > 0.0, "{breakdown:?}");
         assert!(breakdown.repeat_penalty > 0.0, "{breakdown:?}");
+
+        // A DECLINED candidate must report zero for every term, including the anchor penalty — the prior
+        // above is still active here, and an earlier revision applied it unconditionally, leaving a
+        // non-zero `anchor_penalty` on a breakdown with no candidate to attribute it to. `total` looked
+        // right either way (NEG_INFINITY absorbs the subtraction), so only the terms catch this.
+        let declined = unified_fit_score_with_repeat(
+            UnifiedFitCandidate {
+                structure_pre: f64::NEG_INFINITY,
+                structure_post: 0.9,
+                wave_pre: 0.2,
+                wave_post: 0.2,
+                placement: fill_bracket_placement(start, start + 40, nominal_start, 140),
+            },
+            &params,
+            weights,
+            &waveform,
+            Some(prior),
+            RepeatPenaltySource::PerCandidate,
+            &CandidateTimers::default(),
+        );
+        assert_eq!(declined, UnifiedFitBreakdown::declined(), "{declined:?}");
+        assert!(!declined.total.is_finite(), "{declined:?}");
     }
 
     #[test]

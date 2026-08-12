@@ -28,7 +28,7 @@ mod export;
 mod manifest;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clip_sync::{MediaReader, ProgressReporter};
 
@@ -135,6 +135,37 @@ fn listen_entries(
             }
         })
         .collect()
+}
+
+/// Write `listen.json`, warning instead of failing the run when it cannot be written.
+///
+/// **Deliberately not `?`.** Every caller is on its way to returning a completed
+/// [`PatchAudioResult`]: the WAVs are already on disk and the summary already holds the verdicts.
+/// A failed manifest write costs the *index* of that run, not the run — propagating it would throw
+/// away the whole result (and the gap table the caller prints) over a file that can be regenerated
+/// by re-running with the same selection. The WAV writes above it keep their `?` because there the
+/// failure means the artifact itself is incomplete.
+///
+/// `eprintln!` rather than `progress.phase` for the same reason as the other listen warnings: a
+/// missing `listen.json` is indistinguishable from one written by an older binary, so the run must
+/// not be able to hide it under `--progress off`.
+fn write_listen_manifest_or_warn(
+    dir: &Path,
+    a_id: &str,
+    b_id: &str,
+    entries: Vec<ListenEntry>,
+) -> bool {
+    match write_listen_manifest(dir, a_id, b_id, entries) {
+        Ok(()) => true,
+        Err(e) => {
+            eprintln!(
+                "warning: gap-listen: could not write {}: {e}. The clips and the gap table are \
+                 complete; only the disposition index is missing.",
+                dir.join(manifest::LISTEN_MANIFEST_FILE).display(),
+            );
+            false
+        }
+    }
 }
 
 /// Scan → one decode → fingerprint JSON → A/B WAVs → production patch → patched WAVs.
@@ -387,12 +418,12 @@ pub fn run_gap_listen<MR: MediaReader, PW: PatchedAudioWriter>(
         // The manifest is written on this path too, for the same reason the summary is returned:
         // an all-`NotPlanned` run is a finding, and a WAV directory with no `listen.json` would be
         // indistinguishable from one written by an older binary.
-        write_listen_manifest(
+        write_listen_manifest_or_warn(
             &listen.wav_dir,
             &corpus.source.a_source.id,
             &corpus.source.b_source.id,
             listen_entries(&pending, &result.summary, &HashMap::new()),
-        )?;
+        );
         return Ok(result);
     }
 
@@ -415,12 +446,12 @@ pub fn run_gap_listen<MR: MediaReader, PW: PatchedAudioWriter>(
         // `a_patched_wav: false` on every entry, including any the gate patched — which is exactly
         // the distinction between "production refused this" and "production patched it but this
         // run produced no clip to hear it in".
-        write_listen_manifest(
+        write_listen_manifest_or_warn(
             &listen.wav_dir,
             &corpus.source.a_source.id,
             &corpus.source.b_source.id,
             listen_entries(&pending, &patch_result.summary, &HashMap::new()),
-        )?;
+        );
         return Ok(patch_result);
     }
     let patched = patch_result
@@ -528,21 +559,27 @@ pub fn run_gap_listen<MR: MediaReader, PW: PatchedAudioWriter>(
         patched_count += 1;
     }
 
-    write_listen_manifest(
+    let manifest_written = write_listen_manifest_or_warn(
         &listen.wav_dir,
         &corpus.source.a_source.id,
         &corpus.source.b_source.id,
         listen_entries(&pending, &patch_result.summary, &patched_windows),
-    )?;
+    );
 
     progress.phase(&format!(
-        "gap-listen: wrote {} gap clip set(s) ({patched_count} with a patched window{}) \
-         + listen.json to {}",
+        "gap-listen: wrote {} gap clip set(s) ({patched_count} with a patched window{}){} to {}",
         pending.len(),
         if unchanged_count == 0 {
             String::new()
         } else {
             format!(", {unchanged_count} of them UNCHANGED — see warnings above")
+        },
+        // Never claim the index exists when the write warned: the line is the only place a
+        // successful run mentions it, so a stale "+ listen.json" would send a reader looking.
+        if manifest_written {
+            " + listen.json"
+        } else {
+            " (listen.json FAILED — see warning above)"
         },
         listen.wav_dir.display()
     ));

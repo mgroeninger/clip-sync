@@ -16,7 +16,9 @@
 #   * Repair / patch-outcomes: `<DumpDir>/<pair>.json` with `patch.gaps[*].residual`
 #     (from `measure-patch-outcomes.ps1` / `--patch-only --format json`)
 #   * Fingerprint corpus: `<DumpDir>/<pair>/**/*.json` with `gaps[*].residual`
-#     (from `measure-gap-fingerprints.ps1`; skips `corpus.json` / `manifest.json`)
+#     (from `measure-gap-fingerprints.ps1`; skips `corpus.json` / `manifest.json` /
+#     `listen.json` — the last is `--gap-listen`'s sibling manifest, which lands in the same
+#     directory when the WAV root defaults to the JSON root)
 #
 # Buckets (plan §4):
 #   A       — exactly one side `probe_non_finite`, other usable (absent)
@@ -185,7 +187,7 @@ function Find-DumpFiles([string]$Root) {
     $files = [System.Collections.Generic.List[object]]::new()
     # Pair-level repair JSON directly under DumpDir.
     Get-ChildItem -LiteralPath $Root -File -Filter '*.json' -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -notmatch '^(corpus|manifest|fill-level-rollup|census)' } |
+        Where-Object { $_.Name -notmatch '^(corpus|manifest|listen|fill-level-rollup|census)' } |
         ForEach-Object {
             $files.Add([pscustomobject]@{ Pair = $_.BaseName; Path = $_.FullName; Kind = 'repair' })
         }
@@ -193,7 +195,7 @@ function Find-DumpFiles([string]$Root) {
     Get-ChildItem -LiteralPath $Root -Directory -ErrorAction SilentlyContinue | ForEach-Object {
         $pair = $_.Name
         Get-ChildItem -LiteralPath $_.FullName -Recurse -File -Filter '*.json' -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -notmatch '^(corpus|manifest)\.json$' } |
+            Where-Object { $_.Name -notmatch '^(corpus|manifest|listen)\.json$' } |
             ForEach-Object {
                 $files.Add([pscustomobject]@{ Pair = $pair; Path = $_.FullName; Kind = 'fingerprint' })
             }

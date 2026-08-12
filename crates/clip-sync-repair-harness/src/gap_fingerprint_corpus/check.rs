@@ -808,11 +808,7 @@ fn list_library_files(dir: &Path) -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = rd
         .flatten()
         .map(|e| e.path())
-        .filter(|p| {
-            p.extension().and_then(|x| x.to_str()) == Some("json")
-                && p.file_name().and_then(|n| n.to_str()) != Some("manifest.json")
-                && p.file_name().and_then(|n| n.to_str()) != Some("corpus.json")
-        })
+        .filter(|p| super::is_per_gap_library_file(p))
         .collect();
     files.sort();
     files
@@ -1127,6 +1123,28 @@ mod tests {
         assert_eq!(report.placed, 1);
         assert_eq!(report.patches, 1);
         assert_eq!(report.skips, 1);
+    }
+
+    /// `--gap-listen`'s disposition manifest lands in the **fingerprint** dir whenever the WAV root
+    /// defaults to the JSON root — the bare-flag form, and the common one. The library is identified
+    /// by exclusion, so an unlisted side-channel file reads as an extra gap and every listened dump
+    /// fails its health check with a bogus count mismatch.
+    #[test]
+    fn a_listen_manifest_beside_the_corpus_is_not_counted_as_a_gap() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("1");
+        write_healthy_pair(&dir);
+        write(
+            &dir,
+            "listen.json",
+            r#"{"_contract":"…","a_id":"aaaaaaaa","b_id":"bbbb","exported_gap_count":1,
+                "entries":[{"stem":"aaaaaaaa_bbbb_t00-00-00_g000_full","index":0,
+                            "disposition":"patched","a_patched_wav":true}]}"#,
+        );
+
+        let report = check_dirs(&[root.path().to_path_buf()], &HealthCheckOptions::default());
+        assert!(report.ok(), "{}", report.summary_text());
+        assert_eq!(report.gaps, 2, "the dump still has exactly two gaps");
     }
 
     #[test]

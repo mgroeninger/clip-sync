@@ -408,14 +408,20 @@ Optional `residual_db`, `floor_db`, `headroom_db` (worst-side scalars) are prese
 `normalize_gain` (added 2026-08-12) is the loudness gain the splice applied to this fill: `1.0` when `normalize_fill` is off, when dual-fit produced the fill (never normalized), or when the **boost-only** policy declined to touch a fill already at or above A's border level; `> 1.0` when a quiet fill was raised (bounded by `max_fill_gain_db`). It is **never below 1.0** — runs before 2026-08-12 could attenuate down to `-max_fill_gain_db`, and this field is how you tell the two vintages apart. It exists to make `fill_level` readable: those fields are measured on the *gained* fill, so without the gain a loud fill and a boosted quiet one are indistinguishable, and `peak_delta_db` / `edge_delta_db` cannot be compared across a gain-policy change. **Absence means the run predates the field, not unity** — dumps in `gap-files/` written before 2026-08-12 carry no `normalize_gain` at all, and a roll-up must hold those rows out rather than default them. See [pipeline.md](pipeline.md) § Fill normalization.
 
 `fit_terms` (added 2026-08-12) breaks the unified fit objective into the terms that produced the applied
-placement, so a placement can be explained rather than only located. `total` is the score the bracket search
-ranked on; `structure_combined` and `waveform_min` are the two weighted terms (`total` = `structure_weight ×
+placement, so a placement can be explained rather than only located. `total` is the objective evaluated at that
+placement; `structure_combined` and `waveform_min` are the two weighted terms (`total` = `structure_weight ×
 structure_combined` + `waveform_weight × waveform_min`, minus the three penalties); `late_start_penalty`,
 `anchor_penalty` and `repeat_penalty` are each recorded as the **positive amount subtracted**, so a zero means
 that prior did not fire. Two asymmetries matter when reading them: `late_start_penalty` applies only to
 *forward* slides (a backward slide is unpenalized), and `waveform_min` is a **min over the two shoulders**, so
 a placement can improve it by degrading the better shoulder. The terms are measured at the placement that was
 actually applied — after the end search, the fine polish and the gap snap — not at any intermediate winner.
+
+**`total` is not the score the search ranked on**, despite being the same formula. The gap snap can change the
+fill length after ranking, which moves the bracket end and so both `structure_post` and the placement the
+structure term is scored against; on a snapped gap the applied placement is a different candidate from the
+chosen one. So `total` is comparable **across gaps and across runs** — which is what a before/after diff of a
+scoring change needs — but not to any score the search itself reported.
 
 `fit_terms` is **omitted** when the placement did not come from the unified objective: dual-fit / silence-splice
 rescues (`dual_fit_used: true`) and the legacy structure-only gate path. Absence on a bracket patch means the

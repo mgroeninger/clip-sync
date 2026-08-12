@@ -391,7 +391,11 @@ pub(crate) fn pair_dirs(root: &Path) -> Vec<PathBuf> {
     out
 }
 
-/// True if `dir` holds a `corpus.json`, or any non-`manifest` `*.json` (per-gap library files).
+/// True if `dir` holds a `corpus.json`, or any per-gap library `*.json`.
+///
+/// Side-channel files are excluded deliberately: a `--gap-listen` WAV root holds `listen.json` and
+/// nothing else parseable, and calling that a pair dir would report a directory of audio as an
+/// unreadable corpus.
 pub(crate) fn is_pair_dir(dir: &Path) -> bool {
     if dir.join("corpus.json").is_file() {
         return true;
@@ -401,11 +405,7 @@ pub(crate) fn is_pair_dir(dir: &Path) -> bool {
         .into_iter()
         .flatten()
         .flatten()
-        .any(|e| {
-            let p = e.path();
-            p.extension().and_then(|x| x.to_str()) == Some("json")
-                && p.file_name().and_then(|n| n.to_str()) != Some("manifest.json")
-        })
+        .any(|e| super::is_per_gap_library_file(&e.path()))
 }
 
 pub(crate) fn pair_label(root: &Path, pair_dir: &Path) -> String {
@@ -426,10 +426,7 @@ fn read_pair(dir: &Path) -> Option<CorpusFile> {
     let mut seen: BTreeMap<usize, GapEntry> = BTreeMap::new();
     for entry in std::fs::read_dir(dir).ok()?.flatten() {
         let p = entry.path();
-        if p.extension().and_then(|e| e.to_str()) != Some("json") {
-            continue;
-        }
-        if p.file_name().and_then(|n| n.to_str()) == Some("manifest.json") {
+        if !super::is_per_gap_library_file(&p) {
             continue;
         }
         if let Some(file) = read_corpus_json(&p) {

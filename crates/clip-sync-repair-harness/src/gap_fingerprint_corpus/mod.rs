@@ -20,6 +20,31 @@ mod check;
 mod report;
 mod schema;
 
+use std::path::Path;
+
+/// Files a dump directory may hold that are **not** per-gap library files.
+///
+/// The library is identified by exclusion — every other `*.json` in the dir is one gap's corpus —
+/// so anything the writers add beside it must be listed here or it inflates the gap count. That is
+/// not hypothetical: `listen.json` (`--gap-listen`'s disposition manifest) lands in this directory
+/// whenever the WAV root defaults to the JSON root, which is the bare-flag form.
+const NON_LIBRARY_JSON: [&str; 3] = ["corpus.json", "manifest.json", "listen.json"];
+
+/// Is `path` one gap's library JSON, as opposed to a whole-corpus or side-channel file?
+///
+/// Single authority for the question, because it is asked from three places (health-check counting,
+/// merged-library reads, pair-dir detection) and a blocklist that drifts between them reads as
+/// corrupt dumps rather than as a stale filter.
+pub(crate) fn is_per_gap_library_file(path: &Path) -> bool {
+    if path.extension().and_then(|x| x.to_str()) != Some("json") {
+        return false;
+    }
+    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    !NON_LIBRARY_JSON.contains(&name)
+}
+
 pub use analysis::{
     analyze_dirs, curated_gap_cell_projected_rows, curated_gap_cell_rows, drift_eps_from_env,
     gap_rows_from_corpus_json, tail_secs_from_env,
