@@ -95,27 +95,39 @@ system exists only in the fingerprint dump (`application/gap_fingerprint/contrac
   `pre_correlation` / `post_correlation`, so not even the winning scalar survives the search. Emitting
   the terms means changing that return type and threading them through — a separate change, not a
   deletion. Filed as its own §7 item.
-- **Always serialize `dual_fit_used` and `anchor_seam_used`** (drop `skip_serializing_if = "is_false"`,
-  `gap_tags.rs:297-304`). Absence currently means *declined* but reads as *disabled* — the error that
-  produced the first version of S2b. Two bools per gap is not a size argument.
-- **Contract `status.patched`.** Reuse `MetricContract` (a plain serde struct; nothing gates on it).
-  Minimum set: `align_adjustment_secs` (signed slide of the chosen fill start off nominal — *not* a
-  lag), `placement_slide_frames` (unsigned, and **≠ `|align_adjustment| × 48000` on 82/227** — §3.3),
-  `fit_path` (names the **boundary grid**, not the fit path — `baseline_only` does not mean dual-fit
-  was off; `gap_tags.rs:325`), `pre/post_correlation` (seam scores at the chosen placement, min-reduced
-  into the objective — §4.2).
+- ~~**Always serialize `dual_fit_used` and `anchor_seam_used`**~~ **DONE 2026-08-12.**
+  `skip_serializing_if = "is_false"` dropped from both bools on `GapTags` *and* on
+  `GapPatchStatus::Patched`; `false` now always appears and means *declined / baseline*, never
+  *disabled* — the error that produced the first version of S2b. The golden fixture
+  (`tests/fixtures/full_surface_repair.json`) was revised deliberately at three insertion points, both
+  `is_false` helpers went with it, and `docs/json-output.md` replaced its "omitted when false"
+  sentence. Landed alongside a `LAG_DECISION_CONTRACT` fix in the dump: its `not` key now says
+  *"prominence is not uniqueness — no exclusion radius, see `top2_spacing_ms`"*, the misreading §3.3b
+  made.
+- ~~**Contract `status.patched`.**~~ **Moved 2026-08-12 to [BACKLOG.md](../../BACKLOG.md) §
+  "Fingerprint contract follow-ups (C3)"** — it is a reporting-system question that outlives this
+  investigation, and it sits next to the deferred `--fingerprint-contracts` knob because both wait on
+  the same measurement. Two obstacles, not just unwritten code: `Contracted<T>` needs a `T` to flatten
+  and `Patched` is an enum variant with inline fields in a *domain* type (`contract.rs` deliberately
+  keeps reader metadata out of those); and per-gap stamping that costs nothing in a one-gap dump file
+  repeats four strings 227× (~90 KB) in a whole-corpus report, while the cheap root-level `_contracts`
+  map is exactly what § 2.6 rejected. The fields that want the contract are recorded there verbatim.
 - ~~**Emit `normalize_gain` on the patch record.**~~ **Moved 2026-08-12** into
   [TEMP-fill-normalize-boost-only-plan.md](TEMP-fill-normalize-boost-only-plan.md), which edits the
   site that computes it. It belongs to S5's family — the gain is on the spec
   (`gap_repair_spec.rs:197`) but serialized nowhere, so [pipeline.md](../pipeline.md) § Fill-level
   check can say `fill_level` measures `gained_fill` (*gain applied*) while nothing records what the
   gain was — but it is not this plan's to land. Tracked here only so the foot-gun audit stays complete.
-- **Contract `prominence` in `lag_decision`.** It has a block already, but `peak_r − second_peak_r`
-  with **no exclusion radius** (`measure.rs:366`) is unreadable without `top2_spacing_ms`; the `not`
-  key should say so (§2.2 withdrew a conclusion for want of it).
+- ~~**Contract `prominence` in `lag_decision`.**~~ **DONE 2026-08-12**, folded into the bullet above:
+  `peak_r − second_peak_r` carries **no exclusion radius** (`measure.rs:366`), so the `not` key now
+  points the reader at `top2_spacing_ms` (§2.2 withdrew a conclusion for want of it). Both edited
+  strings stay under `CONTRACT_MAX_LEN`, and `not` still opens with the sibling wire key
+  `lag_editorial` that `every_not_names_a_sibling_first` requires.
 
-*Exit:* the four bullets that remain here land or are declined with a reason (the fifth moved to the
-normalize PR). No new measurement is required for any of them.
+*Exit:* **reached 2026-08-12.** Three bullets landed (`waveform_adjustment_secs` deleted, both bools
+always serialized, `lag_decision`'s `not` fixed); two were declined here with a reason and re-filed
+where the work belongs — `normalize_gain` to the normalize PR, `status.patched` to BACKLOG § C3. No
+new measurement was required for any of them, and none of it touched S1–S4.
 
 **Not doing yet:** δ calibration (§6) — n = 2 cannot fix a threshold, and S1 makes waiting free; a
 prominence floor (§2.2 constraint); anything corrective from the residual (§2.1).
