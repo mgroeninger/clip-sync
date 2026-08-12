@@ -12,7 +12,7 @@ that need two distinct fixes and share only a symptom.
 |---|---|---|
 | what went wrong | a near-nominal placement existed and **lost on score** | **nothing near nominal was ever scored** — 18 of 20 brackets died at `structure_floor` |
 | reads as | **source** | **gate** / scoring-objective |
-| the fix | **S2** — a near-nominal search prior | **S2b** — the `min` reduction over shoulders |
+| the fix | **S2** — a near-nominal prior, via backward `LATE_START_PENALTY` (§4.1c) | **S2b** — the `min` reduction over shoulders |
 | aliasing? | surface *is* periodic (480.5 ms comb, §4.3) but the true peak still ranks first | no — flat floor, 9.6× margin (§4.3) |
 
 Consequences for sequencing, all already reflected in §0: **S1 is correct to record under either
@@ -85,15 +85,11 @@ crate**. It is nonetheless validated (`config.rs:922`), CLI-settable (`cli/mod.r
 (`repair-harness/src/patch_audio.rs:332`), and documented as live in `README.md:535` and
 `docs/gap-fill-modes.md:562`. The only mention inside a placement-search file is `gap_structure.rs:294`,
 a comment *declining* to use it. A documented 0.5 s bound that no code reads is a defect regardless of
-this investigation. Two
-outcomes, both terminal: wire it, or delete it. **Do not wire it as a veto** — pair 31's genuine
-−1.15 s placements at #9/#11/#12 are correct and a bare cap would refuse them, converting two bad
-repairs into three unrepaired holes. Wire it as a **search prior** (penalize distant candidates so a
-near-nominal candidate wins ties), for which the mechanism already exists in shape:
-`fill_anchor_search_prior_weight` (`infrastructure/config.rs`, "penalize unified-search candidates far
-from patch-anchor prediction", 0 = off). A prior fixes 26/g6 — a placement at −15.8 ms scored 0.378
-against the applied 0.366 (§4) — and is inert where nothing near nominal scores at all, which is
-exactly pair 31's correct large slides.
+this investigation. ~~Two outcomes, both terminal: wire it, or delete it.~~ **Do not wire it as a veto**
+— pair 31's genuine −1.15 s placements at #9/#11/#12 are correct and a bare cap would refuse them,
+converting two bad repairs into three unrepaired holes. Dual-fit does **not** rescue them: it is on by
+default, but its seam-local search is ±600 ms around nominal and those slides are double that
+(§4.1b).
 
 > **Re-scoped 2026-08-12 (§4.1a).** `fill_anchor_search_prior_weight` is a **template, not a switch**:
 > it is fully plumbed but gated behind `AnchoredRetryPass::Second` + a populated anchor table + a
@@ -105,7 +101,21 @@ exactly pair 31's correct large slides.
 > 2026-08-12**: the terms and all three subtractive priors now ship as `status.patched.fit_terms`
 > (§7), so an S2 experiment is checkable against a repair report rather than by ear. S2 is unblocked.
 
-*Exit:* the knob is enforced or removed, and 26/g6 is re-run to confirm the prior moves it.
+> **Settled 2026-08-12 (§4.1c) — the two outcomes collapse to one.** "Wire it as a prior" buys a single
+> measured gap (26/g6, a 0.012 margin), does nothing for pair 31 (whose placements are *correct*), and
+> would leave a knob named `max_…` that maxes nothing — the field name, its validation and both doc sites
+> all promise a hard bound. The prior it would build already exists in better shape as
+> `LATE_START_PENALTY`. **So: (1) delete the knob** — field, validation (`config.rs:922`), CLI flag
+> (`cli/mod.rs:111`), harness setter (`repair-harness/src/patch_audio.rs:332`), and both doc claims
+> (`README.md:535`, `docs/gap-fill-modes.md:562`); **(2) separately, extend `LATE_START_PENALTY` to
+> backward slides** and check the effect by diffing `status.patched.fit_terms` over the 227 patched gaps.
+> If that needs its own tuning, add `fill_fit_early_start_penalty_scale`, not a seconds-valued cap.
+
+*Exit:* **(1)** `max_fill_align_adjustment_secs` is gone from config, validation, CLI, harness and docs;
+**(2)** the backward-penalty experiment has a `fit_terms` diff over the 227 patched gaps showing whether
+26/g6 moves to the −15.8 ms placement and pair 31 #9/#11/#12 do **not** move. A null result on (2) is a
+real answer — it retires the small-slide-prior hypothesis for 26/g6 and hands it to S2b/§2 — but (1)
+lands either way.
 
 **S2b — Fix the `min` reduction when one shoulder is unmatchable (§4.2). 31/g7's actual defect.**
 31/g7 has no placement where both shoulders score well (its post border has no match in B: dual-fit
@@ -641,9 +651,10 @@ the "enforce it" framing**. A bare magnitude cap is the wrong instrument in eith
   near nominal was ever *scored* there, so bounding the slide only removes the one candidate that
   survived.
 
-**S2's resolution is therefore: wire it as a search prior, or delete it — never as a veto.** As a prior
-it fixes 26/g6, where a placement at −15.8 ms scored 0.378 against the applied 0.366, and stays inert
-where nothing near nominal scores at all.
+~~**S2's resolution is therefore: wire it as a search prior, or delete it — never as a veto.**~~
+**Superseded 2026-08-12 — see §4.1c. The resolution is: delete it, and express the near-nominal
+preference as a backward `LATE_START_PENALTY` instead.** The "wire it as a prior" branch survived one
+question too few; the prior it would build already exists in better form.
 
 #### 4.1a What the objective already contains (read 2026-08-12, before S2 starts)
 
@@ -676,10 +687,11 @@ terms: *"only applies with `--fill-offset anchored-retry`"*. The corpus runs are
 only `if placement.start > placement.nominal_start` — it penalizes **late/forward** starts and leaves
 backward slides free. §1: *"A backward slide … lands the donor window on material A has already played
 — a shoulder repeat by construction. A forward slide cannot duplicate."* Both failures slid backward.
-**The objective penalizes the safe direction and not the dangerous one.** Whether the right S2 is a new
-symmetric prior or simply extending this penalty to the backward side is now an open design question —
-and the backward extension is the cheaper experiment, since the term, its scale knob
-(`late_start_penalty_scale`) and its normalization already exist.
+**The objective penalizes the safe direction and not the dangerous one.** ~~Whether the right S2 is a
+new symmetric prior or simply extending this penalty to the backward side is now an open design
+question~~ — **settled 2026-08-12 (§4.1c): extend this penalty.** The term, its scale knob
+(`late_start_penalty_scale`) and its normalization already exist, and it is the near-nominal prior S2
+was going to build by other means.
 
 This also does not retire the §2 residual guard: a cap refuses large slides indiscriminately, whereas
 the guard asks whether the slide *disagrees with local registration* — again, pair 31's genuine
@@ -724,6 +736,63 @@ The split is itself informative: on 26/g6 the evidence for a near-nominal placem
 lost on score; on 31/g7 the structure stage eliminated every near-nominal candidate before seam
 scoring. Those are different defects and may need different fixes — do not average them into one
 verdict.
+
+#### 4.1b Dual-fit cannot rescue a vetoed placement here (checked 2026-08-12)
+
+The "three unrepaired holes" claim above was made inside the bracket path and said nothing about the
+fallback. Checked directly, the claim survives, for a reason worth recording so nobody re-derives it:
+
+- **`dual_fit` is on by default** (`config.rs:176`, `#[serde(default = "default_true")]`; `--no-dual-fit`
+  disables). So a bracket refusal *does* reach the fallback on a default run.
+- **But dual-fit's reach is ±600 ms.** Each shoulder is fitted seam-locally within
+  `max_lag_frames = 0.6 × sample_rate` (`patch_audio/region.rs:546`, mirroring the analyzer's
+  `SEAM_LOCAL_SEARCH_MS = 600`), centred on the **nominal** `b_mapped_start` /
+  `b_mapped_start + gap_frames`. Pair 31's −1.15 s placements are roughly **double** that half-width, so
+  dual-fit declines those gaps whether or not the bracket path refused them. There is no rescue to hope
+  for.
+- **Eligibility for a cap-veto is undefined today.** `dual_fit_eligible` (`region.rs:584`) is
+  `request.dual_fit && !matches!(fail, StructureAlignmentFailed)`, and no `SeamGateFailure` variant means
+  "slid too far". Reusing `StructureAlignmentFailed` would additionally falsify the A2 comment there
+  (*"structure search never scored a bracket, so there is nothing exhausted for dual-fit to rescue"*) —
+  a capped bracket **did** score.
+
+**Scope note.** "A veto turns a bad repair into an unrepaired hole" is therefore only unconditionally
+true **outside** ±600 ms of nominal. Inside that band dual-fit may well rescue a vetoed placement, and
+the argument would have to be remade. This is itself an argument for the prior over the veto on cleaner
+grounds than were given: a prior never produces a refusal, so it needs no interaction analysis with the
+fallback at all.
+
+#### 4.1c Decision: delete the knob; put the prior on `LATE_START_PENALTY` (2026-08-12)
+
+Pressing on what "wire it as a prior" actually buys:
+
+- **It does nothing for pair 31 #9/#11/#12.** Those placements are *correct*. Leaving them alone was the
+  entire point of preferring a prior to a veto — so none of the benefit is on that side.
+- **The measured benefit is one gap.** 26/g6, where a −15.8 ms placement scored 0.378 against the applied
+  0.366 — a margin of **0.012** — plus whatever unmeasured gaps share that shape.
+- **The name would become a lie.** `max_fill_align_adjustment_secs` is a seconds-valued *bound*; the
+  field name, the validation (`config.rs:922`) and both doc sites (`README.md:535`,
+  `docs/gap-fill-modes.md:562`) all promise a hard cap. Wiring it as a soft prior means rewriting all
+  three to say something the name contradicts — a knob called `max_…` that maxes nothing.
+- **The mechanism already exists in the right shape.** `LATE_START_PENALTY` (`gap_fill_fit.rs:28`,
+  applied `:445` as `LATE_START_PENALTY * late_frac * weights.late_start_penalty_scale`) *is*
+  "penalize distance from nominal": proportional, per-candidate, already config-scaled, and now visible
+  in `fit_terms` (§7).
+
+**So S2's two outcomes are not "wire it or delete it". They are:**
+
+1. **Delete `max_fill_align_adjustment_secs`** — the field, its validation, the CLI flag
+   (`cli/mod.rs:111`), the harness setter (`repair-harness/src/patch_audio.rs:332`), and both doc claims.
+   A documented 0.5 s bound that no code reads is a defect on its own terms, independent of this
+   investigation's outcome.
+2. **Separately, run the symmetric-penalty experiment** (§4.1a(b)): extend `LATE_START_PENALTY` to
+   backward slides and diff `status.patched.fit_terms` across the corpus's 227 patched gaps. If it closes
+   26/g6 without moving pair 31, the near-nominal prior exists and lives where it belongs. If it needs
+   its own tuning, add **`fill_fit_early_start_penalty_scale`** — a name that is true of what it does.
+
+**Unverified:** whether a backward penalty at the default 0.08 scale is large enough to close 26/g6's
+0.012 margin. That is exactly what the experiment measures, and `fit_terms` makes it a report diff
+rather than a listening session.
 
 ### 4.2 31/g7 is *not* an aliasing failure (2026-08-11)
 
@@ -936,9 +1005,11 @@ threshold.
   (§4.1): plumbed, validated, CLI- and harness-settable, documented as live in `README.md:535` and
   `docs/gap-fill-modes.md:562`, and **read by nothing**. Not a loose end any more — it is **S2**, and
   S2's rule is narrower than the "wire it to the placement search or delete it" this bullet used to
-  say: **wire it as a search prior or delete it, never as a veto** (a bare cap would break pair 31's
-  genuine −1.15 s placements). A documented 0.5 s bound that silently does nothing is still worse
-  than neither.
+  say: ~~wire it as a search prior or delete it, never as a veto~~ — **settled 2026-08-12 (§4.1c):
+  delete it.** Never a veto (a bare cap would break pair 31's genuine −1.15 s placements, which
+  dual-fit cannot rescue — §4.1b), and not a prior either, because the prior belongs on
+  `LATE_START_PENALTY` rather than on a knob whose name promises a hard bound. A documented 0.5 s
+  bound that silently does nothing is still worse than neither.
 - ~~**`waveform_adjustment_secs` is a dead field**~~ — **deleted 2026-08-12** (§0 S5). What it *should*
   have reported is now its own open item: **surface the winning candidate's `structure_combined` and
   `waveform_min`.** Both are locals inside `unified_fit_score` (`gap_fill_fit.rs:391-399`), which
