@@ -42,6 +42,106 @@ whether the fix belongs in the placement search or in a new guard (Phase A), and
 and **withdrawn** — see the plan before re-proposing pair-level drift correction, correlation gain,
 a prominence floor, or a level threshold.
 
+### Repeat-at-seam prior is inert on every winner; one branch is unreachable
+
+Found 2026-08-13 reading `status.patched.fit_terms` over
+`gap-files/2026-08-12-fit-terms-baseline/` (39 pairs, **128** patched gaps — note `6.json` is
+zero-length, so that pair needs re-running before the count is quoted as final). `anchor_penalty`
+and `repeat_penalty` are `0.0` on **all 128**. The two zeros mean different things and only one is
+a question.
+
+`anchor_penalty` is a **configuration** zero and needs no work: `anchor_search_prior_for_gap`
+(`patch_audio/region.rs:158`) requires all four of `fill_mode = fit`, a weight > 0 (default `0.0`),
+a non-empty `PatchAnchorTable`, and `AnchoredRetryPass::Second` — i.e. `--fill-offset
+anchored-retry`. Corpus runs are default `Recommended`, so the prior was never constructed. See the
+registration plan § 4.1a for why enabling it would test the pair-level drift model that § 1.1
+already refuted.
+
+`repeat_penalty` is a **behavioural** zero and is the item. The term is enabled (`weight 0.4`,
+`repeat_window_frames = border_frames`), the correlations are genuinely measured per candidate, and
+`fit_terms` is a real re-score of the applied placement (`gap_fill_fit.rs:938`) — the branch simply
+never fires. `repeat_penalty_from_correlations` (`:540`) has three arms:
+
+| arm | condition | value |
+|---|---|---|
+| 1 | `wave_min < 0.45` and `max(repeat_pre, repeat_post) > 0.55` | `repeat_max` |
+| 2 | `repeat_post > 0.55` and `post_seam > 0.55` and `post_seam − pre_seam > 0.35` | `repeat_post` |
+| 3 | `repeat_sum > 1.1` and `wave_min < 0.45` | `repeat_sum × 0.5` |
+
+**Arm 3 is unreachable, and no configuration reaches it.** It shares arm 1's `wave_min` guard, so it
+is only evaluated when `repeat_max ≤ 0.55` — and `repeat_sum ≤ 2 · repeat_max ≤ 1.1` for any pair of
+reals, so its own condition cannot hold there. All three constants are private `const f64`
+(`gap_fill_fit.rs:46-48`), settable from nothing; `fill_repeat_penalty_weight` scales the *result*,
+after the branch. `git log -L46,48` shows they were introduced together in `92b8920a` and never
+edited, so this has been dead since it was written. It misses by exactly zero:
+`REPEAT_SUM_CEILING` is precisely `2 × REPEAT_CORR_THRESHOLD`, and `1.1 → 1.09` (or `0.55 → 0.56`)
+makes it live — for the case it was evidently written to catch, a **symmetric** repeat where both
+shoulders duplicate at ~0.55 and neither side alone clears the threshold.
+
+**Also established: the seam-weak guard is not what blocks it.** `waveform_min < 0.45` on **107 of
+128** winners (median 0.367, max 0.600), so arms 1 and 3 are armed on 84% of the corpus. The binding
+condition is the 0.55 threshold on the repeat correlation itself. Of the 21 winners with
+`wave_min ≥ 0.45`, exactly **one** satisfies arm 2's seam half (`post > 0.55` and
+`post − pre > 0.35`), and its `repeat_post` was under threshold too.
+
+**The work: emit `repeat_pre` / `repeat_post` on the winner, alongside `fit_terms`.** The re-score at
+`gap_fill_fit.rs:938` already computes both (`RepeatPenaltySource::PerCandidate` →
+`repeat_correlations_at_placement`) and throws them away after reducing them to a penalty; carrying
+the pair out costs **no** extra correlation, only a wider return type — the same shape of change as
+`fit_terms` itself, and it needs a `--patch-only --format json` run, no oracle cost. What the data
+would settle, none of which is answerable today:
+
+- **Whether 0.55 is miscalibrated for this material, or the detector is looking at the wrong
+  window.** Today "the penalty is zero" is all we have. With the pair it becomes "the correlation was
+  0.31 against a 0.55 threshold" — a calibration statement — or "it was 0.62 and arm 1 *did* fire on
+  losing candidates", which is a different finding entirely.
+- **Whether arm 3 should be repaired or deleted.** If repeat pairs cluster well under 0.5 on both
+  sides, arm 3 is redundant *and* arm 1 is mis-set, and the whole prior is inert for reasons
+  unrelated to which arm is live. If pairs show up straddling ~0.5/0.5, arm 3 was pointed at a real
+  population and the ceiling is the bug. Do not change either constant before this is measured.
+- **Whether the prior does work we cannot see.** `fit_terms` reports the **winner only**, and a
+  penalty that demotes a candidate below a rival removes it from the report by construction — so a
+  winner-side zero is also what a *working* penalty looks like. The winner's own pair partly closes
+  this (on the 107 seam-weak winners the zero does mean that placement's repeat correlation was under
+  threshold), but ranking the rivals needs per-candidate capture, which is a bigger change and not
+  proposed here.
+- **Whether the two ear-confirmed shoulder-duplication gaps score high here.** 26/g6 and 31/g7 are
+  the defect this prior nominally exists to catch; the corpus baseline contains 26/g6 (backward
+  1.450 s). If their `repeat_pre` is unremarkable, the prior is aimed at the wrong quantity and the
+  registration residual (§ Fill placement, above) is the only live discriminator.
+
+**`REPEAT_CORR_THRESHOLD` has a second consumer — do not retune it as if the penalty owned it.**
+`score_extend_short_fill_to_gap_frames` (`gap_fill_fit.rs:1748-1779`) uses the same `0.55` as a
+**stop condition** when a B bracket comes back shorter than the A gap: it extends one frame at a
+time while `min(pre, post)` does not fall **and** `next_repeat <= REPEAT_CORR_THRESHOLD &&
+next_repeat <= prev_repeat + ε`, then zero-pads whatever is left. The measurement is the same
+`fill_repeat_correlations` (via `placement_repeat_post`, `:1666`) but differs in three ways worth
+holding onto: it scores the **post side only**, it runs on the **assembled fill** rather than a B
+haystack candidate, and it is a **veto**, not a weight — `fill_repeat_penalty_weight` does not reach
+it, so setting the weight to `0` disables the penalty while leaving this one live.
+
+The directions are opposed, which is what makes a blind retune dangerous. Lowering the threshold to
+make the penalty fire **tightens** the extension stop: extension halts earlier, fills get shorter,
+and more of the gap is zero-padded — a change to delivered audio on short-bracket gaps, arriving as
+a side effect of a scoring experiment. Raising it loosens extension in exactly the cases where a
+repeat is the reason to stop. Two consequences for whoever picks this up:
+
+- **The instrumentation should cover both.** The emit above captures the *placement* pair; the
+  extension loop's `prev_repeat` / `next_repeat` trajectory and its stop reason (`score_ok` vs
+  `repeat_ok`, or the `ext_frames` exhaustion break) are separately worth recording, because today it
+  is unknown whether the `0.55` arm ever binds there or whether the monotone `next_repeat <=
+  prev_repeat` clause always stops first. If it is always the monotone clause, the threshold is free
+  to move on this side and the calibration question collapses to the penalty alone.
+- **Split the constant before changing it, not after.** If the corpus says the penalty wants a lower
+  threshold, give the two consumers their own constants rather than moving the shared one — they are
+  answering different questions (*"is this placement a duplicate?"* vs *"has extending this fill
+  started duplicating?"*) and only coincidentally agree on a number today.
+
+Related: `docs/json-output.md` § `fit_terms` records what each zero means; `docs/gap-fill-modes.md`
+§ Fit unified search records that the thresholds are hard-coded, that the knob only scales the
+result, and that the same threshold gates short-bracket extension; `docs/gap-repair-guide.md`'s knob
+table carries the short form.
+
 ### Fill normalize boosts against a non-local reference (ear-confirmed defect)
 
 **Ear-confirmed 2026-08-12.** Pair 19 gap 14 (`g013`) is the corpus's **only** "audible — too loud"

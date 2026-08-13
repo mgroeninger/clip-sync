@@ -412,7 +412,23 @@ placement, so a placement can be explained rather than only located. `total` is 
 placement; `structure_combined` and `waveform_min` are the two weighted terms (`total` = `structure_weight ×
 structure_combined` + `waveform_weight × waveform_min`, minus the three penalties); `late_start_penalty`,
 `anchor_penalty` and `repeat_penalty` are each recorded as the **positive amount subtracted**, so a zero means
-that prior did not fire. Two asymmetries matter when reading them. `late_start_penalty` is **one field for two
+that prior did not fire *at this placement*.
+
+**A zero does not mean the prior is doing no work, and the two zeros do not mean the same thing.** Over the
+2026-08-12 39-pair baseline both are `0.0` on all 128 patched gaps, for unrelated reasons. `anchor_penalty` is a
+**configuration** zero: the prior is only constructed under `--fill-offset anchored-retry` (second pass), with
+`fill_anchor_search_prior_weight > 0` (default `0.0`) and a non-empty patch-anchor table, so on any default run
+it is structurally absent rather than declined. `repeat_penalty` is a **behavioural** zero: the term is enabled
+at stock config and its correlations are measured on every candidate, but its thresholds are not reached. Note
+these terms are reported for the **winning** placement only — a penalty that demoted a rival below the winner
+leaves no trace in the report at all, so "zero on every gap" bounds what the prior did to the *chosen*
+placement and says nothing about the candidates it removed. And `repeat_penalty: 0.0` does **not** mean the
+repeat correlation had no effect on this gap: the same hard-coded `0.55` threshold is separately a stop
+condition for short-bracket extension, which is a veto this weight neither scales nor disables, and which
+changes the delivered fill length rather than any reported term. See BACKLOG § "Repeat-at-seam prior is inert
+on every winner" and [gap-fill-modes.md](gap-fill-modes.md) § Fit unified search.
+
+Two asymmetries matter when reading them. `late_start_penalty` is **one field for two
 directions**: a *forward* slide is scaled by `fill_fit_late_start_penalty_scale` (default `1.0`), a *backward*
 one by `fill_fit_early_start_penalty_scale` (default `0.0`, i.e. unpenalized), so at stock config a non-zero
 value here always means a forward slide — but under a non-default early scale it does not, and the direction

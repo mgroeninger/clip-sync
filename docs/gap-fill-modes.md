@@ -239,6 +239,23 @@ legacy skips on those gaps).
 - B slide radius: **`--fill-border-search-secs`** (default **10 s**).
 - Haystack extract also uses context, margin, length slack, and extension slack — see config example in README.
 
+**Repeat-at-seam prior (`fill_repeat_penalty_weight`, default `0.4`).** Subtracted from the score above. It is
+a *different* window from the seam Pearson: it correlates A's pre-border tail against the **head of the B fill
+interior** (and A's post-border head against the fill's tail), asking whether the donor repeats material A has
+already played. It fires on one of two live conditions — weak seams (`min(pre, post) < 0.45`) with a repeat
+correlation above **0.55**, or a lopsided post seam (`post > 0.55`, `post − pre > 0.35`) with a post repeat
+above 0.55. **Those thresholds are hard-coded, not config**: the weight scales the penalty *after* the
+condition is evaluated, so raising it makes an already-firing penalty heavier and cannot make a non-firing one
+fire. Setting it to `0` disables the term outright. On the 2026-08-12 39-pair baseline it is `0.0` on every
+patched gap's winning placement — see BACKLOG § "Repeat-at-seam prior is inert on every winner" before tuning
+it on the strength of the guide's "↑ `fill_repeat_penalty_weight`" advice for boundary gaps.
+
+The same repeat correlation, at the same hard-coded `0.55`, is **also the stop condition for short-bracket
+extension** (below) — where it acts as a veto rather than a weight, so `fill_repeat_penalty_weight = 0` turns
+the penalty off and leaves that one running. The two move together and in opposite directions: a lower
+threshold makes the placement penalty more sensitive *and* halts extension earlier, producing shorter fills and
+more zero-pad. Treat the constant as shared, not as the penalty's.
+
 ### Gate waveform gate
 
 - Pearson at the structure winner’s seams.
@@ -571,6 +588,8 @@ Most keys below drive **fit** placement. `dual_fit` is shared: G6 rescue runs af
 | `dual_fit` | `true` | `--no-dual-fit` | G6 per-shoulder rescue after scored gate skip (**both** fit and gate) |
 
 **Fit-mode short B bracket:** when structure match returns fewer frames than the A gap, fit mode greedily extends into contiguous B audio frame-by-frame while padded `min(pre, post)` does not fall and `fill_repeat_correlations` post-repeat stays bounded; remaining frames are zero-padded. Gate mode still blind-extends then pads.
+
+"Stays bounded" is two clauses, both of which stop extension on the first frame that fails: the post repeat must stay **at or below the same hard-coded `0.55`** the placement penalty uses, *and* it must not increase from the previous frame. This is the **second consumer** of that constant (see § Fit unified search) and it differs from the penalty in three ways — post side only, measured on the **assembled fill** rather than a B candidate, and a **veto** that `fill_repeat_penalty_weight` does not scale or disable. So a threshold change made to tune placement scoring also changes delivered fill length here: lower stops extension sooner and zero-pads more. Which of the two clauses actually binds in practice has not been measured.
 
 CLI: `--fill-fit-structure-weight`, `--fill-fit-waveform-weight`, and the B haystack flags above override config when passed on the command line.
 
