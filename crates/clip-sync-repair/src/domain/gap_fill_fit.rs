@@ -403,8 +403,9 @@ fn fill_bracket_placement(
 /// `total` is the value the search ranks on and is **byte-identical** to what the old `f64` return produced;
 /// every other field is a report of a term already computed on that path. The penalties are stored as the
 /// **positive amount subtracted**, so `total` = weighted terms − `late_start_penalty` − `anchor_penalty` −
-/// `repeat_penalty`. A declined candidate carries `total: NEG_INFINITY` with terms left at zero — read
-/// `total.is_finite()` before attributing anything.
+/// `repeat_penalty`. `repeat_pre` / `repeat_post` are the Pearson pair that branch consumed — diagnostic
+/// inputs, not terms of `total`. A declined candidate carries `total: NEG_INFINITY` with terms left at
+/// zero — read `total.is_finite()` before attributing anything.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize)]
 pub struct UnifiedFitBreakdown {
     /// The ranked score. The only field the search itself reads.
@@ -422,6 +423,10 @@ pub struct UnifiedFitBreakdown {
     pub anchor_penalty: f64,
     /// Weighted shoulder-repeat penalty (`repeat_penalty_weight × waveform_weight × penalty`).
     pub repeat_penalty: f64,
+    /// Repeat-window Pearson, pre shoulder. Not a term of `total`.
+    pub repeat_pre: f64,
+    /// Repeat-window Pearson, post shoulder. Not a term of `total`.
+    pub repeat_post: f64,
 }
 
 impl UnifiedFitBreakdown {
@@ -645,22 +650,53 @@ fn unified_fit_score_with_repeat(
         }
     }
     let wf = weights.normalized().waveform_weight;
-    if wf > 0.0 && score.is_finite() {
-        let penalty = match repeat_source {
-            RepeatPenaltySource::Fixed(penalty) => penalty,
-            RepeatPenaltySource::Banded(corr) => {
-                repeat_penalty_from_correlations(corr, candidate.wave_pre, candidate.wave_post)
+    if score.is_finite() {
+        match repeat_source {
+            RepeatPenaltySource::Fixed(penalty) => {
+                if wf > 0.0 {
+                    breakdown.repeat_penalty = waveform.repeat_penalty_weight * wf * penalty;
+                    score -= breakdown.repeat_penalty;
+                }
             }
-            RepeatPenaltySource::PerCandidate => repeat_penalty_at_placement(
-                waveform,
-                candidate.placement.start,
-                candidate.wave_pre,
-                candidate.wave_post,
-                timers,
-            ),
-        };
-        breakdown.repeat_penalty = waveform.repeat_penalty_weight * wf * penalty;
-        score -= breakdown.repeat_penalty;
+            RepeatPenaltySource::Banded(corr) => {
+                breakdown.repeat_pre = corr.pre;
+                breakdown.repeat_post = corr.post;
+                if wf > 0.0 {
+                    let penalty = repeat_penalty_from_correlations(
+                        corr,
+                        candidate.wave_pre,
+                        candidate.wave_post,
+                    );
+                    breakdown.repeat_penalty = waveform.repeat_penalty_weight * wf * penalty;
+                    score -= breakdown.repeat_penalty;
+                }
+            }
+            RepeatPenaltySource::PerCandidate => {
+                // Same early-out as `repeat_penalty_at_placement`: a zero window must not be
+                // floored to a 1-frame Pearson, and a zero weight skips the Pearson in the
+                // search loop. The applied-placement re-score passes `Banded` instead when it
+                // wants the pair even with the penalty off.
+                if wf > 0.0
+                    && waveform.repeat_penalty_weight > 0.0
+                    && waveform.repeat_window_frames > 0
+                {
+                    let corr = repeat_correlations_at_placement(
+                        waveform,
+                        candidate.placement.start,
+                        timers,
+                    );
+                    breakdown.repeat_pre = corr.pre;
+                    breakdown.repeat_post = corr.post;
+                    let penalty = repeat_penalty_from_correlations(
+                        corr,
+                        candidate.wave_pre,
+                        candidate.wave_post,
+                    );
+                    breakdown.repeat_penalty = waveform.repeat_penalty_weight * wf * penalty;
+                    score -= breakdown.repeat_penalty;
+                }
+            }
+        }
     }
     breakdown.total = score;
     breakdown
@@ -930,11 +966,26 @@ pub(crate) fn match_gap_fill_unified_in_b_with_timeline(
     // One extra candidate evaluation per gap, against the thousands the search itself runs, and it feeds
     // nothing back into selection — `alignment` is already fixed when this executes.
     //
+    // Repeat source is `Banded` with a freshly measured pair whenever the window is live, so
+    // `fit_terms.repeat_pre` / `repeat_post` are real Pearsons even when `repeat_penalty_weight` is
+    // 0 (the search loop still skips that Pearson). A zero window must not be floored to a 1-frame
+    // Pearson — that path stays `PerCandidate`, which early-outs and leaves the pair at 0.0.
+    //
     // The `CandidateTimers` here are deliberately thrown away: this call is outside the search's spans, so
     // there is no bucket to fold them into, and under `CLIP_SYNC_SPAN_TIMING` its cost lands in NO span.
     // That is a fair trade at one evaluation per gap — but it means the span totals are a floor, not a
     // total, so if `repeat_penalty_at_placement` ever gets materially dearer, look here before concluding
     // a profile accounts for the whole phase.
+    let report_timers = CandidateTimers::default();
+    let repeat_source = if input.waveform.repeat_window_frames > 0 {
+        RepeatPenaltySource::Banded(repeat_correlations_at_placement(
+            input.waveform,
+            alignment.start_frame,
+            &report_timers,
+        ))
+    } else {
+        RepeatPenaltySource::PerCandidate
+    };
     let fit_breakdown = unified_fit_score_with_repeat(
         UnifiedFitCandidate {
             structure_pre,
@@ -952,8 +1003,8 @@ pub(crate) fn match_gap_fill_unified_in_b_with_timeline(
         weights,
         input.waveform,
         anchor_prior,
-        RepeatPenaltySource::PerCandidate,
-        &CandidateTimers::default(),
+        repeat_source,
+        &report_timers,
     );
 
     Some(UnifiedFillMatch {
@@ -2687,6 +2738,10 @@ mod tests {
         assert!(breakdown.late_start_penalty > 0.0, "{breakdown:?}");
         assert!(breakdown.anchor_penalty > 0.0, "{breakdown:?}");
         assert!(breakdown.repeat_penalty > 0.0, "{breakdown:?}");
+        assert!(
+            breakdown.repeat_pre.max(breakdown.repeat_post) > REPEAT_CORR_THRESHOLD,
+            "firing repeat penalty must report the pair that crossed the threshold: {breakdown:?}"
+        );
 
         // A DECLINED candidate must report zero for every term, including the anchor penalty — the prior
         // above is still active here, and an earlier revision applied it unconditionally, leaving a
@@ -2709,6 +2764,98 @@ mod tests {
         );
         assert_eq!(declined, UnifiedFitBreakdown::declined(), "{declined:?}");
         assert!(!declined.total.is_finite(), "{declined:?}");
+    }
+
+    /// The reported pair is the input to the branch, not a restatement of `repeat_penalty`. Strong
+    /// seams over a duplicated border leave the penalty at zero (arm 1 needs `wave_min < 0.45`) while
+    /// the Pearson itself is high — the case a winner-side `repeat_penalty: 0.0` could not distinguish
+    /// from "correlation was 0.31 against 0.55". And `Banded` still carries the pair when the weight
+    /// is 0, which is how the applied-placement re-score reports it with the penalty off.
+    #[test]
+    fn fit_breakdown_reports_repeat_pair_even_when_penalty_is_zero() {
+        use crate::domain::gap_structure::StructureMatchParams;
+
+        let params = StructureMatchParams {
+            gap_frames: 40,
+            bin_frames: 20,
+            search_radius_frames: 100,
+            fill_length_slack_frames: 0,
+            max_fine_adjustment_frames: 0,
+            silence_peak_fraction: 0.01,
+            absolute_silence_rms: 0.0,
+        };
+        let weights = UnifiedFitWeights {
+            structure_weight: 0.4,
+            waveform_weight: 0.6,
+            ..Default::default()
+        };
+        let b_mono: Vec<f64> = (0..400)
+            .map(|i| ((i % 20) as f64 / 20.0 * std::f64::consts::TAU).sin())
+            .collect();
+        let b_ch = vec![b_mono.clone()];
+        let a_pre: Vec<f64> = b_mono[80..96].to_vec();
+        let a_post: Vec<f64> = b_mono[136..152].to_vec();
+        let templates = SeamTemplates {
+            a_pre: &a_pre,
+            a_post: &a_post,
+            a_pre_ch: std::slice::from_ref(&a_pre),
+            a_post_ch: std::slice::from_ref(&a_post),
+            b_mono: &b_mono,
+            b_ch: &b_ch,
+        };
+        let waveform = WaveformSeamContext {
+            templates: &templates,
+            gap_frames: 40,
+            pre_window: 16,
+            post_window: 16,
+            b_total_frames: b_mono.len(),
+            repeat_window_frames: 16,
+            repeat_penalty_weight: 1.0,
+        };
+        let candidate = || UnifiedFitCandidate {
+            structure_pre: 0.9,
+            structure_post: 0.9,
+            wave_pre: 0.9,
+            wave_post: 0.9,
+            placement: fill_bracket_placement(100, 140, 100, 140),
+        };
+        let timers = CandidateTimers::default();
+        let strong_seams = unified_fit_score_with_repeat(
+            candidate(),
+            &params,
+            weights,
+            &waveform,
+            None,
+            RepeatPenaltySource::PerCandidate,
+            &timers,
+        );
+        assert_eq!(strong_seams.repeat_penalty, 0.0, "{strong_seams:?}");
+        assert!(
+            strong_seams.repeat_pre.max(strong_seams.repeat_post) > REPEAT_CORR_THRESHOLD,
+            "duplicated border must still report a high pair: {strong_seams:?}"
+        );
+
+        let corr = repeat_correlations_at_placement(&waveform, 100, &timers);
+        let waveform_off = WaveformSeamContext {
+            repeat_penalty_weight: 0.0,
+            ..waveform
+        };
+        let weight_off = unified_fit_score_with_repeat(
+            candidate(),
+            &params,
+            weights,
+            &waveform_off,
+            None,
+            RepeatPenaltySource::Banded(corr),
+            &timers,
+        );
+        assert_eq!(weight_off.repeat_penalty, 0.0, "{weight_off:?}");
+        assert_eq!(weight_off.repeat_pre, corr.pre, "{weight_off:?}");
+        assert_eq!(weight_off.repeat_post, corr.post, "{weight_off:?}");
+        assert!(
+            weight_off.repeat_pre.max(weight_off.repeat_post) > REPEAT_CORR_THRESHOLD,
+            "Banded must carry the pair with the penalty off: {weight_off:?}"
+        );
     }
 
     /// S2 (§4.1c): the backward half of the distance-from-nominal prior. Two properties matter and neither

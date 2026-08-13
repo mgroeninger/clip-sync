@@ -1119,6 +1119,8 @@ mod tests {
                         late_start_penalty: 0.03,
                         anchor_penalty: 0.01,
                         repeat_penalty: 0.02,
+                        repeat_pre: 0.31,
+                        repeat_post: 0.42,
                     }),
                 },
             ),

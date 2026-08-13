@@ -401,7 +401,7 @@ Orthogonal gap classification tags. `plan_skip_reason`, `fit_path`, and `signatu
 
 Externally tagged (serde default): exactly one of the following keys.
 
-- `{"patched": {"pre_correlation": number, "post_correlation": number, "align_adjustment_secs": number, "structure_trusted": bool, "confidence": "high"|"marginal", "gap_start_adjust_frames": number, "gap_end_adjust_frames": number, "residual_db": number, "floor_db": number, "headroom_db": number, "anchor_seam_used": bool, "anchor_bracket_move_frames": number, "dual_fit_used": bool, "normalize_gain": number, "fit_terms": {"total": number, "structure_combined": number, "waveform_min": number, "late_start_penalty": number, "anchor_penalty": number, "repeat_penalty": number}}}`
+- `{"patched": {"pre_correlation": number, "post_correlation": number, "align_adjustment_secs": number, "structure_trusted": bool, "confidence": "high"|"marginal", "gap_start_adjust_frames": number, "gap_end_adjust_frames": number, "residual_db": number, "floor_db": number, "headroom_db": number, "anchor_seam_used": bool, "anchor_bracket_move_frames": number, "dual_fit_used": bool, "normalize_gain": number, "fit_terms": {"total": number, "structure_combined": number, "waveform_min": number, "late_start_penalty": number, "anchor_penalty": number, "repeat_penalty": number, "repeat_pre": number, "repeat_post": number}}}`
 
 Optional `residual_db`, `floor_db`, `headroom_db` (worst-side scalars) are present when residual was measured; omitted otherwise. `anchor_seam_used` and `dual_fit_used` are **always serialized, including when `false`** (changed 2026-08-12; both were omitted-when-false before that). `false` on `dual_fit_used` means the A3 dual-fit path (G6) did not carry this gap — it ran and declined, or was never reached — and has never meant the path was disabled; the old absence was read that way at least once. `false` on `anchor_seam_used` means baseline-throat placement. When `dual_fit_used` is `true`, this gap was rescued by dual-fit after the bracket search exhausted — see [gap-fill-modes.md](gap-fill-modes.md) § Dual-fit rescue. `anchor_bracket_move_frames` is still omitted when 0. Full per-side detail is in `GapPatchOutcome.residual`.
 
@@ -412,14 +412,20 @@ placement, so a placement can be explained rather than only located. `total` is 
 placement; `structure_combined` and `waveform_min` are the two weighted terms (`total` = `structure_weight ×
 structure_combined` + `waveform_weight × waveform_min`, minus the three penalties); `late_start_penalty`,
 `anchor_penalty` and `repeat_penalty` are each recorded as the **positive amount subtracted**, so a zero means
-that prior did not fire *at this placement*.
+that prior did not fire *at this placement*. `repeat_pre` / `repeat_post` (added 2026-08-13) are the
+repeat-window Pearson pair that `repeat_penalty` reduced — diagnostic inputs, not terms of `total`. They are
+always present when `fit_terms` is, including when `repeat_penalty` is `0.0`, so a winner-side zero is readable
+as a calibration statement (`0.31` against a `0.55` threshold) rather than only as "the branch did not fire".
+They are omitted with `fit_terms` when the objective did not run. A zero window (`repeat_window_frames == 0`)
+does not measure, and reports `0.0` / `0.0`.
 
 **A zero does not mean the prior is doing no work, and the two zeros do not mean the same thing.** Over the
 2026-08-12 39-pair baseline both are `0.0` on all 128 patched gaps, for unrelated reasons. `anchor_penalty` is a
 **configuration** zero: the prior is only constructed under `--fill-offset anchored-retry` (second pass), with
 `fill_anchor_search_prior_weight > 0` (default `0.0`) and a non-empty patch-anchor table, so on any default run
 it is structurally absent rather than declined. `repeat_penalty` is a **behavioural** zero: the term is enabled
-at stock config and its correlations are measured on every candidate, but its thresholds are not reached. Note
+at stock config and its correlations are measured on every candidate, but its thresholds are not reached.
+`repeat_pre` / `repeat_post` are how to read that zero; dumps from 2026-08-12 lack the pair. Note
 these terms are reported for the **winning** placement only — a penalty that demoted a rival below the winner
 leaves no trace in the report at all, so "zero on every gap" bounds what the prior did to the *chosen*
 placement and says nothing about the candidates it removed. And `repeat_penalty: 0.0` does **not** mean the

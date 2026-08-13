@@ -530,7 +530,7 @@ Use only when the recommendation matrix is insufficient. Lower floors accept wea
 | `min_fill_correlation` | 0.35 | High tier floor; also caps effective absolute floor |
 | `fill_marginal_margin` | 0.08 | Width of marginal band (default 0.27–0.35) |
 | `fill_absolute_floor` | 0.12 | Hard skip below this `min(pre, post)` |
-| `fill_repeat_penalty_weight` | 0.4 | Down-rank repeat-at-border when seams weak (fit). Scales the penalty only — the correlation thresholds that decide whether it fires are hard-coded, and it is `0.0` on every winner in the 2026-08-12 corpus baseline, so raising it may change nothing. `0` disables the penalty but **not** the short-bracket extension stop, which vetoes on the same hard-coded threshold. See [gap-fill-modes.md](gap-fill-modes.md) § Fit unified search |
+| `fill_repeat_penalty_weight` | 0.4 | Down-rank repeat-at-border when seams weak (fit). Scales the penalty only — the correlation thresholds that decide whether it fires are hard-coded, and it is `0.0` on every winner in the 2026-08-12 corpus baseline, so raising it may change nothing. The winner's `repeat_pre` / `repeat_post` now ship on `fit_terms`. `0` disables the penalty but **not** the short-bracket extension stop, which vetoes on the same hard-coded threshold. See [gap-fill-modes.md](gap-fill-modes.md) § Fit unified search |
 | `fill_border_search_secs` | 10 | B slide radius — larger = more CPU, helps edge-clamped matches |
 | `gap_signature_context_secs` | 3.0 | Structure context; raise for ambiguous long gaps |
 | `anchor_seam_mode` | `auto` | `force` for diagnostics; `off` to disable editorial anchor search |

@@ -248,7 +248,9 @@ above 0.55. **Those thresholds are hard-coded, not config**: the weight scales t
 condition is evaluated, so raising it makes an already-firing penalty heavier and cannot make a non-firing one
 fire. Setting it to `0` disables the term outright. On the 2026-08-12 39-pair baseline it is `0.0` on every
 patched gap's winning placement — see BACKLOG § "Repeat-at-seam prior is inert on every winner" before tuning
-it on the strength of the guide's "↑ `fill_repeat_penalty_weight`" advice for boundary gaps.
+it on the strength of the guide's "↑ `fill_repeat_penalty_weight`" advice for boundary gaps. The winner's
+`repeat_pre` / `repeat_post` now ship on `fit_terms` (2026-08-13) so that zero is a calibration statement
+rather than only a branch outcome.
 
 The same repeat correlation, at the same hard-coded `0.55`, is **also the stop condition for short-bracket
 extension** (below) — where it acts as a veto rather than a weight, so `fill_repeat_penalty_weight = 0` turns

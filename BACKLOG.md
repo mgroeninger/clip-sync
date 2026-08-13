@@ -2,7 +2,7 @@
 
 Open follow-up work for `clip-sync`. See [PLAN.md](PLAN.md) for architecture, [docs/pipeline.md](docs/pipeline.md) for the repair pipeline (phase by phase), [docs/dev/corpus-validation.md](docs/dev/corpus-validation.md) for the test corpus, and [docs/error-mapping.md](docs/error-mapping.md) for error handling. Shipped work is recorded in `docs/dev/archive/*` and git history.
 
-Last updated: 2026-08-11.
+Last updated: 2026-08-13.
 
 **How this doc works**
 
@@ -84,17 +84,16 @@ condition is the 0.55 threshold on the repeat correlation itself. Of the 21 winn
 `wave_min ≥ 0.45`, exactly **one** satisfies arm 2's seam half (`post > 0.55` and
 `post − pre > 0.35`), and its `repeat_post` was under threshold too.
 
-**The work: emit `repeat_pre` / `repeat_post` on the winner, alongside `fit_terms`.** The re-score at
-`gap_fill_fit.rs:938` already computes both (`RepeatPenaltySource::PerCandidate` →
-`repeat_correlations_at_placement`) and throws them away after reducing them to a penalty; carrying
-the pair out costs **no** extra correlation, only a wider return type — the same shape of change as
-`fit_terms` itself, and it needs a `--patch-only --format json` run, no oracle cost. What the data
-would settle, none of which is answerable today:
+**The emit shipped 2026-08-13.** `fit_terms.repeat_pre` / `repeat_post` are the winner's repeat-window
+Pearson pair, diagnostic inputs not terms of `total`. The applied-placement re-score measures them
+whenever `repeat_window_frames > 0` (including when the penalty weight is 0) and they ride the existing
+`fit_terms` plumbing — omitted with it on dual-fit / legacy. A `--patch-only --format json` run, no
+oracle cost. **Do not retune the constants until that run is read.** What the data still has to settle:
 
 - **Whether 0.55 is miscalibrated for this material, or the detector is looking at the wrong
-  window.** Today "the penalty is zero" is all we have. With the pair it becomes "the correlation was
-  0.31 against a 0.55 threshold" — a calibration statement — or "it was 0.62 and arm 1 *did* fire on
-  losing candidates", which is a different finding entirely.
+  window.** Today "the penalty is zero" is all the 2026-08-12 baseline has. With the pair it becomes
+  "the correlation was 0.31 against a 0.55 threshold" — a calibration statement — or "it was 0.62 and
+  arm 1 *did* fire on losing candidates", which is a different finding entirely.
 - **Whether arm 3 should be repaired or deleted.** If repeat pairs cluster well under 0.5 on both
   sides, arm 3 is redundant *and* arm 1 is mis-set, and the whole prior is inert for reasons
   unrelated to which arm is live. If pairs show up straddling ~0.5/0.5, arm 3 was pointed at a real

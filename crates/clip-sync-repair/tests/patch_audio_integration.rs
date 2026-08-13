@@ -544,6 +544,16 @@ fn assert_fit_terms_reported_on_bracket_patches(summary: &clip_sync_repair::doma
             "gap #{} reported an unrankable total: {terms:?}",
             index + 1
         );
+        for (name, value) in [
+            ("repeat_pre", terms.repeat_pre),
+            ("repeat_post", terms.repeat_post),
+        ] {
+            assert!(
+                value.is_finite() && (-1.0..=1.0).contains(&value),
+                "gap #{} {name} is not a Pearson: {terms:?}",
+                index + 1
+            );
+        }
     }
 }
 
