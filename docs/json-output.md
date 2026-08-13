@@ -412,10 +412,14 @@ placement, so a placement can be explained rather than only located. `total` is 
 placement; `structure_combined` and `waveform_min` are the two weighted terms (`total` = `structure_weight ×
 structure_combined` + `waveform_weight × waveform_min`, minus the three penalties); `late_start_penalty`,
 `anchor_penalty` and `repeat_penalty` are each recorded as the **positive amount subtracted**, so a zero means
-that prior did not fire. Two asymmetries matter when reading them: `late_start_penalty` applies only to
-*forward* slides (a backward slide is unpenalized), and `waveform_min` is a **min over the two shoulders**, so
-a placement can improve it by degrading the better shoulder. The terms are measured at the placement that was
-actually applied — after the end search, the fine polish and the gap snap — not at any intermediate winner.
+that prior did not fire. Two asymmetries matter when reading them. `late_start_penalty` is **one field for two
+directions**: a *forward* slide is scaled by `fill_fit_late_start_penalty_scale` (default `1.0`), a *backward*
+one by `fill_fit_early_start_penalty_scale` (default `0.0`, i.e. unpenalized), so at stock config a non-zero
+value here always means a forward slide — but under a non-default early scale it does not, and the direction
+has to be read off the sign of `align_adjustment_secs` instead. And `waveform_min` is a **min over the two
+shoulders**, so a placement can improve it by degrading the better shoulder. The terms are measured at the
+placement that was actually applied — after the end search, the fine polish and the gap snap — not at any
+intermediate winner.
 
 **`total` is not the score the search ranked on**, despite being the same formula. The gap snap can change the
 fill length after ranking, which moves the bracket end and so both `structure_post` and the placement the

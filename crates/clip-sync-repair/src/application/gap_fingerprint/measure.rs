@@ -692,6 +692,8 @@ fn place_on_b(input: &PlaceOnBInput<'_>) -> Option<PlacementScores> {
         waveform_weight: 0.0,
         nominal_bias_scale: 0.0,
         late_start_penalty_scale: 0.0,
+        // Unbiased placement: every distance-from-nominal prior is off here, backward included.
+        early_start_penalty_scale: 0.0,
     };
     let matched = match_gap_fill_unified_in_b(
         &UnifiedFillSearchInput {

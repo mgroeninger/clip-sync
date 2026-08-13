@@ -284,6 +284,23 @@ pub struct UnifiedFitWeights {
     pub nominal_bias_scale: f64,
     /// Scales the late-start penalty when `start > nominal_start`.
     pub late_start_penalty_scale: f64,
+    /// Scales the **early**-start penalty when `start < nominal_start` — the mirror of
+    /// `late_start_penalty_scale` on the backward side. **Defaults to 0.0 (off)**, so the objective is
+    /// bit-identical to its pre-2026-08-12 behaviour until something sets it.
+    ///
+    /// S2 (`TEMP-fill-placement-registration-plan.md` §4.1a(b), §4.1c): the objective's one hard-coded
+    /// directional prior penalizes forward slides only, i.e. the direction §1 says cannot cause the
+    /// misregistration defect — a backward slide lands the donor on material A has already played, a
+    /// shoulder repeat by construction. This knob is how that asymmetry gets tested, as a sweep against a
+    /// same-binary baseline rather than a rebuild.
+    ///
+    /// **Unbounded by design, and that is the thing under test.** `early_frac` is normalized by
+    /// `gap_frames` and is not clamped, so a slide larger than the gap charges more than
+    /// `LATE_START_PENALTY`. At large scales that behaves as a soft veto — the instrument §4.1 rules
+    /// out — while 26/g6 needs only 0.012 to flip. Whether it needs a cap (and whether `gap_frames` is
+    /// even the right normalizer on this side, when backward risk scales with the repeat window) are
+    /// questions for the corpus diff, not for a default.
+    pub early_start_penalty_scale: f64,
 }
 
 impl Default for UnifiedFitWeights {
@@ -293,6 +310,7 @@ impl Default for UnifiedFitWeights {
             waveform_weight: 0.65,
             nominal_bias_scale: 1.0,
             late_start_penalty_scale: 1.0,
+            early_start_penalty_scale: 0.0,
         }
     }
 }
@@ -308,6 +326,7 @@ impl UnifiedFitWeights {
             waveform_weight: self.waveform_weight / sum,
             nominal_bias_scale: self.nominal_bias_scale,
             late_start_penalty_scale: self.late_start_penalty_scale,
+            early_start_penalty_scale: self.early_start_penalty_scale,
         }
     }
 }
@@ -394,8 +413,10 @@ pub struct UnifiedFitBreakdown {
     pub structure_combined: f64,
     /// `min(wave_pre, wave_post)` — the reduction S2b is about.
     pub waveform_min: f64,
-    /// `LATE_START_PENALTY` — subtracted only when `start > nominal_start` (forward slides). Backward
-    /// slides are unpenalized, which §4.1a flags as pointing away from the defect.
+    /// `LATE_START_PENALTY` — the distance-from-nominal prior, in whichever direction the candidate slid.
+    /// Forward slides are scaled by `late_start_penalty_scale` (default 1.0); backward slides by
+    /// `early_start_penalty_scale` (default **0.0**, so backward is unpenalized unless a run opts in —
+    /// see §4.1c). The field does not say which direction fired; `align_adjustment_secs` carries the sign.
     pub late_start_penalty: f64,
     /// `AnchorSearchPrior::penalty_at_start`. Zero unless anchored-retry pass 2 supplied a prior.
     pub anchor_penalty: f64,
@@ -438,11 +459,26 @@ pub fn unified_fit_score(
     );
     let mut score =
         weights.structure_weight * structure_combined + weights.waveform_weight * waveform_min;
+    // One term, two directions, reported in one field. `align_adjustment_secs` already carries the sign of
+    // the slide, so a reader can tell which side fired; splitting the report would also break the
+    // reconstruction identity `fit_breakdown_terms_reconstruct_the_total` guards. The two scales are
+    // separate because there is no reason the safe direction and the dangerous one deserve equal weight —
+    // forward defaults to 1.0, backward to 0.0 (off).
     let mut late_start_penalty = 0.0;
-    if placement.start > placement.nominal_start {
-        let late_frac =
-            (placement.start - placement.nominal_start) as f64 / params.gap_frames.max(1) as f64;
-        late_start_penalty = LATE_START_PENALTY * late_frac * weights.late_start_penalty_scale;
+    let (offset_frames, scale) = if placement.start > placement.nominal_start {
+        (
+            placement.start - placement.nominal_start,
+            weights.late_start_penalty_scale,
+        )
+    } else {
+        (
+            placement.nominal_start - placement.start,
+            weights.early_start_penalty_scale,
+        )
+    };
+    if offset_frames > 0 && scale != 0.0 {
+        let offset_frac = offset_frames as f64 / params.gap_frames.max(1) as f64;
+        late_start_penalty = LATE_START_PENALTY * offset_frac * scale;
         score -= late_start_penalty;
     }
     UnifiedFitBreakdown {
@@ -2672,6 +2708,88 @@ mod tests {
         );
         assert_eq!(declined, UnifiedFitBreakdown::declined(), "{declined:?}");
         assert!(!declined.total.is_finite(), "{declined:?}");
+    }
+
+    /// S2 (§4.1c): the backward half of the distance-from-nominal prior. Two properties matter and neither
+    /// implies the other — that the term FIRES on a backward slide when opted in, and that it is EXACTLY
+    /// inert at the 0.0 default. The second is what lets the S2 sweep use a same-binary baseline: if the
+    /// default moved placement even slightly, the baseline run would no longer be comparable to the
+    /// pre-change corpus, and every diff would be confounded.
+    #[test]
+    fn early_start_penalty_is_inert_at_default_and_mirrors_the_late_one() {
+        use crate::domain::gap_structure::StructureMatchParams;
+
+        let params = StructureMatchParams {
+            gap_frames: 40,
+            bin_frames: 20,
+            search_radius_frames: 100,
+            fill_length_slack_frames: 0,
+            max_fine_adjustment_frames: 0,
+            silence_peak_fraction: 0.01,
+            absolute_silence_rms: 0.0,
+        };
+        let nominal_start = 200usize;
+        // Same magnitude either side of nominal, so the two directions are directly comparable.
+        let offset = 40usize;
+        let score_at = |start: usize, weights: UnifiedFitWeights| {
+            unified_fit_score(
+                0.9,
+                0.9,
+                0.5,
+                fill_bracket_placement(start, start + 40, nominal_start, nominal_start + 40),
+                &params,
+                weights,
+            )
+        };
+
+        let defaults = UnifiedFitWeights {
+            nominal_bias_scale: 0.0, // isolate the directional prior from the structure-tier bias
+            ..Default::default()
+        };
+        assert_eq!(
+            defaults.early_start_penalty_scale, 0.0,
+            "the backward prior must ship off; the S2 baseline depends on it"
+        );
+
+        // Default: forward is charged, backward is free.
+        let late = score_at(nominal_start + offset, defaults);
+        let early = score_at(nominal_start - offset, defaults);
+        assert!(late.late_start_penalty > 0.0, "{late:?}");
+        assert_eq!(early.late_start_penalty, 0.0, "{early:?}");
+
+        // Opted in at parity: the same slide costs the same either way.
+        let symmetric = UnifiedFitWeights {
+            early_start_penalty_scale: 1.0,
+            ..defaults
+        };
+        let early_on = score_at(nominal_start - offset, symmetric);
+        assert!(
+            (early_on.late_start_penalty - late.late_start_penalty).abs() < 1e-12,
+            "backward must mirror forward at equal scale: {early_on:?} vs {late:?}"
+        );
+        assert!(early_on.total < early.total, "{early_on:?} vs {early:?}");
+
+        // The scale is a multiplier, not a switch — a half-weight backward prior charges half.
+        let half = UnifiedFitWeights {
+            early_start_penalty_scale: 0.5,
+            ..defaults
+        };
+        let early_half = score_at(nominal_start - offset, half);
+        assert!(
+            (early_half.late_start_penalty - late.late_start_penalty / 2.0).abs() < 1e-12,
+            "{early_half:?}"
+        );
+
+        // Turning the backward prior on must not disturb the forward side.
+        let late_with_early_on = score_at(nominal_start + offset, symmetric);
+        assert_eq!(
+            late_with_early_on, late,
+            "{late_with_early_on:?} vs {late:?}"
+        );
+
+        // A candidate exactly at nominal is charged by neither direction, at any scale.
+        let at_nominal = score_at(nominal_start, symmetric);
+        assert_eq!(at_nominal.late_start_penalty, 0.0, "{at_nominal:?}");
     }
 
     #[test]

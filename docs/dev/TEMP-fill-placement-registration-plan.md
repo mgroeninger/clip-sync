@@ -1,7 +1,8 @@
 # Fill placement vs local registration — plan
 
-Status: **investigation → delivery. S3 and S5 done (2026-08-12); S2 and S2b unblocked; S1 blocked on
-re-scoping; S4 conditional and unstarted.**
+Status: **investigation → delivery. S3 and S5 done (2026-08-12); S2(1) done; S2(2) / S2b unblocked;
+S2c fix settled (do before trusting `seam_post` vs `fit_terms`); S1 blocked on re-scoping; S4
+conditional and unstarted.**
 
 **The source-vs-gate fork is retired — the answer was "both, on different gaps".** Earlier drafts of
 this document (and §4's exit, since rewritten) treated a single verdict as gating everything
@@ -112,8 +113,10 @@ default, but its seam-local search is ±600 ms around nominal and those slides a
 > If that needs its own tuning, add `fill_fit_early_start_penalty_scale`, not a seconds-valued cap.
 
 *Exit:* **(1)** `max_fill_align_adjustment_secs` is gone from config, validation, CLI, harness and docs;
-**(2)** the backward-penalty experiment has a `fit_terms` diff over the 227 patched gaps showing whether
-26/g6 moves to the −15.8 ms placement and pair 31 #9/#11/#12 do **not** move. A null result on (2) is a
+**(2)** the backward-penalty experiment has a `fit_terms` diff — baseline vs non-zero scale, **same
+binary** — showing whether 26/g6 moves to the −15.8 ms placement and pair 31 #9/#11/#12 do **not** move.
+(The 227-gap figure comes from the 2026-08-05 report, which predates `fit_terms`; the baseline run
+re-establishes the count.) A null result on (2) is a
 real answer — it retires the small-slide-prior hypothesis for 26/g6 and hands it to S2b/§2 — but (1)
 lands either way.
 
@@ -127,20 +130,55 @@ because driving it from a configurable span caused multi-second per-candidate lo
 symbol that no longer exists. Workspace builds, full test suite, clippy and fmt all green; no behaviour
 changed, because nothing read the value.
 
+**(2) IMPLEMENTED 2026-08-12 — shipped inert, awaiting the sweep.** `LATE_START_PENALTY` now applies in
+both directions, with the two sides independently scaled: `fill_fit_late_start_penalty_scale` (forward,
+default **1.0**, unchanged) and the new `fill_fit_early_start_penalty_scale` (backward, default
+**0.0 = off**). Plumbed config → `PatchAudioRequest` → `UnifiedFitWeights`, plus the harness
+`PatchTestOptions`; config-only, no CLI flag. One term, one reported field — both directions land in
+`fit_terms.late_start_penalty`, and `align_adjustment_secs` already carries the sign, so splitting the
+report would have bought nothing and broken the reconstruction identity the unit test guards.
+
+*Why inert by default.* The baseline run and the sweep runs must be the **same binary and the same
+commit**, differing only by config value — otherwise every difference is confounded with the fortnight
+of other changes since the last corpus report (normalize boost-only, `waveform_adjustment_secs`
+removal, `fit_terms` itself). A `0.0` default is what makes the baseline comparable. The unit test
+`early_start_penalty_is_inert_at_default_and_mirrors_the_late_one` pins exactly that: the term fires
+backward when opted in, scales linearly, leaves the forward side untouched, and is **exactly** zero at
+the default.
+
+*The tension the sweep has to resolve.* `offset_frac` is normalized by `gap_frames` and is **not
+clamped**, so a slide longer than the gap charges more than `LATE_START_PENALTY`. One term is being
+asked to do two opposing things: be large enough to close 26/g6's **0.012** margin, and small enough
+that pair 31 #9/#11/#12 — genuine −1.15 s placements, correct and clean by ear — still win. At large
+scales an unbounded proportional penalty *is* a soft veto, the instrument §4.1 rules out. Whether it
+needs a cap, and whether `gap_frames` is even the right normalizer on the backward side (where the risk
+scales with the **repeat window**, not the gap), are questions for the corpus, deliberately not guessed
+at in a default.
+
+**Next: the runs.** (a) a fresh baseline at scale `0.0` — also the first corpus report to carry
+`fit_terms` at all, and the re-validation of S2c's `energy`/`bool` split, both of which currently rest
+on a 2026-08-05 report; (b) the same binary at a few non-zero scales, diffed against (a). These are
+repair-report runs (`--patch-only --format json`), not fingerprint runs — no per-bracket oracle cost, so
+several scale values are affordable.
+
 **S2c — `post_correlation` carries a structure score on snapped Bool gaps (found 2026-08-12 reviewing
-the §7 instrumentation). Not a blocker for S2 — see the corpus split below.**
+the §7 instrumentation). Not a blocker for S2(2)'s energy-gap `fit_terms` diff — see the corpus split
+below — but **land before reading `seam_post` against `fit_terms.waveform_min` as if they share a
+domain.**
 `gap_structure::snap_structure_fill_to_gap:223` does `alignment.post_correlation = snapped_post`, where
 `snapped_post` comes from `score_post_match` — a **structure** match score. Everywhere else
 `post_correlation` is a waveform seam Pearson: `patch_region.rs:1561` reports it as `seam_post`, and
 `:2123` casts it as the gate's post-seam input. So on a snapped gap the gate's post check is made
-against a quantity from the wrong domain.
+against a quantity from the wrong domain, while `fit_terms.waveform_min` stays honest (it is taken
+from the seam pair, not from `alignment`). That disagreement is type confusion on a shared field, not
+a schema gap.
 
 *Confirmed live, not theoretical.* Over the 227-patched-gap corpus report, one Bool gap reports
 `post_correlation: 1.0` exactly, against `pre_correlation: 0.270` (`confidence: marginal`). A waveform
 Pearson of exactly 1.0 on real audio is essentially impossible; a structure score of 1.0 is
 unremarkable. That gap's post-seam check passed on a number that is not a seam correlation.
 
-*Why it does not block S2.* `snap_fill_to_gap` is a **no-op outside the Bool signature**
+*Why it does not block S2(2).* `snap_fill_to_gap` is a **no-op outside the Bool signature**
 (`gap_signature.rs:227` matches only `Bool`/`Bool`), and the corpus is overwhelmingly `energy`:
 
 | `signature_mode` | patched gaps |
@@ -149,17 +187,40 @@ unremarkable. That gap's post-seam check passed on a number that is not a seam c
 | `bool` | **2** |
 
 So S2c reaches at most 2 of 227 gaps (0.9%), and 26/g6 — S2's exit criterion — is `energy` (§3). An S2
-`fit_terms` diff over the 225 energy gaps cannot be confounded by it. It is also invisible in
-`fit_terms` itself, which takes `waveform_min` from the seam pair, not from `alignment`.
+`fit_terms` diff over the 225 energy gaps cannot be confounded by it.
 
-*Two candidate fixes, decide before touching it.* (a) Re-measure the waveform seam after snap and write
-that — correct, but it changes the gate's input on snapped Bool gaps and needs its own validation.
-(b) Give snap its own field and leave `post_correlation` a waveform value throughout — no behaviour
-change, and it makes the conflation visible rather than silently plausible. **(b) is the safer first
-move.** Worth establishing first whether any snapped gap passes its gate *only* because a structure
-score landed in a waveform field — if so, that is a finding in its own right and changes which fix is
-right. *Exit:* `post_correlation` holds one kind of number on every path, and the `1.0` gap either
-reports a real seam correlation or is re-adjudicated.
+> **Settled 2026-08-12 — stop snap from writing correlation fields.** This is accidental dual meaning
+> *on the unified path*, where `post_correlation` is supposed to stay waveform. (The intentional dual
+> meaning under structure-trust — `GapPatchStatus` already says "structure or waveform Pearson" — is a
+> separate, documented case; do not broaden that contract further to paper over snap.)
+>
+> **Preferred fix:**
+> 1. In `snap_structure_fill_to_gap`: keep the accept/reject logic on `snapped_post`, but **only set
+>    `alignment.fill_frames`**. Do not assign `post_correlation`.
+> 2. On the **structure-only** call site (where pre/post are already structure scores), re-score after
+>    snap if accepted: `alignment.post_correlation = score_post_match(..., start + fill_frames, ...)`.
+> 3. On the **unified** path: do nothing else — `wave_pre` / `wave_post` stay; `structure_post` is
+>    already re-derived after snap in `gap_fill_fit.rs`.
+>
+> That restores one meaning per path without new fields, without re-plumbing `FillAlignment`, and
+> without touching S2/S2b. Rejected alternatives: restore `wave_post` after snap in unified only
+> (works, leaves the landmine in snap); add a separate report field / rename (overkill for n=2 —
+> structure after snap already exists as `structure_post`); re-measure waveform post at the snapped end
+> (different seam semantics — don't fold that in here); doc-only (insufficient — the gate reads the
+> same field).
+>
+> **Safety:** a unit test that builds a unified alignment with a waveform post, calls snap with a
+> candidate that would previously overwrite, and asserts `post_correlation` unchanged while
+> `fill_frames` snaps. Optional: when `fit_terms` is present, `fit_terms.waveform_min ≈ min(pre, post)`.
+>
+> Worth checking on the two Bool gaps whether either currently passes its gate *only* because a
+> structure score landed in the waveform field — if so, that is a finding in its own right (gate input
+> changes when the write is removed), but it does not change the fix: the field must stop lying.
+
+*Exit:* `snap_structure_fill_to_gap` never writes `pre_correlation` / `post_correlation`; on the
+unified path those fields remain waveform Pearson through report and gate; the structure-only path
+re-scores post after a successful snap; the previously `1.0` Bool gap either reports a real seam
+correlation or is re-adjudicated.
 
 **S2b — Fix the `min` reduction when one shoulder is unmatchable (§4.2). 31/g7's actual defect.**
 31/g7 has no placement where both shoulders score well (its post border has no match in B: dual-fit

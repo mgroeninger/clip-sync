@@ -385,6 +385,8 @@ Gate legacy path always uses bool structure. CLI: `--gap-signature-mode`.
 
 **Mode-coupled nominal bias:** energy-resolved gaps use `fill_fit_energy_nominal_bias_scale` (default `0.25`) for the distance-from-nominal penalty; bool keeps the base `fill_fit_nominal_bias_scale` (default `1.0`). The lower energy scale lets a confident contour override a **drifted nominal B map** (energy mode self-corrects), while only loosening far-off candidates — sub-second offsets are unaffected. Raise toward `1.0` to restore hard anchoring for energy gaps.
 
+**Directional start penalty (`fill_fit_late_start_penalty_scale` default `1.0`, `fill_fit_early_start_penalty_scale` default `0.0`):** the unified objective charges a distance-from-nominal penalty that grows with how far the chosen start slid, normalized by gap length. The two directions are scaled independently, and **only the forward one is on by default** — a candidate placed *after* nominal is charged, one placed *before* nominal is free. That asymmetry is deliberate but not obviously correct: a backward slide lands the donor window on material A has already played, so it is the direction that can produce an audible shoulder repeat, while a forward slide cannot duplicate. `fill_fit_early_start_penalty_scale` turns the backward half on for experiments; at `0.0` (the default) placement is bit-identical to runs from before the knob existed. Note it is **unbounded** — a slide longer than the gap costs more than the base penalty — so large values behave less like a preference and more like a cap. Config-only, no CLI flag.
+
 **Context length (`gap_signature_context_secs`, default `3.0`):** keep 3 s. Larger values (10 / 30 s) widen the matched signature window for ambiguous/long drift gaps, but the synthetic corpus (contexts 3 / 10 / 30) showed no measurable patch benefit and a longer context costs more B decode/memory per gap. A manual knob to try on a stubborn gap, not a default to raise.
 
 See [Signature context and contour geometry](#signature-context-and-contour-geometry) for where contour is measured on the timeline, how the >5% flat test works, and how that geometry ties to editorial anchor seam.
@@ -552,6 +554,7 @@ Most keys below drive **fit** placement. `dual_fit` is shared: G6 rescue runs af
 | `fill_extract_tail_slack_secs` | `5.0` | `--fill-extract-tail-slack-secs` | B haystack tail beyond refined end (extract / fingerprint `pad_tail`; `max` with align margin) |
 | `fill_repeat_penalty_weight` | `0.4` | `--fill-repeat-penalty-weight` | Penalize repeat-at-seam when seams weak (0 = off) |
 | `fill_fit_structure_weight` | `0.35` | `--fill-fit-structure-weight` | Unified scorer |
+| `fill_fit_early_start_penalty_scale` | `0.0` | — | Penalize starts before nominal (0 = off) |
 | `fill_fit_waveform_weight` | `0.65` | `--fill-fit-waveform-weight` | Unified scorer |
 | `fill_fit_energy_nominal_bias_scale` | `0.25` | — | Distance-from-nominal penalty for energy-resolved gaps (< base `1.0`; energy self-corrects drifted nominal) |
 | `fill_marginal_margin` | `0.08` | — | Warn band below `min_fill_correlation` |

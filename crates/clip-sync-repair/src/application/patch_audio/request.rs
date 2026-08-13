@@ -124,6 +124,8 @@ pub struct PatchRequestSettings {
     pub fill_fit_energy_nominal_bias_scale: f64,
     /// Scales late-start penalty when structure search starts after the nominal map (1.0 = default).
     pub fill_fit_late_start_penalty_scale: f64,
+    /// Scales the early-start penalty when the chosen start precedes the nominal map (0.0 = off, default).
+    pub fill_fit_early_start_penalty_scale: f64,
     /// Fit mode marginal patch band below `min_fill_correlation` (Phase C).
     pub fill_marginal_margin: f32,
     /// Fit mode hard waveform skip floor (Phase C).

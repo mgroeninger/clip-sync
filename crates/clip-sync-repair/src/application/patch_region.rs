@@ -1515,6 +1515,7 @@ fn gate_structure_align(
         waveform_weight: params.settings.fill_fit_waveform_weight,
         nominal_bias_scale,
         late_start_penalty_scale: params.settings.fill_fit_late_start_penalty_scale,
+        early_start_penalty_scale: params.settings.fill_fit_early_start_penalty_scale,
     };
     let structure_timeline = cache.structure_timeline(&signature);
     let search_input = UnifiedFillSearchInput {

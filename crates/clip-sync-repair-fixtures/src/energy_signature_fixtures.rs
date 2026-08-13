@@ -603,6 +603,7 @@ pub fn structure_heavy_weights() -> UnifiedFitWeights {
         // Acceptance fixtures use a wrong nominal map on purpose; isolate structure discrimination.
         nominal_bias_scale: 0.0,
         late_start_penalty_scale: 0.0,
+        early_start_penalty_scale: 0.0,
     }
 }
 

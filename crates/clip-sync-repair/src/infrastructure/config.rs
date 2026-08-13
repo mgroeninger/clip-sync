@@ -233,6 +233,15 @@ pub struct RepairConfig {
     /// Unified fit: scale late-start penalty when candidate start exceeds nominal (1.0 = default).
     #[serde(default = "default_fill_fit_late_start_penalty_scale")]
     pub fill_fit_late_start_penalty_scale: f64,
+    /// Unified fit: scale the **early**-start penalty when the candidate start precedes nominal
+    /// (**0.0 = off, the default** — placement is bit-identical to pre-2026-08-12 runs until set).
+    /// The forward penalty above guards the direction that cannot cause misregistration; this is its
+    /// mirror, shipped inert so S2 can sweep it against a same-binary baseline
+    /// (`docs/dev/TEMP-fill-placement-registration-plan.md` §4.1c). Unbounded: a slide longer than the
+    /// gap charges more than the base penalty, which at large scales approaches a veto — deliberately
+    /// left for the corpus to bound rather than guessed at here.
+    #[serde(default = "default_fill_fit_early_start_penalty_scale")]
+    pub fill_fit_early_start_penalty_scale: f64,
     /// Fit mode: patch band below `min_fill_correlation` with a marginal warning (Phase C).
     #[serde(default = "default_fill_marginal_margin")]
     pub fill_marginal_margin: f32,
@@ -460,6 +469,9 @@ fn default_fill_fit_energy_nominal_bias_scale() -> f64 {
 fn default_fill_fit_late_start_penalty_scale() -> f64 {
     1.0
 }
+fn default_fill_fit_early_start_penalty_scale() -> f64 {
+    0.0
+}
 fn default_fill_marginal_margin() -> f32 {
     crate::domain::gap_fill_fit::DEFAULT_FILL_MARGINAL_MARGIN
 }
@@ -581,6 +593,7 @@ impl Default for RepairConfig {
             fill_fit_nominal_bias_scale: default_fill_fit_nominal_bias_scale(),
             fill_fit_energy_nominal_bias_scale: default_fill_fit_energy_nominal_bias_scale(),
             fill_fit_late_start_penalty_scale: default_fill_fit_late_start_penalty_scale(),
+            fill_fit_early_start_penalty_scale: default_fill_fit_early_start_penalty_scale(),
             fill_marginal_margin: default_fill_marginal_margin(),
             fill_absolute_floor: default_fill_absolute_floor(),
             fill_repeat_penalty_weight: default_fill_repeat_penalty_weight(),
@@ -722,6 +735,7 @@ impl RepairConfig {
             fill_fit_nominal_bias_scale: self.fill_fit_nominal_bias_scale,
             fill_fit_energy_nominal_bias_scale: self.fill_fit_energy_nominal_bias_scale,
             fill_fit_late_start_penalty_scale: self.fill_fit_late_start_penalty_scale,
+            fill_fit_early_start_penalty_scale: self.fill_fit_early_start_penalty_scale,
             fill_marginal_margin: self.fill_marginal_margin,
             fill_absolute_floor: self.fill_absolute_floor,
             fill_repeat_penalty_weight: self.fill_repeat_penalty_weight,
@@ -802,6 +816,10 @@ impl RepairConfig {
             (
                 "fill_fit_late_start_penalty_scale",
                 self.fill_fit_late_start_penalty_scale,
+            ),
+            (
+                "fill_fit_early_start_penalty_scale",
+                self.fill_fit_early_start_penalty_scale,
             ),
             ("fill_marginal_margin", f64::from(self.fill_marginal_margin)),
             ("fill_absolute_floor", f64::from(self.fill_absolute_floor)),
@@ -1048,6 +1066,27 @@ impl RepairConfig {
                 field: "fill_repeat_penalty_weight".into(),
                 reason: "must be non-negative".into(),
             });
+        }
+        // Both start-penalty scales multiply a positive penalty that is then SUBTRACTED from the score, so a
+        // negative scale does not weaken the prior — it inverts it into a reward for sliding away from
+        // nominal. These two exist to be hand-edited for a sweep, which is exactly when a stray sign would
+        // otherwise pass silently.
+        for (field, value) in [
+            (
+                "fill_fit_late_start_penalty_scale",
+                self.fill_fit_late_start_penalty_scale,
+            ),
+            (
+                "fill_fit_early_start_penalty_scale",
+                self.fill_fit_early_start_penalty_scale,
+            ),
+        ] {
+            if value < 0.0 {
+                return Err(ConfigError::InvalidValue {
+                    field: field.into(),
+                    reason: "must be non-negative".into(),
+                });
+            }
         }
         if self.repair_preview
             && (self.output.wav_path.is_some() || self.output.video_path.is_some())
@@ -1447,6 +1486,34 @@ dry_run = true
             format!("{err:?}").contains("fill_repeat_penalty_weight"),
             "unexpected error: {err:?}"
         );
+    }
+
+    #[test]
+    fn rejects_negative_start_penalty_scales() {
+        // A negative scale flips `score -= penalty` into a reward for sliding away from nominal, which would
+        // otherwise run a whole sweep backwards without erroring.
+        for (name, config) in [
+            (
+                "fill_fit_late_start_penalty_scale",
+                RepairConfig {
+                    fill_fit_late_start_penalty_scale: -0.01,
+                    ..RepairConfig::default()
+                },
+            ),
+            (
+                "fill_fit_early_start_penalty_scale",
+                RepairConfig {
+                    fill_fit_early_start_penalty_scale: -0.01,
+                    ..RepairConfig::default()
+                },
+            ),
+        ] {
+            let err = config.validate().expect_err(name);
+            assert!(
+                format!("{err:?}").contains(name),
+                "unexpected error for {name}: {err:?}"
+            );
+        }
     }
 
     #[test]

@@ -151,6 +151,7 @@ pub fn production_repair_config(
         fill_fit_nominal_bias_scale: 0.0,
         fill_fit_energy_nominal_bias_scale: 0.0, // coupling-neutral: matches base
         fill_fit_late_start_penalty_scale: 0.0,
+        fill_fit_early_start_penalty_scale: 0.0,
         min_structure_match_score: 0.0,
         min_fill_correlation: 0.0,
         fill_absolute_floor: -0.05,
@@ -408,6 +409,7 @@ pub fn oracle_baseline_throat_pearson_opt(
         waveform_weight: repair.fill_fit_waveform_weight,
         nominal_bias_scale,
         late_start_penalty_scale: repair.fill_fit_late_start_penalty_scale,
+        early_start_penalty_scale: repair.fill_fit_early_start_penalty_scale,
     };
     let matched = preview.unified_match_on_haystack(fixture, repair.gap_signature_mode, weights)?;
     Some((
