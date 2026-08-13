@@ -1,8 +1,7 @@
 # Fill placement vs local registration — plan
 
-Status: **investigation → delivery. S3 and S5 done (2026-08-12); S2(1) done; S2(2) / S2b unblocked;
-S2c fix settled (do before trusting `seam_post` vs `fit_terms`); S1 blocked on re-scoping; S4
-conditional and unstarted.**
+Status: **investigation → delivery. S3 and S5 done (2026-08-12); S2(1) done; S2c done (2026-08-12);
+S2(2) / S2b unblocked; S1 blocked on re-scoping; S4 conditional and unstarted.**
 
 **The source-vs-gate fork is retired — the answer was "both, on different gaps".** Earlier drafts of
 this document (and §4's exit, since rewritten) treated a single verdict as gating everything
@@ -162,23 +161,25 @@ repair-report runs (`--patch-only --format json`), not fingerprint runs — no p
 several scale values are affordable.
 
 **S2c — `post_correlation` carries a structure score on snapped Bool gaps (found 2026-08-12 reviewing
-the §7 instrumentation). Not a blocker for S2(2)'s energy-gap `fit_terms` diff — see the corpus split
+the §7 instrumentation). ~~Not a blocker for S2(2)'s energy-gap `fit_terms` diff — see the corpus split
 below — but **land before reading `seam_post` against `fit_terms.waveform_min` as if they share a
-domain.**
-`gap_structure::snap_structure_fill_to_gap:223` does `alignment.post_correlation = snapped_post`, where
-`snapped_post` comes from `score_post_match` — a **structure** match score. Everywhere else
-`post_correlation` is a waveform seam Pearson: `patch_region.rs:1561` reports it as `seam_post`, and
-`:2123` casts it as the gate's post-seam input. So on a snapped gap the gate's post check is made
-against a quantity from the wrong domain, while `fit_terms.waveform_min` stays honest (it is taken
-from the seam pair, not from `alignment`). That disagreement is type confusion on a shared field, not
-a schema gap.
+domain.**~~ **DONE 2026-08-12.**
+~~`gap_structure::snap_structure_fill_to_gap:223` does `alignment.post_correlation = snapped_post`, where
+`snapped_post` comes from `score_post_match` — a **structure** match score.~~ (That write is gone —
+snap only mutates `fill_frames` now.) Everywhere else `post_correlation` is a waveform seam Pearson:
+`patch_region.rs:1561` reports it as `seam_post`, and `:2123` casts it as the gate's post-seam input.
+So on a snapped gap the gate's post check **was** made against a quantity from the wrong domain, while
+`fit_terms.waveform_min` stayed honest (it is taken from the seam pair, not from `alignment`). That
+disagreement was type confusion on a shared field, not a schema gap.
 
 *Confirmed live, not theoretical.* Over the 227-patched-gap corpus report, one Bool gap reports
 `post_correlation: 1.0` exactly, against `pre_correlation: 0.270` (`confidence: marginal`). A waveform
 Pearson of exactly 1.0 on real audio is essentially impossible; a structure score of 1.0 is
-unremarkable. That gap's post-seam check passed on a number that is not a seam correlation.
+unremarkable. That gap's post-seam check passed on a number that is not a seam correlation. **Re-check
+that gap on the next corpus report** — it should now report a real seam Pearson (or fail the gate
+honestly if the structure `1.0` was the only reason it passed).
 
-*Why it does not block S2(2).* `snap_fill_to_gap` is a **no-op outside the Bool signature**
+*Why it did not block S2(2).* `snap_fill_to_gap` is a **no-op outside the Bool signature**
 (`gap_signature.rs:227` matches only `Bool`/`Bool`), and the corpus is overwhelmingly `energy`:
 
 | `signature_mode` | patched gaps |
@@ -186,7 +187,7 @@ unremarkable. That gap's post-seam check passed on a number that is not a seam c
 | `energy` | 225 |
 | `bool` | **2** |
 
-So S2c reaches at most 2 of 227 gaps (0.9%), and 26/g6 — S2's exit criterion — is `energy` (§3). An S2
+So S2c reached at most 2 of 227 gaps (0.9%), and 26/g6 — S2's exit criterion — is `energy` (§3). An S2
 `fit_terms` diff over the 225 energy gaps cannot be confounded by it.
 
 > **Settled 2026-08-12 — stop snap from writing correlation fields.** This is accidental dual meaning
@@ -194,7 +195,7 @@ So S2c reaches at most 2 of 227 gaps (0.9%), and 26/g6 — S2's exit criterion �
 > meaning under structure-trust — `GapPatchStatus` already says "structure or waveform Pearson" — is a
 > separate, documented case; do not broaden that contract further to paper over snap.)
 >
-> **Preferred fix:**
+> **Preferred fix (landed):**
 > 1. In `snap_structure_fill_to_gap`: keep the accept/reject logic on `snapped_post`, but **only set
 >    `alignment.fill_frames`**. Do not assign `post_correlation`.
 > 2. On the **structure-only** call site (where pre/post are already structure scores), re-score after
@@ -209,18 +210,14 @@ So S2c reaches at most 2 of 227 gaps (0.9%), and 26/g6 — S2's exit criterion �
 > (different seam semantics — don't fold that in here); doc-only (insufficient — the gate reads the
 > same field).
 >
-> **Safety:** a unit test that builds a unified alignment with a waveform post, calls snap with a
-> candidate that would previously overwrite, and asserts `post_correlation` unchanged while
-> `fill_frames` snaps. Optional: when `fit_terms` is present, `fit_terms.waveform_min ≈ min(pre, post)`.
->
-> Worth checking on the two Bool gaps whether either currently passes its gate *only* because a
-> structure score landed in the waveform field — if so, that is a finding in its own right (gate input
-> changes when the write is removed), but it does not change the fix: the field must stop lying.
+> **Safety:** unit test `snap_does_not_overwrite_waveform_post_correlation` plants a waveform
+> `post_correlation`, forces snap to accept on a higher structure score, and asserts `fill_frames`
+> snaps while `post_correlation` is unchanged.
 
-*Exit:* `snap_structure_fill_to_gap` never writes `pre_correlation` / `post_correlation`; on the
-unified path those fields remain waveform Pearson through report and gate; the structure-only path
-re-scores post after a successful snap; the previously `1.0` Bool gap either reports a real seam
-correlation or is re-adjudicated.
+*Exit:* **met** — `snap_structure_fill_to_gap` never writes `pre_correlation` / `post_correlation`; on
+the unified path those fields remain waveform Pearson through report and gate; the structure-only path
+re-scores post after a successful snap. Corpus re-adjudication of the previously `1.0` Bool gap waits
+on the next report (same run as S2(2)'s baseline).
 
 **S2b — Fix the `min` reduction when one shoulder is unmatchable (§4.2). 31/g7's actual defect.**
 31/g7 has no placement where both shoulders score well (its post border has no match in B: dual-fit

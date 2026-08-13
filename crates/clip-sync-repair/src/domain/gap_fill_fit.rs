@@ -920,10 +920,11 @@ pub(crate) fn match_gap_fill_unified_in_b_with_timeline(
     // to `combined_structure_score` and `structure_post`, which is why those two are read off `alignment`
     // above rather than reused from the search.
     //
-    // The seam pair is NOT re-measured. `snap_fill_to_gap` never writes `start_frame` (it only adjusts
-    // `fill_frames`/`post_correlation` — `gap_structure::snap_structure_fill_to_gap`, and it is a no-op
-    // outside the Bool signature), and `waveform_seams_at_start` keys off `start` and `waveform.gap_frames`,
-    // never `alignment.fill_frames`. So a re-measurement here is bit-identical to `wave_pre`/`wave_post` by
+    // The seam pair is NOT re-measured. `snap_fill_to_gap` never writes `start_frame` and (S2c)
+    // never writes `pre_correlation` / `post_correlation` either — it only adjusts `fill_frames`
+    // (`gap_structure::snap_structure_fill_to_gap`, and it is a no-op outside the Bool signature).
+    // `waveform_seams_at_start` keys off `start` and `waveform.gap_frames`, never
+    // `alignment.fill_frames`. So a re-measurement here is bit-identical to `wave_pre`/`wave_post` by
     // construction; an earlier revision paid for one anyway on the strength of a wrong comment.
     //
     // One extra candidate evaluation per gap, against the thousands the search itself runs, and it feeds

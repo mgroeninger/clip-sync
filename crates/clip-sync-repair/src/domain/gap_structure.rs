@@ -197,11 +197,30 @@ pub fn match_gap_structure_in_b(
         pre_correlation: best_pre,
         post_correlation: best_post,
     };
+    let fill_frames_before_snap = alignment.fill_frames;
     snap_structure_fill_to_gap(&mut alignment, signature, &timeline, params);
+    // Snap only mutates `fill_frames` (S2c). On this structure-only path pre/post are structure
+    // scores, so re-score post at the new end when snap accepted; do not rely on snap to write it.
+    if alignment.fill_frames != fill_frames_before_snap {
+        alignment.post_correlation = score_post_match(
+            signature,
+            &timeline,
+            alignment.start_frame.saturating_add(alignment.fill_frames),
+            params,
+        );
+    }
 
     Some(alignment)
 }
 
+/// Optionally stretch `fill_frames` to `params.gap_frames` when the structure post-match at the
+/// preferred end is within a small tolerance of the current `post_correlation`.
+///
+/// **Does not write `pre_correlation` / `post_correlation`.** Those fields are domain-dependent:
+/// structure scores on the structure-only path, waveform Pearson on the unified path. Stuffing a
+/// structure `score_post_match` into them (the pre-S2c behaviour) made the gate and `seam_post`
+/// report the wrong quantity on snapped Bool gaps. Callers that need an updated structure post
+/// after a successful snap must re-score themselves.
 pub(crate) fn snap_structure_fill_to_gap(
     alignment: &mut FillAlignment,
     signature: &GapContextSignature,
@@ -220,7 +239,6 @@ pub(crate) fn snap_structure_fill_to_gap(
     const SNAP_TOLERANCE: f64 = 0.08;
     if snapped_post + SNAP_TOLERANCE >= alignment.post_correlation {
         alignment.fill_frames = params.gap_frames;
-        alignment.post_correlation = snapped_post;
     }
 }
 
@@ -683,6 +701,80 @@ mod tests {
             alignment.start_frame.abs_diff(62) <= 5,
             "expected stay near nominal, got {}",
             alignment.start_frame
+        );
+    }
+
+    /// S2c: snap may accept on a structure score, but must not stuff that score into
+    /// `post_correlation` — on the unified path that field is waveform Pearson (gate / `seam_post`).
+    #[test]
+    fn snap_does_not_overwrite_waveform_post_correlation() {
+        let channels = 1usize;
+        let bin_frames = 10usize;
+        let gap_frames = 30usize;
+        let start = 60usize;
+        let context = 50usize;
+
+        let mut a = vec![0.0f32; 200];
+        for f in 0..start {
+            write_frame(&mut a, channels, f, false);
+        }
+        for f in start..(start + gap_frames) {
+            write_frame(&mut a, channels, f, false);
+        }
+        for f in (start + gap_frames)..150 {
+            write_frame(&mut a, channels, f, true);
+        }
+        let b = a.clone();
+
+        let params = StructureMatchParams {
+            gap_frames,
+            bin_frames,
+            search_radius_frames: 20,
+            fill_length_slack_frames: 5,
+            max_fine_adjustment_frames: 0,
+            silence_peak_fraction: 0.01,
+            absolute_silence_rms: 0.0,
+        };
+
+        let sig =
+            build_gap_context_signature(&a, channels, start, start + gap_frames, context, &params);
+        let timeline = ActivityTimeline::build(
+            &b,
+            channels,
+            b.len() / channels,
+            bin_frames,
+            params.silence_peak_fraction,
+            params.absolute_silence_rms,
+        );
+
+        let waveform_post = 0.270;
+        let mut alignment = FillAlignment {
+            start_frame: start,
+            fill_frames: gap_frames - 5,
+            pre_correlation: 0.5,
+            post_correlation: waveform_post,
+        };
+
+        let snapped_structure =
+            score_post_match(&sig, &timeline, start + gap_frames, &params);
+        assert!(
+            snapped_structure.is_finite() && snapped_structure + 0.08 >= waveform_post,
+            "precondition: snap must accept (structure={snapped_structure})"
+        );
+        assert!(
+            (snapped_structure - waveform_post).abs() > 0.1,
+            "precondition: structure score must differ from planted waveform value"
+        );
+
+        snap_structure_fill_to_gap(&mut alignment, &sig, &timeline, &params);
+
+        assert_eq!(
+            alignment.fill_frames, gap_frames,
+            "snap should accept and set fill_frames"
+        );
+        assert_eq!(
+            alignment.post_correlation, waveform_post,
+            "snap must not write structure score into post_correlation"
         );
     }
 }
