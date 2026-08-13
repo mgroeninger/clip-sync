@@ -114,9 +114,6 @@ pub struct RepairConfig {
     /// Extra B audio (seconds) extracted on each side of the mapped gap for boundary alignment.
     #[serde(default = "default_fill_align_margin_secs")]
     pub fill_align_margin_secs: f64,
-    /// Maximum slide (seconds) when searching for the best-matching B fill position.
-    #[serde(default = "default_max_fill_align_adjustment_secs")]
-    pub max_fill_align_adjustment_secs: f64,
     /// How far (seconds) to search in B for A's pre-gap border before local alignment.
     #[serde(default = "default_fill_border_search_secs")]
     pub fill_border_search_secs: f64,
@@ -394,9 +391,6 @@ fn default_min_fill_correlation() -> f32 {
 fn default_fill_align_margin_secs() -> f64 {
     1.0
 }
-fn default_max_fill_align_adjustment_secs() -> f64 {
-    0.5
-}
 fn default_fill_border_search_secs() -> f64 {
     10.0
 }
@@ -556,7 +550,6 @@ impl Default for RepairConfig {
             gap_offset_tolerance_secs: default_gap_offset_tolerance_secs(),
             min_fill_correlation: default_min_fill_correlation(),
             fill_align_margin_secs: default_fill_align_margin_secs(),
-            max_fill_align_adjustment_secs: default_max_fill_align_adjustment_secs(),
             fill_border_search_secs: default_fill_border_search_secs(),
             min_border_discovery_secs: default_min_border_discovery_secs(),
             border_standoff_secs: default_border_standoff_secs(),
@@ -703,7 +696,6 @@ impl RepairConfig {
             max_fill_gain_db: self.max_fill_gain_db,
             min_fill_correlation: self.min_fill_correlation,
             fill_align_margin_secs: self.fill_align_margin_secs,
-            max_fill_align_adjustment_secs: self.max_fill_align_adjustment_secs,
             fill_border_search_secs: self.fill_border_search_secs,
             min_border_discovery_secs: self.min_border_discovery_secs,
             border_standoff_secs: self.border_standoff_secs,
@@ -769,10 +761,6 @@ impl RepairConfig {
             ("gap_offset_tolerance_secs", self.gap_offset_tolerance_secs),
             ("min_fill_correlation", f64::from(self.min_fill_correlation)),
             ("fill_align_margin_secs", self.fill_align_margin_secs),
-            (
-                "max_fill_align_adjustment_secs",
-                self.max_fill_align_adjustment_secs,
-            ),
             ("fill_border_search_secs", self.fill_border_search_secs),
             ("min_border_discovery_secs", self.min_border_discovery_secs),
             ("border_standoff_secs", self.border_standoff_secs),
@@ -916,12 +904,6 @@ impl RepairConfig {
         if self.fill_align_margin_secs < 0.0 {
             return Err(ConfigError::InvalidValue {
                 field: "fill_align_margin_secs".into(),
-                reason: "must be non-negative".into(),
-            });
-        }
-        if self.max_fill_align_adjustment_secs < 0.0 {
-            return Err(ConfigError::InvalidValue {
-                field: "max_fill_align_adjustment_secs".into(),
                 reason: "must be non-negative".into(),
             });
         }

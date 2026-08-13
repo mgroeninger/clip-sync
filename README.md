@@ -189,7 +189,6 @@ clip-sync-repair [OPTIONS] <VIDEO_A> <VIDEO_B>
 | `--fingerprint-diagnostics` | off | Include Tier-3 fingerprint fields (`seam_probe`, `wide_envelope`, diagnostic `lag`, `b_levels`); **requires** `--gap-fingerprints` |
 | `--no-structure-trust` | — | Stricter seams (gate only): always run waveform Pearson; no structure skip/soften; both seams required |
 | `--min-fill-correlation <N>` | `0.35` | Waveform seam floor (`min(pre, post)` in fit; gate threshold when waveform runs) |
-| `--max-fill-align-adjust-secs <SECS>` | `0.5` | Legacy structure polish window; **fit** B slide uses `--fill-border-search-secs` |
 | `--fill-border-search-secs <SECS>` | `10` | B slide radius for unified gap-fill search; primary patch performance lever |
 | `--fill-align-margin-secs <SECS>` | `1` | Extra B audio extracted on each side of the mapped gap |
 | `--gap-signature-context-secs <SECS>` | `3` | A audio on each side of the gap used for structure signatures |
@@ -284,7 +283,6 @@ All flags are accepted with `fit`; none are rejected. Gate-only options have no 
 | `--no-short-gap-one-strong-seam` | **No effect** — one-strong-seam is a `gate` shortcut only (`--fill-mode gate`). |
 | `strong_structure_trust`, `partial_structure_waveform_soften` (config) | **No effect on waveform** — structure match still runs; waveform is never skipped for trust. |
 | `--min-fill-correlation` | **Active** — `min(pre, post)` floor; **High** vs **Marginal** tier (`fill_marginal_margin`). |
-| `--max-fill-align-adjust-secs` | Legacy polish window only — use **`--fill-border-search-secs`** for B slide radius. |
 | `--fill-border-search-secs` | **Active** — B slide radius and part of per-gap extract window. |
 | `--fill-align-margin-secs`, `--gap-signature-context-secs`, `--fill-length-slack-secs` | **Active** — B haystack extract padding. |
 | `--fill-offset interpolated` | **Active** — per-gap B map before local search. |
@@ -405,7 +403,6 @@ clip-sync-repair recording_with_gaps.mkv reference.mkv `
 |----------|------------|
 | `--no-structure-trust` | `disable_structure_trust = true` (gate only) |
 | `--min-fill-correlation` | `min_fill_correlation` |
-| `--max-fill-align-adjust-secs` | `max_fill_align_adjustment_secs` |
 | `--border-standoff-secs` | `border_standoff_secs` |
 | `--fill-border-search-secs` | `fill_border_search_secs` |
 | `--fill-align-margin-secs` | `fill_align_margin_secs` |
@@ -532,7 +529,6 @@ gap_offset_tolerance_secs = 0.5
 min_fill_correlation = 0.35
 disable_structure_trust = false   # gate only: true or --no-structure-trust
 fill_align_margin_secs = 1.0
-max_fill_align_adjustment_secs = 0.5
 fill_border_search_secs = 10.0      # fit: B slide radius (default 10; CLI: --fill-border-search-secs)
 min_border_discovery_secs = 2.0
 border_standoff_secs = 0.35

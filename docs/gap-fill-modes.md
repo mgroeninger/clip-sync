@@ -128,7 +128,6 @@ CLI flags are accepted in both modes unless noted. **Effect** differs by mode.
 | `--no-gap-start-extend` | Disables **joint grid** start axis | Disables pre-seam **retry** loop |
 | `--gap-end-extend-max-ms`, `--gap-end-extend-step-ms` | Grid span / step on A (fit) | Retry span / step (gate) |
 | `--crossfade-ms`, `--no-normalize` | **Active** | **Active** |
-| `--max-fill-align-adjust-secs` | Legacy polish window only — **not** the main B search radius in fit | Structure polish window (legacy) |
 | `fill_fit_structure_weight`, `fill_fit_waveform_weight` | Unified scorer weights (config; CLI optional) | Ignored |
 | `fill_marginal_margin`, `fill_absolute_floor` | Warn tier / hard skip (config-only) | Ignored |
 | `anchor_seam_mode`, `max_anchor_bracket_secs`, `max_anchors_per_side`, `anchor_seam_min_*` | **Active** — editorial anchor bracket search when triggered | **No effect** (fit only) |
@@ -237,7 +236,7 @@ legacy skips on those gaps).
 - Scores B candidates with  
   `fill_fit_structure_weight · structure_combined + fill_fit_waveform_weight · min(pre, post)`  
   (defaults **0.35 / 0.65**).
-- B slide radius: **`--fill-border-search-secs`** (default **10 s**), not `--max-fill-align-adjust-secs`.
+- B slide radius: **`--fill-border-search-secs`** (default **10 s**).
 - Haystack extract also uses context, margin, length slack, and extension slack — see config example in README.
 
 ### Gate waveform gate
@@ -559,7 +558,6 @@ Most keys below drive **fit** placement. `dual_fit` is shared: G6 rescue runs af
 | `fill_absolute_floor` | `0.12` | — | Hard skip floor |
 | `gap_end_extend_max_ms` | `500` | `--gap-end-extend-max-ms` | A-boundary grid / gate retries |
 | `gap_end_extend_step_ms` | `20` | `--gap-end-extend-step-ms` | Grid/retry step |
-| `max_fill_align_adjustment_secs` | `0.5` | `--max-fill-align-adjust-secs` | Legacy polish window |
 | `anchor_seam_mode` | `auto` | `--anchor-seam-mode` | Editorial anchor search: `off` \| `auto` \| `force` |
 | `max_anchor_bracket_secs` | `5.0` | `--max-anchor-bracket-secs` | Max anchor bracket span |
 | `max_anchors_per_side` | `5` | `--max-anchors-per-side` | Anchor candidates per side |

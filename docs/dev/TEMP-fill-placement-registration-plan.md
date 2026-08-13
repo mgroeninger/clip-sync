@@ -117,6 +117,50 @@ default, but its seam-local search is ±600 ms around nominal and those slides a
 real answer — it retires the small-slide-prior hypothesis for 26/g6 and hands it to S2b/§2 — but (1)
 lands either way.
 
+**(1) DONE 2026-08-12.** `max_fill_align_adjustment_secs` is gone: the config field, its default, the
+`normalized()` copy, the profile-diff row, the `< 0.0` validation, `PatchAudioRequest`'s field, the
+`--max-fill-align-adjust-secs` flag and its help default, the harness `PatchTestOptions` field and its
+two fixture overrides, the `repair.toml` test fixture line, the README flag-mapping row and config
+sample, and the `gap-fill-modes.md` table row. `gap_structure.rs:294`'s comment — the one place that
+*mentioned* the knob, to decline using it — now records the constraint (a small fixed polish clamp,
+because driving it from a configurable span caused multi-second per-candidate loops) without naming a
+symbol that no longer exists. Workspace builds, full test suite, clippy and fmt all green; no behaviour
+changed, because nothing read the value.
+
+**S2c — `post_correlation` carries a structure score on snapped Bool gaps (found 2026-08-12 reviewing
+the §7 instrumentation). Not a blocker for S2 — see the corpus split below.**
+`gap_structure::snap_structure_fill_to_gap:223` does `alignment.post_correlation = snapped_post`, where
+`snapped_post` comes from `score_post_match` — a **structure** match score. Everywhere else
+`post_correlation` is a waveform seam Pearson: `patch_region.rs:1561` reports it as `seam_post`, and
+`:2123` casts it as the gate's post-seam input. So on a snapped gap the gate's post check is made
+against a quantity from the wrong domain.
+
+*Confirmed live, not theoretical.* Over the 227-patched-gap corpus report, one Bool gap reports
+`post_correlation: 1.0` exactly, against `pre_correlation: 0.270` (`confidence: marginal`). A waveform
+Pearson of exactly 1.0 on real audio is essentially impossible; a structure score of 1.0 is
+unremarkable. That gap's post-seam check passed on a number that is not a seam correlation.
+
+*Why it does not block S2.* `snap_fill_to_gap` is a **no-op outside the Bool signature**
+(`gap_signature.rs:227` matches only `Bool`/`Bool`), and the corpus is overwhelmingly `energy`:
+
+| `signature_mode` | patched gaps |
+|---|---|
+| `energy` | 225 |
+| `bool` | **2** |
+
+So S2c reaches at most 2 of 227 gaps (0.9%), and 26/g6 — S2's exit criterion — is `energy` (§3). An S2
+`fit_terms` diff over the 225 energy gaps cannot be confounded by it. It is also invisible in
+`fit_terms` itself, which takes `waveform_min` from the seam pair, not from `alignment`.
+
+*Two candidate fixes, decide before touching it.* (a) Re-measure the waveform seam after snap and write
+that — correct, but it changes the gate's input on snapped Bool gaps and needs its own validation.
+(b) Give snap its own field and leave `post_correlation` a waveform value throughout — no behaviour
+change, and it makes the conflation visible rather than silently plausible. **(b) is the safer first
+move.** Worth establishing first whether any snapped gap passes its gate *only* because a structure
+score landed in a waveform field — if so, that is a finding in its own right and changes which fix is
+right. *Exit:* `post_correlation` holds one kind of number on every path, and the `1.0` gap either
+reports a real seam correlation or is re-adjudicated.
+
 **S2b — Fix the `min` reduction when one shoulder is unmatchable (§4.2). 31/g7's actual defect.**
 31/g7 has no placement where both shoulders score well (its post border has no match in B: dual-fit
 reaches 0.124 at its own best lag and declines). Reducing by `min` then *prefers* a placement that
@@ -1001,7 +1045,8 @@ threshold.
 - **Two gaps break the frame-672000 identity** (§3.1) by 589 and 4245 frames. Candidates: gap
   refinement moving `refined.start_frame` away from the reported gap start, or the `.max(0.0)` clamp
   on `pad_lead` near track start. Dump-only; needed before the join is used unconditionally.
-- ~~**`max_fill_align_adjustment_secs` appears to be a dead knob**~~ — **confirmed dead 2026-08-12**
+- ~~**`max_fill_align_adjustment_secs` appears to be a dead knob**~~ — **DELETED 2026-08-12** (§0 S2(1));
+  the bullet below is kept for provenance. Confirmed dead 2026-08-12
   (§4.1): plumbed, validated, CLI- and harness-settable, documented as live in `README.md:535` and
   `docs/gap-fill-modes.md:562`, and **read by nothing**. Not a loose end any more — it is **S2**, and
   S2's rule is narrower than the "wire it to the placement search or delete it" this bullet used to

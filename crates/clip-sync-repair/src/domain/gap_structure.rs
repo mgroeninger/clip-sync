@@ -291,8 +291,9 @@ pub(crate) fn search_coarse_step(bin_frames: usize, span_frames: usize) -> usize
 
 /// Sample-level polish radius after coarse bin search — not the waveform slide window.
 ///
-/// `max_fill_align_adjustment_secs` controls B waveform placement elsewhere; using that
-/// value here caused multi-second exhaustive loops per fit candidate.
+/// Deliberately a small fixed clamp, not a configurable span: an earlier revision drove this from the
+/// (now deleted) `max_fill_align_adjustment_secs`, which caused multi-second exhaustive loops per fit
+/// candidate. The B slide radius is `fill_border_search_secs`; this is only the polish step.
 #[doc(hidden)]
 pub fn structure_fine_polish_frames(bin_frames: usize) -> usize {
     bin_frames.clamp(1, 128)

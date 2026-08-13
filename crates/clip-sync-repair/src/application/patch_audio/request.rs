@@ -67,8 +67,6 @@ pub struct PatchRequestSettings {
     pub min_fill_correlation: f32,
     /// Extra B audio extracted on each side of the mapped gap window for boundary alignment.
     pub fill_align_margin_secs: f64,
-    /// Maximum slide (seconds) applied when searching for the best B fill position.
-    pub max_fill_align_adjustment_secs: f64,
     /// How far (seconds) to search in B for A's pre-gap border before local alignment.
     pub fill_border_search_secs: f64,
     /// Minimum border template length (seconds) for discovery/correlation on short gaps.

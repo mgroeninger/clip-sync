@@ -200,12 +200,6 @@ pub struct Args {
     #[arg(long, value_name = "N")]
     pub min_fill_correlation: Option<f32>,
 
-    /// Override: maximum B fill slide during structure match (seconds) [default: 0.5].
-    /// Legacy structure polish window. Under `fill_mode = fit`, B slide radius is
-    /// `--fill-border-search-secs` (not this flag).
-    #[arg(long, value_name = "SECS")]
-    pub max_fill_align_adjust_secs: Option<f64>,
-
     /// Override: B slide radius for unified gap-fill search (seconds) [default: 10].
     /// Primary performance lever; also sizes part of the per-gap B extract window.
     #[arg(long, value_name = "SECS")]
@@ -557,10 +551,6 @@ mod tests {
                 .round() as u32
             ),
             &format!("[default: {}]", defaults.repair.min_fill_correlation),
-            &format!(
-                "[default: {}]",
-                defaults.repair.max_fill_align_adjustment_secs
-            ),
             &format!("[default: {}]", defaults.repair.fill_border_search_secs),
             &format!("[default: {}]", defaults.repair.fill_align_margin_secs),
             &format!("[default: {}]", defaults.repair.gap_signature_context_secs),

@@ -34,7 +34,6 @@ pub struct PatchTestOptions {
     pub gap_end_extend_on_post_seam_fail: bool,
     pub gap_start_extend_on_pre_seam_fail: bool,
     pub short_gap_mean_correlation_secs: f64,
-    pub max_fill_align_adjustment_secs: f64,
     pub partial_structure_waveform_soften: f64,
     pub fill_mode: FillMode,
     pub fill_marginal_margin: f32,
@@ -78,7 +77,6 @@ impl Default for PatchTestOptions {
             gap_end_extend_on_post_seam_fail: true,
             gap_start_extend_on_pre_seam_fail: true,
             short_gap_mean_correlation_secs: 2.0,
-            max_fill_align_adjustment_secs: 1.0,
             partial_structure_waveform_soften: 0.85,
             fill_mode: FillMode::Gate,
             fill_marginal_margin: 0.08,
@@ -224,7 +222,6 @@ pub fn energy_sig_patch_options(mode: GapSignatureMode) -> PatchTestOptions {
     PatchTestOptions {
         fill_mode: FillMode::Fit,
         fill_border_search_secs: 3.5,
-        max_fill_align_adjustment_secs: 2.0,
         fill_align_margin_secs: 0.2,
         gap_signature_context_secs: 0.5,
         fill_length_slack_secs: 0.05,
@@ -326,10 +323,9 @@ pub fn patch_request_with_options(
         // "clean up" without reading `docs/dev/archive/TEMP-repair-config-bundles-plan.md` §4.
         //
         // Via PatchTestOptions defaults: fill_mode (Gate vs production Fit),
-        // fill_border_search_secs (30.0 vs 10.0), max_fill_align_adjustment_secs (1.0 vs 0.5).
+        // fill_border_search_secs (30.0 vs 10.0).
         fill_mode: options.fill_mode,
         fill_border_search_secs: options.fill_border_search_secs,
-        max_fill_align_adjustment_secs: options.max_fill_align_adjustment_secs,
         // Hypothesis: synthetic fixtures contain true digital silence, so production's real-world
         // noise floor and codec-edge standoff do not apply.
         absolute_silence_rms: 0.0,

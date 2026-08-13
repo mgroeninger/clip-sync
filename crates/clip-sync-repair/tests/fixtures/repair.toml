@@ -30,7 +30,6 @@ min_fill_correlation = 0.35
 disable_structure_trust = false   # gate only
 fill_mode = "fit"
 fill_align_margin_secs = 1.0
-max_fill_align_adjustment_secs = 0.5
 fill_border_search_secs = 30.0
 min_border_discovery_secs = 2.0
 border_standoff_secs = 0.35
