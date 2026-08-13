@@ -18,6 +18,7 @@ Last updated: 2026-08-13.
 | Plan | Covers |
 |------|--------|
 | [TEMP-fill-placement-registration-plan.md](docs/dev/TEMP-fill-placement-registration-plan.md) | Fill placement accepted without checking local registration — defect characterized, candidate guard measured; Phase A (source vs gate) not started |
+| [TEMP-lag-envelope-recenter-plan.md](docs/dev/TEMP-lag-envelope-recenter-plan.md) | Recenter `lag_decision`'s ±600 ms sweep on a coarse envelope peak (independent of the fill search) so pair 31's −1.11 s offset is measurable — draft, not started |
 | [TEMP-nway-donor-alignment-plan.md](docs/dev/TEMP-nway-donor-alignment-plan.md) | N-way donor alignment: repair one damaged copy from multiple donors — draft, not started |
 | [TEMP-flac-output-plan.md](docs/dev/TEMP-flac-output-plan.md) | In-process `--flac` lossless output (peer of `--wav`, no ffmpeg) — draft, not started |
 
@@ -45,10 +46,12 @@ a prominence floor, or a level threshold.
 ### Repeat-at-seam prior is inert on every winner; one branch is unreachable
 
 Found 2026-08-13 reading `status.patched.fit_terms` over
-`gap-files/2026-08-12-fit-terms-baseline/` (39 pairs, **128** patched gaps — note `6.json` is
-zero-length, so that pair needs re-running before the count is quoted as final). `anchor_penalty`
-and `repeat_penalty` are `0.0` on **all 128**. The two zeros mean different things and only one is
-a question.
+`gap-files/2026-08-12-fit-terms-baseline/`. ~~(39 pairs, **128** patched gaps — note `6.json` is
+zero-length, so that pair needs re-running before the count is quoted as final)~~ **Counts corrected
+2026-08-13, run complete:** 39 pairs, no zero-length files, **227 patched gaps of which 147 carry
+`fit_terms`** (the other 80 are dual-fit, which sets `fit_terms: None`). `anchor_penalty` and
+`repeat_penalty` are `0.0` on **all 147**. The two zeros mean different things and only one is a
+question.
 
 `anchor_penalty` is a **configuration** zero and needs no work: `anchor_search_prior_for_gap`
 (`patch_audio/region.rs:158`) requires all four of `fill_mode = fit`, a weight > 0 (default `0.0`),
@@ -78,11 +81,12 @@ edited, so this has been dead since it was written. It misses by exactly zero:
 makes it live — for the case it was evidently written to catch, a **symmetric** repeat where both
 shoulders duplicate at ~0.55 and neither side alone clears the threshold.
 
-**Also established: the seam-weak guard is not what blocks it.** `waveform_min < 0.45` on **107 of
-128** winners (median 0.367, max 0.600), so arms 1 and 3 are armed on 84% of the corpus. The binding
-condition is the 0.55 threshold on the repeat correlation itself. Of the 21 winners with
-`wave_min ≥ 0.45`, exactly **one** satisfies arm 2's seam half (`post > 0.55` and
-`post − pre > 0.35`), and its `repeat_post` was under threshold too.
+**Also established: the seam-weak guard is not what blocks it.** `waveform_min < 0.45` on **124 of
+147** winners (84%; median 0.362, max within that group 0.446 — the 0.600 corpus max sits in the
+*other* group, an earlier draft conflated the two), so arms 1 and 3 are armed on 84% of the corpus.
+The binding condition is the 0.55 threshold on the repeat correlation itself. Of the 23 winners with
+`wave_min ≥ 0.45`, **none** satisfies arm 2's seam half (`post > 0.55` and `post − pre > 0.35`) — the
+"exactly one" in the pre-completion draft was an artifact of the partial run.
 
 **The emit shipped 2026-08-13.** `fit_terms.repeat_pre` / `repeat_post` are the winner's repeat-window
 Pearson pair, diagnostic inputs not terms of `total`. The applied-placement re-score measures them

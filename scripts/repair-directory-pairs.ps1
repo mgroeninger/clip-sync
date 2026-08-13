@@ -12,6 +12,7 @@
 #   ./scripts/repair-directory-pairs.ps1 -MediaDir D:\media\pair-batch
 #   ./scripts/repair-directory-pairs.ps1 -MediaDir D:\media -ListOnly
 #   ./scripts/repair-directory-pairs.ps1 -MediaDir D:\media -WriteManifest pairs.csv
+#   ./scripts/repair-directory-pairs.ps1 -MediaDir D:\media\numbered-pairs -Recurse -LabelByFolder -WriteManifest pairs.csv
 #   ./scripts/repair-directory-pairs.ps1 -Manifest pairs.csv
 #   ./scripts/repair-directory-pairs.ps1 -Manifest pairs.csv -RepairArgs "--no-fft-repeat-band" -KeepWav
 #   ./scripts/repair-directory-pairs.ps1 -MediaDir D:\media -Mux D:\out\muxed -MuxExt .mkv
@@ -106,6 +107,15 @@ param(
     [Parameter(ParameterSetName = 'ListOnly')]
     [Parameter(ParameterSetName = 'WriteManifest')]
     [switch]$LabelByStem,
+
+    # Label by the pair's containing folder name (directory discovery only). Use with -Recurse
+    # when each pair lives in a numbered subfolder (`1/movie.mkv` + `1/movie.2.mkv` → label `1`).
+    # Default 1..N follows filesystem walk order (`1,10,11,…,2`), which will not match folder
+    # numbers. Mutually exclusive with -LabelByStem. Duplicate folder names are refused.
+    [Parameter(ParameterSetName = 'RunDir')]
+    [Parameter(ParameterSetName = 'ListOnly')]
+    [Parameter(ParameterSetName = 'WriteManifest')]
+    [switch]$LabelByFolder,
 
     # Also search subdirectories. Pairing is still per-directory (A and B must share a folder).
     [Parameter(ParameterSetName = 'RunDir')]
@@ -330,17 +340,34 @@ if ($PSCmdlet.ParameterSetName -eq 'RunManifest') {
     $MediaDir = (Resolve-Path -LiteralPath $MediaDir).Path
     $sourceDesc = $MediaDir
 
+    if ($LabelByStem -and $LabelByFolder) {
+        throw "-LabelByStem and -LabelByFolder cannot be combined"
+    }
+
     $pairs = @(Find-RepairPairs -Root $MediaDir -RecurseDirs:$Recurse)
     if ($pairs.Count -eq 0) {
         throw "no <name>.<ext> + <name>.2.<ext> pairs found under $MediaDir"
     }
 
     $i = 0
+    $seenLabels = @{}
     foreach ($p in $pairs) {
         $i++
-        $label = if ($LabelByStem) { $p.Stem } else { "$i" }
+        $label = if ($LabelByStem) {
+            $p.Stem
+        } elseif ($LabelByFolder) {
+            Split-Path -Leaf $p.Dir
+        } else {
+            "$i"
+        }
         if ($label -match '[\\/:*?"<>|]') {
             throw "pair label '$label' contains path-invalid characters (stem='$($p.Stem)')"
+        }
+        if ($LabelByFolder) {
+            if ($seenLabels.ContainsKey($label)) {
+                throw "duplicate folder label '$label' (pairs in '$($seenLabels[$label])' and '$($p.Dir)')"
+            }
+            $seenLabels[$label] = $p.Dir
         }
         $indexed.Add([pscustomobject]@{
                 Label = $label
@@ -351,6 +378,14 @@ if ($PSCmdlet.ParameterSetName -eq 'RunManifest') {
                 Ext   = $p.Ext
                 Extra = ''
             })
+    }
+
+    # Numbered pair folders (`1`,`2`,…`10`) walk as `1,10,11,…,2` on disk; sort so the
+    # manifest matches the folder numbers the rest of the corpus already uses.
+    if ($LabelByFolder -and (@($indexed | Where-Object { $_.Label -notmatch '^\d+$' }).Count -eq 0)) {
+        $sorted = @($indexed | Sort-Object { [int]$_.Label })
+        $indexed.Clear()
+        foreach ($p in $sorted) { $indexed.Add($p) }
     }
 }
 

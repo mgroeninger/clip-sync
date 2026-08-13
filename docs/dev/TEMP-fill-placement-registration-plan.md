@@ -1,7 +1,8 @@
 # Fill placement vs local registration — plan
 
 Status: **investigation → delivery. S3 and S5 done (2026-08-12); S2(1) done; S2c done (2026-08-12);
-S2(2) / S2b unblocked; S1 blocked on re-scoping; S4 conditional and unstarted.**
+S2(2) superseded 2026-08-13 — sweep refuted, prior must be registration-referenced, not nominal-referenced;
+S2b unblocked; S1 blocked on re-scoping; S4 conditional and unstarted.**
 
 **The source-vs-gate fork is retired — the answer was "both, on different gaps".** Earlier drafts of
 this document (and §4's exit, since rewritten) treated a single verdict as gating everything
@@ -12,7 +13,7 @@ that need two distinct fixes and share only a symptom.
 |---|---|---|
 | what went wrong | a near-nominal placement existed and **lost on score** | **nothing near nominal was ever scored** — 18 of 20 brackets died at `structure_floor` |
 | reads as | **source** | **gate** / scoring-objective |
-| the fix | **S2** — a near-nominal prior, via backward `LATE_START_PENALTY` (§4.1c) | **S2b** — the `min` reduction over shoulders |
+| the fix | ~~**S2** — a near-nominal prior, via backward `LATE_START_PENALTY` (§4.1c)~~ → **superseded 2026-08-13**: the prior must reference the pair's measured registration, not nominal (§0 S2(2)) | **S2b** — the `min` reduction over shoulders |
 | aliasing? | surface *is* periodic (480.5 ms comb, §4.3) but the true peak still ranks first | no — flat floor, 9.6× margin (§4.3) |
 
 Consequences for sequencing, all already reflected in §0: **S1 is correct to record under either
@@ -69,6 +70,11 @@ its precondition is false (found 2026-08-12).**
 > is *plumbing* — lifting the shoulder-lag measurement out of `application/gap_fingerprint/` so the
 > patch path can call it, and deciding whether it runs on every patched gap or only where a slide was
 > applied. Re-scope before starting; do **not** start it as written.
+>
+> **Re-scope 2026-08-13:** the measurement S1 would plumb is itself blind to pair 31's genuine
+> −1.11 s offset (fine window ±600 ms around `b_mapped`; fill search ±10 s). Do not lift the
+> nominal-only sweep. Recenter the fine sweep on a coarse envelope peak first —
+> [TEMP-lag-envelope-recenter-plan.md](TEMP-lag-envelope-recenter-plan.md) — then S1 records that.
 
 Emit the §2 quantity (`applied − frac_lag_ms`, reduced by minimum absolute value over shoulders with
 `peak_r ≥ τ`, abstain when none) as a field on the patch record, alongside the shoulder `peak_r` /
@@ -159,6 +165,112 @@ at in a default.
 on a 2026-08-05 report; (b) the same binary at a few non-zero scales, diffed against (a). These are
 repair-report runs (`--patch-only --format json`), not fingerprint runs — no per-bracket oracle cost, so
 several scale values are affordable.
+
+##### (2) SUPERSEDED 2026-08-13 — the sweep is refuted, and nominal is the wrong origin
+
+Baseline (a) completed: `gap-files/2026-08-12-fit-terms-baseline/`, **39 pairs, 227 patched gaps, 147
+carrying `fit_terms`** (the other 80 are dual-fit, which sets `fit_terms: None` and reports
+`align_adjustment_secs == 0.0` by construction — verified 80/80). Sweep (b) **should not be run.**
+
+**The sweep is refuted by arithmetic, before any config value.** The penalty is
+`LATE_START_PENALTY × offset_frac × scale` with `offset_frac = |offset_frames| / gap_frames`, so the
+ordering between gaps is scale-invariant. At *every* scale, 31/g8 (`offset_frac` 0.1428) and 31/g11
+(0.1470) are charged **strictly more** than 26/g6 (0.0465) — roughly 3× — so no scale closes 26/g6's
+0.012 margin without hitting the three must-not-move placements harder. This is the tension §4.1c
+flagged, resolved against the instrument. The knob stays shipped and inert; it is not the fix.
+
+**Why: the penalty measures the slide against the wrong origin.** Referencing `|align_adjustment_secs|`
+to **nominal** assumes nominal is where a correct fill sits. It isn't. Per-pair, slides are coherent:
+77.9% of slide variance is explained by pair identity (19 pairs / 106 unified gaps) against a
+shuffled-label null of 17.0% (p95 25.7%), p < 0.0005. Re-reference each gap to the **leave-one-out
+median slide of the other unified gaps in its pair** and the separation inverts —
+26/g6 residual −1.4541 → penalty 0.0466, versus 31/g7 0.0097, 31/g8 0.0013, 31/g10 0.0007,
+31/g11 0.0014: a 5–68× separation, in the right direction, with no tuning. Ranked by residual rather
+than by `|adj|`, pair 31's only flagged gap is **31/g7** — which §4.2 independently identifies as the
+`min`-reduction defect (S2b), not a placement-prior defect.
+
+**Route 2 — the consensus is independently confirmed, so this is not the search agreeing with itself.**
+The obvious objection is circularity: `align_adjustment_secs` is the search's own argmax, so a
+consensus built from it cannot justify it. Joined against `lag_decision.frac_lag_ms` from the
+2026-08-08 dumps (`measure.rs:1662`, Full tier) — a waveform-correlation lag measured at `b_mapped`
+**nominal**, which reads neither the fill search, the unified objective, nor any other gap. Joined on
+`geometry.a_start_secs`, never on gap index; 227/227 joined, 35 pairs.
+
+- **26 of 26 in-window pairs agree within 50 ms.** Load-bearing cell (`|consensus| ≥ 150 ms`, where
+  agreement is not free): **6/6** — pairs 3, 6, 13, 18, 22, 32, e.g. 18 `+0.3308` vs `+0.3197`,
+  22 `−0.2458` vs `−0.2469`.
+- **Nominal is wrong by ~13× on the large slides.** For `|adj| > 150 ms` (n=33), median `|adj|`
+  0.2713 s → median `|adj − own measured lag|` **0.0210 s**.
+- **29 of 32 gaps in the decisive cell are confirmed correctly registered** (big `adj`, small residual —
+  the placements a nominal-referenced penalty would have moved), 3 near, **zero contradicted**.
+- **80 dual-fit gaps corroborate independently.** They carry no slide at all, so their lag is
+  uncontaminated by construction; their per-pair medians sit on the same offsets (pair 18 `+0.3150`
+  vs consensus `+0.3308`; pair 22 `−0.2302` vs `−0.2458`).
+- **26/g6 is confirmed misplaced without reference to any label**: measured lag `−0.041 s` against a
+  `−1.450 s` slide. Caveat (§4.3's territory): its `second_peak_r` is 0.972 against `peak_r` 0.997 at
+  0 ms spacing and `peak_z` is only 6.1, so the lag curve has a near-tie — this corroborates the
+  ±2000 ms sweep rather than adding an independent strong measurement.
+
+*Reduction discipline (the first cut of this join got it wrong).* Both shoulders are absolute lags on
+one scale — post is **gross** (`L_pre + L_post_fine`, gap-fingerprint.md:720-739), so its magnitude
+guard is ±1200 ms, not ±600, and averaging the two shoulders is invalid whenever `step_ms` is large
+(3/g9: pre +10 ms, post +354 ms, mean +182 ms — a number describing neither). Pair offsets are
+estimated by pooling **confident** shoulders across the pair; big-step gaps are reported, not reduced.
+Under the fix, every previous "disagreement" resolved: pair 12 went −113.8 ms → −29.2 ms, and the
+decisive cell went 31/38-with-7-exceptions to 29/32-with-none. The load-bearing cell agrees under all
+five reductions tried (pooled / mean / pre / min-abs / best-r), so the result does not rest on the
+choice. `peak_z` (≥12 ≈ unique, gap-fingerprint.md:725) is the correct addressability gate and is
+stricter than the `peak_r ≥ 0.5` used here — re-gating on it is free and re-sorts the suspect list.
+
+**Still open, and bounding the above.** (i) A **signed −23.4 ms bias**: pooled lag ≈ consensus − 23 ms
+on 24 of 26 pairs, in both slide directions, surviving every reduction. Not fine polish
+(`structure_fine_polish_frames` caps at 128 frames ≈ 2.7 ms); most likely a window-centring convention
+between the 1 s lag template and the seam the objective scores. **This must be explained before the lag
+becomes a scoring input** — it is fine as a diagnostic today. (ii) **Pair 31 remains unvalidated by this
+route**: its −1.109 s consensus is outside the ±600 ms sweep, and its late-half gaps return a *flat*
+lag curve (`second_peak_r ≈ peak_r`, `prominence ≈ 0`, `peak_z` 3.6–5.4) while B is not silent
+(rms −37 to −51 dB, `silence_fraction` 0.00) — the signature of a true offset outside the window.
+Pair 31 splits cleanly in time: measured at ~0 lag with `peak_r` 0.83–0.99 up to t≈1726 s, unmeasurable
+from t≈2852 s on. That is a **step**, now supported by independent measurement rather than by the
+dual-fit zeros §1.1 had to retract. (iii) Six gaps where a coherent measurement contradicts the slide:
+26/g6, 3/g2, 12/g4, 10/g1, 19/g2, 16/g11 — of which only **12/g4** (`peak_z` 44.0) and **16/g11**
+(21.7) clear the `peak_z` bar.
+
+*Next, in order:* re-gate the join on `peak_z ≥ 12` (free); read the widened-envelope measurement plan
+([TEMP-lag-envelope-recenter-plan.md](TEMP-lag-envelope-recenter-plan.md)) before any pair-31 run; then
+explain the −23 ms bias by reading `lag_at_placement`'s window construction against the objective's
+seam window. The backward-penalty sweep is **not** on this list.
+
+##### (3) `peak_z ≥ 12` re-gate — 2026-08-13, the result survives at a third of the coverage
+
+Re-ran the join with `peak_z ≥ 12` replacing `peak_r ≥ 0.5` as the confidence gate. The cost is
+steep and the conclusion does not move.
+
+*Cost.* 162 of 454 shoulders drop (432 → **270** kept); gaps with **no** usable shoulder go 4 → **58**
+of 147. Per-pair coverage falls from 26 in-window pairs to **22**, and section B's per-gap cell from
+n≈120 to **n=82**.
+
+*What survives.* 22 of 22 in-window pairs still agree within 50 ms (`AGREE` on every row). The
+load-bearing cell (|consensus| ≥ 150 ms) is 5 pairs — 3, 6, 13, 18, 32 — and **5/5** agree; pair 22
+left the cell for lack of a confident shoulder, not by disagreeing. Per-gap: |adj| against nominal
+median 0.0532 s vs |adj − own measured lag| **0.0238 s**; on the big-slide subset (|adj| > 150 ms,
+n=16) 0.2623 s → **0.0260 s**, a 10× collapse. The decisive cell is **14/16 confirmed** with the two
+misses (13/g34 +64.6 ms, 32/g9 +76.2 ms) *near*, not contradicting. All 15 dual-fit pairs still
+corroborate.
+
+*What the gate re-sorts.* The suspect list drops from six to **two** — 12/g4 (+188.8 ms, `peak_z` 44.0)
+and 16/g11 (+112.9 ms, 21.7) — exactly the two predicted. **26/g6 is no longer a contradiction**: at
+`peak_z` 6.1 it is now *unmeasurable*, which is the honest reading of a `second_peak_r` 0.972 near-tie.
+3/g2, 10/g1 and 19/g2 leave the same way. So the only genuinely coherent disagreements in the corpus
+are 12/g4 and 16/g11, and 16/g11 carries a 99 ms step.
+
+*What it does not fix.* The signed bias is unchanged and slightly larger: median **−24.8 ms**, negative
+on **20 of 22** pairs. It is not a low-confidence artifact.
+
+*A structural read of the failures.* The 58 no-confidence gaps are not uniform — they cluster at pair
+edges and in runs (pair 5 `. X X X . . . .`, pair 13 `. . . . . X X X . .`, pair 31 `. . X X X`).
+Pair 31's is the plan's step: the last three gaps are exactly the ones the ±600 ms window cannot see.
+This is direct support for the envelope-recenter plan and against any fix that only tightens gates.
 
 **S2c — `post_correlation` carries a structure score on snapped Bool gaps (found 2026-08-12 reviewing
 the §7 instrumentation). ~~Not a blocker for S2(2)'s energy-gap `fit_terms` diff — see the corpus split
@@ -1096,6 +1208,9 @@ threshold.
   it is dump-only, and it tests §1.2's ±600 ms saturation hypothesis for `donor_registration`. Note
   the two failures already read `edge_pinned: false` (§4.3's dumps), but they are the wrong gaps for
   it — the hypothesis is about pair 31 **#9–#12**, whose true registration is ≈ −1150 ms.
+  **Successor 2026-08-13:** do not widen the fine sweep; recenter it on a coarse envelope peak.
+  [TEMP-lag-envelope-recenter-plan.md](TEMP-lag-envelope-recenter-plan.md). Pair 31 only to start;
+  not a corpus pass.
 - **The +39 ms systematic bias** in fill-start detection (§2.1). Cosmetic for a discriminator;
   required before any absolute claim about delivered position.
 - **The `applied = 0` cohort at large** — 26 gaps corpus-wide placed at nominal while confident
