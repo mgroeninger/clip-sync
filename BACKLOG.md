@@ -46,7 +46,7 @@ a prominence floor, or a level threshold.
 ### Repeat-at-seam prior is inert on every winner; one branch is unreachable
 
 Found 2026-08-13 reading `status.patched.fit_terms` over
-`gap-files/2026-08-12-fit-terms-baseline/`. ~~(39 pairs, **128** patched gaps — note `6.json` is
+`gap-files/archive/mixed-ab/2026-08-12-fit-terms-baseline/`. ~~(39 pairs, **128** patched gaps — note `6.json` is
 zero-length, so that pair needs re-running before the count is quoted as final)~~ **Counts corrected
 2026-08-13, run complete:** 39 pairs, no zero-length files, **227 patched gaps of which 147 carry
 `fit_terms`** (the other 80 are dual-fit, which sets `fit_terms: None`). `anchor_penalty` and
@@ -165,7 +165,7 @@ statistic and does not touch this half.
 **Contaminates the fill-level corpus.** `measure_fill_level` measures `gained_fill` but takes
 shoulders from ungained A, so a boost inflates `peak_delta_db` ≈1:1. Backing out this gap's gain
 gives 15.93 − 11.78 = **4.15 dB** — below the lowest clip ever labelled *clean* (6.37), rather than
-second-highest in the labelled set. All 227 rows of `gap-files/2026-08-07-fill-level-shape/`
+second-highest in the labelled set. All 227 rows of `gap-files/archive/mixed-ab/2026-08-07-fill-level-shape/`
 are inflated by their own gap's unknown gain (0–12 dB). Cross-gap `peak_delta_db` comparisons are
 invalid; do not rank or shortlist on that column.
 
@@ -174,7 +174,7 @@ invalid; do not rank or shortlist on that column.
 | **Size the exposure before designing a fix** (do this first) | Do **not** design from n=1. `--patch-only --format json` now emits `normalize_gain` on every patched gap and runs the full patch path with **no** fingerprint/oracle cost, so a multi-pair sweep is cheap. The tooling already exists: `scripts/measure/measure-patch-outcomes.ps1` is exactly this run (`--patch-only` → `fill-level-rollup.csv`) and needs **one column added** — it emits `PeakDeltaDb`/`EdgeDeltaDb` (`:170`, `:183`) but not `normalize_gain`. With that column: large gain **and** quiet immediate shoulders = the exposed set, and every existing delta becomes divisible by its own gain (see the contamination note above). First honest count of how often this fires, and the input that decides between a reference-window fix and the blunt option below |
 | Make the boost reference local | Candidate directions once the sweep lands: narrow the border window; take the quieter of wide-vs-local; or cap the gain by the local shoulder ratio. All are guesses today. Note `normalize_window_secs` (default 5.0) is already a knob, so a calibration sweep is possible without new code |
 | Consider defaulting `normalize_fill` to false | Named explicitly because the evidence now points at it: **one** ear case where the boost causes an audible defect, **zero** ear cases where it demonstrably helps — the only support for boosting is a synthetic fixture (`patch_audio_normalizes_fill_loudness_to_a_border`), never a listen. The boost-only plan lists this as a non-goal, but that was written before the boost was implicated. If the sweep shows large boosts are common, this is the honest short-term answer while a better reference is designed |
-| Re-run the fill-level roll-up after any gain change | Any change here moves `peak_delta_db` / `edge_delta_db` for the affected gaps, so `gap-files/2026-08-07-fill-level-shape/` becomes a different-policy baseline again. Same caveat the boost-only plan § 5.5 recorded. **Already owed once:** the boost-only PR itself changed the gain on every previously-attenuated gap, so that roll-up is a mixed-policy baseline *today*, before any further work here |
+| Re-run the fill-level roll-up after any gain change | Any change here moves `peak_delta_db` / `edge_delta_db` for the affected gaps, so `gap-files/archive/mixed-ab/2026-08-07-fill-level-shape/` becomes a different-policy baseline again. Same caveat the boost-only plan § 5.5 recorded. **Already owed once:** the boost-only PR itself changed the gain on every previously-attenuated gap, so that roll-up is a mixed-policy baseline *today*, before any further work here |
 | Residual seam `g` (`a ≈ g·b`) as the production gain | Carried over from the boost-only plan § 1 follow-ups, which has no other home now that plan is archived. The attraction is that it estimates level from the **seam** rather than from whole-fill RMS, so neither the mid-gap-event failure (attenuation, fixed) nor the wide-window failure (boost, open above) applies. Deferred there because it needs verdict plumbing plus corpus rules for when the estimate is trustworthy — not because it was refused |
 | B-relative / donor-shoulder matching as a full replacement for A-border RMS | Also from § 1 follow-ups. Matching the fill to **B's own surrounding level** sidesteps the A-reference question entirely; the open issue is that it corrects nothing when the two masters genuinely differ in level, which is the only case normalize exists for. Worth evaluating against the sweep data above rather than in the abstract |
 | The attenuation half was never ear-validated | Stated so it is not mistaken for a proven win. The boost-only PR removed attenuation on evidence of mechanism (whole-fill RMS is the wrong statistic) plus earlier "loud event is correct content" labels — but no before/after A/B was ever rendered, because pair 19's only pre-change render turned out to be a boost gap. The two affected gaps sound clean *now*; nobody has heard them sound bad *before*. Cheap to close if it ever matters: restore the symmetric clamp, drop the `region.rs` assert, render to a `-before` dir, revert |
@@ -236,7 +236,8 @@ axis resolved with it. Two claims in the original entry were wrong and are recor
 each was a "safe because…": the stem *was* parsed — `check.rs` cross-checked `_patch.json` /
 `_skip.json` against `outcome.tier` (removed, deliberately not replaced), and `measure.rs`'s
 `write_corpus_dir` test asserted the token. New dumps are not name-comparable with existing
-`gap-files/` dirs (gitignored, regenerable, self-consistent within a dir).
+`gap-files/` dirs (gitignored, regenerable, self-consistent within a dir). The 2026-08
+mixed-orientation dumps live under `gap-files/archive/mixed-ab/` and are not a default input.
 
 **Disposition manifest shipped 2026-08-12** — `listen.json` at the WAV root
 (`gap_listen/manifest.rs`), one entry per exported gap: `disposition` mirroring `GapPatchStatus`

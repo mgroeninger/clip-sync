@@ -7,6 +7,9 @@
 #   A (gap file)  = movie.mkv
 #   B (donor)     = movie.2.mkv
 # Files whose stem already ends in `.2` are never treated as A (avoids looking for `movie.2.2.mkv`).
+# Do not invent A/B by sorting filenames: `name.2.ext` sorts before `name.ext`, which is how the
+# 2026-08 mixed-orientation dumps were produced. Write manifests with this script
+# (`-Recurse -LabelByFolder` for numbered pair folders).
 #
 # Usage:
 #   ./scripts/repair-directory-pairs.ps1 -MediaDir D:\media\pair-batch

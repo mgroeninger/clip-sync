@@ -33,11 +33,15 @@ on index — on `a_start_secs` all 227 patched gaps join to the 39-pair dumps wi
 placements (`start_frame`) are B-haystack frames whose nominal origin is **672000**; see §3.1 before
 comparing any two of them.
 
-**Data.** `gap-files/2026-08-07-fill-level-shape/` (38 pairs, 227 patched gaps) for scan reports
-carrying `status.patched.align_adjustment_secs`; `gap-files/2026-08-08-v0.5.2-full-corpus/`
-(39 pairs) for per-gap dumps carrying `lag_decision`; `gap-files/2026-08-09-drift-listen/`
-(`listen.csv` + `listen-round2.csv`, 12 patched gaps rendered and labelled 2026-08-09) for the ear
-pass. All of `gap-files/` is gitignored and media-derived — quote pairs by index only, never by
+**Data.** Quarantined 2026-08-13 under `gap-files/archive/mixed-ab/` — pairs **2–17** in these
+dumps scanned `name.2.ext` as A; pairs **18–39** (including 26 / 31) used `name.ext` as A and remain
+the provenance for this plan. `archive/mixed-ab/2026-08-07-fill-level-shape/` (38 pairs, 227 patched
+gaps) for scan reports carrying `status.patched.align_adjustment_secs`;
+`archive/mixed-ab/2026-08-08-v0.5.2-full-corpus/` (39 pairs) for per-gap dumps carrying
+`lag_decision`; `archive/mixed-ab/2026-08-09-drift-listen/` (`listen.csv` + `listen-round2.csv`,
+12 patched gaps rendered and labelled 2026-08-09) for the ear pass. Do not feed these dirs to a
+new measure run; new oriented dumps go at `gap-files/<date>-…` from a
+`repair-directory-pairs.ps1 -Recurse -LabelByFolder` manifest. All of `gap-files/` is gitignored and media-derived — quote pairs by index only, never by
 title or path. **The two `listen*.csv` files are render worklists carrying A/B media paths and hold
 no label column** — the ear labels live only in this document, so treat §1/§2's tables as their
 system of record. `drift-listen/` also keeps the rendered `_a_surround` / `_b_surround` /
@@ -168,7 +172,7 @@ several scale values are affordable.
 
 ##### (2) SUPERSEDED 2026-08-13 — the sweep is refuted, and nominal is the wrong origin
 
-Baseline (a) completed: `gap-files/2026-08-12-fit-terms-baseline/`, **39 pairs, 227 patched gaps, 147
+Baseline (a) completed: `gap-files/archive/mixed-ab/2026-08-12-fit-terms-baseline/`, **39 pairs, 227 patched gaps, 147
 carrying `fit_terms`** (the other 80 are dual-fit, which sets `fit_terms: None` and reports
 `align_adjustment_secs == 0.0` by construction — verified 80/80). Sweep (b) **should not be run.**
 
@@ -416,11 +420,11 @@ consumers are `gained_fill` and `spec.normalize_gain`, and seam scores are Pears
 so this plan's whole axis is gain-invariant. What it does change, confined to fills currently
 attenuated (whole-fill RMS above A-border RMS; boosted fills untouched):
 
-- `peak_delta_db` / `edge_delta_db` on that subset — `gap-files/2026-08-07-fill-level-shape/` becomes
+- `peak_delta_db` / `edge_delta_db` on that subset — `gap-files/archive/mixed-ab/2026-08-07-fill-level-shape/` becomes
   a different-policy baseline. (Nothing in §0–§7 reasons from those fields, so no conclusion here moves.)
 - **§5 / S4's ear labels.** `--gap-listen` renders through the normal patch path, so `normalize_fill`
   applies to `_a_patched`: a loud-fill gap rendered after the change is different audio from one
-  labelled before it. Existing `2026-08-09-drift-listen/` renders remain valid as files; a re-render
+  labelled before it. Existing `archive/mixed-ab/2026-08-09-drift-listen/` renders remain valid as files; a re-render
   will not match its own label.
 
 **Decision: the normalize change ships first, before S4 renders anything new** — S4 is conditional and
@@ -760,7 +764,7 @@ Captured: per-bracket seam scores, and the production-weight chosen alignment (`
 
 ### 3.3 The scan reports settle two things the dumps could only infer (2026-08-11)
 
-`gap-files/2026-08-07-fill-level-shape/<pair>.json` is the **production** scan+patch report, and it
+`gap-files/archive/mixed-ab/2026-08-07-fill-level-shape/<pair>.json` is the **production** scan+patch report, and it
 carries more than `align_adjustment_secs`: each patched gap has `status.patched.pre_correlation` /
 `post_correlation`, a `residual` block (including `placement_slide_frames`) written by production
 rather than by the fingerprint oracle, `tags`, and the `fill_level` shape fields.

@@ -14,7 +14,7 @@
 #
 # Usage:
 #   ./scripts/measure/scan-registration.ps1 -Manifest pairs.csv
-#   ./scripts/measure/scan-registration.ps1 -Manifest pairs.csv -OutDir gap-files/2026-08-04-registration-rate
+#   ./scripts/measure/scan-registration.ps1 -Manifest pairs.csv -OutDir gap-files/<date>-registration-rate
 #   ./scripts/measure/scan-registration.ps1 -Manifest pairs.csv -ScanArgs "--min-gap-ms 500"
 #   ./scripts/measure/scan-registration.ps1 -Manifest pairs.csv -SkipBuild -Force
 #
