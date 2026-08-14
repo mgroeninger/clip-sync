@@ -179,7 +179,7 @@ contracts! {
     LAG_DECISION_CONTRACT for "lag_decision" {
         measures: "per-shoulder waveform lag the gate decides patch/skip on: peak_r, frac_lag_ms, peak_z, prominence",
         placement: "b_mapped nominal, not the throat; post shoulder on S + D_A + round(L_pre); never compare across placements",
-        window: "per shoulder window_ms / max_lag_ms (1000/600); mono; gross to b_mapped_end; zero = -pre/+post border_displacement_ms",
+        window: "per shoulder window/max_lag (defaults 1000 / 600); mono; gross to b_mapped_end; zero -pre/+post border_displacement_ms",
         not: "lag_editorial (diagnostic placement); prominence is not uniqueness - no exclusion radius, see top2_spacing_ms",
     }
 
