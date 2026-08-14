@@ -10,7 +10,8 @@ mod silence;
 
 pub(crate) use gap_borders::{adaptive_seam_window_frames, border_active_extent_frames};
 pub use gap_borders::{
-    border_templates_for_gap, border_templates_per_channel_for_gap, loudest_seam_channel,
+    border_edge_displacement_frames, border_templates_for_gap,
+    border_templates_per_channel_for_gap, loudest_seam_channel,
     refine_gap_frames, selected_seam_channels, FillAlignment, GapBorderSpec, RefinedGapFrames,
 };
 pub use seam_residual::{

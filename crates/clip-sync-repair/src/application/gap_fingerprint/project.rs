@@ -272,6 +272,8 @@ fn projected_lag_entry(
             frac_lag_samples: 0.0,
             frac_lag_ms: frac_lag_ms.unwrap_or(0.0),
             edge_pinned: None,
+            // Projection: the stored summary carries no border geometry to displace against.
+            border_displacement_ms: None,
             verdict: LagVerdict::TimingOffset,
         }],
         None => Vec::new(),
@@ -824,7 +826,7 @@ mod tests {
                 peak_lag_samples: -12,
                 frac_lag_samples: -12.5,
                 frac_lag_ms: -0.26,
-                edge_pinned: Some(false),
+                edge_pinned: Some(false),                border_displacement_ms: None,
                 verdict: LagVerdict::TimingOffset,
             }],
             post_anchor: vec![],

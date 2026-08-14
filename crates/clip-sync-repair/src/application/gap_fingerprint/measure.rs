@@ -27,7 +27,8 @@ use crate::domain::gap_structure::StructureMatchParams;
 use crate::domain::patch_result::GapPatchSkipReason;
 use crate::domain::pcm::{interleaved_to_channels, interleaved_to_mono};
 use crate::domain::policies::{
-    border_templates_for_gap, border_templates_per_channel_for_gap, refine_gap_frames,
+    border_edge_displacement_frames, border_templates_for_gap,
+    border_templates_per_channel_for_gap, refine_gap_frames,
     rms_interleaved, seam_channel_diagnostics, GapBorderSpec, RefinedGapFrames, SeamPlacement,
     SeamTemplates,
 };
@@ -234,6 +235,10 @@ struct LagSideSweep<'a> {
     pre_shoulder: bool,
     /// Samples added to each lag bin in the returned summary (sequential post: gross map to `b_mapped_end`).
     gross_lag_shift: i64,
+    /// This shoulder's template-edge displacement from the gap edge (`border_edge_displacement_frames`),
+    /// recorded as `LagSummary::border_displacement_ms`. `None` where the caller builds no border
+    /// templates (seam-local / dual-fit windows), which is what an absent field then means.
+    border_displacement_frames: Option<usize>,
 }
 
 /// ± lag sweep (ms) used to gauge each dual-fit seam's peak uniqueness (the periodicity/alias guard).
@@ -357,6 +362,9 @@ pub fn summarize_lag_curve(
         frac_lag_samples: frac_lag,
         frac_lag_ms: frac_lag * 1000.0 / rate,
         edge_pinned: Some(edge_pinned),
+        // Stamped by the caller that owns the border templates (`lag_side_sweep`); the curve alone
+        // cannot know how far the template edge sits from the gap.
+        border_displacement_ms: None,
         verdict: classify_lag(lag0_r, frac_r, peak_lag),
     })
 }
@@ -774,7 +782,7 @@ fn lag_side_sweep(side: LagSideSweep<'_>, params: LagSweepParams) -> Option<LagS
         &side.a_border[..w]
     };
     let curve = lag_correlation_curve_auto(a_win, &side.b_signal[lo..hi], params.max_lag);
-    if side.gross_lag_shift == 0 {
+    let mut summary = if side.gross_lag_shift == 0 {
         summarize_lag_curve(
             &curve,
             params.sample_rate,
@@ -794,7 +802,11 @@ fn lag_side_sweep(side: LagSideSweep<'_>, params: LagSweepParams) -> Option<LagS
             params.max_lag_ms(),
             params.channel,
         )
+    };
+    if let (Some(s), Some(frames)) = (summary.as_mut(), side.border_displacement_frames) {
+        s.border_displacement_ms = Some(frames as f64 * 1000.0 / f64::from(params.sample_rate));
     }
+    summary
 }
 
 fn lag_pair(
@@ -804,6 +816,7 @@ fn lag_pair(
     start_frame: usize,
     gap_frames: usize,
     params: LagSweepParams,
+    displacement: Option<(usize, usize)>,
 ) -> (Option<LagSummary>, Option<LagSummary>) {
     let pre = lag_side_sweep(
         LagSideSweep {
@@ -812,6 +825,7 @@ fn lag_pair(
             anchor_frame: start_frame,
             pre_shoulder: true,
             gross_lag_shift: 0,
+            border_displacement_frames: displacement.map(|(pre, _)| pre),
         },
         params,
     );
@@ -832,6 +846,7 @@ fn lag_pair(
             anchor_frame: post_base,
             pre_shoulder: false,
             gross_lag_shift: pre_shift,
+            border_displacement_frames: displacement.map(|(_, post)| post),
         },
         params,
     );
@@ -899,7 +914,26 @@ fn lag_at_placement(input: &LagAtPlacementInput<'_>) -> LagFingerprint {
         }
     };
 
-    let (pre, post) = lag_pair(&a_pre, &a_post, b_mono, start_frame, gap_frames, sweep);
+    // The B anchors below are the mapped gap edges, but these templates start away from them (silence
+    // walk-off + trim; standoff is 0 here). Record that displacement per shoulder so `frac_lag_ms` can
+    // be read against a known zero instead of an assumed one — see `LagSummary::border_displacement_ms`.
+    let mono_displacement = border_edge_displacement_frames(
+        a_samples,
+        ch,
+        &border_spec,
+        a_pre.len(),
+        a_post.len(),
+    );
+
+    let (pre, post) = lag_pair(
+        &a_pre,
+        &a_post,
+        b_mono,
+        start_frame,
+        gap_frames,
+        sweep,
+        Some(mono_displacement),
+    );
     add(pre, post);
 
     if let Some(sel) = selected {
@@ -918,6 +952,14 @@ fn lag_at_placement(input: &LagAtPlacementInput<'_>) -> LagFingerprint {
                     channel: LagChannel::Selected(sel),
                     ..sweep
                 },
+                // The 12 %-of-peak trim runs per buffer, so this channel's displacement is its own.
+                Some(border_edge_displacement_frames(
+                    a_samples,
+                    ch,
+                    &border_spec,
+                    a_pre_ch[sel].len(),
+                    a_post_ch[sel].len(),
+                )),
             );
             add(pre, post);
         }
@@ -3602,6 +3644,68 @@ mod tests {
         assert!(curve.iter().all(|(_, r)| r.is_finite()));
     }
 
+    /// A *perfectly* registered pair does not read lag 0. The A templates start `D_pre` / `D_post`
+    /// away from the gap edges (fade trimmed at 12 % of peak) while the B anchors sit on the edges
+    /// themselves, so the sweep reads `−D_pre` on the pre shoulder and `+D_post` on the post one —
+    /// and `border_displacement_ms` is exactly the correction. This is the −21.9 ms corpus bias
+    /// against `align_adjustment_secs` (registration plan § "Step 5 result").
+    #[test]
+    fn lag_at_placement_reads_border_displacement_at_true_registration() {
+        const RATE: u32 = 48_000;
+        let d_pre = 200usize;
+        let d_post = 150usize;
+        let (gap_start, gap_end) = (4_200usize, 4_500usize);
+        let total = 9_000usize;
+
+        // Loud broadband either side, with a quiet fade into and out of the dropout: the fade is
+        // above the silence floor (so it is not walked off) but below the 12 %-of-peak trim.
+        let mut a = vec![0.0f32; total];
+        write_noise(&mut a, 0, gap_start - d_pre, 7, 0.5);
+        write_noise(&mut a, gap_start - d_pre, gap_start, 7, 0.5 * 0.02);
+        write_noise(&mut a, gap_end, gap_end + d_post, 7, 0.5 * 0.02);
+        write_noise(&mut a, gap_end + d_post, total, 7, 0.5);
+
+        // B carries the same program at the same time — true registration is exactly 0.
+        let b_mono: Vec<f64> = a.iter().map(|&v| f64::from(v)).collect();
+
+        let config = FingerprintConfig {
+            lag_window_secs: 0.01,  // 480 frames
+            lag_max_lag_ms: 20,     // ±960 frames — comfortably past both displacements
+            ..FingerprintConfig::default()
+        };
+        let out = lag_at_placement(&LagAtPlacementInput {
+            a_samples: &a,
+            channels: 1,
+            refined: RefinedGapFrames {
+                start_frame: gap_start,
+                end_frame: gap_end,
+            },
+            b_mono: &b_mono,
+            b_ch: &[],
+            selected: None,
+            start_frame: gap_start,
+            cfg: &config,
+            sample_rate: RATE,
+        });
+
+        let ms = |frames: usize| frames as f64 * 1000.0 / f64::from(RATE);
+        let pre = out.pre_anchor.first().copied().expect("pre shoulder");
+        let post = out.post_anchor.first().copied().expect("post shoulder");
+        assert!(pre.peak_r > 0.95 && post.peak_r > 0.95, "both shoulders lock");
+        assert_eq!(pre.border_displacement_ms, Some(ms(d_pre)));
+        assert_eq!(post.border_displacement_ms, Some(ms(d_post)));
+        assert!(
+            (pre.frac_lag_ms + ms(d_pre)).abs() < 0.05,
+            "pre reads -D_pre ({} ms), not 0",
+            pre.frac_lag_ms
+        );
+        assert!(
+            (post.frac_lag_ms - ms(d_post)).abs() < 0.05,
+            "post gross reads +D_post ({} ms), not 0 — the pre shift is added back out",
+            post.frac_lag_ms
+        );
+    }
+
     /// Pre-fix post search: center on `start_frame + gap_frames` with no pre-shift — stacks
     /// `L_pre + (D_B - D_A)` into one ±max_lag window (ledger A2).
     fn naive_lag_pair_post(
@@ -3618,6 +3722,7 @@ mod tests {
                 anchor_frame: start_frame + gap_frames,
                 pre_shoulder: false,
                 gross_lag_shift: 0,
+                border_displacement_frames: None,
             },
             params,
         )
@@ -3667,7 +3772,15 @@ mod tests {
             channel: LagChannel::Mono,
         };
 
-        let (pre, post_seq) = lag_pair(&a_pre, &a_post, &b_signal, start_frame, gap_frames, sweep);
+        let (pre, post_seq) = lag_pair(
+            &a_pre,
+            &a_post,
+            &b_signal,
+            start_frame,
+            gap_frames,
+            sweep,
+            None,
+        );
         let pre = pre.expect("pre shoulder");
         let post_seq = post_seq.expect("sequential post shoulder");
         assert!(
@@ -3751,7 +3864,7 @@ mod tests {
                 peak_lag_samples: -500,
                 frac_lag_samples: -500.0,
                 frac_lag_ms: -10.5,
-                edge_pinned: Some(false),
+                edge_pinned: Some(false),                border_displacement_ms: None,
                 verdict: LagVerdict::TimingOffset,
             }],
             post_anchor: vec![LagSummary {
@@ -3767,7 +3880,7 @@ mod tests {
                 peak_lag_samples: -300,
                 frac_lag_samples: -300.0,
                 frac_lag_ms: -6.2,
-                edge_pinned: Some(false),
+                edge_pinned: Some(false),                border_displacement_ms: None,
                 verdict: LagVerdict::TimingOffset,
             }],
         };
@@ -5109,7 +5222,7 @@ mod tests {
                         peak_lag_samples: -778,
                         frac_lag_samples: -778.0,
                         frac_lag_ms: -16.2,
-                        edge_pinned: Some(false),
+                        edge_pinned: Some(false),                        border_displacement_ms: None,
                         verdict: LagVerdict::TimingOffset,
                     }],
                     post_anchor: vec![],

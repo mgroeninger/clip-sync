@@ -239,6 +239,39 @@ pub fn border_templates_for_gap(
     (pre_mono, post_mono)
 }
 
+/// How far each template's **gap-facing edge** sits *away* from its gap edge, in frames: the silence
+/// walk-off, plus `border_standoff_frames`, plus the 12 %-of-peak trim
+/// [`border_templates_for_gap`] applied. Pass the lengths of the templates it returned (mono, or one
+/// channel's — the trim is per-buffer, so the displacement is too).
+///
+/// Both values are **≥ 0** — every step moves the edge outward, never toward the dropout. That
+/// matters to anything that correlates a template against a B window anchored on the *gap* edge
+/// (`gap_fingerprint::measure::lag_at_placement`): at true registration such a sweep reads `−pre` on
+/// the pre shoulder and `+post` on the post one, because the A content it is holding sits that far
+/// from where the anchor claims. See `docs/dev/TEMP-fill-placement-registration-plan.md` § "Step 5
+/// result".
+pub fn border_edge_displacement_frames(
+    samples: &[f32],
+    channels: usize,
+    spec: &GapBorderSpec,
+    pre_template_len: usize,
+    post_template_len: usize,
+) -> (usize, usize) {
+    let channels = channels.max(1);
+    let total_frames = samples.len() / channels;
+    let range = gap_border_frame_range(samples, channels, spec);
+
+    let pre_untrimmed = range.pre_end.saturating_sub(range.pre_start);
+    let post_untrimmed = range.post_end.saturating_sub(range.post_start);
+    let pre = spec.gap_start_frame.min(total_frames).saturating_sub(range.pre_end)
+        + pre_untrimmed.saturating_sub(pre_template_len);
+    let post = range
+        .post_start
+        .saturating_sub(spec.gap_end_frame.min(total_frames))
+        + post_untrimmed.saturating_sub(post_template_len);
+    (pre, post)
+}
+
 /// Count of samples above 12% of border peak (matches trim_low_energy threshold).
 pub(crate) fn border_active_extent_frames(border: &[f64]) -> usize {
     if border.is_empty() {
@@ -457,6 +490,40 @@ mod tests {
             border_templates_for_gap(&samples, channels, &test_border_spec(20, 25, 15, 5));
         assert_eq!(pre_no.len(), 15);
         assert_eq!(pre_standoff.len(), 10);
+    }
+
+    /// The displacement is the walk-off *plus* the trim, per side, and it is what a lag sweep
+    /// anchored on the gap edge reads at true registration (registration plan § "Step 5 result").
+    #[test]
+    fn border_edge_displacement_counts_walk_off_and_trim() {
+        let channels = 1usize;
+        let loud = 8_000.0_f32 / 32767.0;
+        let low = 200.0_f32 / 32767.0; // above the silence floor, below the 12 %-of-peak trim
+        let mut samples = vec![loud; 8]; // 0..8
+        samples.extend(vec![low; 4]); //  8..12  trimmed off the pre template
+        samples.extend(vec![0.0f32; 4]); // 12..16  walked off the pre template
+        samples.extend(vec![0.0f32; 4]); // 16..20  the gap
+        samples.extend(vec![0.0f32; 2]); // 20..22  walked off the post template
+        samples.extend(vec![low; 3]); //    22..25  trimmed off the post template
+        samples.extend(vec![loud; 8]); //   25..33
+
+        let spec = test_border_spec(16, 20, 13, 0);
+        let (pre, post) = border_templates_for_gap(&samples, channels, &spec);
+        assert_eq!(pre.len(), 5);
+        assert_eq!(post.len(), 8);
+
+        let (d_pre, d_post) =
+            border_edge_displacement_frames(&samples, channels, &spec, pre.len(), post.len());
+        assert_eq!(d_pre, 8, "4 walked + 4 trimmed");
+        assert_eq!(d_post, 5, "2 walked + 3 trimmed");
+
+        // A standoff that reaches past the already-trimmed fade eats real audio, and the
+        // displacement grows by exactly that much.
+        let spec = test_border_spec(16, 20, 13, 6);
+        let (pre, post) = border_templates_for_gap(&samples, channels, &spec);
+        let (d_pre, _) =
+            border_edge_displacement_frames(&samples, channels, &spec, pre.len(), post.len());
+        assert_eq!(d_pre, 10, "walk to 12, standoff back to 6, no fade left to trim");
     }
 
     #[test]

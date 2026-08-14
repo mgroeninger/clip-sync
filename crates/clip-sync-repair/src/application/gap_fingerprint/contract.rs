@@ -179,7 +179,7 @@ contracts! {
     LAG_DECISION_CONTRACT for "lag_decision" {
         measures: "per-shoulder waveform lag the gate decides patch/skip on: peak_r, frac_lag_ms, peak_z, prominence",
         placement: "b_mapped nominal, not the throat; post shoulder on S + D_A + round(L_pre); never compare across placements",
-        window: "recorded per shoulder as window_ms / max_lag_ms (defaults 1000 / 600); mono; gross-relative to b_mapped_end",
+        window: "per shoulder window_ms / max_lag_ms (1000/600); mono; gross to b_mapped_end; zero = -pre/+post border_displacement_ms",
         not: "lag_editorial (diagnostic placement); prominence is not uniqueness - no exclusion radius, see top2_spacing_ms",
     }
 
@@ -397,10 +397,17 @@ mod tests {
             frac_lag_samples: 12.5,
             frac_lag_ms: 0.26,
             edge_pinned: Some(false),
+            border_displacement_ms: Some(31.6),
             verdict: super::super::LagVerdict::TimingOffset,
         })
         .expect("lag summary");
-        for key in ["peak_r", "frac_lag_ms", "peak_z", "prominence"] {
+        for key in [
+            "peak_r",
+            "frac_lag_ms",
+            "peak_z",
+            "prominence",
+            "border_displacement_ms",
+        ] {
             assert!(
                 lag.get(key).is_some(),
                 "`{key}` is quoted by the lag contracts but LagSummary no longer emits it"
