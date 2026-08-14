@@ -36,8 +36,14 @@ donor window on material A has already played. The defect is not the size of the
 that a large displacement is accepted without being checked against what the shoulders say the
 offset should be, because **no component owns the question "is this placement plausible?"**
 
+**Data re-based 2026-08-14 — see the plan's § 0.0 before quoting any count here.** The corpus these
+numbers came from mixed A/B orientation on pairs 2–17; the current baseline is
+`gap-files/2026-08-13-repeat-terms/` (53 pairs, **317** patched gaps) with dumps at
+`gap-files/2026-08-13-v0.6.0-oriented/`. Both ear-confirmed failures are correctly oriented and
+unchanged; the cross-pair statistics are not.
+
 A candidate discriminator (`applied − frac_lag_ms`, signed backward, gated on shoulder confidence)
-fires on exactly those two gaps and nothing else in 227. Before it can ship, the plan has to settle
+fires on exactly those two gaps and nothing else in 227 (recompute on 317). Before it can ship, the plan has to settle
 whether the fix belongs in the placement search or in a new guard (Phase A), and whether the
 `applied = 0` cohort is in the guard's domain (Phase B). Several readings have already been measured
 and **withdrawn** — see the plan before re-proposing pair-level drift correction, correlation gain,
@@ -93,6 +99,42 @@ Pearson pair, diagnostic inputs not terms of `total`. The applied-placement re-s
 whenever `repeat_window_frames > 0` (including when the penalty weight is 0) and they ride the existing
 `fit_terms` plumbing — omitted with it on dual-fit / legacy. A `--patch-only --format json` run, no
 oracle cost. **Do not retune the constants until that run is read.** What the data still has to settle:
+
+> #### The run is in: `gap-files/2026-08-13-repeat-terms/` (read 2026-08-14)
+>
+> 53 pairs, **317 patched gaps, 210 carrying `fit_terms`**, correctly oriented throughout (the
+> 2026-08-12 baseline quoted above was the mixed-A/B set — see the registration plan § 0.0; its pairs
+> 2–17 scanned `name.2.ext` as A). `repeat_penalty` and `anchor_penalty` are `0.0` on **all 210**, so
+> the headline holds at 1.4× the n and in the right orientation. Three of the four questions close:
+>
+> - **Calibration, not the wrong window — but the guard *is* what blocks it.** Repeat pairs cluster far
+>   under threshold: `repeat_pre` median **0.123** / p90 0.354, `repeat_post` median **0.124** / p90
+>   0.338. Only **9 of 210** have `repeat_max > 0.55`. The sharper finding is that the two arm-1
+>   conditions are **anti-correlated**: 169 of 210 winners have `wave_min < 0.45` (80%, matching the
+>   old 84%), all 9 high-repeat winners have `wave_min ≥ 0.45` (0.467–0.772), and **the sets do not
+>   intersect**. So it is not simply that 0.55 is set too high — on this corpus a high repeat
+>   correlation goes with a *strong* seam, which is exactly what arm 1 refuses to penalize. Lowering
+>   0.55 alone would not have fired arm 1 on any of the 9.
+> - **Arm 3 was not pointed at a real population — delete it, do not repair it.** The predicted
+>   straddling case (both shoulders ~0.5) has **zero** instances: no winner has both `repeat_pre` and
+>   `repeat_post` in [0.40, 0.60], and only one has both ≥ 0.45. Exactly **one** winner exceeds
+>   `repeat_sum > 1.1` — 53/g8 at 0.949 / 0.974 — and its `wave_min` is 0.772, so arm 3's own seam guard
+>   excludes it anyway, and arm 1 would have caught it had the seam been weak. The `1.1 → 1.09` repair
+>   buys nothing. This is the "arm 3 is redundant *and* arm 1 is mis-set" branch of the question below.
+> - **The two ear-confirmed duplications score unremarkably.** 26/g6 `repeat_pre` **0.153** /
+>   `repeat_post` **0.368**; 31/g7 **0.249** / **0.207** — against a 0.55 threshold and a 0.12 median.
+>   The four other large backward slides agree (31/g8 0.046/0.097, 31/g10 0.113/0.530, 31/g11
+>   0.295/−0.009, 17/g34 −0.028/0.121). **The conditional below therefore fires: the prior is aimed at
+>   the wrong quantity, and the registration residual is the only live discriminator for that defect.**
+>
+> **Still open: the winner-only blindness** (third bullet below) — `fit_terms` reports the winner, so
+> none of this rules out the penalty demoting rivals invisibly. That needs per-candidate capture and is
+> still not proposed.
+>
+> **What this does not license.** The measurement says the prior is inert *and* mis-aimed at the § Fill
+> placement defect; it does not say what the right window or quantity would be. Treat "delete arm 3" as
+> the actionable half and leave arm 1's threshold alone until the anti-correlation above is explained —
+> and remember `REPEAT_CORR_THRESHOLD`'s second consumer below, which a retune would move.
 
 - **Whether 0.55 is miscalibrated for this material, or the detector is looking at the wrong
   window.** Today "the penalty is zero" is all the 2026-08-12 baseline has. With the pair it becomes
@@ -168,6 +210,17 @@ gives 15.93 − 11.78 = **4.15 dB** — below the lowest clip ever labelled *cle
 second-highest in the labelled set. All 227 rows of `gap-files/archive/mixed-ab/2026-08-07-fill-level-shape/`
 are inflated by their own gap's unknown gain (0–12 dB). Cross-gap `peak_delta_db` comparisons are
 invalid; do not rank or shortlist on that column.
+
+**Second contamination, 2026-08-14: that roll-up is also the mixed-A/B corpus** (108 of its 227 rows are
+pairs 2–17, scanned in the wrong direction — see the registration plan § 0.0). The current oriented
+roll-up is `gap-files/2026-08-13-repeat-terms/fill-level-rollup.csv`, 317 rows. The CSV itself has no
+gain column (`Label, Gap*, AStart/AEndSecs, EdgeDeltaDb, Head/Tail/ReferenceDb, RefAtFloor,
+Pre/PostShoulderDb, PeakDeltaDb, PeakBinDb/Index, Bins, BinMs, DualFitUsed, Report`), but the run's
+per-pair JSONs carry `status.patched.normalize_gain` on **317 of 317** patched gaps — join on
+`a_start_secs` and the gain can finally be backed out per row.
+**The ear labels behind this item are the worse casualty:** `2026-08-08-edge-listen` covers pairs 24, 8,
+12, 7, 31 — **pairs 7, 8 and 12 are swapped**, so 3 of its 5 labels are of the reverse pairing and do not
+transfer. Re-label before quoting "the lowest clip ever labelled clean" as a bound.
 
 | Item | Direction |
 |------|-----------|

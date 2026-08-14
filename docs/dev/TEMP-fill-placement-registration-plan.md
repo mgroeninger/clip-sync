@@ -2,7 +2,8 @@
 
 Status: **investigation → delivery. S3 and S5 done (2026-08-12); S2(1) done; S2c done (2026-08-12);
 S2(2) superseded 2026-08-13 — sweep refuted, prior must be registration-referenced, not nominal-referenced;
-S2b unblocked; S1 blocked on re-scoping; S4 conditional and unstarted.**
+S2b unblocked; S1 blocked on re-scoping; S4 conditional and unstarted.
+Data re-based 2026-08-14 (§0.0) — every corpus count below is superseded; the per-gap conclusions are not.**
 
 **The source-vs-gate fork is retired — the answer was "both, on different gaps".** Earlier drafts of
 this document (and §4's exit, since rewritten) treated a single verdict as gating everything
@@ -29,23 +30,409 @@ which made fill placement observable; this plan asks whether the observed placem
 **Conventions used throughout.** Gap numbers are the repair table's 1-based `#`, as
 `--fingerprint-gap` takes them (`resolve_fingerprint_gap_select`, `composition.rs`); corpus dumps
 index the same gaps **0-based**, so 26/#7 = `26/g6`. Join the two on `geometry.a_start_secs`, never
-on index — on `a_start_secs` all 227 patched gaps join to the 39-pair dumps with zero misses. Bracket
+on index — on `a_start_secs` all patched gaps join to the dumps with zero misses (227/227 on the old
+mixed set; re-establish on the oriented pair of runs as part of §0.0 step 3). Bracket
 placements (`start_frame`) are B-haystack frames whose nominal origin is **672000**; see §3.1 before
 comparing any two of them.
 
-**Data.** Quarantined 2026-08-13 under `gap-files/archive/mixed-ab/` — pairs **2–17** in these
-dumps scanned `name.2.ext` as A; pairs **18–39** (including 26 / 31) used `name.ext` as A and remain
-the provenance for this plan. `archive/mixed-ab/2026-08-07-fill-level-shape/` (38 pairs, 227 patched
-gaps) for scan reports carrying `status.patched.align_adjustment_secs`;
-`archive/mixed-ab/2026-08-08-v0.5.2-full-corpus/` (39 pairs) for per-gap dumps carrying
-`lag_decision`; `archive/mixed-ab/2026-08-09-drift-listen/` (`listen.csv` + `listen-round2.csv`,
-12 patched gaps rendered and labelled 2026-08-09) for the ear pass. Do not feed these dirs to a
-new measure run; new oriented dumps go at `gap-files/<date>-…` from a
-`repair-directory-pairs.ps1 -Recurse -LabelByFolder` manifest. All of `gap-files/` is gitignored and media-derived — quote pairs by index only, never by
-title or path. **The two `listen*.csv` files are render worklists carrying A/B media paths and hold
-no label column** — the ear labels live only in this document, so treat §1/§2's tables as their
-system of record. `drift-listen/` also keeps the rendered `_a_surround` / `_b_surround` /
-`_a_patched` WAVs per gap, which is what makes S3 answerable without a media re-run.
+**Data. Re-based 2026-08-14 onto oriented runs — see §0.0, which supersedes every corpus count in
+§0–§7.** The plan's measurements now come from exactly two dirs, both correctly oriented:
+`gap-files/2026-08-13-repeat-terms/` (53 pairs, **317 patched gaps**, 210 carrying `fit_terms`) for
+scan+patch reports, and `gap-files/2026-08-13-v0.6.0-oriented/` (as of 2026-08-14 morning: pairs 1–42
+complete, 43 writing, 44–53 remaining) for per-gap dumps carrying `lag_decision`.
+**`archive/mixed-ab/` is retired as a data source** — a hand-written name-sorted manifest scanned
+`name.2.ext` as A on pairs 2–17, and the two oriented dirs reproduce its usable half exactly (§0.0),
+so there is nothing left to read there. Do not join against it.
+
+The one exception is `archive/mixed-ab/2026-08-09-drift-listen/`, which keeps the rendered
+`_a_surround` / `_b_surround` / `_a_patched` WAVs behind the ear labels — audio, not measurement, and
+not re-derivable without a media re-run. Its pairs 18, 24, 25, 26, 31 and 37 are correctly oriented and
+their labels stand; **pairs 3 and 6 were rendered from the reversed pairing and their labels do not
+transfer** (both were clean labels, so the clean cohort shrinks by two — see §2.3). The two
+`listen*.csv` files are render worklists carrying A/B media paths and hold **no label column** — the
+ear labels live only in this document, so treat §1/§2's tables as their system of record.
+
+New runs go at `gap-files/<date>-…` from a `repair-directory-pairs.ps1 -Recurse -LabelByFolder`
+manifest. All of `gap-files/` is gitignored and media-derived — quote pairs by index only, never by
+title or path.
+
+---
+
+## 0.0 Data re-baseline (2026-08-14) — read before any number below
+
+A hand-written manifest (folder group, `Sort-Object Name`, first file as A) reversed A/B on
+**pairs 2–17**: those runs scanned `name.2.ext` as A, so they measured the *other* member's dropouts.
+`repair-directory-pairs.ps1` was not that generator. Everything in §0–§7 that aggregates across pairs
+was computed over that mixed set and is superseded. Everything scoped to a single correctly-oriented
+pair — which is both ear-confirmed failures and most of this plan's reasoning — is untouched.
+
+### What was verified, and how
+
+Two independent tests, both scripted from the files, agreeing exactly on all 39 pairs:
+
+| test | result |
+|---|---|
+| `manifest.json` `a_id` / `b_id` content hashes, old vs oriented | pairs **2–17**: `old.a_id == new.b_id` and vice versa → **swapped**. Pairs **1, 18–39**: both match → **same A**. No pair unclassified. |
+| gap sets joined on `a_start_secs` per label | swapped pairs share **0** of 108 old patched gaps; same-A pairs share **all 119**. Perfectly bimodal, no partials. |
+
+The gap-set test works because a gap *is* "A silent, B has energy", so swapping A and B produces a
+near-disjoint set by construction. It is corroborating evidence; the hash test is authoritative and is
+the one to run on any dir of unknown provenance.
+
+**The oriented dirs reproduce the old data exactly where the old data was valid.** Over pairs 1 and
+18–39: **1036/1036** `lag_decision` shoulder anchors identical (`frac_lag_ms`, `peak_r`, `peak_z`)
+between `2026-08-08-v0.5.2-full-corpus/` and `2026-08-13-v0.6.0-oriented/`, no gap present in old and
+missing from new; and all **119/119** patched gaps carry an identical `align_adjustment_secs` (< 1e-6)
+between `2026-08-12-fit-terms-baseline/` and `2026-08-13-repeat-terms/`. So nothing between the
+2026-08-12 baseline commit and `f3ebebab` moved a placement — `repeat_pre`/`repeat_post` are pure
+reporting — and the re-analysis can be built on **those two dirs** with the old dirs retired rather
+than cross-linked.
+
+**Pairs 2–17 are new data, not corrected data.** Their old measurements were internally valid
+observations of the reverse pairing (B filled from A), a direction we do not ship. Findings there
+(12/g4, 16/g11) are **withdrawn, not refuted** — re-seek them in the production orientation; if the
+same phenomenon reappears it is a stronger result than the original, because it would hold both ways.
+
+### The new baseline
+
+`gap-files/2026-08-13-repeat-terms/` — 53 pairs, 52 with patched gaps, policy-identical to the
+2026-08-12 baseline plus the repeat-term reporting.
+
+| | old (mixed, 39 pairs) | **new (oriented, 53 pairs)** |
+|---|---|---|
+| patched gaps | 227 | **317** |
+| carrying `fit_terms` | 147 | **210** |
+| `dual_fit_used` | 80 | **107** |
+| `anchor_seam_used` | 75 | **100** |
+| `signature_mode` energy / bool | 225 / 2 | **315 / 2** |
+| `patch_tier` high / marginal / anchor_trusted | 179 / 37 / 11 | **244 / 51 / 22** |
+| `residual.informative` | 16 | **26** (8%) |
+| `\|align_adjustment\| > 0.5 s` | 5 | **12** |
+| slide identity `placement_slide_frames == \|adj\|×48000` | 145 / 225 | **208 / 315** |
+| `beyond_lag_reach` — n, median, max \|applied\| | 159, 56.7 ms, 1450 ms | **215, 43.8 ms, 2833 ms** |
+| every other `residual_uninformative` — n, median, max | 68, 0.0 ms, 8.0 ms | **102, 0.0 ms, 9.8 ms** |
+
+The `beyond_lag_reach` / other split stays a tautology of the 10 ms definition (§3), as before: the
+non-`beyond` bucket still tops out under 10 ms. `dual_fit_used` continues to equal the no-`fit_terms`
+count *exactly* in every subset (107/107, and 47/47, 38/38, 22/22 on the three cohorts below), which
+re-confirms "dual-fit sets `fit_terms: None`" as an identity rather than an observation.
+
+The corpus now decomposes into three cohorts, worth reporting separately until the new ones have been
+looked at:
+
+| cohort | pairs | patched gaps | `fit_terms` |
+|---|---|---|---|
+| same-A, directly comparable to the old work | 1, 18–39 (22 with gaps) | **119** | 72 |
+| re-oriented, never measured this way | 2–17 | **111** | 73 |
+| never measured at all | 40–53 | **87** | 65 |
+
+Ear labels exist only in the first cohort, and only a dozen of those 119 were labelled. The other
+**198** gaps (2–17 and 40–53) have no ear labels; most of the 119 same-A gaps don't either.
+
+### The recount answers the repeat-prior run that BACKLOG was waiting on
+
+This baseline is the `--patch-only` run that [BACKLOG.md § Repeat-at-seam prior is inert on every
+winner](../../BACKLOG.md#repeat-at-seam-prior-is-inert-on-every-winner-one-branch-is-unreachable) shipped
+the `repeat_pre` / `repeat_post` emit for. Full answers are recorded there; the one that lands **in this
+plan** is its fourth open question:
+
+**The repeat window does not see the two duplications this prior exists to catch.** On 26/g6 the pair
+is `repeat_pre` 0.153 / `repeat_post` 0.368; on 31/g7 it is 0.249 / 0.207 — against a 0.55 threshold, on
+the two gaps that are *ear-confirmed shoulder repeats*, and against a corpus median of 0.12. The other
+four large backward slides agree (31/g8 0.046/0.097, 31/g10 0.113/0.530, 31/g11 0.295/−0.009, 17/g34
+−0.028/0.121). BACKLOG's own conditional therefore fires: *"if their `repeat_pre` is unremarkable, the
+prior is aimed at the wrong quantity and the registration residual is the only live discriminator."*
+
+**A repeat-correlation term is not the fix for the §1 defect at this window size** — the discriminating
+information is registration, not self-similarity, which is where §2 arrived from the other end. This
+constrains S2/S2b rather than adding work to them.
+
+(For the record, the recount also confirms `anchor_penalty` 0.0 on all 210 — expected, §4.1a: the
+anchor prior needs `--fill-offset anchored-retry` — and `late_start_penalty` firing on 140 of 210, so
+the forward prior is the only live one of the three.)
+
+### What survives without re-measurement
+
+- **Both ear-confirmed failures.** 26/g6 (`align_adjustment_secs` −1.4500, `pre` 0.3663 / `post`
+  0.4942, tier `high`, `energy`, dual-fit declined) and 31/g7 (−0.9774, 0.4368 / 0.4369) are present in
+  the new baseline with **identical values**. §1, §2, §2.1, §2.2, §2.4 stand.
+- **S3 / §4.3** — the ±2000 ms sweeps refuting the rival peak, measured on 26 and 31 only.
+- **S2b** and its exit criterion (31/g7 → ≈ −47 ms).
+- **S2(2)'s refutation of the backward-penalty sweep** — the scale-invariance argument is 26/g6 vs
+  31/g8 and 31/g11, all same-A.
+- **Every code-derived fact:** §3's dual-nominal mechanism, §3.1's frame-672000 origin, §3.2, §4.1a's
+  prior table, §4.1b, S2c, S5, S2(1).
+
+### What is withdrawn pending recomputation
+
+- ~~**Route 2's consensus** (§0 S2(2))~~ — **rebuilt, see "Step 3 result" below: it survives at
+  34/34 in-window pairs and a 9-pair load-bearing cell.** The 77.9% slide-variance figure is the one
+  part not yet recomputed.
+- ~~**The `peak_z ≥ 12` re-gate** (§0 (3))~~ — **rebuilt: 30/31 agree, cell 8/8.** Its suspect list is
+  re-derived below; 12/g4 and 16/g11 are gone with their swapped pairs.
+- **The −23.4 / −24.8 ms signed bias.** Note it is *not* an orientation artifact on the same-A pairs —
+  those anchors are bit-identical old to new. It **survived the rebuild** at −21.9 ms (`peak_r`) /
+  −26.1 ms (`peak_z`), negative on 32/34 and 28/31 pairs, so step 5 is unchanged and now better
+  supported.
+- **§2's corpus firing table** (δ 150/300/500 ms → 20/9/2) and the 30/227 `|residual| > 150 ms` count —
+  both need `lag_decision`, so both wait on the join.
+- **§4's zero-move bracket distribution** (132 of 291, median +12.4 ms) — dump-side, same wait.
+- **§2.3's 3/g9 caveat.** Pair 3 is swapped; that gap does not exist in the production orientation. It
+  only ever reduced n, so drop it and recount the clean cohort. The "do not turn this into a level
+  threshold" ruling stands on its own argument.
+- **Two of the twelve ear labels.** The `drift-listen` worklists cover pairs 3, 6, 18, 24, 25, 26, 31,
+  37; **pairs 3 and 6 are swapped**, so their renders are of the reverse pairing. Both were *clean*
+  labels, so the labelled cohort loses two clean gaps and no failures — every margin in §1/§2 is
+  unaffected or slightly better-supported, and n drops. (The separate `2026-08-08-edge-listen`
+  worklist, which belongs to the fill-level work rather than to this plan, loses 3 of its 5 — pairs 7,
+  8 and 12. The archive README's "3 / 6 / 10" was wrong: no pair 10 appears in any worklist.)
+
+### The fingerprint run is complete (verified 2026-08-14)
+
+`2026-08-13-v0.6.0-oriented/` holds **53 pair dirs, 53 `manifest.json`, 1090 `*_full.json` dumps**, and
+**every one of the 317 patched gaps has a dump**. The only gaps without one are 26 leading `g0`s whose
+status is `not_planned` — expected, not truncation. Step 3 can run at full corpus scope in one pass.
+
+### Two pairs are duplicate media — dedup before quoting any corpus rate
+
+The `a_id`/`b_id` sweep that settled orientation also shows **pair 6 ≡ pair 22** and **pair 16 ≡ pair
+28**: identical content hashes on *both* members. Their new outputs are bit-identical (6 vs 22: 5/5
+patched gaps matching on `align_adjustment_secs`, `pre`/`post_correlation`, tier and `dual_fit_used`;
+16 vs 28: 4/4). So 53 labels are **51 distinct media**, and 317 gaps are **308 independent** ones.
+
+| | as labelled | deduped (drop 6, 16) |
+|---|---|---|
+| pairs with patched gaps | 52 | **50** |
+| patched gaps | 317 | **308** |
+| carrying `fit_terms` | 210 | **203** |
+| `dual_fit_used` | 107 | **105** |
+| `anchor_seam_used` | 100 | **97** |
+| `residual.informative` | 26 | **26** |
+| `\|adj\| > 0.5 s` | 12 | **12** |
+
+The duplication **straddles the cohort table above**: 6 and 16 are counted as "re-oriented, never
+measured this way", but their content was already measured, correctly oriented, as 22 and 28. That
+cohort is **102** genuinely new gaps, not 111. Drop 6 and 16 rather than 22 and 28 — the latter carry
+the same-A history the regression column needs.
+
+Two things fall out for free:
+
+- **A determinism check passed.** Two independent invocations on identical input produced identical
+  placements — worth keeping as the cheapest available regression on the analysis pipeline.
+- **A third, stronger confirmation of the swap.** In the old archive, pair 6 was scanned inverted and
+  pair 22 was not, on *the same two files* — a controlled A/B-swap experiment we did not know we had.
+  Old-6 has 9 patched gaps, old-22 has 5, and they share **zero** `a_start_secs`; old-16 vs old-28 is
+  8 vs 4, also zero shared. Identical media, opposite direction, disjoint gap sets — exactly what "a
+  gap is *A silent, B has energy*" predicts, measured rather than argued.
+
+### Step 3 result (2026-08-14) — Route 2 rebuilt: it survives, and it is stronger
+
+Recomputed from scratch over `2026-08-13-v0.6.0-oriented` × `2026-08-13-repeat-terms`, joined on
+`geometry.a_start_secs`: **317/317 gaps joined, 0 unjoined, 52 pairs.** Corpus-wide figures below are
+**deduped** (pairs 6 and 16 dropped, 308 gaps).
+
+**The analysis code was calibrated before it was trusted.** Re-run against the *old* pair
+(`2026-08-08-v0.5.2-full-corpus` × `2026-08-12-fit-terms-baseline`) it reproduces the published
+`peak_r` result exactly — **26/26 in-window pairs agree**, load-bearing cell **6/6 = {3, 6, 13, 18, 22,
+32}** — and the `peak_z` cost figures exactly: **432 → 270** shoulders kept, gaps with no usable
+shoulder **4 → 58**. Recovering that took two rules the prose had left implicit, both now explicit in
+the code: a pair needs **≥3 unified gaps** before its consensus is quoted, and a **big-step gap is
+excluded from the pair pool**, not merely from its own reduction. (Using the archive to calibrate
+*code* is not using it as a data source; it is the regression fixture §0.0 asked for.)
+
+**The rebuild is committed as [`scripts/measure/route2-consensus.ps1`](../../scripts/measure/route2-consensus.ps1)**,
+so every number in this section is re-derivable without re-running the corpus:
+
+```
+./scripts/measure/route2-consensus.ps1 -ScanDir gap-files/2026-08-13-repeat-terms `
+    -DumpDir gap-files/2026-08-13-v0.6.0-oriented -ExcludePairs 6,16
+```
+
+Its header carries both calibration targets (archive and oriented); it accepts both the pre- and
+post-`1e4fef21` dump filenames, and `-PairTable` / `-OutOfWindow` / `-ShoulderMap` /
+`-ReductionRobustness` / `-CsvOut` reproduce the supporting tables below.
+
+| | old mixed (published) | **oriented, deduped** | same-A cohort |
+|---|---|---|---|
+| joined gaps | 227 | **308** | 119 |
+| shoulders kept (`peak_r`) | 432 / 454 | **580 / 616** | 222 / 238 |
+| in-window pairs agreeing ≤ 50 ms | 26 / 26 | **34 / 34** | 12 / 12 |
+| load-bearing cell (\|consensus\| ≥ 150 ms) | 6 / 6 | **9 / 9** | 3 / 3 |
+| big-slide median \|adj\| → \|adj − lag\| | 0.2713 → 0.0210 s | **0.2479 → 0.0241 s** (10.3×) | 0.3073 → 0.0209 s (14.7×) |
+| signed bias (`peak_r`) | −23.4 ms | **−21.9 ms**, negative on 32/34 | −15.7 ms, 11/12 |
+| signed bias (`peak_z`) | −24.8 ms, 20/22 | **−26.1 ms**, negative on 28/31 | −26.1 ms, 9/11 |
+
+**The regression column passes.** Running the *same* code over old dumps and new dumps restricted to
+the 22 same-A pairs gives **identical per-pair `(consensus, pooled)` on every pair, under both gates**
+— as it must, the anchors being bit-identical, but it is now checked rather than assumed.
+
+**The load-bearing cell went from 6 pairs to 9 and only 3 of the old 6 were real.** It is now
+`{2, 3, 13, 14, 18, 22, 32, 47, 51}` — 9/9 agreeing — and it draws from all three cohorts (2, 3, 13, 14
+re-oriented; 18, 22, 32 same-A; 47, 51 never measured). Route 2's core claim is no longer resting on a
+cell that was half swapped; it is reproduced independently on media the original never saw.
+
+**The `peak_z ≥ 12` re-gate also survives, at the same steep cost.** 616 → **373** shoulders, gaps
+with no usable shoulder 10 → **75**; **30/31** in-window pairs agree and the load-bearing cell is
+**8/8** `{2, 3, 13, 14, 18, 32, 47, 51}` (pair 22 leaves for lack of a confident shoulder, exactly as
+before). The big-slide collapse is 0.2204 → 0.0221 s, **10.0×**. Conclusion unchanged: the gate costs
+coverage and buys sorting, and the registration result does not depend on it.
+
+**Robustness.** Pair-level agreement, the cell, and the bias are identical under all four reductions
+(mean / pre / min-abs / best-r) because pooling is over shoulders, not reduced gaps. The per-gap
+decisive cell does move with the reduction — `pre`-only is clearly the worst (`peak_z`: 13/24 confirmed,
+median residual 0.0454 s, versus 22–24 confirmed and 0.0198–0.0227 s for the other three) — which is
+itself the reduction-discipline point, measured.
+
+#### A second pair-31
+
+**Pair 50's consensus is +2.7891 s**, and its last six gaps in order read `. . . . X X X X X X` — no
+usable shoulder at all. Pair 31 reproduces its published signature exactly (`. . X X X`, consensus
+−1.1086 s). So the "true offset outside the ±600 ms sweep" class has **two** members, one of them in
+the never-measured cohort, and it is no longer a single-pair observation. This is direct, independent
+support for [TEMP-lag-envelope-recenter-plan.md](TEMP-lag-envelope-recenter-plan.md) and it gives that
+plan a **second** validation pair.
+
+#### The suspect list, re-derived (step 4)
+
+The old list does not transfer: **12/g4 and 16/g11 are both from swapped pairs** and neither exists in
+the production orientation. Under `peak_z ≥ 12`, deduped, the coherent contradictions are now:
+
+| gap | `align_adjustment` | measured lag | discrepancy | cohort |
+|---|---|---|---|---|
+| **17/g34** | −1149.6 ms | −19.7 ms | **−1130.0** | re-oriented |
+| **31/g7** | −977.4 | −47.5 | −930.0 | same-A (known, S2b) |
+| **27/g2** | +83.4 | −549.2 | +632.6 | same-A |
+| 45/g5 | +50.0 | −221.2 | +271.1 | never measured |
+| 5/g2 | +24.6 | +268.4 | −243.8 | re-oriented |
+| 33/g21 | −49.9 | −285.1 | +235.2 | same-A |
+| 47/g14 | **+0.0** | +207.6 | −207.6 | never measured |
+| 13/g16 | +153.3 | +257.0 | −103.7 | re-oriented |
+
+Three of these deserve naming:
+
+- **17/g34 is a third member of the 26/g6 class** — a ~1.15 s backward slide that the registration
+  measurement flatly contradicts. It is *not* ear-labelled, and §0.0 already noted its repeat terms are
+  unremarkable (−0.028 / 0.121). It is the strongest new candidate failure in the corpus.
+- **27/g2** is a 633 ms discrepancy on a **correctly-oriented, always-valid pair** — it was reachable
+  in the old data and was not on the published list, because the published suspect threshold was never
+  written down. Treat it as a genuine miss of the old analysis, not as new data.
+- **47/g14 fails in the opposite direction**: `align_adjustment_secs` is **exactly 0.0** while the
+  shoulders measure +207.6 ms. Every failure this plan has chased so far is *slid too far*; this one
+  did not move when it should have. If it holds up it widens §1's defect statement.
+
+26/g6 is absent from this list under `peak_z`, exactly as the old run found: at `peak_z` 6.1 its lag is
+unmeasurable, so it is refuted by §4.3's sweep, not by this route.
+
+### Restart sequence
+
+1. ~~Record the split.~~ **Done — this section.**
+2. ~~Re-baseline the patch-side counts.~~ **Done — the tables above.**
+3. ~~Rebuild Route 2 and the `peak_z` re-gate from scratch.~~ **Done 2026-08-14 — "Step 3 result"
+   above.** One full-corpus pass, 317/317 joined; the code was calibrated against the archive first
+   (it reproduces the published `peak_r` result exactly) and the same-A regression column is identical
+   old-to-new under both gates.
+4. ~~Re-derive the suspect list.~~ **Done — table above.** 12/g4 and 16/g11 are gone with their swapped
+   pairs; the new list is headed by **17/g34**, **27/g2** and **47/g14**.
+5. ~~**Then the −24.8 ms bias**, which is what blocks the lag becoming a scoring input.~~
+   **Done 2026-08-14 — "Step 5 result" below.** It splits in two: ~11 ms is an artifact of
+   `lag_at_placement`'s own window construction, and the remaining ~25 ms is the applied placement
+   sitting **late** relative to where both shoulders register. Both are now separately measurable.
+
+### Step 5 result (2026-08-14) — the bias is two terms, and only one is the probe
+
+**The measurement's zero is not "A's gap edge against B's gap edge."** It is *A's border-template
+edge* against *B's gap edge*. Only one of the two is pulled away from the dropout:
+
+- **A side.** `lag_at_placement` (`measure.rs:874-882`) builds its templates with
+  `border_templates_for_gap`. That construction walks the gap-facing edge back through silence
+  (`gap_borders.rs:166-192`) and then trims the low-energy tail/head at 12 % of the template's own
+  peak (`seam_splice.rs:24-55`). Both only ever move the edge **away** from the gap. Call the
+  displacements `D_pre`, `D_post` — both ≥ 0 by construction. (`border_standoff_frames` is **0** on
+  this path, so the 0.35 s standoff is not part of it.)
+- **B side.** The anchors are `start_frame = b_mapped(refined.start)` and, for post,
+  `start_frame + gap_frames` — the mapped gap edges exactly, undisplaced.
+
+The sweep convention is "A's window flush with the anchor at lag 0" (`seam_local.rs:21`,
+`base = max_lag + lag`), so a displaced A edge is reported as a lag of exactly that displacement.
+The post shoulder is searched around `+round(L_pre)` and then shifted **back** (`measure.rs:800`), so
+it does *not* inherit the pre displacement — the shift cancels. Against a true registration `T`:
+
+```
+pre lag   =  T − D_pre
+post lag  =  T + D_post
+```
+
+Locked by `lag_at_placement_reads_border_displacement_at_true_registration`: a synthetic pair with
+`T = 0` and a known fade on each shoulder reads exactly −`D_pre` / +`D_post`, not 0.
+
+**So the two shoulders separate the two terms.** Writing the applied slide as `adj = T + α`:
+
+```
+post − pre      =  D_pre + D_post      ← the probe's displacement, α cancels
+−(pre + post)/2 =  α ∓ (D_post−D_pre)/2 ← how late the placement sits, D mostly cancels
+```
+
+Corpus (183 gaps with both shoulders, non-dual, |adj| ≤ 600 ms):
+
+| quantity | prediction | median | quartiles | sign held |
+|----------|-----------|--------|-----------|-----------|
+| `D_pre + D_post` (probe) | ≥ 0 | **11.3 ms** | 3.7 / 11.5 / 25.8 | 155/183 |
+| `α` (placement) | — | **25.4 ms** | 7.3 / 25.3 / 42.2 | 156/183 > 0 |
+
+**Only about half the bias is the probe.** The larger half is `α`: the fill is placed ~25 ms *later*
+than the point at which A's two shoulders both register against B. That is production's own version
+of the same artifact — its search templates carry the **0.35 s** `border_standoff`
+(`patch_region.rs:453`, `gap_borders.rs:195-200`) on top of walk-off and trim, and the B windows it
+scores them against are flush at `start` / `start + gap_frames` with no compensation
+(`seam_scoring.rs:789-801`). The two shoulders pull the placement in opposite directions by roughly
+±(350 ms + their own walk/trim); `α` is where that tug settles, and it settles on the post side.
+
+**Two rival explanations were killed, not argued away:**
+
+- **Gap-edge refinement.** Production records its own refinement (`gap_start_adjust_frames`,
+  `gap_end_adjust_frames`); it is non-zero on 68/317 patched gaps. On the 101-gap subset where it is
+  **exactly zero** — both paths agreeing on the gap edges to the sample — the bias is unchanged
+  (pre −30.4, post −19.6). Code agrees: production's reference `offset_nominal_start` is itself built
+  from the refined start (`patch_region.rs:1431-1436`), so the term cancels.
+- **Crossfade midpoint.** Default `crossfade_ms` is 10; half of it is 5 ms, not 22.
+
+**Consequences.**
+
+1. **The probe half is now recorded, not inferred. DONE (2026-08-14).** `D` is known for free where
+   the templates are built, so `border_edge_displacement_frames` (`gap_borders.rs`, co-located with the
+   construction it mirrors) returns it and `lag_at_placement` stamps it per shoulder as
+   `LagSummary::border_displacement_ms`. Reading a recorded `frac_lag_ms` against its true zero is
+   `frac_lag_ms + border_displacement_ms` on the pre shoulder and `− border_displacement_ms` on the
+   post one. It is content-dependent per gap (do not substitute the median), absent on paths that build
+   no border templates, and absent on pre-2026-08-14 corpora — which stay readable, because nothing
+   about the recorded lag changed. Re-anchoring the B window on the border edge would also have worked
+   but silently redefines every historical `frac_lag_ms`.
+2. **`α` is the open question, and it is production's, not the probe's.** Correcting `D` removes
+   ~11 ms of the ~22; the remaining ~25 ms is the fill genuinely sitting late. The suspected mechanism
+   above (0.35 s standoff on both search templates against flush B windows) is a code reading, not yet
+   a measurement — it predicts `α` should scale with `border_standoff_secs`, which is testable by
+   sweeping that one config value on a handful of gaps. Nothing downstream should treat `α` as a probe
+   artifact now that the probe's share is separately accounted.
+3. **Neither term is a tolerance budget.** Neither may be spent as one — including in the
+   envelope-recenter exit criterion, which currently says the median lag "must not move by more than
+   the existing ~22 ms signed bias". A recenter cannot change `D`, and `α` is a property of where the
+   fill was placed, so that check is measuring the wrong thing at the wrong size.
+4. **S1 is affected as a units bug, not a blocker.** Feeding a raw `frac_lag_ms` into a score feeds
+   `true_lag − D_pre` (or `+ D_post`), content-dependent gap to gap. Any threshold calibrated on
+   uncorrected numbers bakes the probe's border policy into the gate; S1 should score the corrected
+   value.
+
+Two follow-ons this step created, neither of them blocking step 5:
+
+- **17/g34 and 47/g14 want an ear pass.** 17/g34 is a third candidate of the 26/g6 class; 47/g14 is the
+  first *failure-to-move* candidate. Both are unlabelled. This is the cheapest way to test whether the
+  registration residual orders audibility, which is the question §1 has never been able to answer at
+  n=2.
+- **The 77.9% slide-variance / leave-one-out-median result** (S2(2)) is the one Route 2 figure still on
+  mixed data. It is corroborating rather than load-bearing, so it can wait.
+
+Unchanged by any of this: S2b can proceed in parallel, the envelope-recenter plan is still what
+unblocks S1, and S4 is still conditional.
 
 ---
 
@@ -86,7 +473,8 @@ Emit the §2 quantity (`applied − frac_lag_ms`, reduced by minimum absolute va
 **neither** δ (§6) **nor** the source/gate verdict (§4) — the measurement is correct to record under
 either answer, and it converts "found by ear" into "visible in the output", which is the thing that
 actually failed. Precedent: the fill-level fields shipped record-only for the same reason.
-*Exit:* the field appears on all 227 patched gaps; the two known-bad gaps are its extremes.
+*Exit:* the field appears on all patched gaps (**317** on the current baseline, §0.0); the two
+known-bad gaps are its extremes.
 
 **S2 — Resolve `max_fill_align_adjustment_secs` (§4.1). ~~Blocked only on confirming it is dead.~~
 Confirmed dead 2026-08-12 — unblocked.** Workspace-wide search: the value flows config → `AppConfig`
@@ -176,6 +564,12 @@ Baseline (a) completed: `gap-files/archive/mixed-ab/2026-08-12-fit-terms-baselin
 carrying `fit_terms`** (the other 80 are dual-fit, which sets `fit_terms: None` and reports
 `align_adjustment_secs == 0.0` by construction — verified 80/80). Sweep (b) **should not be run.**
 
+> **Re-based 2026-08-14 (§0.0).** That baseline is the mixed-orientation set. Replaced by
+> `gap-files/2026-08-13-repeat-terms/` — **53 pairs, 317 patched gaps, 210 with `fit_terms`**,
+> policy-identical (all 119 shared placements bit-identical), so **the refutation below is unaffected**:
+> it rests on 26/g6 vs 31/g8 / 31/g11, all correctly-oriented pairs, and their values are unchanged.
+> **Route 2's consensus statistics further down are withdrawn** — half its load-bearing cell was swapped.
+
 **The sweep is refuted by arithmetic, before any config value.** The penalty is
 `LATE_START_PENALTY × offset_frac × scale` with `offset_frac = |offset_frames| / gap_frames`, so the
 ordering between gaps is scale-invariant. At *every* scale, 31/g8 (`offset_frac` 0.1428) and 31/g11
@@ -194,6 +588,9 @@ than by `|adj|`, pair 31's only flagged gap is **31/g7** — which §4.2 indepen
 `min`-reduction defect (S2b), not a placement-prior defect.
 
 **Route 2 — the consensus is independently confirmed, so this is not the search agreeing with itself.**
+**⚠ Superseded 2026-08-14 — rebuilt on the oriented corpus (§0.0 "Step 3 result"): the claim holds at
+34/34 in-window pairs and a 9-pair load-bearing cell `{2, 3, 13, 14, 18, 22, 32, 47, 51}`. The numbers
+below are the mixed-corpus originals, kept for provenance; read the rebuilt ones instead.**
 The obvious objection is circularity: `align_adjustment_secs` is the search's own argmax, so a
 consensus built from it cannot justify it. Joined against `lag_decision.frac_lag_ms` from the
 2026-08-08 dumps (`measure.rs:1662`, Full tier) — a waveform-correlation lag measured at `b_mapped`
@@ -247,6 +644,13 @@ seam window. The backward-penalty sweep is **not** on this list.
 
 ##### (3) `peak_z ≥ 12` re-gate — 2026-08-13, the result survives at a third of the coverage
 
+> **⚠ Superseded 2026-08-14 — rebuilt (§0.0 "Step 3 result").** The gate's cost/benefit reproduces on
+> the oriented corpus (30/31 in-window pairs agree, cell 8/8, 10.0× big-slide collapse), so the
+> conclusion stands; the counts below are the mixed-corpus originals. The suspect list **is** replaced:
+> 12/g4 and 16/g11 are from swapped pairs and do not exist in the production orientation. The
+> *structural* read at the end stands and got stronger — pair 31's `. . X X X` reproduces exactly, and
+> **pair 50 is a second instance** (`. . . . X X X X X X`, consensus +2.79 s).
+
 Re-ran the join with `peak_z ≥ 12` replacing `peak_r ≥ 0.5` as the confidence gate. The cost is
 steep and the conclusion does not move.
 
@@ -291,20 +695,30 @@ disagreement was type confusion on a shared field, not a schema gap.
 *Confirmed live, not theoretical.* Over the 227-patched-gap corpus report, one Bool gap reports
 `post_correlation: 1.0` exactly, against `pre_correlation: 0.270` (`confidence: marginal`). A waveform
 Pearson of exactly 1.0 on real audio is essentially impossible; a structure score of 1.0 is
-unremarkable. That gap's post-seam check passed on a number that is not a seam correlation. **Re-check
-that gap on the next corpus report** — it should now report a real seam Pearson (or fail the gate
-honestly if the structure `1.0` was the only reason it passed).
+unremarkable. That gap's post-seam check passed on a number that is not a seam correlation. ~~**Re-check
+that gap on the next corpus report**~~
+
+> **Re-check done 2026-08-14 — the gap is 32/g3, and it re-adjudicated.** Pair 32 is correctly oriented
+> in both runs, so this is a clean before/after. Pre-fix (`2026-08-07-fill-level-shape`): pre 0.2703 /
+> post **1.0000**, `marginal` / `marginal`. Post-fix (both the 08-12 baseline and the oriented
+> `2026-08-13-repeat-terms`): pre 0.6053 / post **0.4069**, `high` / `high`. So the field now carries a
+> real seam Pearson, and the gap passes *more* strongly than before rather than failing — the structure
+> `1.0` was not what was carrying it. Note `pre_correlation` moved too (0.270 → 0.605), which the fix's
+> stated scope does not predict: snap's write was evidently also changing the placement the pre-seam was
+> scored at, not only mislabelling the post field. Worth a look if `snap_fill_to_gap` is touched again;
+> n = 1, and Bool is 2 of 317 gaps, so not worth chasing on its own.
 
 *Why it did not block S2(2).* `snap_fill_to_gap` is a **no-op outside the Bool signature**
 (`gap_signature.rs:227` matches only `Bool`/`Bool`), and the corpus is overwhelmingly `energy`:
 
-| `signature_mode` | patched gaps |
-|---|---|
-| `energy` | 225 |
-| `bool` | **2** |
+| `signature_mode` | patched gaps (mixed, 227) | **oriented, 317** |
+|---|---|---|
+| `energy` | 225 | **315** |
+| `bool` | **2** | **2** (32/g3, 48/g2) |
 
-So S2c reached at most 2 of 227 gaps (0.9%), and 26/g6 — S2's exit criterion — is `energy` (§3). An S2
-`fit_terms` diff over the 225 energy gaps cannot be confounded by it.
+So S2c reached at most 2 of 227 gaps (0.9%) — **2 of 317 (0.6%) on the oriented corpus**, the rate
+holding as the corpus grew — and 26/g6, S2's exit criterion, is `energy` (§3). An S2 `fit_terms` diff
+over the energy gaps cannot be confounded by it.
 
 > **Settled 2026-08-12 — stop snap from writing correlation fields.** This is accidental dual meaning
 > *on the unified path*, where `post_correlation` is supposed to stay waveform. (The intentional dual
@@ -342,8 +756,8 @@ degrades the good shoulder from 0.829 to 0.437 because it raises the minimum. Op
 the trustworthy shoulder when the other is provably unmatchable (generalizing
 `short_gap_one_strong_seam_fallback`), or make the unmatchable shoulder abstain from the reduction
 rather than dominate it. Either way this is a **scoring-objective** change, distinct from S2's prior.
-*Exit:* 31/g7 places at ≈ −47 ms, and the change is checked against the 227-gap corpus for placements
-it moves.
+*Exit:* 31/g7 places at ≈ −47 ms, and the change is checked against the **317**-gap oriented corpus
+(§0.0) for placements it moves.
 
 **S3 — ~~Find or refute~~ the rival peak at −977 / −1450 ms (§4.2). DONE 2026-08-12 — REFUTED on both.
 No re-run needed, and none is now warranted.** Full curves and method in **§4.3**. Headline: at both
@@ -420,12 +834,15 @@ consumers are `gained_fill` and `spec.normalize_gain`, and seam scores are Pears
 so this plan's whole axis is gain-invariant. What it does change, confined to fills currently
 attenuated (whole-fill RMS above A-border RMS; boosted fills untouched):
 
-- `peak_delta_db` / `edge_delta_db` on that subset — `gap-files/archive/mixed-ab/2026-08-07-fill-level-shape/` becomes
-  a different-policy baseline. (Nothing in §0–§7 reasons from those fields, so no conclusion here moves.)
+- `peak_delta_db` / `edge_delta_db` on that subset — the fill-level roll-up (now
+  `gap-files/2026-08-13-repeat-terms/`; the mixed `archive/mixed-ab/2026-08-07-fill-level-shape/` is
+  not a live baseline) becomes a different-policy corpus. (Nothing in §0–§7 reasons from those
+  fields, so no conclusion here moves.)
 - **§5 / S4's ear labels.** `--gap-listen` renders through the normal patch path, so `normalize_fill`
   applies to `_a_patched`: a loud-fill gap rendered after the change is different audio from one
-  labelled before it. Existing `archive/mixed-ab/2026-08-09-drift-listen/` renders remain valid as files; a re-render
-  will not match its own label.
+  labelled before it. Existing `archive/mixed-ab/2026-08-09-drift-listen/` renders remain valid as
+  files for the correctly-oriented pairs (18, 24, 25, 26, 31, 37); pairs 3 and 6 were reversed and
+  do not transfer. A re-render will not match its own label.
 
 **Decision: the normalize change ships first, before S4 renders anything new** — S4 is conditional and
 has not started, so landing it first keeps the forward label set under one policy rather than
@@ -480,7 +897,7 @@ Also refuted as discriminators, each by a labelled counterexample:
 | `confidence` / `patch_tier` | both `high` on both failures |
 | donor-envelope self-similarity | 26/#7 = 0.366 vs clean median 0.160 — wrong direction |
 | spectral flux | 26/#7 = 2.91, inside the clean range 1.13–3.50 |
-| correlation gain (`post − pre`) | 31/#8 flat (+0.0001) and *bad*; 31/#12 *falls* 0.574 → 0.376 and is clean; 7/#7 goes 0.993 → 0.354 and is clean. Corpus-wide 67% of patched gaps move it by < 0.001 — not a quality measure |
+| correlation gain (`post − pre`) | 31/#8 flat (+0.0001) and *bad*; 31/#12 *falls* 0.574 → 0.376 and is clean. Corpus-wide 67% of patched gaps move it by < 0.001 — not a quality measure. ~~7/#7 (0.993 → 0.354, "clean")~~ **withdrawn 2026-08-14**: pair 7 was reversed; that label does not transfer |
 | `\|align_adjustment\| / gap_length` as a screen | it is what put the four clean pair-31 gaps at the top |
 
 ### 1.2 Correction: the pipeline already computes local shoulder registration
@@ -532,7 +949,12 @@ shoulder ⇒ abstain (never veto).
 yet show ≈ 1100 ms disagreement, and are excluded only because their best `peak_r` is 0.075–0.152.
 Both abstentions are clean gaps, so abstain lands in the safe direction.
 
-**Corpus-wide firing rate** (227 patched gaps). Symmetric `|residual| > 150 ms` fires **30/227** —
+**Corpus-wide firing rate** (227 patched gaps). **⚠ Withdrawn 2026-08-14 (§0.0) — mixed-orientation
+corpus, and it needs a `lag_decision` join, so it recomputes as part of step 3. The labelled-gap
+separation above survives the loss of the two swapped-pair labels (pairs 3 and 6): both were *clean*
+labels, so removing them shrinks the clean cohort and cannot weaken the margin — both failures and the
+abstention cases are pairs 26 and 31.**
+Symmetric `|residual| > 150 ms` fires **30/227** —
 but 26 of those 30 have `applied = 0`, a different population (no local slide applied where the
 shoulders do see drift), not a misplacement. Signing the residual separates them:
 
@@ -672,7 +1094,8 @@ both gate paths (that assignment is what made `waveform_adjustment_secs` identic
 **nominals do not**: `fit_residual_geometry` shifts the B nominal by
 `refined.start_frame − baseline.start_frame` (`:466-468`), so it **tracks gap refinement**, while
 `align_adjustment_secs`'s nominal is the mapped one and does not move. The two coincide exactly when
-refinement moved nothing — 145 of 227.
+refinement moved nothing — 145 of 227, and **208 of 315** on the oriented corpus (§0.0), so the
+identity holds at the same 64–66% rate in both.
 
 That predicts §3.3's counterexample rather than merely tolerating it: **31/g6 has
 `align_adjustment_secs` exactly 0.0 with `placement_slide_frames` 1734 (36 ms)** — a 36 ms refinement
@@ -701,9 +1124,15 @@ at 8.0 ms, under the 10 ms line, as the definition requires. Kept only to size t
 |---|---|---|---|
 | `beyond_lag_reach` | 159 | 56.7 ms | 1450 ms |
 | every other reason | 68 | **0.0 ms** | **8.0 ms** |
+| **oriented, 317 gaps — `beyond_lag_reach`** | **215** | **43.8 ms** | **2833 ms** |
+| **oriented — every other reason** | **102** | **0.0 ms** | **9.8 ms** |
 
-`residual.informative` is true on **12 of 227** gaps (5%), and only where the fill was essentially
-not moved. The five largest slides in the corpus are all `beyond_lag_reach`, `informative: false`,
+The tautology holds on the oriented corpus too: the non-`beyond` bucket still tops out under the 10 ms
+line, as the definition requires.
+
+`residual.informative` is true on **12 of 227** gaps (5%) — **26 of 317 (8%) oriented**; the 08-12
+baseline read 16/227, so the 12 came from the older 08-07 report — and only where the fill was
+essentially not moved. The five largest slides in the corpus are all `beyond_lag_reach`, `informative: false`,
 and all `patch_tier: high`. That is the mechanical explanation for "found by ear, not by any gate" —
 but the correct reading is that **no component owns the question "is this placement plausible?"**,
 not that the residual gate fails at it. The residual gate measures same-source cancellation depth at
@@ -764,8 +1193,10 @@ Captured: per-bracket seam scores, and the production-weight chosen alignment (`
 
 ### 3.3 The scan reports settle two things the dumps could only infer (2026-08-11)
 
-`gap-files/archive/mixed-ab/2026-08-07-fill-level-shape/<pair>.json` is the **production** scan+patch report, and it
-carries more than `align_adjustment_secs`: each patched gap has `status.patched.pre_correlation` /
+`gap-files/2026-08-13-repeat-terms/<pair>.json` is the current production scan+patch report (the
+2026-08-11 reading below used `archive/mixed-ab/2026-08-07-fill-level-shape/`, mixed-orientation, and
+is kept as the historical source of the 26/g6 / 31/g7 digits — those two pairs match the new
+baseline). It carries more than `align_adjustment_secs`: each patched gap has `status.patched.pre_correlation` /
 `post_correlation`, a `residual` block (including `placement_slide_frames`) written by production
 rather than by the fingerprint oracle, `tags`, and the `fill_level` shape fields.
 
@@ -792,7 +1223,7 @@ default (`:293`). Waveform is not a downstream floor check — it carries most o
 S2's prior therefore belongs in that unified score, not in "the structure stage".
 
 **Caveat: `placement_slide_frames` ≠ `|align_adjustment| × 48000` in general.** It holds on 145 of 227
-patched gaps and fails on the rest — e.g. 31/g6 has `align_adjustment_secs` exactly 0.0 but
+(oriented: **208 of 315**) patched gaps and fails on the rest — e.g. 31/g6 has `align_adjustment_secs` exactly 0.0 but
 `placement_slide_frames` 1734 (36 ms). The two coincide on the failures (§3.1) but the identity in §3
 is not corpus-wide. **Explained 2026-08-12 — §3 now carries the mechanism:** the two use *different
 nominals*, and `placement_slide`'s tracks gap refinement (`fit_residual_geometry`,
@@ -801,8 +1232,10 @@ refinement moved nothing. 31/g6's 1734 frames is a 36 ms refinement move. What r
 the overlap with the §5 `applied = 0` cohort — the *explanation* no longer blocks using either
 quantity, provided the reader knows which nominal each is relative to.
 
-Also useful here: only **5** of 227 gaps have `|align_adjustment| > 0.5 s`, so S2's bound — if wired
-as a veto rather than a prior — would touch five placements, of which three are believed correct.
+Also useful here: only **5** of 227 gaps have `|align_adjustment| > 0.5 s` (**12 of 317 on the oriented
+corpus**, §0.0), so S2's bound — if wired as a veto rather than a prior — would touch a dozen
+placements, of which at least three (pair 31 #9/#11/#12) are believed correct. The rate is essentially
+unchanged, 2.2% → 3.8%, so the shape of the argument does not move.
 
 ## 4. Phase A — source or gate? (do this first)
 
@@ -818,6 +1251,12 @@ This is **not** selection-worthy on its own: the zero-move bracket scores `Ok` o
 dumps (45%), so it is the ordinary path. What is anomalous is the slide at it — corpus distribution
 of `start_frame − 672000` over those 132: median **+12.4 ms**, p10 −233 ms, p90 +109 ms, min −1450 ms,
 max +726 ms. Only **3** gaps slide beyond −500 ms, and the two failures are two of them.
+
+> **⚠ Distribution withdrawn 2026-08-14 (§0.0)** — mixed-orientation dumps. It recomputes with step 3
+> off `2026-08-13-v0.6.0-oriented`. The per-failure facts in the paragraph above (both applied
+> placements are the zero-move bracket) are pair 26 / pair 31 and stand; note the oriented corpus has
+> **12** gaps at `|adj| > 0.5 s` against the old 5, so "only 3 beyond −500 ms" will not survive as
+> stated.
 
 **It is not a saturation issue.** The placement search radius is
 `max(fill_border_search_secs, fill_align_margin_secs) = 10.0 s`; a 1.45 s slide sits at 14% of reach,

@@ -95,6 +95,47 @@ agrees inside ±600 ms (3, 6, 13, 18, 22, 32): median lag must not move by more 
 existing ~22 ms signed bias. 26/g6 must stay near-nominal (≈ −50 ms), not follow the −1.45 s
 slide.
 
+> **⚠ This exit criterion is contaminated — re-derive it before running (2026-08-14).** Both of its
+> inputs come from the mixed-orientation corpus (registration plan
+> [§ 0.0](TEMP-fill-placement-registration-plan.md#00-data-re-baseline-2026-08-14--read-before-any-number-below)):
+>
+> - The six-pair cell is **not six pairs**. Pairs 3 and 6 were scanned with A/B reversed, so their
+>   consensus is of a pairing we do not ship; and pair 6 is **duplicate media of pair 22**, already in
+>   the cell. What is left is `{13, 18, 22, 32}` — four distinct, correctly-oriented media.
+> - The **~22 ms signed bias** is the withdrawn −23.4 / −24.8 ms figure. It is not an orientation
+>   artifact on the same-A pairs (those anchors are bit-identical old to new), but its value when the
+>   16 replacement pairs enter is unmeasured.
+>
+> **Resolved for the cell, 2026-08-14 (step 3 is done).** The rebuilt consensus set is **9 pairs,
+> `{2, 3, 13, 14, 18, 22, 32, 47, 51}`, all agreeing within 50 ms** — use that as the smoke-join set.
+> The bias is now **−21.9 ms** (`peak_r`) / **−26.1 ms** (`peak_z`) on the clean corpus.
+>
+> **Explained 2026-08-14 (step 5) — and this exit check must change.** The bias is not registration
+> disagreement, and it is **two terms**. One is `lag_at_placement`'s own border displacement (silence
+> walk-off + 12 %-of-peak trim pull the A template edge away from the gap; the B anchor is not pulled),
+> so `pre = true − D_pre` and `post = true + D_post` — the post sweep's pre-shift is added back out, so
+> post does *not* inherit `D_pre`. That probe term is `D_pre + D_post`, median **11.3 ms**, and it is
+> now recorded per shoulder as `lag_decision.…border_displacement_ms`. The other, larger term is the
+> applied placement itself sitting ~**25 ms** late (`−(pre + post)/2`), which is production's geometry,
+> not the probe's. A recenter moves neither — it only moves the sweep's center — so "median lag must not
+> move by more than the existing ~22 ms bias" is checking a quantity this change does not touch.
+> Replace it with: on the six-pair smoke set the median lag must not move **at all** beyond the
+> re-quantization of a shifted center (a few ms), because none of those pairs' coarse peaks should be
+> interior-and-far enough to trigger a recenter in the first place. The bias itself is not a budget to
+> spend: its probe half is a per-gap recorded correction (not a constant — do not subtract the median),
+> and its placement half is a separate open question.
+> Nothing above the Exit section depends on the corpus — the pair-31 mechanism, the guard, and the
+> 31/g7 fail-open case are single-pair and correctly oriented.
+
+> **This plan now has a second validation pair (2026-08-14).** **Pair 50** shows the same signature as
+> pair 31 and more extremely: consensus **+2.7891 s**, with its last six gaps in order returning no
+> usable shoulder at all (`. . . . X X X X X X`) against pair 31's `. . X X X`. So "true offset outside
+> the ±600 ms sweep" is a **class, not a pair**, which is the objection this plan was most exposed to.
+> Add pair 50 to the exit run: at +2.79 s it is outside even the proposed 2000 ms default
+> `lag_envelope_max_lag_ms`, so it is also the test of whether that default is the right size — if the
+> coarse window has to reach 3 s to see pair 50, say so and set it deliberately rather than discovering
+> it later.
+
 If pair 31’s later gaps still miss with a 2 s envelope, stop: that is a different question
 (envelope locked onto the same wrong peak as the fill), not a window problem, and this plan
 does not proceed to production plumbing.
