@@ -17,7 +17,8 @@ Last updated: 2026-08-13.
 
 | Plan | Covers |
 |------|--------|
-| [TEMP-fill-placement-registration-plan.md](docs/dev/TEMP-fill-placement-registration-plan.md) | Fill placement accepted without checking local registration — defect characterized, candidate guard measured; Phase A (source vs gate) not started |
+| [TEMP-fill-placement-registration-plan.md](docs/dev/TEMP-fill-placement-registration-plan.md) | Fill placement accepted without checking local registration — defect characterized; S2b / S1 split to children |
+| [TEMP-unmatchable-shoulder-plan.md](docs/dev/TEMP-unmatchable-shoulder-plan.md) | S2b: stop `min(pre, post)` preferring a stutter when one shoulder is unmatchable — draft, decisions open |
 | [TEMP-lag-envelope-recenter-plan.md](docs/dev/TEMP-lag-envelope-recenter-plan.md) | Recenter `lag_decision`'s ±600 ms sweep on a coarse envelope peak (independent of the fill search) so pair 31's −1.11 s offset is measurable — draft, not started |
 | [TEMP-nway-donor-alignment-plan.md](docs/dev/TEMP-nway-donor-alignment-plan.md) | N-way donor alignment: repair one damaged copy from multiple donors — draft, not started |
 | [TEMP-flac-output-plan.md](docs/dev/TEMP-flac-output-plan.md) | In-process `--flac` lossless output (peer of `--wav`, no ffmpeg) — draft, not started |

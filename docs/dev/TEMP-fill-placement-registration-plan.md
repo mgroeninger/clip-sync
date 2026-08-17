@@ -2,7 +2,8 @@
 
 Status: **investigation → delivery. S3 and S5 done (2026-08-12); S2(1) done; S2c done (2026-08-12);
 S2(2) superseded 2026-08-13 — sweep refuted, prior must be registration-referenced, not nominal-referenced;
-S2b unblocked; S1 blocked on re-scoping; S4 conditional and unstarted.
+S2b unblocked — tracked in [TEMP-unmatchable-shoulder-plan.md](TEMP-unmatchable-shoulder-plan.md)
+(decisions open, not started); S1 blocked on re-scoping; S4 conditional and unstarted.
 Data re-based 2026-08-14 (§0.0) — every corpus count below is superseded; the per-gap conclusions are not.**
 
 **The source-vs-gate fork is retired — the answer was "both, on different gaps".** Earlier drafts of
@@ -750,14 +751,16 @@ re-scores post after a successful snap. Corpus re-adjudication of the previously
 on the next report (same run as S2(2)'s baseline).
 
 **S2b — Fix the `min` reduction when one shoulder is unmatchable (§4.2). 31/g7's actual defect.**
+**Plan: [TEMP-unmatchable-shoulder-plan.md](TEMP-unmatchable-shoulder-plan.md)** — draft, decisions
+open, not started. Do not implement from this paragraph.
 31/g7 has no placement where both shoulders score well (its post border has no match in B: dual-fit
 reaches 0.124 at its own best lag and declines). Reducing by `min` then *prefers* a placement that
-degrades the good shoulder from 0.829 to 0.437 because it raises the minimum. Options: fall back to
-the trustworthy shoulder when the other is provably unmatchable (generalizing
-`short_gap_one_strong_seam_fallback`), or make the unmatchable shoulder abstain from the reduction
-rather than dominate it. Either way this is a **scoring-objective** change, distinct from S2's prior.
-*Exit:* 31/g7 places at ≈ −47 ms, and the change is checked against the **317**-gap oriented corpus
-(§0.0) for placements it moves.
+degrades the good shoulder from 0.829 to 0.437 because it raises the minimum. That is a
+**scoring-objective** change, distinct from S2's prior. The child owns the options (fallback vs
+abstain), the unmatchable predicate, waveform-vs-structure scope, the fit-mode floor, and the
+must-not-move set.
+*Exit (held in the child):* 31/g7 places at ≈ −47 ms **and still patches**; checked against the
+**317**-gap oriented corpus (§0.0) for placements it moves.
 
 **S3 — ~~Find or refute~~ the rival peak at −977 / −1450 ms (§4.2). DONE 2026-08-12 — REFUTED on both.
 No re-run needed, and none is now warranted.** Full curves and method in **§4.3**. Headline: at both
