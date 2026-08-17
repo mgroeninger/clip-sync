@@ -237,7 +237,7 @@ pub struct RepairConfig {
     /// (**0.0 = off, the default** — placement is bit-identical to pre-2026-08-12 runs until set).
     /// The forward penalty above guards the direction that cannot cause misregistration; this is its
     /// mirror, shipped inert so S2 can sweep it against a same-binary baseline
-    /// (`docs/dev/TEMP-fill-placement-registration-plan.md` §4.1c). Unbounded: a slide longer than the
+    /// (`docs/dev/archive/TEMP-fill-placement-registration-plan.md` §4.1c). Unbounded: a slide longer than the
     /// gap charges more than the base penalty, which at large scales approaches a veto — deliberately
     /// left for the corpus to bound rather than guessed at here.
     #[serde(default = "default_fill_fit_early_start_penalty_scale")]

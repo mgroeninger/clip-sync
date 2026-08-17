@@ -1,8 +1,9 @@
 # TEMP — Unmatchable-shoulder `min` reduction (S2b)
 
-**Status:** draft, 2026-08-14. Not started. Decisions 1–5 open; do not code until they close.
-Parent: [TEMP-fill-placement-registration-plan.md](TEMP-fill-placement-registration-plan.md)
-(§0 S2b, §4.2 min-reduction pathology, §4.3 rival refuted).
+**Status:** draft, 2026-08-14; code-checked 2026-08-17. Not started.
+Decisions **1, 2, 4, 6** open; **3 and 5 closed** by the code read below. Do not code until they close.
+Parent: [archive/TEMP-fill-placement-registration-plan.md](archive/TEMP-fill-placement-registration-plan.md)
+(§0 S2b, §4.2 min-reduction pathology, §4.3 rival refuted). Findings; do not treat §0 as a work list.
 
 31/g7 is an ear-confirmed stutter: production places at **−977 ms** (`align_adjustment_secs`
 −0.9774, seams 0.437 / 0.437, `patch_tier: high`) where the local registration is **≈ −47 ms**.
@@ -60,6 +61,42 @@ seams *at −47 ms* are not in the baseline ( `fit_terms` is re-scored at the wi
 
 ---
 
+## Code read (2026-08-17) — where the reduction actually lives
+
+Three distinct `min(pre, post)` sites, only the first of which is the objective:
+
+| site | what it is | S2b touches it? |
+|---|---|---|
+| `gap_fill_fit.rs:634` (`unified_fit_score_with_repeat`) | **the ranked waveform term.** Both the naive path (`waveform_seams_at_start`, :1112) and the FFT band (:1230–1247) hand `consider` a `(pre, post)` *pair* and converge here | **yes — the single edit site** |
+| `gap_fill_fit.rs:550` (`repeat_penalty_from_correlations`) | the repeat penalty's own `wave_min` branch | decision 6 |
+| `gap_fill_fit.rs:181` (`classify_fill_waveform_confidence`), `:1906` (`fit_mode_waveform_floor_passes`) | the Phase-C hard skip / tiering | decision 4 |
+
+`waveform_min_at_start` (:705) is **not** the objective. Its one caller is the band-vs-naive
+divergence belt (:1275/:1285), which must stay as it is: it verifies the FFT against an exact
+re-score of the raw correlations. An earlier draft of this plan named it (and "the FFT seam
+band") as the edit site — that would have changed the belt and left the argmax where it is.
+
+**The objective is one term short of the truth, quantitatively.** Weights are 0.35 structure /
+0.65 waveform (`config.rs:454–459`); the applied 31/g7 breakdown reconstructs exactly:
+`0.6146 = 0.35 × 0.9448 + 0.65 × 0.4368`, all three penalties 0.0. So
+
+- under today's `min`, the truth needs `structure_combined ≥ ~1.61` to beat the stutter — above
+  the stutter's own 0.9448, i.e. unreachable;
+- under a `max`-style reduction with pre ≈ 0.8, it needs only `≥ ~0.27`.
+
+That is the falsifiable prediction the decision-4 probe checks, and it is why decision 3 is
+waveform-only.
+
+Two non-issues, recorded so they are not relitigated:
+
+- `search_coarse_step` (`gap_structure.rs:304`) is `bin_frames` for a ±10 s span, so −47 ms is
+  on the coarse grid and genuinely scored. The coarse/refine split does not hide the truth.
+- `fill_anchor_search_prior_weight` defaults to **0.0**, so shrinking `--fill-border-search-secs`
+  in the probe does not perturb `AnchorSearchPrior` even though the two share
+  `search_radius_frames`.
+
+---
+
 ## Decisions (open — close these in order)
 
 ### 1. Fallback vs abstain
@@ -85,8 +122,9 @@ A predicate that can actually run:
 
 > if `min(pre, post)` is dead and `max(pre, post)` is strong, reduce to `max`; else `min`.
 
-That is the one-strong-seam *shape*, inside `waveform_min_at_start` (and the FFT band that
-must stay identical to it). Always switching `min` → `max` is a different, broader change:
+That is the one-strong-seam *shape*, applied at `gap_fill_fit.rs:634` (see §"Code read" — not
+in `waveform_min_at_start`, and not in the FFT band, which never reduces the pair).
+Always switching `min` → `max` is a different, broader change:
 it would also re-rank gaps where both sides are matchable and one is merely better.
 
 Constants are not guessed here. The live floors already in fit mode are
@@ -94,17 +132,19 @@ Constants are not guessed here. The live floors already in fit mode are
 below both; its winning pair is 0.437 / 0.437, so both sides look matchable at the stutter —
 the predicate must fire at the *truth*, not at the stutter.
 
-### 3. Waveform only, or structure too?
+### 3. Waveform only, or structure too? — **CLOSED: waveform only**
 
 `combined_structure_score` is a **sum**, not a min (`gap_structure.rs`). The −977 ms slide is
 inside the surviving zero-move bracket, so a waveform-only change can move the start without
 reviving the 18 `structure_floor` brackets.
 
-Default: **waveform only**. Touching `min_structure_match_score` (0.55) or the structure-floor
-rule is in this plan only if a waveform-only change cannot reach −47 ms because that start is
-never scored. Confirm from `fit_terms` / a one-pair repair before widening scope. The open
-"confirm the production selection rule" item in the parent (§4.3) is a report read of
-`fit_terms`, not a new dump.
+**Waveform only.** Closed by the §"Code read" arithmetic: the waveform term alone accounts for
+the whole gap between the stutter and the truth (truth needs structure ≥ ~1.61 under `min`,
+≥ ~0.27 under `max`), and the coarse grid does score −47 ms. Touching
+`min_structure_match_score` (0.55) or the structure-floor rule re-enters this plan only if the
+probe shows the winner is still ~1 s back after the reduction changes. The open "confirm the
+production selection rule" item in the parent (§4.3) is a report read of `fit_terms`, not a new
+dump.
 
 ### 4. The patch must survive the floor
 
@@ -142,14 +182,19 @@ production rank inside that window.
 $rep = Get-Content gap-files/2026-08-13-repeat-terms/31.json -Raw | ConvertFrom-Json
 
 cargo run --release --features he-aac -p clip-sync-repair --bin clip-sync-repair -- `
-  $rep.video_a $rep.video_b --patch-only --format json --only-gaps 8 `
+  $rep.scan.video_a $rep.scan.video_b --patch-only --format json --only-gaps 8 `
   --fill-border-search-secs 0.20 --no-dual-fit
 ```
 
-Join the patched/skipped gap to the baseline on `video_a_start_secs`, not on index.
-Read `align_adjustment_secs`, `pre_correlation`, `post_correlation`, `fit_terms`, and
-either `status.patched` or `status.skipped.correlation_below_threshold` (that skip arm
-carries the same pre/post).
+The paths are under `scan`, not at the root. `--only-gaps 8` is verified: this pair has 13
+scan gaps and 13 patch gaps, and `patch.gaps[7]` is the `align_adjustment_secs = −0.9774166`
+record.
+
+Join the patched/skipped gap to the baseline on **`a_start_secs`** (the patch record's field;
+`video_a_start_secs` exists only in the `scan` section), not on index. Read
+`align_adjustment_secs`, `pre_correlation`, `post_correlation`, `fit_terms` — including
+`repeat_pre`, `repeat_post`, `repeat_penalty` for decision 6 — and either `status.patched` or
+`status.skipped.correlation_below_threshold` (that skip arm carries the same pre/post).
 
 | readout | meaning |
 |---|---|
@@ -164,7 +209,7 @@ dual-fit would rescue. The dump already predicts it will not (`post_seam_r` 0.12
 `gate_pass: false`). Do not let a rescue on this probe stand in for the unified
 classifier — S2b edits the unified term.
 
-### 5. Must-not-move set, and default-on
+### 5. Must-not-move set, and default-on — **CLOSED (set confirmed against the baseline)**
 
 | gap | expect |
 |-----|--------|
@@ -173,22 +218,66 @@ classifier — S2b edits the unified term.
 | 26/g6 | not required to move |
 | 17/g34 | not this class; a move is inspect, not success |
 
+Baseline `fit_terms` for the three must-not-movers: `structure_combined` 1.714 / 1.766 / 1.740
+against `waveform_min` 0.313 / 0.483 / 0.350. Their margin over any rival is carried by
+structure, not by the reduction, so a waveform-only change has little purchase on them — the
+expectation in the table is now grounded, not assumed.
+
+**g8 and g11 arrived via `anchor_seam_used: true`** with six-figure `gap_start_adjust_frames`
+(−129600 / −14400). The exit diff must therefore cover the anchor-rescue path, not only the
+plain fit path.
+
 Default **on**. This is a defect in the shipped reduction, not an experiment with an inert
 knob. A config flag is acceptable as an emergency off; it is not a reason to ship inert.
 No CLI flag unless the corpus pass shows a second population this rule creates.
 
+### 6. Does the rule feed the repeat penalty's `wave_min`? (open)
+
+`repeat_penalty_from_correlations` (`gap_fill_fit.rs:550`) computes its **own**
+`wave_min = pre_seam.min(post_seam)` and fires when
+`wave_min < REPEAT_SEAM_WEAK (0.45)` **and** `max(repeat_pre, repeat_post) > REPEAT_CORR_THRESHOLD (0.55)`,
+costing `repeat_penalty_weight (0.4) × waveform_weight (0.65) × repeat_max` ≥ **0.14**.
+
+An edit confined to `:634` leaves this branch reading the raw min. That is asymmetric against
+the fix: the truth candidate (post ≈ 0.075) sits squarely inside the `wave_min < 0.45` arm,
+while the −977 ms stutter escapes on the other clause (baseline `repeat_pre/post` 0.249 / 0.207,
+both under 0.55). If the truth's repeat correlations are high, a ≥ 0.14 penalty lands on the
+candidate S2b is trying to promote and on nothing else — enough to eat the margin the
+reduction change buys.
+
+Two options, same shape as decision 4:
+
+- **Uncoupled (default):** `:634` only. The repeat branch keeps the raw min, so a "one strong
+  shoulder" candidate is still treated as seam-weak for repeat purposes. Defensible — the
+  penalty is about donor self-similarity, not about which shoulder we trust — but it must be a
+  stated choice, not an oversight.
+- **Coupled:** pass the reduced term into `repeat_penalty_from_correlations` so one rule governs
+  both. Broader blast radius: this branch fires on gaps far outside 31/g7.
+
+Decide from the probe, which reports `repeat_pre` / `repeat_post` / `repeat_penalty` at the
+near-nominal winner. If `repeat_max` there is < 0.55, the branch never fires at the truth and
+**uncoupled** ships with no cost.
+
 ---
 
-## Change (blocked on 1–5)
+## Change (blocked on 1, 2, 4, 6)
 
-In `waveform_min_at_start` / the FFT seam band (they must stay identical):
+At `gap_fill_fit.rs:634`, inside `unified_fit_score_with_repeat` — the **one** place the
+objective reduces the pair, reached identically by the naive and FFT-band paths:
 
-1. Compute `(pre, post)` as today.
-2. Apply the decision-2 predicate; return the decision-1 term instead of `pre.min(post)`
-   when it fires.
-3. If decision 4 is "coupled," thread the same rule through
-   `classify_fill_waveform_confidence` / `fit_mode_waveform_floor_passes` so the winner is
-   not hard-skipped. Do not reach for the gate-mode fallback flag.
+1. `candidate.wave_pre` / `wave_post` arrive as today (unchanged upstream).
+2. Apply the decision-2 predicate; pass the decision-1 term to `unified_fit_score` instead of
+   `candidate.wave_pre.min(candidate.wave_post)` when it fires.
+3. Per decision 6, decide whether the same term also reaches
+   `repeat_penalty_from_correlations` (:550) or whether that keeps the raw min.
+4. If decision 4 is "coupled," thread the same rule through
+   `classify_fill_waveform_confidence` (:181) / `fit_mode_waveform_floor_passes` (:1906) so the
+   winner is not hard-skipped. Do not reach for the gate-mode fallback flag.
+
+**Do not touch `waveform_min_at_start` (:705) or `build_wave_seam_band`.** The band produces
+`(pre, post)` pairs, not a min, and `waveform_min_at_start`'s only caller is the divergence belt
+at :1275/:1285, whose whole job is to compare the band against an exact naive re-score of the
+raw correlations. Both stay byte-identical; the reduction change is invisible to them.
 
 Unit test: synthetic pair, post border unmatched, pre unique at true lag; assert argmax at
 true registration and that the gap patches. A second case with both shoulders matchable at a
@@ -208,7 +297,14 @@ Same binary, `--patch-only --format json`, oriented corpus:
 3. Diff `align_adjustment_secs` / `fit_terms` against `2026-08-13-repeat-terms/` over all
    **317** patched gaps. Every mover is listed and classified against the table in
    decision 5.
-4. Ear-check the new 31/g7 render only after the JSON says the slide moved.
+4. **Diff the skipped set too, in both directions.** A patched-only diff is blind to the
+   population this change can create: if decision 4 lands on "coupled", a gap that today skips
+   `correlation_below_threshold` can now patch on one shoulder, and it appears in *neither*
+   baseline row nor the mover list. Count and classify every skipped→patched and
+   patched→skipped transition; a silent skipped→patched population is a fail, not a bonus.
+5. Ear-check the new 31/g7 render only after the JSON says the slide moved. If step 4 found
+   any skipped→patched gaps, ear-check a sample of those as well — they are unheard by
+   construction.
 
 If 31/g7 moves to −47 ms and then skips, the exit fails — that is decision 4, not a
 partial success.

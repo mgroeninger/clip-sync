@@ -248,7 +248,7 @@ pub fn border_templates_for_gap(
 /// matters to anything that correlates a template against a B window anchored on the *gap* edge
 /// (`gap_fingerprint::measure::lag_at_placement`): at true registration such a sweep reads `−pre` on
 /// the pre shoulder and `+post` on the post one, because the A content it is holding sits that far
-/// from where the anchor claims. See `docs/dev/TEMP-fill-placement-registration-plan.md` § "Step 5
+/// from where the anchor claims. See `docs/dev/archive/TEMP-fill-placement-registration-plan.md` § "Step 5
 /// result".
 pub fn border_edge_displacement_frames(
     samples: &[f32],

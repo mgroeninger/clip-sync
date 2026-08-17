@@ -1,6 +1,6 @@
 #!/usr/bin/env pwsh
 # Cross-arm placement differential for the `border_standoff_secs` sweep
-# (docs/dev/TEMP-fill-placement-registration-plan.md § "Consequences" (2)).
+# (docs/dev/archive/TEMP-fill-placement-registration-plan.md § "Consequences" (2)).
 #
 # Asks one question: does the applied placement (`align_adjustment_secs`) move with the
 # standoff? With `adj = T + alpha`, `T` is the true registration and `alpha` is the ~25 ms by
@@ -49,7 +49,7 @@
 # against.
 #
 # MEDIA HYGIENE: emit pair label + gap index only — never media paths or titles.
-# Docs: docs/dev/TEMP-fill-placement-registration-plan.md.
+# Docs: docs/dev/archive/TEMP-fill-placement-registration-plan.md.
 
 [CmdletBinding()]
 param(
@@ -459,5 +459,5 @@ if ($CsvOut -ne '') {
 }
 
 Write-Host ''
-Write-Host 'Report-only analysis — no repair re-run. Plan: docs/dev/TEMP-fill-placement-registration-plan.md' `
+Write-Host 'Report-only analysis — no repair re-run. Plan: docs/dev/archive/TEMP-fill-placement-registration-plan.md' `
     -ForegroundColor DarkGray

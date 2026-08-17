@@ -288,7 +288,7 @@ pub struct UnifiedFitWeights {
     /// `late_start_penalty_scale` on the backward side. **Defaults to 0.0 (off)**, so the objective is
     /// bit-identical to its pre-2026-08-12 behaviour until something sets it.
     ///
-    /// S2 (`TEMP-fill-placement-registration-plan.md` §4.1a(b), §4.1c): the objective's one hard-coded
+    /// S2 (`docs/dev/archive/TEMP-fill-placement-registration-plan.md` §4.1a(b), §4.1c): the objective's one hard-coded
     /// directional prior penalizes forward slides only, i.e. the direction §1 says cannot cause the
     /// misregistration defect — a backward slide lands the donor on material A has already played, a
     /// shoulder repeat by construction. This knob is how that asymmetry gets tested, as a sweep against a
@@ -393,7 +393,7 @@ fn fill_bracket_placement(
 
 /// The objective's terms for one candidate, not just its argmax.
 ///
-/// **Why this exists** (`TEMP-fill-placement-registration-plan.md` §7). `unified_fit_score` used to return
+/// **Why this exists** (`docs/dev/archive/TEMP-fill-placement-registration-plan.md` §7). `unified_fit_score` used to return
 /// a bare `f64`, so `structure_combined`, `waveform_min` and all three placement priors were locals that
 /// died with the call: nothing downstream could say *which term carried a placement*. §4.2's min-reduction
 /// diagnosis had to be reconstructed from fingerprint dumps for exactly that reason, and both remaining

@@ -1,10 +1,19 @@
 # Fill placement vs local registration — plan
 
-Status: **investigation → delivery. S3 and S5 done (2026-08-12); S2(1) done; S2c done (2026-08-12);
-S2(2) superseded 2026-08-13 — sweep refuted, prior must be registration-referenced, not nominal-referenced;
-S2b unblocked — tracked in [TEMP-unmatchable-shoulder-plan.md](TEMP-unmatchable-shoulder-plan.md)
-(decisions open, not started); S1 blocked on re-scoping; S4 conditional and unstarted.
-Data re-based 2026-08-14 (§0.0) — every corpus count below is superseded; the per-gap conclusions are not.**
+> **Status (2026-08-17): ARCHIVED.** Investigation closed. Two distinct defects sharing a
+> symptom: 26/g6 (source — a near-nominal placement existed and lost on score) and 31/g7
+> (gate — `min` over an unmatchable shoulder). Remaining delivery is not in this file.
+>
+> **Live plans:** [TEMP-unmatchable-shoulder-plan.md](../TEMP-unmatchable-shoulder-plan.md) (S2b);
+> [TEMP-lag-envelope-recenter-plan.md](../TEMP-lag-envelope-recenter-plan.md) (unblocks S1).
+> **Leftovers** (26/g6, S1 plumbing, S4 / `applied = 0`, ear-pass 17/g34 and 47/g14, α, §7):
+> [BACKLOG.md](../../../BACKLOG.md) § *Fill placement*.
+>
+> Shipped here and not to be re-opened: S3 (rival refuted), S5 (reporting foot-guns), S2(1)
+> (dead cap deleted), S2c (snap correlation domain), S2(2) (nominal backward penalty refuted),
+> Route 2 rebuild, probe border-displacement `D`. §1–§7 below are the evidence; do not treat
+> §0 as a work list. Data re-based 2026-08-14 (§0.0) — every corpus count below is superseded;
+> the per-gap conclusions are not.
 
 **The source-vs-gate fork is retired — the answer was "both, on different gaps".** Earlier drafts of
 this document (and §4's exit, since rewritten) treated a single verdict as gating everything
@@ -24,8 +33,8 @@ verdict** (and is blocked on its own precondition, not on this fork); **Phase B/
 remains blocked on it. **Read §0 first** — it names the actual deliverables; §1–§7 are the evidence
 behind them, and where an older section still argues the fork, §0 and §4.3 win.
 
-Split out of [BACKLOG.md](../../BACKLOG.md) on 2026-08-11 (the section had grown to ~270 lines).
-Successor to the archived [TEMP-fill-placement-axis-plan.md](archive/TEMP-fill-placement-axis-plan.md),
+Split out of [BACKLOG.md](../../../BACKLOG.md) on 2026-08-11 (the section had grown to ~270 lines).
+Successor to the archived [TEMP-fill-placement-axis-plan.md](TEMP-fill-placement-axis-plan.md),
 which made fill placement observable; this plan asks whether the observed placements are *right*.
 
 **Conventions used throughout.** Gap numbers are the repair table's 1-based `#`, as
@@ -133,7 +142,7 @@ Ear labels exist only in the first cohort, and only a dozen of those 119 were la
 ### The recount answers the repeat-prior run that BACKLOG was waiting on
 
 This baseline is the `--patch-only` run that [BACKLOG.md § Repeat-at-seam prior is inert on every
-winner](../../BACKLOG.md#repeat-at-seam-prior-is-inert-on-every-winner-one-branch-is-unreachable) shipped
+winner](../../../BACKLOG.md#repeat-at-seam-prior-is-inert-on-every-winner-one-branch-is-unreachable) shipped
 the `repeat_pre` / `repeat_post` emit for. Full answers are recorded there; the one that lands **in this
 plan** is its fourth open question:
 
@@ -241,7 +250,7 @@ the code: a pair needs **≥3 unified gaps** before its consensus is quoted, and
 excluded from the pair pool**, not merely from its own reduction. (Using the archive to calibrate
 *code* is not using it as a data source; it is the regression fixture §0.0 asked for.)
 
-**The rebuild is committed as [`scripts/measure/route2-consensus.ps1`](../../scripts/measure/route2-consensus.ps1)**,
+**The rebuild is committed as [`scripts/measure/route2-consensus.ps1`](../../../scripts/measure/route2-consensus.ps1)**,
 so every number in this section is re-derivable without re-running the corpus:
 
 ```
@@ -290,7 +299,7 @@ itself the reduction-discipline point, measured.
 usable shoulder at all. Pair 31 reproduces its published signature exactly (`. . X X X`, consensus
 −1.1086 s). So the "true offset outside the ±600 ms sweep" class has **two** members, one of them in
 the never-measured cohort, and it is no longer a single-pair observation. This is direct, independent
-support for [TEMP-lag-envelope-recenter-plan.md](TEMP-lag-envelope-recenter-plan.md) and it gives that
+support for [TEMP-lag-envelope-recenter-plan.md](../TEMP-lag-envelope-recenter-plan.md) and it gives that
 plan a **second** validation pair.
 
 #### The suspect list, re-derived (step 4)
@@ -439,6 +448,12 @@ unblocks S1, and S4 is still conditional.
 
 ## 0. What to actually do (added 2026-08-11)
 
+> **Superseded 2026-08-17.** This section is no longer the work list. Live delivery is
+> [TEMP-unmatchable-shoulder-plan.md](../TEMP-unmatchable-shoulder-plan.md) and
+> [TEMP-lag-envelope-recenter-plan.md](../TEMP-lag-envelope-recenter-plan.md); leftovers are in
+> [BACKLOG.md](../../../BACKLOG.md) § *Fill placement*. Kept below as the investigation's own
+> sequencing record.
+
 **Why this section exists.** Through §1–§7 this plan subdivides and branches without ever naming a
 change to the code. Phases A/B/C are *diagnostics*, and each has been answered with another fork. The
 steps below are the deliverables; the phases are inputs to them, not substitutes. If a step's
@@ -466,7 +481,7 @@ its precondition is false (found 2026-08-12).**
 > **Re-scope 2026-08-13:** the measurement S1 would plumb is itself blind to pair 31's genuine
 > −1.11 s offset (fine window ±600 ms around `b_mapped`; fill search ±10 s). Do not lift the
 > nominal-only sweep. Recenter the fine sweep on a coarse envelope peak first —
-> [TEMP-lag-envelope-recenter-plan.md](TEMP-lag-envelope-recenter-plan.md) — then S1 records that.
+> [TEMP-lag-envelope-recenter-plan.md](../TEMP-lag-envelope-recenter-plan.md) — then S1 records that.
 
 Emit the §2 quantity (`applied − frac_lag_ms`, reduced by minimum absolute value over shoulders with
 `peak_r ≥ τ`, abstain when none) as a field on the patch record, alongside the shoulder `peak_r` /
@@ -639,7 +654,7 @@ dual-fit zeros §1.1 had to retract. (iii) Six gaps where a coherent measurement
 (21.7) clear the `peak_z` bar.
 
 *Next, in order:* re-gate the join on `peak_z ≥ 12` (free); read the widened-envelope measurement plan
-([TEMP-lag-envelope-recenter-plan.md](TEMP-lag-envelope-recenter-plan.md)) before any pair-31 run; then
+([TEMP-lag-envelope-recenter-plan.md](../TEMP-lag-envelope-recenter-plan.md)) before any pair-31 run; then
 explain the −23 ms bias by reading `lag_at_placement`'s window construction against the objective's
 seam window. The backward-penalty sweep is **not** on this list.
 
@@ -751,7 +766,7 @@ re-scores post after a successful snap. Corpus re-adjudication of the previously
 on the next report (same run as S2(2)'s baseline).
 
 **S2b — Fix the `min` reduction when one shoulder is unmatchable (§4.2). 31/g7's actual defect.**
-**Plan: [TEMP-unmatchable-shoulder-plan.md](TEMP-unmatchable-shoulder-plan.md)** — draft, decisions
+**Plan: [TEMP-unmatchable-shoulder-plan.md](../TEMP-unmatchable-shoulder-plan.md)** — draft, decisions
 open, not started. Do not implement from this paragraph.
 31/g7 has no placement where both shoulders score well (its post border has no match in B: dual-fit
 reaches 0.124 at its own best lag and declines). Reducing by `min` then *prefers* a placement that
@@ -801,7 +816,7 @@ system exists only in the fingerprint dump (`application/gap_fingerprint/contrac
   sentence. Landed alongside a `LAG_DECISION_CONTRACT` fix in the dump: its `not` key now says
   *"prominence is not uniqueness — no exclusion radius, see `top2_spacing_ms`"*, the misreading §3.3b
   made.
-- ~~**Contract `status.patched`.**~~ **Moved 2026-08-12 to [BACKLOG.md](../../BACKLOG.md) §
+- ~~**Contract `status.patched`.**~~ **Moved 2026-08-12 to [BACKLOG.md](../../../BACKLOG.md) §
   "Fingerprint contract follow-ups (C3)"** — it is a reporting-system question that outlives this
   investigation, and it sits next to the deferred `--fingerprint-contracts` knob because both wait on
   the same measurement. Two obstacles, not just unwritten code: `Contracted<T>` needs a `T` to flatten
@@ -810,9 +825,9 @@ system exists only in the fingerprint dump (`application/gap_fingerprint/contrac
   repeats four strings 227× (~90 KB) in a whole-corpus report, while the cheap root-level `_contracts`
   map is exactly what § 2.6 rejected. The fields that want the contract are recorded there verbatim.
 - ~~**Emit `normalize_gain` on the patch record.**~~ **Moved 2026-08-12** into
-  [TEMP-fill-normalize-boost-only-plan.md](archive/TEMP-fill-normalize-boost-only-plan.md), which edits the
+  [TEMP-fill-normalize-boost-only-plan.md](TEMP-fill-normalize-boost-only-plan.md), which edits the
   site that computes it. It belongs to S5's family — the gain is on the spec
-  (`gap_repair_spec.rs:197`) but serialized nowhere, so [pipeline.md](../pipeline.md) § Fill-level
+  (`gap_repair_spec.rs:197`) but serialized nowhere, so [pipeline.md](../../pipeline.md) § Fill-level
   check can say `fill_level` measures `gained_fill` (*gain applied*) while nothing records what the
   gain was — but it is not this plan's to land. Tracked here only so the foot-gun audit stays complete.
 - ~~**Contract `prominence` in `lag_decision`.**~~ **DONE 2026-08-12**, folded into the bullet above:
@@ -830,7 +845,7 @@ new measurement was required for any of them, and none of it touched S1–S4.
 prominence floor (§2.2 constraint); anything corrective from the residual (§2.1).
 
 **Sequencing against the normalize boost-only change (settled 2026-08-12).**
-[TEMP-fill-normalize-boost-only-plan.md](archive/TEMP-fill-normalize-boost-only-plan.md) stops
+[TEMP-fill-normalize-boost-only-plan.md](TEMP-fill-normalize-boost-only-plan.md) stops
 `compute_fill_gain` from ever attenuating. **It does not block S1 / S2 / S2b / S3 / S5** — the gain is
 computed at `region.rs:2056`, strictly *after* the placement search and seam reconciliation, its only
 consumers are `gained_fill` and `spec.normalize_gain`, and seam scores are Pearson (scale-invariant),
@@ -1023,7 +1038,7 @@ maximally ambiguous. "Matches well" and "matches uniquely" came apart on one of 
 The guard caught it regardless (residual −1390 ms), so this is **not a hole**.
 
 > **Constraint (checked 2026-08-11): do not add a prominence floor to any gate yet.** Two prior
-> rulings apply. (a) [Dual-fit confidence axis](../../BACKLOG.md#dual-fit-confidence-axis):
+> rulings apply. (a) [Dual-fit confidence axis](../../../BACKLOG.md#dual-fit-confidence-axis):
 > uniqueness stays *diagnostic* until a **labeled false positive** exists — 26/g6 is a labeled
 > *true* positive of the residual guard, not a false positive of the uniqueness axis, so the trigger
 > has not fired. (b) `analysis.rs:314` records that the analyzer gates on `peak_z`, not `prominence`.
@@ -1074,7 +1089,7 @@ Both carry an *identical* and entirely ordinary tag signature — `plan_kind: fi
 
 **The residual gate does not check placement — by design, not by defect.** On both failures it
 abstains with `residual_uninformative: beyond_lag_reach`. Read the code before treating this as a
-gap: [docs/json-output.md](../json-output.md) § residual distinguishes `beyond_lag_reach` (the
+gap: [docs/json-output.md](../../json-output.md) § residual distinguishes `beyond_lag_reach` (the
 gate's **deliberate refusal**) from `no_reference_window` / `probe_non_finite` (true "could not
 measure" abstentions), and `policies/seam_residual.rs:980` gives the reason — headroom is
 `chosen − floor`, the floor is anchored at the **nominal** placement and measured within a lag radius
@@ -1147,7 +1162,7 @@ subtracting a reference that no longer covers the point being tested. Measuring 
 requires re-anchoring the floor *there*, at which point the metric stops asking "did this land where
 the map says" and starts asking "does this cancel wherever it happens to be" — a different question,
 and not the one that catches these two. (Also see
-[BACKLOG.md § Residual gate follow-ups](../../BACKLOG.md#residual-gate-follow-ups) L6: changing walk
+[BACKLOG.md § Residual gate follow-ups](../../../BACKLOG.md#residual-gate-follow-ups) L6: changing walk
 parameters recalibrates the floors.)
 
 ---
@@ -1655,7 +1670,7 @@ threshold.
   the two failures already read `edge_pinned: false` (§4.3's dumps), but they are the wrong gaps for
   it — the hypothesis is about pair 31 **#9–#12**, whose true registration is ≈ −1150 ms.
   **Successor 2026-08-13:** do not widen the fine sweep; recenter it on a coarse envelope peak.
-  [TEMP-lag-envelope-recenter-plan.md](TEMP-lag-envelope-recenter-plan.md). Pair 31 only to start;
+  [TEMP-lag-envelope-recenter-plan.md](../TEMP-lag-envelope-recenter-plan.md). Pair 31 only to start;
   not a corpus pass.
 - **The +39 ms systematic bias** in fill-start detection (§2.1). Cosmetic for a discriminator;
   required before any absolute claim about delivered position.

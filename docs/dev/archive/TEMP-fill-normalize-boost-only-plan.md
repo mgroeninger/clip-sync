@@ -53,7 +53,7 @@ Companion: [fill_level.rs](../../../crates/clip-sync-repair/src/domain/fill_leve
 
 **Sequencing against the fill-placement investigation (settled 2026-08-12)**
 
-Ship this **before** [TEMP-fill-placement-registration-plan.md](../TEMP-fill-placement-registration-plan.md)
+Ship this **before** [TEMP-fill-placement-registration-plan.md](TEMP-fill-placement-registration-plan.md)
 § 5 (Phase B / S4) renders any new ear-label set. The two plans touch disjoint quantities and the
 placement axis is **gain-invariant** — the gain is computed at `region.rs:2056`, strictly after the
 placement search and seam reconciliation, its only consumers are `gained_fill` and

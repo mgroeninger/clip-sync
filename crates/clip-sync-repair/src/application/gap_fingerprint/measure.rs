@@ -207,7 +207,7 @@ const LAG_EDGE_TOL_MS: f64 = 2.0;
 /// measures *registration*, so adopting it would push the template a third of a second off the edge
 /// and every recorded `frac_lag_ms` with it. The residual walk-off/trim displacement that remains is
 /// measured, not assumed (`border_edge_displacement_frames` → [`LagSummary::border_displacement_ms`]).
-/// See `docs/dev/TEMP-fill-placement-registration-plan.md` § "Step 5 result".
+/// See `docs/dev/archive/TEMP-fill-placement-registration-plan.md` § "Step 5 result".
 ///
 /// One constant, shared by [`probe_border_spec`] (every probe `GapBorderSpec`) and by
 /// [`probe_border_standoff_secs`] / [`CorpusProbeRecipe::from_config`], so a corpus can never

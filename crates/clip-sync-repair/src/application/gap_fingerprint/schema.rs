@@ -984,7 +984,7 @@ pub struct LagSummary {
     /// so `post − pre` over the raw lags is `D_pre + D_post`: the probe's total displacement, and the
     /// half of the corpus's −21.9 ms bias against `align_adjustment_secs` that belongs to the probe
     /// (median 11.3 ms; the other ~25 ms is the applied placement itself sitting late — see
-    /// `docs/dev/TEMP-fill-placement-registration-plan.md` § "Step 5 result"). Content-dependent per
+    /// `docs/dev/archive/TEMP-fill-placement-registration-plan.md` § "Step 5 result"). Content-dependent per
     /// gap, not a constant — do not substitute the median. `None` for fingerprints written before
     /// this field, and on paths that do not build border templates.
     #[serde(skip_serializing_if = "Option::is_none", default)]

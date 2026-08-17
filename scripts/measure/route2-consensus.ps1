@@ -1,5 +1,5 @@
 #!/usr/bin/env pwsh
-# Route 2 consensus + peak_z re-gate (docs/dev/TEMP-fill-placement-registration-plan.md §0 S2).
+# Route 2 consensus + peak_z re-gate (docs/dev/archive/TEMP-fill-placement-registration-plan.md §0 S2).
 #
 # Asks one question: does the per-shoulder waveform lag (`lag_decision`, a measurement) agree
 # with the slide the repair actually applied (`align_adjustment_secs`, a decision)? Agreement
@@ -51,7 +51,7 @@
 #     peak_z  30/31, cell 8/8 = {2, 3, 13, 14, 18, 32, 47, 51},     bias -26.1 ms
 #
 # MEDIA HYGIENE: emit pair label + gap index only — never media paths or titles.
-# Docs: docs/dev/TEMP-fill-placement-registration-plan.md §0.0, §0 S2.
+# Docs: docs/dev/archive/TEMP-fill-placement-registration-plan.md §0.0, §0 S2.
 
 [CmdletBinding()]
 param(
@@ -671,5 +671,5 @@ if ($CsvOut -ne '') {
 }
 
 Write-Host ''
-Write-Host 'Dump-only analysis — no gate change, no repair re-run. Plan: docs/dev/TEMP-fill-placement-registration-plan.md §0 S2' `
+Write-Host 'Dump-only analysis — no gate change, no repair re-run. Plan: docs/dev/archive/TEMP-fill-placement-registration-plan.md §0 S2' `
     -ForegroundColor DarkGray

@@ -2,14 +2,14 @@
 
 Open follow-up work for `clip-sync`. See [PLAN.md](PLAN.md) for architecture, [docs/pipeline.md](docs/pipeline.md) for the repair pipeline (phase by phase), [docs/dev/corpus-validation.md](docs/dev/corpus-validation.md) for the test corpus, and [docs/error-mapping.md](docs/error-mapping.md) for error handling. Shipped work is recorded in `docs/dev/archive/*` and git history.
 
-Last updated: 2026-08-13.
+Last updated: 2026-08-17.
 
 **How this doc works**
 
 - **Open** — actionable items below (problem / direction kept for open work only).
 - **Plans** — active drafts under `docs/dev/TEMP-*.md`; archive when shipped.
 
-**Next:** [Fill placement vs local registration](#fill-placement-is-accepted-without-checking-local-registration-defect); [Donor registration leftovers](#donor-registration-leftovers); [Repair R6](#repair-r6-follow-ups); [Residual gate](#residual-gate-follow-ups).
+**Next:** [TEMP-unmatchable-shoulder-plan.md](docs/dev/TEMP-unmatchable-shoulder-plan.md) (S2b, changes audio); [TEMP-lag-envelope-recenter-plan.md](docs/dev/TEMP-lag-envelope-recenter-plan.md) (unblocks S1); [Fill placement leftovers](#fill-placement-is-accepted-without-checking-local-registration-defect); [Donor registration leftovers](#donor-registration-leftovers); [Repair R6](#repair-r6-follow-ups); [Residual gate](#residual-gate-follow-ups).
 
 ---
 
@@ -17,7 +17,6 @@ Last updated: 2026-08-13.
 
 | Plan | Covers |
 |------|--------|
-| [TEMP-fill-placement-registration-plan.md](docs/dev/TEMP-fill-placement-registration-plan.md) | Fill placement accepted without checking local registration — defect characterized; S2b / S1 split to children |
 | [TEMP-unmatchable-shoulder-plan.md](docs/dev/TEMP-unmatchable-shoulder-plan.md) | S2b: stop `min(pre, post)` preferring a stutter when one shoulder is unmatchable — draft, decisions open |
 | [TEMP-lag-envelope-recenter-plan.md](docs/dev/TEMP-lag-envelope-recenter-plan.md) | Recenter `lag_decision`'s ±600 ms sweep on a coarse envelope peak (independent of the fill search) so pair 31's −1.11 s offset is measurable — draft, not started |
 | [TEMP-nway-donor-alignment-plan.md](docs/dev/TEMP-nway-donor-alignment-plan.md) | N-way donor alignment: repair one damaged copy from multiple donors — draft, not started |
@@ -27,28 +26,30 @@ Last updated: 2026-08-13.
 
 ### Fill placement is accepted without checking local registration (defect)
 
-**Plan: [TEMP-fill-placement-registration-plan.md](docs/dev/TEMP-fill-placement-registration-plan.md).**
+**Findings (archived 2026-08-17):** [archive/TEMP-fill-placement-registration-plan.md](docs/dev/archive/TEMP-fill-placement-registration-plan.md).
+Two ear-confirmed stutters, two distinct fixes. Do not re-open the source/gate fork — it was both, on different gaps.
 
-The corpus's only ear-confirmed wrong repairs — pair 26 gap 7 and pair 31 gap 8 — are shoulder
-duplications, both accepted at `patch_tier: high` / `confidence: high`, found by ear and by no gate.
-Each fill carries an `align_adjustment_secs` that is correct on 10 of 12 labelled gaps; on these two
-it slides **backward** by 0.94–1.45 s where the local shoulders were already registered, landing the
-donor window on material A has already played. The defect is not the size of the adjustment — it is
-that a large displacement is accepted without being checked against what the shoulders say the
-offset should be, because **no component owns the question "is this placement plausible?"**
+| Gap | What went wrong | Live work |
+|-----|-----------------|-----------|
+| 31/g7 (−977 ms) | `min(pre, post)` prefers a stutter when post is unmatchable | [TEMP-unmatchable-shoulder-plan.md](docs/dev/TEMP-unmatchable-shoulder-plan.md) — **do this first** (changes audio). Decisions still open |
+| 26/g6 (−1450 ms) | a near-nominal placement existed and lost on score | No plan. S2(2) refuted a nominal-referenced `LATE_START_PENALTY`. A registration-referenced prior is an idea, not a Change. Do not retune `fill_fit_early_start_penalty_scale` |
 
-**Data re-based 2026-08-14 — see the plan's § 0.0 before quoting any count here.** The corpus these
-numbers came from mixed A/B orientation on pairs 2–17; the current baseline is
-`gap-files/2026-08-13-repeat-terms/` (53 pairs, **317** patched gaps) with dumps at
-`gap-files/2026-08-13-v0.6.0-oriented/`. Both ear-confirmed failures are correctly oriented and
-unchanged; the cross-pair statistics are not.
+**After S2b:** [TEMP-lag-envelope-recenter-plan.md](docs/dev/TEMP-lag-envelope-recenter-plan.md) (pair 31, then pair 50). That unblocks S1. Do not write S1 until the recenter exit is met.
 
-A candidate discriminator (`applied − frac_lag_ms`, signed backward, gated on shoulder confidence)
-fires on exactly those two gaps and nothing else in 227 (recompute on 317). Before it can ship, the plan has to settle
-whether the fix belongs in the placement search or in a new guard (Phase A), and whether the
-`applied = 0` cohort is in the guard's domain (Phase B). Several readings have already been measured
-and **withdrawn** — see the plan before re-proposing pair-level drift correction, correlation gain,
-a prominence floor, or a level threshold.
+**Data.** Oriented baseline `gap-files/2026-08-13-repeat-terms/` (53 pairs, **317** patched gaps) and dumps `gap-files/2026-08-13-v0.6.0-oriented/`. Counts from the mixed-A/B set are superseded; both failures are correctly oriented and unchanged. See archived §0.0 before quoting any corpus rate.
+
+Withdrawn as discriminators (archived §1.1): pair-level drift correction, correlation gain, a prominence floor, a level threshold, a magnitude cap.
+
+| Item | Direction |
+|------|-----------|
+| **S1 — record the registration residual on the patch record** | Blocked on envelope-recenter. `lag_decision` is dump-only today. After pair 31's exit, a new TEMP that is plumbing only: emit `applied − frac_lag_ms` (min-abs over confident shoulders, abstain when none) on every patched gap; no gate reads it. Do not lift the nominal-only ±600 ms sweep |
+| **S4 / `applied = 0` cohort** | Conditional ear labels for whether a residual guard's domain includes gaps that never slid. Do not run until it would change a decision. The archived §5 render list is mixed-orientation and stale |
+| **Ear-pass 17/g34 and 47/g14** | Cheapest n>2. 17/g34 is the 26/g6 class; 47/g14 is the first failure-to-move. Labels, not a TEMP |
+| **α / `border_standoff_secs`** | Fill sits ~25 ms late vs both shoulders. Hypothesis: production's 0.35 s standoff. Run existing arms through `scripts/measure/diff-patch-adjustments.ps1` or drop. Not a TEMP |
+| **+39 ms fill-start detection bias** | Archived §2.1. Cosmetic for a discriminator; required before any absolute claim about delivered position |
+| **Two gaps break the frame-672000 identity** | Archived §3.1, 589 and 4245 frames. Dump-only; needed before that join is used unconditionally |
+
+S3 (rival peak), S5 (reporting foot-guns), S2(1) (dead cap), S2c (snap correlation), Route 2, and probe `D` recording shipped with the investigation — do not re-open.
 
 ### Repeat-at-seam prior is inert on every winner; one branch is unreachable
 
@@ -64,7 +65,7 @@ question.
 (`patch_audio/region.rs:158`) requires all four of `fill_mode = fit`, a weight > 0 (default `0.0`),
 a non-empty `PatchAnchorTable`, and `AnchoredRetryPass::Second` — i.e. `--fill-offset
 anchored-retry`. Corpus runs are default `Recommended`, so the prior was never constructed. See the
-registration plan § 4.1a for why enabling it would test the pair-level drift model that § 1.1
+archived registration plan § 4.1a for why enabling it would test the pair-level drift model that § 1.1
 already refuted.
 
 `repeat_penalty` is a **behavioural** zero and is the item. The term is enabled (`weight 0.4`,
@@ -104,7 +105,7 @@ oracle cost. **Do not retune the constants until that run is read.** What the da
 > #### The run is in: `gap-files/2026-08-13-repeat-terms/` (read 2026-08-14)
 >
 > 53 pairs, **317 patched gaps, 210 carrying `fit_terms`**, correctly oriented throughout (the
-> 2026-08-12 baseline quoted above was the mixed-A/B set — see the registration plan § 0.0; its pairs
+> 2026-08-12 baseline quoted above was the mixed-A/B set — see the archived registration plan § 0.0; its pairs
 > 2–17 scanned `name.2.ext` as A). `repeat_penalty` and `anchor_penalty` are `0.0` on **all 210**, so
 > the headline holds at 1.4× the n and in the right orientation. Three of the four questions close:
 >
@@ -213,7 +214,7 @@ are inflated by their own gap's unknown gain (0–12 dB). Cross-gap `peak_delta_
 invalid; do not rank or shortlist on that column.
 
 **Second contamination, 2026-08-14: that roll-up is also the mixed-A/B corpus** (108 of its 227 rows are
-pairs 2–17, scanned in the wrong direction — see the registration plan § 0.0). The current oriented
+pairs 2–17, scanned in the wrong direction — see the archived registration plan § 0.0). The current oriented
 roll-up is `gap-files/2026-08-13-repeat-terms/fill-level-rollup.csv`, 317 rows. The CSV itself has no
 gain column (`Label, Gap*, AStart/AEndSecs, EdgeDeltaDb, Head/Tail/ReferenceDb, RefAtFloor,
 Pre/PostShoulderDb, PeakDeltaDb, PeakBinDb/Index, Bins, BinMs, DualFitUsed, Report`), but the run's
@@ -269,7 +270,7 @@ Leftovers from [archive/TEMP-fingerprint-field-clarity-plan.md](docs/dev/archive
 |------|-----------|
 | Share the contract string table with harness `legend_text()` | The stated goal was "dump and analyzer legend cannot drift" (§ 2.5). Cost is real: `legend_text()` is a human CLI roll-up on a **22-char label column** — R3 had to re-pad every label and continuation line for one 22-char field name — while contracts are ≤120-char prose read beside the numbers. Sharing couples the two formats, and the four axes do not fit a legend line. Trigger: an *observed* drift between a legend string and a contract, not the possibility of one |
 | `--fingerprint-contracts=once\|always\|off` write flag | § 2.6 chose repeat-per-gap ("clarity beats bytes") for diagnostic dumps and deferred the knob to "if size becomes an issue". Nobody has measured the size cost of the eight contracts on a real corpus. Trigger: a corpus where `_contract` repetition is a measured problem — until then `always` is the only behaviour, and a knob is an untested branch |
-| **Contract `status.patched` on the production report** | Raised 2026-08-12 from [TEMP-fill-placement-registration-plan.md](docs/dev/TEMP-fill-placement-registration-plan.md) § 0 S5, where misread patch-record fields produced two withdrawn conclusions. The production `--json` surface carries **no `_contract` anywhere**; the fields that misled want one — `align_adjustment_secs` (signed slide of the chosen fill start off nominal, **not** a lag), `placement_slide_frames` (unsigned, and **≠ `\|align_adjustment\| × 48000` on 82/227 gaps**), `fit_path` (names the **boundary grid**, not the fit path — `gap_tags.rs`'s `FitPathTag::from_boundary_grid_used`), `pre/post_correlation` (min-reduced into the placement objective). **Two design questions come first, which is why this is deferred and not just unwritten.** (a) `Contracted<T>` needs a `T` to flatten; `GapPatchStatus::Patched` is an enum variant with inline fields, so stamping it means extracting them into a named struct — and `contract.rs`'s own rationale deliberately keeps reader metadata *out of* domain types, which `patch_result.rs` is. (b) Per-gap stamping does not transfer: a dump is one gap per file, a report is all gaps in one, so a 227-gap report repeats the same four strings 227 times (~90 KB against files that run 78–574 KB today) — the same measurement the row above is waiting on, and the cheap alternative (one `_contracts` map at the report root) is exactly what § 2.6 rejected as "too easy to skip and too far from the number it explains". That rejection was reasoned about a per-gap file; whether it survives a report-shaped one is the open question. **Already landed separately** (no contract needed): `dual_fit_used` / `anchor_seam_used` are now always serialized, so absence no longer reads as "disabled" |
+| **Contract `status.patched` on the production report** | Raised 2026-08-12 from [archive/TEMP-fill-placement-registration-plan.md](docs/dev/archive/TEMP-fill-placement-registration-plan.md) § 0 S5, where misread patch-record fields produced two withdrawn conclusions. The production `--json` surface carries **no `_contract` anywhere**; the fields that misled want one — `align_adjustment_secs` (signed slide of the chosen fill start off nominal, **not** a lag), `placement_slide_frames` (unsigned, and **≠ `\|align_adjustment\| × 48000` on 82/227 gaps**), `fit_path` (names the **boundary grid**, not the fit path — `gap_tags.rs`'s `FitPathTag::from_boundary_grid_used`), `pre/post_correlation` (min-reduced into the placement objective). **Two design questions come first, which is why this is deferred and not just unwritten.** (a) `Contracted<T>` needs a `T` to flatten; `GapPatchStatus::Patched` is an enum variant with inline fields, so stamping it means extracting them into a named struct — and `contract.rs`'s own rationale deliberately keeps reader metadata *out of* domain types, which `patch_result.rs` is. (b) Per-gap stamping does not transfer: a dump is one gap per file, a report is all gaps in one, so a 227-gap report repeats the same four strings 227 times (~90 KB against files that run 78–574 KB today) — the same measurement the row above is waiting on, and the cheap alternative (one `_contracts` map at the report root) is exactly what § 2.6 rejected as "too easy to skip and too far from the number it explains". That rejection was reasoned about a per-gap file; whether it survives a report-shaped one is the open question. **Already landed separately** (no contract needed): `dual_fit_used` / `anchor_seam_used` are now always serialized, so absence no longer reads as "disabled" |
 
 ### Fingerprint dump naming (verdict token dropped; listen-manifest disposition open)
 
