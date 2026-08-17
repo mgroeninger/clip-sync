@@ -2668,6 +2668,73 @@ mod tests {
         assert_eq!(fitted, vec![v1, v1, v2, v2, 0.0, 0.0, 0.0, 0.0]);
     }
 
+    /// The echo must carry the value this run patched with, per field. The 2026-08-17 standoff sweep
+    /// had no such record: four arms differing only by `--border-standoff-secs`, and nothing in the
+    /// report to tell a real sweep from a flag that never applied. Distinct values per field so a
+    /// copy-paste that echoes the neighbouring knob fails here.
+    #[test]
+    fn fill_geometry_echo_carries_the_values_this_run_patched_with() {
+        let mut request = dual_fit_test_request(false, crate::domain::ResidualGateMode::Off);
+        request.settings.border_standoff_secs = 0.11;
+        request.settings.fill_border_search_secs = 0.22;
+        request.settings.min_border_discovery_secs = 0.33;
+        request.settings.fill_seam_search_secs = 0.44;
+
+        request.settings.normalize_window_secs = 0.55;
+
+        let echo = super::super::fill_geometry_for(&request);
+
+        // Asserting `echo.x == request.settings.x` would only prove the copy copies — it would pass
+        // just as well if the patch path read a different field. So bind the echo to the code that
+        // turns these settings into frames: `SeamGateDerived::from_repair` for the run-constant pair,
+        // `FillWindowFrames::for_gap` for the per-gap trio. If the echo ever names a setting the
+        // search does not use, these stop agreeing.
+        let rate = 48_000u32;
+        let derived =
+            crate::application::patch_region::SeamGateDerived::from_repair(&request, rate, 1, 0.01);
+        let secs_to_frames = |s: f64| (s * f64::from(rate)).round() as usize;
+        assert_eq!(
+            secs_to_frames(echo.border_standoff_secs),
+            derived.border_standoff_frames,
+            "the echoed standoff must be the one held off the gap edge"
+        );
+        assert_eq!(
+            secs_to_frames(echo.fill_border_search_secs),
+            derived.search_radius_frames,
+            "the echoed border search must be the radius the fill search actually scans"
+        );
+
+        // A gap long enough that `border_frames` is not clamped by `correlate_frames`, so the echoed
+        // normalize window is readable as the A-border template width it sizes.
+        let gap_frames = rate as usize * 2;
+        let windows =
+            super::super::geometry::FillWindowFrames::for_gap(&request.settings, gap_frames, rate);
+        assert_eq!(
+            super::super::geometry::correlate_frames_for_gap(
+                echo.normalize_window_secs,
+                echo.min_border_discovery_secs,
+                gap_frames,
+                rate,
+            ),
+            windows.correlate_frames,
+            "the echoed normalize/discovery pair must reproduce the correlation window"
+        );
+        assert_eq!(
+            super::super::geometry::seam_gate_frames_for(
+                windows.correlate_frames,
+                echo.fill_seam_search_secs,
+                rate,
+            ),
+            windows.seam_gate_frames,
+            "the echoed seam search must reproduce the seam-gate cap"
+        );
+        assert_eq!(
+            super::super::geometry::border_frames_from_secs(echo.normalize_window_secs, rate),
+            windows.border_frames,
+            "the echoed normalize window IS the A-border template width on this path"
+        );
+    }
+
     fn dual_fit_test_request(
         measure_residual: bool,
         residual_gate: crate::domain::ResidualGateMode,

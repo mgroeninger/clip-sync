@@ -462,6 +462,36 @@ fn is_zero_count(count: &usize) -> bool {
     *count == 0
 }
 
+/// Border-geometry **settings** this run patched with, echoed per run so a differential
+/// across two runs is attributable to the setting that changed rather than to the directory it landed
+/// in. Added for the 2026-08-17 `border_standoff_secs` sweep, where nothing in the report recorded the
+/// swept value and the arms were distinguishable only by their output path — a run whose result cannot
+/// be told apart from a mis-applied flag.
+///
+/// Settings, not per-gap effective widths: each field is read by the patch path
+/// (`patch_audio::geometry`, `patch_audio::region`) but is then clamped against the material actually
+/// available at that gap, so the template a given gap got can be narrower than the value here. Read it
+/// as "what this run was asked for", never as "what gap *n* used".
+///
+/// The
+/// fingerprint probe's geometry is *not* here and must not be added: it is different, and it has its
+/// own block (`gap_fingerprint::CorpusProbeRecipe`).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct FillGeometryRecipe {
+    /// How far the border templates are held off the dropout edge (`--border-standoff-secs`).
+    pub border_standoff_secs: f64,
+    /// How much border material the fill search may discover / requires.
+    pub fill_border_search_secs: f64,
+    pub min_border_discovery_secs: f64,
+    /// Seam-scoring window either side of the splice.
+    pub fill_seam_search_secs: f64,
+    /// The **A-border template width** — `border_frames_from_secs(normalize_window_secs)` in
+    /// `patch_audio::geometry`, which also floors `correlate_frames`. Named for normalization but read
+    /// as a border size on this path, so a standoff sweep that omitted it would be describing the
+    /// standoff of a template whose width it never recorded.
+    pub normalize_window_secs: f64,
+}
+
 /// User-visible summary of a `PatchAudio` run (no PCM payload).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct PatchSummary {
@@ -480,6 +510,10 @@ pub struct PatchSummary {
     /// Offset anchors built from pass-1 successes (`anchored_retry`); omitted when empty.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub patch_anchors_used: Option<Vec<crate::domain::patch_anchor::PatchAnchorReport>>,
+    /// Border geometry this run used — see [`FillGeometryRecipe`]. `None` on summaries built without a
+    /// request in hand (domain tests), and absent from pre-2026-08-17 reports.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fill_geometry: Option<FillGeometryRecipe>,
 }
 
 impl PatchSummary {
@@ -517,7 +551,14 @@ impl PatchSummary {
             gaps,
             donor_relation,
             patch_anchors_used: None,
+            fill_geometry: None,
         }
+    }
+
+    /// Stamp the border geometry this run used — see [`FillGeometryRecipe`].
+    pub fn with_fill_geometry(mut self, geometry: FillGeometryRecipe) -> Self {
+        self.fill_geometry = Some(geometry);
+        self
     }
 
     pub fn with_patch_anchors(

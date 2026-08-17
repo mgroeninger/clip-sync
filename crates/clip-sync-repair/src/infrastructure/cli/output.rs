@@ -1144,6 +1144,16 @@ mod tests {
                 },
             ),
         ])
+        // Every real patch run stamps this (`patch_audio::fill_geometry_for`); `from_outcomes` alone
+        // leaves it `None`, so without it the golden would pin the contract with the key missing and a
+        // change to the block's wire shape would go unnoticed.
+        .with_fill_geometry(crate::domain::patch_result::FillGeometryRecipe {
+            border_standoff_secs: 0.35,
+            fill_border_search_secs: 10.0,
+            min_border_discovery_secs: 1.0,
+            fill_seam_search_secs: 0.25,
+            normalize_window_secs: 5.0,
+        })
     }
 
     fn minimal_alignment_detail() -> AlignmentResult {

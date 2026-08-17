@@ -28,9 +28,8 @@ use crate::domain::patch_result::GapPatchSkipReason;
 use crate::domain::pcm::{interleaved_to_channels, interleaved_to_mono};
 use crate::domain::policies::{
     border_edge_displacement_frames, border_templates_for_gap,
-    border_templates_per_channel_for_gap, refine_gap_frames,
-    rms_interleaved, seam_channel_diagnostics, GapBorderSpec, RefinedGapFrames, SeamPlacement,
-    SeamTemplates,
+    border_templates_per_channel_for_gap, refine_gap_frames, rms_interleaved,
+    seam_channel_diagnostics, GapBorderSpec, RefinedGapFrames, SeamPlacement, SeamTemplates,
 };
 
 /// Span args for [`level_profile`]: the gap window and the surrounding context window (in frames).
@@ -200,6 +199,20 @@ fn mono_slice_rms(b_mono: &[f64], start: usize, end: usize) -> f32 {
 /// A lag peak within this many ms of the searched boundary is treated as edge-pinned (search-exhausted):
 /// the parabolic vertex can't be trusted and a larger lag was never scored. See [`LagSummary::edge_pinned`].
 const LAG_EDGE_TOL_MS: f64 = 2.0;
+
+/// Border standoff applied to **every** `GapBorderSpec` this probe builds — deliberately 0, and
+/// deliberately **not** `RepairConfig.border_standoff_secs` (0.35).
+///
+/// The standoff exists to hold production's search templates away from the dropout; this probe
+/// measures *registration*, so adopting it would push the template a third of a second off the edge
+/// and every recorded `frac_lag_ms` with it. The residual walk-off/trim displacement that remains is
+/// measured, not assumed (`border_edge_displacement_frames` → [`LagSummary::border_displacement_ms`]).
+/// See `docs/dev/TEMP-fill-placement-registration-plan.md` § "Step 5 result".
+///
+/// One constant, shared by [`probe_border_spec`] (every probe `GapBorderSpec`) and by
+/// [`probe_border_standoff_secs`] / [`CorpusProbeRecipe::from_config`], so a corpus can never
+/// advertise a standoff the probe didn't apply.
+pub(crate) const PROBE_BORDER_STANDOFF_FRAMES: usize = 0;
 
 /// Search knobs for a per-shoulder lag correlation sweep (`lag_side_sweep` / [`lag_pair`]).
 #[derive(Debug, Clone, Copy)]
@@ -418,17 +431,19 @@ pub struct FingerprintConfig {
     pub fill_seam_search_secs: f64,
     pub fill_border_search_secs: f64,
     pub fill_align_margin_secs: f64,
-    pub fill_length_slack_secs: f64,
     /// B haystack tail slack (extract / `pad_tail`); see `RepairConfig.fill_extract_tail_slack_secs`.
     pub fill_extract_tail_slack_secs: f64,
-    pub border_secs: f64,
-    pub border_standoff_secs: f64,
+    /// Pre-gap **noise-collar** width for the `levels` RMS/peak context — *not* a border-template
+    /// size. No border template on this path is configured: each measurement sizes its own from what
+    /// it is measuring (`bin_frames * 3` for structure, `window + max_lag` for
+    /// [`lag_at_placement`]). Fed from `RepairConfig.normalize_window_secs`, which is why it does not
+    /// share production's `border_secs` name — it never held that value.
+    pub noise_collar_secs: f64,
     pub max_anchor_bracket_secs: f64,
     pub max_anchors_per_side: usize,
     pub anchor_seam_min_prominence: f32,
     pub min_structure_match_score: f64,
     pub min_fill_correlation: f32,
-    pub fill_marginal_margin: f32,
     pub fill_absolute_floor: f32,
     pub max_refine_secs: f64,
     pub lag_max_lag_ms: u32,
@@ -448,16 +463,16 @@ impl Default for FingerprintConfig {
             fill_seam_search_secs: 0.25,
             fill_border_search_secs: 10.0,
             fill_align_margin_secs: 1.0,
-            fill_length_slack_secs: 0.05,
             fill_extract_tail_slack_secs: 0.05,
-            border_secs: 1.0,
-            border_standoff_secs: 0.35,
+            // 1.0 is a TEST default, not the probe's operating value: every real run goes through
+            // `from_request`, which feeds `normalize_window_secs` (production default 5.0). Do not read
+            // this as "the collar the corpus used" — that is `probe_recipe.noise_collar_secs`.
+            noise_collar_secs: 1.0,
             max_anchor_bracket_secs: 5.0,
             max_anchors_per_side: 5,
             anchor_seam_min_prominence: 0.0,
             min_structure_match_score: 0.55,
             min_fill_correlation: 0.35,
-            fill_marginal_margin: 0.08,
             fill_absolute_floor: 0.12,
             max_refine_secs: 0.75,
             lag_max_lag_ms: 600,
@@ -612,6 +627,59 @@ struct PlaceOnBInput<'a> {
     cfg: &'a FingerprintConfig,
 }
 
+/// Seconds form of [`PROBE_BORDER_STANDOFF_FRAMES`] at the rate the probe applied it. Shared by
+/// [`CorpusProbeRecipe::from_config`] so a corpus cannot advertise a standoff the specs did not use.
+fn probe_border_standoff_secs(sample_rate: u32) -> f64 {
+    PROBE_BORDER_STANDOFF_FRAMES as f64 / f64::from(sample_rate).max(1.0)
+}
+
+/// Every probe `GapBorderSpec` is built here so a fifth site cannot write a standoff the recipe
+/// would not report. `border_frames` still varies per measurement; the standoff does not.
+fn probe_border_spec(
+    refined: &RefinedGapFrames,
+    border_frames: usize,
+    cfg: &FingerprintConfig,
+) -> GapBorderSpec {
+    GapBorderSpec {
+        gap_start_frame: refined.start_frame,
+        gap_end_frame: refined.end_frame,
+        border_frames,
+        border_standoff_frames: PROBE_BORDER_STANDOFF_FRAMES,
+        silence_peak_fraction: cfg.silence_peak_fraction,
+        absolute_rms_floor: cfg.absolute_silence_rms,
+    }
+}
+
+impl CorpusProbeRecipe {
+    /// Build from the config **and the gaps that were actually built**, so each window is reported
+    /// only where the corpus can show the measurement it sized.
+    ///
+    /// The config alone is not evidence. [`characterize_gaps`] builds every gap at
+    /// `DetailTier::Summary` with `skip_baseline_placement`, which calls neither [`lag_at_placement`]
+    /// nor [`place_on_b`] — yet its `FingerprintConfig` still carries `lag_window_secs` /
+    /// `lag_max_lag_ms` / `fill_seam_search_secs`. Reading those straight off the config would
+    /// advertise sweeps that never ran: the deleted `border_standoff_secs` defect, moved up one level.
+    /// From-decode corpora are mixed (selected gaps rebuilt at `DetailTier::Full`, the rest left at
+    /// summary), so the test is "did *any* gap carry this measurement" — the same check a reader would
+    /// make against the gaps in front of them.
+    ///
+    /// `sample_rate` is required, not defaulted: the standoff the probe actually applied is a frame
+    /// count, and the only honest way to report it in seconds is to divide by the rate it was applied
+    /// at. Hardcoding `0.0` here would re-create the defect this type exists to close the moment
+    /// [`PROBE_BORDER_STANDOFF_FRAMES`] stops being zero.
+    pub fn for_corpus(cfg: &FingerprintConfig, sample_rate: u32, gaps: &[GapFingerprint]) -> Self {
+        let measured_lag = gaps.iter().any(|g| g.lag_decision.is_some());
+        let measured_seams = gaps.iter().any(|g| g.seams.is_some());
+        Self {
+            noise_collar_secs: cfg.noise_collar_secs,
+            lag_window_secs: measured_lag.then_some(cfg.lag_window_secs),
+            lag_max_lag_ms: measured_lag.then_some(cfg.lag_max_lag_ms),
+            seam_window_secs: measured_seams.then_some(cfg.fill_seam_search_secs),
+            border_standoff_secs: probe_border_standoff_secs(sample_rate),
+        }
+    }
+}
+
 /// Structure-best placement of the A bracket `refined` on the B haystack, plus the seam there.
 /// Structure-dominant weights so the placement locks to the energy-best (mirrors the production
 /// "structure aligns, seam read there" story). `None` if the match degenerates.
@@ -635,14 +703,7 @@ fn place_on_b(input: &PlaceOnBInput<'_>) -> Option<PlacementScores> {
         return None;
     }
     let border_frames = bin_frames * 3;
-    let border_spec = GapBorderSpec {
-        gap_start_frame: refined.start_frame,
-        gap_end_frame: refined.end_frame,
-        border_frames,
-        border_standoff_frames: 0,
-        silence_peak_fraction: cfg.silence_peak_fraction,
-        absolute_rms_floor: cfg.absolute_silence_rms,
-    };
+    let border_spec = probe_border_spec(&refined, border_frames, cfg);
     let (a_pre, a_post) = border_templates_for_gap(a_samples, ch, &border_spec);
     let (a_pre_ch, a_post_ch) = border_templates_per_channel_for_gap(a_samples, ch, &border_spec);
     let pre_window = a_pre.len().max(1);
@@ -886,14 +947,7 @@ fn lag_at_placement(input: &LagAtPlacementInput<'_>) -> LagFingerprint {
     // template isn't capped to the ~150 ms `bin_frames*3` used for the structure probe.
     let window = ((cfg.lag_window_secs * f64::from(sample_rate)).round() as usize).max(8);
     let max_lag = ((cfg.lag_max_lag_ms as f64 / 1000.0) * f64::from(sample_rate)).round() as i64;
-    let border_spec = GapBorderSpec {
-        gap_start_frame: refined.start_frame,
-        gap_end_frame: refined.end_frame,
-        border_frames: window + max_lag.max(0) as usize,
-        border_standoff_frames: 0,
-        silence_peak_fraction: cfg.silence_peak_fraction,
-        absolute_rms_floor: cfg.absolute_silence_rms,
-    };
+    let border_spec = probe_border_spec(&refined, window + max_lag.max(0) as usize, cfg);
     let (a_pre, a_post) = border_templates_for_gap(a_samples, ch, &border_spec);
     let (a_pre_ch, a_post_ch) = border_templates_per_channel_for_gap(a_samples, ch, &border_spec);
 
@@ -915,15 +969,11 @@ fn lag_at_placement(input: &LagAtPlacementInput<'_>) -> LagFingerprint {
     };
 
     // The B anchors below are the mapped gap edges, but these templates start away from them (silence
-    // walk-off + trim; standoff is 0 here). Record that displacement per shoulder so `frac_lag_ms` can
-    // be read against a known zero instead of an assumed one — see `LagSummary::border_displacement_ms`.
-    let mono_displacement = border_edge_displacement_frames(
-        a_samples,
-        ch,
-        &border_spec,
-        a_pre.len(),
-        a_post.len(),
-    );
+    // walk-off + trim; standoff is [`PROBE_BORDER_STANDOFF_FRAMES`], not production's 0.35 s). Record
+    // that displacement per shoulder so `frac_lag_ms` can be read against a known zero instead of an
+    // assumed one — see `LagSummary::border_displacement_ms`.
+    let mono_displacement =
+        border_edge_displacement_frames(a_samples, ch, &border_spec, a_pre.len(), a_post.len());
 
     let (pre, post) = lag_pair(
         &a_pre,
@@ -1113,14 +1163,7 @@ fn seam_probe_at_placement(input: &SeamProbeAtPlacementInput<'_>) -> SeamProbeFi
     let ch = channels.max(1);
     let gap_frames = refined.end_frame.saturating_sub(refined.start_frame);
     let rate = f64::from(sample_rate).max(1.0);
-    let border_spec = GapBorderSpec {
-        gap_start_frame: refined.start_frame,
-        gap_end_frame: refined.end_frame,
-        border_frames: bin_frames * 3,
-        border_standoff_frames: 0,
-        silence_peak_fraction: cfg.silence_peak_fraction,
-        absolute_rms_floor: cfg.absolute_silence_rms,
-    };
+    let border_spec = probe_border_spec(&refined, bin_frames * 3, cfg);
     let (a_pre, a_post) = border_templates_for_gap(a_samples, ch, &border_spec);
     let window = ((cfg.fill_seam_search_secs * rate).round() as usize).max(8);
     let fine_max_lag = ((SEAM_PROBE_FINE_LAG_MS / 1000.0) * rate).round() as i64;
@@ -1424,14 +1467,11 @@ fn wide_envelope_at_placement(input: &WideEnvelopeAtPlacementInput<'_>) -> WideE
     let wide_lag = ((WIDE_ENV_MAX_LAG_MS / 1000.0) * rate).round() as usize;
     let post_wide_lag = ((cfg.lag_max_lag_ms as f64 / 1000.0) * rate).round() as usize;
     let env_bin = ((WIDE_ENV_BIN_MS / 1000.0) * rate).round().max(1.0) as usize;
-    let border_spec = GapBorderSpec {
-        gap_start_frame: refined.start_frame,
-        gap_end_frame: refined.end_frame,
-        border_frames: (window + wide_lag).max(window + post_wide_lag),
-        border_standoff_frames: 0,
-        silence_peak_fraction: cfg.silence_peak_fraction,
-        absolute_rms_floor: cfg.absolute_silence_rms,
-    };
+    let border_spec = probe_border_spec(
+        &refined,
+        (window + wide_lag).max(window + post_wide_lag),
+        cfg,
+    );
     let (a_pre, a_post) = border_templates_for_gap(a_samples, ch, &border_spec);
 
     let pre = (|| {
@@ -1516,7 +1556,7 @@ pub fn build_gap_fingerprint(
         .round()
         .max(1.0) as usize;
     let context_frames = (cfg.gap_signature_context_secs * rate).round() as usize;
-    let border_frames = (cfg.border_secs * rate).round() as usize;
+    let noise_collar_frames = (cfg.noise_collar_secs * rate).round() as usize;
     let max_refine_frames = (cfg.max_refine_secs * rate).round() as usize;
 
     let refined = refine_gap_frames(
@@ -1560,7 +1600,7 @@ pub fn build_gap_fingerprint(
         cfg.gap_signature_bin_ms as u32,
     );
 
-    let collar_start = refined.start_frame.saturating_sub(border_frames);
+    let collar_start = refined.start_frame.saturating_sub(noise_collar_frames);
     let collar_rms = mono_rms(inputs.a_samples, ch, collar_start, refined.start_frame);
     let collar_peak = mono_peak(inputs.a_samples, ch, collar_start, refined.start_frame);
     let collar_ratio = if collar_peak > 0.0 {
@@ -1825,16 +1865,13 @@ impl FingerprintConfig {
             fill_seam_search_secs: request.fill_seam_search_secs,
             fill_border_search_secs: request.fill_border_search_secs,
             fill_align_margin_secs: request.fill_align_margin_secs,
-            fill_length_slack_secs: request.fill_length_slack_secs,
             fill_extract_tail_slack_secs: request.fill_extract_tail_slack_secs,
-            border_secs: request.normalize_window_secs,
-            border_standoff_secs: request.border_standoff_secs,
+            noise_collar_secs: request.normalize_window_secs,
             max_anchor_bracket_secs: request.max_anchor_bracket_secs,
             max_anchors_per_side: request.max_anchors_per_side,
             anchor_seam_min_prominence: request.anchor_seam_min_prominence,
             min_structure_match_score: f64::from(request.min_structure_match_score),
             min_fill_correlation: request.min_fill_correlation,
-            fill_marginal_margin: request.fill_marginal_margin,
             fill_absolute_floor: request.fill_absolute_floor,
             max_refine_secs: GAP_EDGE_REFINE_SECS,
             // `b_mapped_start`/`b_mapped_end` share a single rigid per-gap offset (gap_offset_secs) —
@@ -2353,6 +2390,8 @@ fn refused_channel_mismatch_corpus(
             gap_count: report.gaps.len(),
             incomparable: Some(IncomparableReason::ChannelLayoutMismatch),
             gate_recipe: None,
+            // Refusal ⇒ nothing was measured, so there is no probe geometry to report.
+            probe_recipe: None,
             // Refusal ⇒ `gaps` is empty, so there is nothing to qualify.
             not_measured: Vec::new(),
         },
@@ -2839,6 +2878,16 @@ pub fn characterize_gaps_from_decode(
     // `lag_decision.*` is appended only when some gap actually got the fabricated row. This path
     // normally threads the real sweep through `MeasuredDetail`, so the usual answer is "not declared,
     // because measured" — the declaration tracks what happened, not what the code is capable of.
+    // Re-stamp the probe recipe now that the rebuild has run: `characterize_gaps` could only report
+    // the collar, because at that point no gap carried a `lag_decision` or a `seams` block. Same
+    // rule, later evidence — the recipe describes what this corpus can show, not what the config
+    // could have swept.
+    corpus.source.probe_recipe = Some(CorpusProbeRecipe::for_corpus(
+        &cfg,
+        sample_rate,
+        &corpus.gaps,
+    ));
+
     if corpus.gaps.iter().any(|g| g.tier == DetailTier::Full) {
         corpus.source.not_measured = NOT_MEASURED_BY_PROJECTION
             .iter()
@@ -2902,7 +2951,7 @@ pub fn characterize_gaps(
         + cfg.fill_align_margin_secs;
 
     let take_all = select.is_empty();
-    let gaps = report
+    let gaps: Vec<GapFingerprint> = report
         .gaps
         .iter()
         .enumerate()
@@ -2964,6 +3013,10 @@ pub fn characterize_gaps(
             incomparable: None,
             // Summary-only path does not run the seam gate; from-decode stamps `gate_recipe`.
             gate_recipe: None,
+            // Built from `gaps`, not from `cfg`: this path is summary-only, so it must not quote the
+            // lag/seam windows it never swept. `characterize_gaps_from_decode` re-stamps after its
+            // `DetailTier::Full` rebuild, when those measurements exist.
+            probe_recipe: Some(CorpusProbeRecipe::for_corpus(cfg, sample_rate, &gaps)),
             // **No `not_measured` here.** This path measures every one of those fields —
             // `build_gap_fingerprint` below fills levels/silence/contour/anchors for real. The
             // declaration belongs to `characterize_gaps_from_decode`, which *replaces* these gaps with
@@ -3669,8 +3722,8 @@ mod tests {
         let b_mono: Vec<f64> = a.iter().map(|&v| f64::from(v)).collect();
 
         let config = FingerprintConfig {
-            lag_window_secs: 0.01,  // 480 frames
-            lag_max_lag_ms: 20,     // ±960 frames — comfortably past both displacements
+            lag_window_secs: 0.01, // 480 frames
+            lag_max_lag_ms: 20,    // ±960 frames — comfortably past both displacements
             ..FingerprintConfig::default()
         };
         let out = lag_at_placement(&LagAtPlacementInput {
@@ -3691,7 +3744,10 @@ mod tests {
         let ms = |frames: usize| frames as f64 * 1000.0 / f64::from(RATE);
         let pre = out.pre_anchor.first().copied().expect("pre shoulder");
         let post = out.post_anchor.first().copied().expect("post shoulder");
-        assert!(pre.peak_r > 0.95 && post.peak_r > 0.95, "both shoulders lock");
+        assert!(
+            pre.peak_r > 0.95 && post.peak_r > 0.95,
+            "both shoulders lock"
+        );
         assert_eq!(pre.border_displacement_ms, Some(ms(d_pre)));
         assert_eq!(post.border_displacement_ms, Some(ms(d_post)));
         assert!(
@@ -3864,7 +3920,8 @@ mod tests {
                 peak_lag_samples: -500,
                 frac_lag_samples: -500.0,
                 frac_lag_ms: -10.5,
-                edge_pinned: Some(false),                border_displacement_ms: None,
+                edge_pinned: Some(false),
+                border_displacement_ms: None,
                 verdict: LagVerdict::TimingOffset,
             }],
             post_anchor: vec![LagSummary {
@@ -3880,7 +3937,8 @@ mod tests {
                 peak_lag_samples: -300,
                 frac_lag_samples: -300.0,
                 frac_lag_ms: -6.2,
-                edge_pinned: Some(false),                border_displacement_ms: None,
+                edge_pinned: Some(false),
+                border_displacement_ms: None,
                 verdict: LagVerdict::TimingOffset,
             }],
         };
@@ -3975,6 +4033,111 @@ mod tests {
         }
     }
 
+    /// The recipe must report a number that *moved this run's measurement*, not a config knob that
+    /// happens to sit nearby. `noise_collar_secs` is the field most at risk (it was called
+    /// `border_secs` and reads like a template width), so tie the recorded value to observable
+    /// behaviour: widening the collar over silence must drop `collar_rms_peak_ratio`.
+    #[test]
+    fn probe_recipe_reports_the_collar_width_that_moved_the_measurement() {
+        let rate = 48_000u32;
+        let frames = |s: f64| (s * f64::from(rate)) as usize;
+        let (gap_start, gap_end) = (frames(1.0), frames(1.5));
+        let mut a = vec![0f32; frames(2.0)];
+        // 100 ms of tone hard against the gap edge; everything before it is silent, so a collar wider
+        // than 100 ms averages in that silence and the RMS/peak ratio falls.
+        for i in frames(0.9)..gap_start {
+            a[i] = (i as f32 * 0.05).sin() * 0.5;
+        }
+
+        let measure = |collar_secs: f64| {
+            let config = FingerprintConfig {
+                noise_collar_secs: collar_secs,
+                ..Default::default()
+            };
+            let inputs = GapInputs {
+                a_samples: &a,
+                b_haystack: None,
+                channels: 1,
+                sample_rate: rate,
+                reported_start_frame: gap_start,
+                reported_end_frame: gap_end,
+                b_extract_start_secs: 0.0,
+                gap_offset_secs: 0.0,
+                config,
+            };
+            let fp = build_gap_fingerprint(0, &inputs, DetailTier::Full, false);
+            let ratio = fp
+                .silence
+                .as_ref()
+                .expect("silence profile measured")
+                .collar_rms_peak_ratio;
+            let recipe = CorpusProbeRecipe::for_corpus(&config, rate, std::slice::from_ref(&fp));
+            (ratio, recipe)
+        };
+
+        let (narrow, narrow_recipe) = measure(0.1);
+        let (wide, wide_recipe) = measure(1.0);
+        assert!(
+            narrow > wide * 2.0,
+            "collar width must move the measurement it is reported for: {narrow} vs {wide}"
+        );
+        assert_eq!(narrow_recipe.noise_collar_secs, 0.1);
+        assert_eq!(wide_recipe.noise_collar_secs, 1.0);
+        // Not a restatement of the constant: this asserts the recipe *derives* the standoff it reports
+        // from the same constant the specs are built with, at the rate it was applied at. If someone
+        // wires a non-zero standoff into the probe, this reads it back instead of silently claiming 0.
+        assert_eq!(
+            narrow_recipe.border_standoff_secs,
+            probe_border_standoff_secs(48_000),
+            "the recipe must report the standoff the probe's border specs were built with, never \
+             production's 0.35"
+        );
+    }
+
+    /// A summary-only corpus must not advertise the lag/seam sweeps it never ran. `characterize_gaps`
+    /// builds every gap at `DetailTier::Summary` with `skip_baseline_placement` — no
+    /// `lag_at_placement`, no `place_on_b` — while its `FingerprintConfig` still carries
+    /// `lag_window_secs` / `lag_max_lag_ms` / `fill_seam_search_secs`. Quoting them from the config is
+    /// the deleted `border_standoff_secs` defect one level up, so the recipe reads the gaps instead.
+    #[test]
+    fn probe_recipe_omits_windows_the_summary_path_never_swept() {
+        let rate = 48_000u32;
+        let frames = |s: f64| (s * f64::from(rate)) as usize;
+        let mut a = vec![0f32; frames(2.0)];
+        for i in frames(0.9)..frames(1.0) {
+            a[i] = (i as f32 * 0.05).sin() * 0.5;
+        }
+        let config = FingerprintConfig::default();
+        let inputs = GapInputs {
+            a_samples: &a,
+            b_haystack: None,
+            channels: 1,
+            sample_rate: rate,
+            reported_start_frame: frames(1.0),
+            reported_end_frame: frames(1.5),
+            b_extract_start_secs: 0.0,
+            gap_offset_secs: 0.0,
+            config,
+        };
+
+        let summary = build_gap_fingerprint(0, &inputs, DetailTier::Summary, true);
+        assert!(summary.lag_decision.is_none() && summary.seams.is_none());
+        let recipe = CorpusProbeRecipe::for_corpus(&config, rate, std::slice::from_ref(&summary));
+        assert_eq!(
+            recipe.noise_collar_secs, config.noise_collar_secs,
+            "levels runs on every path, so the collar is always reportable"
+        );
+        assert_eq!(
+            (recipe.lag_window_secs, recipe.lag_max_lag_ms, recipe.seam_window_secs),
+            (None, None, None),
+            "a summary-only corpus has no lag_decision and no seams — reporting their windows would \
+             describe sweeps that never ran"
+        );
+
+        // The other direction — a corpus that DID sweep must report the windows — is asserted where a
+        // real B side exists to sweep against: `production_dump_omits_unmeasured_option_fields`.
+    }
+
     #[test]
     fn builder_characterizes_noise_collar_gap() {
         let rate = 48_000u32;
@@ -4004,8 +4167,7 @@ mod tests {
         let config = FingerprintConfig {
             gap_signature_context_secs: 1.5,
             fill_border_search_secs: 1.0,
-            border_secs: 0.3,
-            border_standoff_secs: 0.0,
+            noise_collar_secs: 0.3,
             ..Default::default()
         };
         let inputs = GapInputs {
@@ -4273,10 +4435,8 @@ mod tests {
         let repair = RepairConfig {
             fill_border_search_secs: 0.05,
             fill_align_margin_secs: 0.02,
-            fill_length_slack_secs: 0.1,
             fill_extract_tail_slack_secs: 0.1,
             fill_seam_search_secs: 0.05,
-            border_standoff_secs: 0.0,
             max_anchor_bracket_secs: 0.2,
             max_anchors_per_side: 2,
             ..RepairConfig::default()
@@ -4318,6 +4478,28 @@ mod tests {
         assert_eq!(
             recipe.residual_headroom_margin_db,
             request.residual_headroom_margin_db
+        );
+        // The probe's own geometry, re-stamped after the `DetailTier::Full` rebuild. This dump DID
+        // run the sweeps, so unlike a summary-only corpus it must report their windows — and it must
+        // report the probe's standoff, never production's `border_standoff_secs`.
+        let probe = corpus
+            .source
+            .probe_recipe
+            .as_ref()
+            .expect("from-decode dump stamps the probe recipe");
+        let cfg = FingerprintConfig::from_request(&request, report.recipe.silence_peak_fraction());
+        assert_eq!(
+            probe.lag_window_secs,
+            Some(cfg.lag_window_secs),
+            "a dump that swept lag_decision must report the window it swept with"
+        );
+        assert_eq!(probe.lag_max_lag_ms, Some(cfg.lag_max_lag_ms));
+        assert_eq!(probe.noise_collar_secs, request.normalize_window_secs);
+        assert_eq!(
+            probe.border_standoff_secs,
+            probe_border_standoff_secs(corpus.gaps[0].sample_rate),
+            "the probe measures at standoff 0; echoing production's 0.35 would misdescribe every \
+             recorded frac_lag_ms"
         );
         let full: Vec<_> = corpus
             .gaps
@@ -4694,10 +4876,8 @@ mod tests {
             gap_signature_context_secs: 1.5,
             fill_border_search_secs: 0.05,
             fill_align_margin_secs: 0.02,
-            fill_length_slack_secs: 0.1,
             fill_extract_tail_slack_secs: 0.1,
             fill_seam_search_secs: 0.05,
-            border_standoff_secs: 0.0,
             max_anchor_bracket_secs: 0.2,
             max_anchors_per_side: 2,
             ..RepairConfig::default()
@@ -4849,10 +5029,8 @@ mod tests {
             // brute force over a handful of anchor-bracket combinations.
             fill_border_search_secs: 0.05,
             fill_align_margin_secs: 0.02,
-            fill_length_slack_secs: 0.1,
             fill_extract_tail_slack_secs: 0.1,
             fill_seam_search_secs: 0.05,
-            border_standoff_secs: 0.0,
             max_anchor_bracket_secs: 0.2,
             max_anchors_per_side: 2,
             ..RepairConfig::default()
@@ -5222,7 +5400,8 @@ mod tests {
                         peak_lag_samples: -778,
                         frac_lag_samples: -778.0,
                         frac_lag_ms: -16.2,
-                        edge_pinned: Some(false),                        border_displacement_ms: None,
+                        edge_pinned: Some(false),
+                        border_displacement_ms: None,
                         verdict: LagVerdict::TimingOffset,
                     }],
                     post_anchor: vec![],
@@ -5276,6 +5455,7 @@ mod tests {
                 gap_count: 2,
                 incomparable: None,
                 gate_recipe: None,
+                probe_recipe: None,
                 not_measured: Vec::new(),
             },
             gaps: vec![mk_fp(0, false), mk_fp(3, true)],

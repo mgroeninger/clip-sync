@@ -147,6 +147,49 @@ impl CorpusGateRecipe {
     }
 }
 
+/// The **probe's own** window geometry for a corpus — what `characterize_gaps_*` measured with, which
+/// is not what the patch path fills with. Sibling of [`CorpusScanRecipe`] (which is gap *detection*)
+/// and of [`CorpusGateRecipe`] (which echoes production's thresholds); this one is deliberately
+/// separate from both so no reader can mistake a probe window for a production setting.
+///
+/// **Every field here is a value the probe actually used.** That rule exists because two fields once
+/// broke it: `FingerprintConfig::border_standoff_secs` carried production's 0.35 while every border
+/// spec on the path hardcoded 0 (it was never read, and is now deleted), and `border_secs` — renamed
+/// to `noise_collar_secs` — reads as a border-template width but only ever sized the `levels`
+/// noise collar, fed from `normalize_window_secs`. Do not add a field here by mirroring a
+/// `RepairConfig` knob; add it only after finding the line that reads it.
+///
+/// Border-template *sizes* are absent on purpose: none is configured. Each measurement derives its own
+/// from what it is measuring (`bin_frames * 3` for the structure probe, `window + max_lag` for
+/// `lag_at_placement`), and the residual edge displacement that survives is recorded per gap as
+/// [`LagSummary::border_displacement_ms`] rather than inferred from a recipe.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct CorpusProbeRecipe {
+    /// Pre-gap noise-collar width behind `levels` (`FingerprintConfig::noise_collar_secs`). Not
+    /// optional: `levels` is the one group every path measures for every gap.
+    pub noise_collar_secs: f64,
+    /// Lag-sweep window and half-width behind `lag_decision` — the §3.6a 1 s / 600 ms pair.
+    ///
+    /// **Absent when no gap in the corpus carries a `lag_decision`.** The summary-only path
+    /// (`characterize_gaps`, `DetailTier::Summary`) never calls `lag_at_placement`, so quoting a sweep
+    /// width there would describe a measurement that did not happen — the exact defect this type was
+    /// added to close, one level up. See [`CorpusProbeRecipe::for_corpus`].
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub lag_window_secs: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub lag_max_lag_ms: Option<u32>,
+    /// Seam window behind `splice` / `splice_dualfit` (`fill_seam_search_secs`). **Absent when no gap
+    /// carries `seams`** — the summary-only path runs with `skip_baseline_placement`, which skips
+    /// `place_on_b` entirely.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub seam_window_secs: Option<f64>,
+    /// Recorded rather than omitted so a reader never has to assume production's
+    /// `border_standoff_secs` (0.35) applied to a measurement. Not a knob — [`CorpusProbeRecipe::for_corpus`]
+    /// converts it from [`PROBE_BORDER_STANDOFF_FRAMES`](super::measure::PROBE_BORDER_STANDOFF_FRAMES),
+    /// the same constant every probe `GapBorderSpec` is given, so the two cannot drift.
+    pub border_standoff_secs: f64,
+}
+
 /// Non-identifying provenance for a corpus: the A/B file identities (pair = entry identity), the scan
 /// recipe, and the gap count. No titles, no paths.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -161,6 +204,10 @@ pub struct SourceMeta {
     /// Seam-gate thresholds used when scoring brackets — see [`CorpusGateRecipe`].
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub gate_recipe: Option<CorpusGateRecipe>,
+    /// The probe's own window geometry — see [`CorpusProbeRecipe`]. Absent on pre-2026-08-17 corpora,
+    /// where the probe's geometry has to be recovered from the binary that wrote them.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub probe_recipe: Option<CorpusProbeRecipe>,
     /// Dotted paths of per-gap fields the emitting path left as **present structural defaults** rather
     /// than measurements — see [`NOT_MEASURED_BY_PROJECTION`] and [`PROJECTED_LAG_DECISION_FIELDS`].
     ///
@@ -1285,6 +1332,7 @@ mod tests {
             gap_count: 0,
             incomparable: None,
             gate_recipe: None,
+            probe_recipe: None,
             not_measured: Vec::new(),
         };
         assert!(

@@ -1,6 +1,6 @@
 # JSON output contract — v1
 
-Authoritative field-by-field contract for `--format json` output of both CLIs. **Frozen as v1 (2026-06-10).** Additive revisions: optional `end_clip_anchor` on analyzer/repair alignment reports (2026-06-17); optional `video_b_window_*` on clip entries when B differs from A; optional `audio_timeline_skew` on repair `GapReport` (2026-06-19); additive scan-recipe echo keys `min_gap_ms`, `silence_hold_ms` (effective), and `absolute_silence_rms` (normalized) on repair `GapReport` (2026-07-31).
+Authoritative field-by-field contract for `--format json` output of both CLIs. **Frozen as v1 (2026-06-10).** Additive revisions: optional `end_clip_anchor` on analyzer/repair alignment reports (2026-06-17); optional `video_b_window_*` on clip entries when B differs from A; optional `audio_timeline_skew` on repair `GapReport` (2026-06-19); additive scan-recipe echo keys `min_gap_ms`, `silence_hold_ms` (effective), and `absolute_silence_rms` (normalized) on repair `GapReport` (2026-07-31); optional `fill_geometry` on repair `PatchSummary` (2026-08-17).
 
 Any change to field names, types, optionality, or nesting is a contract revision: update this document, regenerate the golden fixtures, and call the revision out explicitly in the changelog/commit.
 
@@ -231,6 +231,8 @@ Gap positions in `gaps[]` use the **decoded-sample clock**. When `delta_secs` is
 | `not_planned_count` | integer | always | Excluded at plan time |
 | `not_applied_count` | integer | when > 0 | **Bug indicator.** Gaps the seam gate approved whose splice then failed — A is unchanged across them. Never emitted on a healthy run; any non-zero value is a defect report, not a routine outcome |
 | `donor_relation` | string | when residual measured on ≥1 gap | `same_master` \| `mixed` \| `diff_capture` — inferred from informative-floor fraction. **A cancellation rate, not a provenance finding — see note below** |
+| `patch_anchors_used` | array of PatchAnchorReport | when non-empty | Offset anchors built from pass-1 successes and reused by the anchored retry |
+| `fill_geometry` | object | since 2026-08-17, when patched from a request | Border-geometry **settings** this run patched with: `border_standoff_secs`, `fill_border_search_secs`, `min_border_discovery_secs`, `fill_seam_search_secs`. Settings, not per-gap effective widths — each is clamped against the material available at a given gap. Exists so a two-arm differential is attributable to the flag that changed rather than to the output directory |
 | `gaps` | array of [GapPatchOutcome](#gappatchoutcome) | always | Per-gap outcomes in scan order |
 
 > **`donor_relation` claims more than it measures.** It is derived purely from the fraction of gaps

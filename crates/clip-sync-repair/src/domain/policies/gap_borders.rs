@@ -263,7 +263,10 @@ pub fn border_edge_displacement_frames(
 
     let pre_untrimmed = range.pre_end.saturating_sub(range.pre_start);
     let post_untrimmed = range.post_end.saturating_sub(range.post_start);
-    let pre = spec.gap_start_frame.min(total_frames).saturating_sub(range.pre_end)
+    let pre = spec
+        .gap_start_frame
+        .min(total_frames)
+        .saturating_sub(range.pre_end)
         + pre_untrimmed.saturating_sub(pre_template_len);
     let post = range
         .post_start
@@ -523,7 +526,10 @@ mod tests {
         let (pre, post) = border_templates_for_gap(&samples, channels, &spec);
         let (d_pre, _) =
             border_edge_displacement_frames(&samples, channels, &spec, pre.len(), post.len());
-        assert_eq!(d_pre, 10, "walk to 12, standoff back to 6, no fade left to trim");
+        assert_eq!(
+            d_pre, 10,
+            "walk to 12, standoff back to 6, no fade left to trim"
+        );
     }
 
     #[test]

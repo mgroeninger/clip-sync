@@ -368,6 +368,41 @@ From-decode dumps stamp `source.gate_recipe` with the seam-gate floors used to a
 so a reader can tell a floor that failed *this run's* bar from one that would fail any. Absent on
 recipes written before 2026-08-05 (and it must read as absent, not as today's default).
 
+### Probe recipe — the probe's own window geometry on `source`
+
+Every characterizing dump stamps `source.probe_recipe` (since 2026-08-17; absent on older corpora,
+where the geometry has to be recovered from the binary that wrote them):
+
+| field | presence | role |
+|-------|----------|------|
+| `noise_collar_secs` | always | pre-gap noise collar behind `levels` (fed from `normalize_window_secs`) |
+| `lag_window_secs` / `lag_max_lag_ms` | when some gap carries `lag_decision` | per-shoulder sweep (§3.6a, 1 s / 600 ms) |
+| `seam_window_secs` | when some gap carries `seams` | seam window behind `splice` / `splice_dualfit` |
+| `border_standoff_secs` | always | converted from `PROBE_BORDER_STANDOFF_FRAMES` (currently 0 frames) at the dump's sample rate — the same constant every probe `GapBorderSpec` is built with |
+
+The lag and seam keys are **absent, not zero**, on a summary-only corpus. `characterize_gaps` builds
+every gap at `DetailTier::Summary` with `skip_baseline_placement`, which calls neither
+`lag_at_placement` nor `place_on_b` — so although its `FingerprintConfig` carries those windows,
+nothing swept with them. `CorpusProbeRecipe::for_corpus` reads the built gaps rather than the config,
+and `characterize_gaps_from_decode` re-stamps after its `DetailTier::Full` rebuild, when the
+measurements exist. A `--gap-fingerprints` dump therefore carries all four keys; a bare
+`characterize_gaps` corpus carries the collar and the standoff only.
+
+The standoff is recorded rather than omitted precisely so a reader never assumes production's 0.35
+applied to a measurement: adopting it would push the template a third of a second off the gap edge and
+carry every recorded `frac_lag_ms` with it. What residual walk-off/trim displacement remains is
+*measured* per gap (`border_displacement_ms`), not assumed. The seconds value is derived from the same
+`PROBE_BORDER_STANDOFF_FRAMES` constant the probe's border specs are built with (at the dump's sample
+rate) — it is not a second literal, so wiring a non-zero standoff into a spec cannot leave the corpus
+advertising 0.0.
+
+The rule for this block: **every field is a value some line of the probe actually reads.** Do not add a
+field by mirroring a `RepairConfig` knob — add it only after finding the line that reads it. Two fields
+have already violated that (`FingerprintConfig::border_standoff_secs`, dead and defaulted to
+production's 0.35; `border_secs`, read but only as the `levels` noise collar), which is why the border
+*template* sizes are deliberately absent here: there is no probe border template setting — each
+measurement derives its own size from what it is measuring.
+
 **Measuredness:** a side governs `informative` only with a finite sourced floor; sourced-NaN
 (`probe_non_finite`) is ignored like unmeasured on both mono and multichannel constructors (shared
 `combine_informative`, toward-MC — see

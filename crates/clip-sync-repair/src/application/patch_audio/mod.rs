@@ -110,6 +110,20 @@ pub(crate) fn empty_plan_write_result(
     empty_plan_result(request, plan, PatchRunKind::Write)
 }
 
+/// Echo the border geometry this request will patch with. Every field is one the patch path reads —
+/// see [`crate::domain::patch_result::FillGeometryRecipe`] for why that rule is written down.
+fn fill_geometry_for(
+    request: &PatchAudioRequest,
+) -> crate::domain::patch_result::FillGeometryRecipe {
+    crate::domain::patch_result::FillGeometryRecipe {
+        border_standoff_secs: request.border_standoff_secs,
+        fill_border_search_secs: request.fill_border_search_secs,
+        min_border_discovery_secs: request.min_border_discovery_secs,
+        fill_seam_search_secs: request.fill_seam_search_secs,
+        normalize_window_secs: request.normalize_window_secs,
+    }
+}
+
 fn empty_plan_result(
     request: &PatchAudioRequest,
     plan: &crate::domain::gap_fill::GapFillPlan,
@@ -127,7 +141,8 @@ fn empty_plan_result(
         },
         &[],
         &[],
-    ));
+    ))
+    .with_fill_geometry(fill_geometry_for(request));
     PatchAudioResult {
         pcm: None,
         summary,
@@ -353,7 +368,8 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                 // measure a fill level on.
                 &[],
                 &[],
-            ));
+            ))
+            .with_fill_geometry(fill_geometry_for(&request));
             return Ok(PatchAudioResult {
                 pcm: None,
                 summary,
@@ -534,7 +550,8 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             thresholds,
             &not_applied,
             &fill_level,
-        ));
+        ))
+        .with_fill_geometry(fill_geometry_for(&request));
         if let Some(anchors) = patch_anchors_used {
             summary = summary.with_patch_anchors(anchors);
         }

@@ -195,6 +195,13 @@
           "dual_fit_used": false
         }
       }
-    ]
+    ],
+    "fill_geometry": {
+      "border_standoff_secs": 0.35,
+      "fill_border_search_secs": 10.0,
+      "min_border_discovery_secs": 1.0,
+      "fill_seam_search_secs": 0.25,
+      "normalize_window_secs": 5.0
+    }
   }
 }

@@ -755,8 +755,7 @@ mod tests {
             post_correlation: waveform_post,
         };
 
-        let snapped_structure =
-            score_post_match(&sig, &timeline, start + gap_frames, &params);
+        let snapped_structure = score_post_match(&sig, &timeline, start + gap_frames, &params);
         assert!(
             snapped_structure.is_finite() && snapped_structure + 0.08 >= waveform_post,
             "precondition: snap must accept (structure={snapped_structure})"
