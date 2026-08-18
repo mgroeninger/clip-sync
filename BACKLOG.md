@@ -9,7 +9,7 @@ Last updated: 2026-08-18.
 - **Open** — actionable items below (problem / direction kept for open work only).
 - **Plans** — active drafts under `docs/dev/TEMP-*.md`; archive when shipped.
 
-**Next:** [Fill placement](#fill-placement-two-defects--registration-ignored-26g6-class-and-one-sided-closeability-31g7) — two cheap probes first (post-shoulder wide sweep; 26/g6 axis-2 start-sweep oracle); [TEMP-unmatchable-shoulder-plan.md](docs/dev/TEMP-unmatchable-shoulder-plan.md) (S2b — leading candidate for the 31/g7 cell, re-specify before coding); [TEMP-lag-envelope-recenter-plan.md](docs/dev/TEMP-lag-envelope-recenter-plan.md) (unblocks S1); [Donor registration leftovers](#donor-registration-leftovers); [Repair R6](#repair-r6-follow-ups); [Residual gate](#residual-gate-follow-ups).
+**Next:** [Fill placement](#fill-placement-two-defects--registration-ignored-26g6-class-and-step-gap-with-empty-donor-bridge-31g7) — 31/g7 diagnosis complete (step gap, empty bridge; S2b refuted): sensor-honesty instrument (Tier-3 wide sweep + `bridge_ms`), then the 13-gap sort; 26/g6 axis-2 start-sweep oracle still the cheapest open probe; [TEMP-lag-envelope-recenter-plan.md](docs/dev/TEMP-lag-envelope-recenter-plan.md) (unblocked; unblocks S1); [Donor registration leftovers](#donor-registration-leftovers); [Repair R6](#repair-r6-follow-ups); [Residual gate](#residual-gate-follow-ups).
 
 ---
 
@@ -17,33 +17,35 @@ Last updated: 2026-08-18.
 
 | Plan | Covers |
 |------|--------|
-| [TEMP-unmatchable-shoulder-plan.md](docs/dev/TEMP-unmatchable-shoulder-plan.md) | S2b: stop `min(pre, post)` preferring a stutter when one shoulder is unmatchable — draft, decisions open |
 | [TEMP-lag-envelope-recenter-plan.md](docs/dev/TEMP-lag-envelope-recenter-plan.md) | Recenter `lag_decision`'s ±600 ms sweep on a coarse envelope peak (independent of the fill search) so pair 31's −1.11 s offset is measurable — draft, not started |
 | [TEMP-nway-donor-alignment-plan.md](docs/dev/TEMP-nway-donor-alignment-plan.md) | N-way donor alignment: repair one damaged copy from multiple donors — draft, not started |
 | [TEMP-flac-output-plan.md](docs/dev/TEMP-flac-output-plan.md) | In-process `--flac` lossless output (peer of `--wav`, no ffmpeg) — draft, not started |
 
 ## Open work
 
-### Fill placement: two defects — registration ignored (26/g6-class) and one-sided closeability (31/g7)
+### Fill placement: two defects — registration ignored (26/g6-class) and step gap with empty donor bridge (31/g7)
 
 **Findings (live):** [TEMP-31g7-model-vs-findings.md](docs/dev/TEMP-31g7-model-vs-findings.md) —
 placement model vs measurements; **gap signature vs patch disagreement** (§8). Residual
 (`applied − frac_lag`) detects the two bad *patches*; the two gaps do not share a fingerprint.
 31/g7's mark is `splice_dualfit` 0.966 / 0.123 fail (1 of 308 patched); lag-verdict one-dead is a
 13-gap type. 26/g6 is a healthy unique registration that scoring ignored.
-**Parallel (rewrite landed 2026-08-18; its own parked decision — what moves into vocabulary / S2b / backlog — is still open):** [TEMP-31g7-gap-shape-vocabulary.md](docs/dev/TEMP-31g7-gap-shape-vocabulary.md)
-— 31/g7 is one-sided closeability (gap shape), not a missing placement-vs-registration axis.
-Durable two-hole statement: [gap-vocabulary.md](docs/dev/gap-vocabulary.md) § *Known holes*.
+**Parallel (RESOLVED 2026-08-18, §9; archived):** [archive/TEMP-31g7-gap-shape-vocabulary.md](docs/dev/archive/TEMP-31g7-gap-shape-vocabulary.md)
+— the one-sided-closeability cell was refuted by the post-shoulder ±2000 ms wide sweep: the post
+shoulder is **uniquely at −1160 ms**, both shoulders live at own lags, donor bridge **zero-length**
+(`gap + post_lag − pre_lag` ≈ 0) — 31/g7 *is* pair 31's map step, and no donor fill can serve it
+(any fill duplicates program; honest action = reasoned skip / step verdict).
+Durable statement: [gap-vocabulary.md](docs/dev/gap-vocabulary.md) § *Known holes* (Hole 1 open, Hole 2 resolved).
 
 **Findings (archived 2026-08-17):** [archive/TEMP-fill-placement-registration-plan.md](docs/dev/archive/TEMP-fill-placement-registration-plan.md).
 Two ear-confirmed stutters, two distinct fixes. Do not re-open the source/gate fork — it was both, on different gaps. The archive's "residual is the only live discriminator" line is the patch check; superseded for gap classification by the live findings §8.
 
 | Gap | What went wrong | Live work |
 |-----|-----------------|-----------|
-| 31/g7 (−977 ms) | `min(pre, post)` prefers a stutter when post is unmatchable; isolating fingerprint is the dual-fit split, not the lag verdict | [TEMP-unmatchable-shoulder-plan.md](docs/dev/TEMP-unmatchable-shoulder-plan.md) — **leading candidate; do not code as written** (probe 2026-08-17: pathology confirmed on the bracket axis, and the −47 ms truth fill was never scored — it fails today's floors, findings F3). Order: (1) post-shoulder wide sweep (gap-shape §4 reach caveat); (2) score the truth fill; (3) pick among gap-shape §8 — S2b one-seam joint fill / one-seam branch beside dual-fit / reasoned skip (pick unblocked now the rewrite landed); then re-specify S2b's Change. Class vs mark: findings §8 |
+| 31/g7 (−977 ms) | **Diagnosis complete 2026-08-18:** the gap *is* pair 31's map step — post shoulder uniquely at −1160 ms (wide sweep, gap-shape §9), pre at −47 ms, donor bridge zero-length; B is continuous, so **any** donor fill duplicates program, and the shipped −977 is `min`'s best compromise between the two true lags (0.437/0.437). Neither one-seam fill nor dual-fit-with-reach can patch it; honest action = reasoned skip / step verdict | S2b **refuted; archived 2026-08-18** ([archive/TEMP-unmatchable-shoulder-plan.md](docs/dev/archive/TEMP-unmatchable-shoulder-plan.md)). Sensor honesty, in order: (1) **Tier-3 wide-sweep diagnostic** — non-chained ±2000 ms per-shoulder sweep + derived `bridge_ms` in the fingerprint dump (reuses `lag_side_sweep`; the offline `gap-files/scratch_shoulder_sweep.py` is the validated prototype, keep Python out of the repo); (2) run it over the **13-gap lag-verdict one-dead set** — sorts recenter customers (landmark beyond reach) from step gaps (`bridge_ms ≈ 0`) from genuinely dead shoulders; (3) production detection = [TEMP-lag-envelope-recenter-plan.md](docs/dev/TEMP-lag-envelope-recenter-plan.md) territory + a bridge≈0 skip verdict — spec only after (2)'s prevalence numbers |
 | 26/g6 (−1450 ms) | a near-nominal placement existed and lost on score; fingerprint is healthy (dual-fit passes, both shoulders live) | **Cheapest open lead:** oracle the axis-2 start sweep at this gap — what did the objective score at ≈−50 ms vs −1450 ms (findings §6.8). Unambiguous right answer; not gated on S2b or the vocabulary decision. Beyond that, no plan. S2(2) refuted a nominal-referenced `LATE_START_PENALTY`. A registration-referenced prior is an idea, not a Change. Do not retune `fill_fit_early_start_penalty_scale` |
 
-**After S2b:** [TEMP-lag-envelope-recenter-plan.md](docs/dev/TEMP-lag-envelope-recenter-plan.md) (pair 31, then pair 50). That unblocks S1. Do not write S1 until the recenter exit is met.
+**Recenter plan unblocked (S2b refuted 2026-08-18):** [TEMP-lag-envelope-recenter-plan.md](docs/dev/TEMP-lag-envelope-recenter-plan.md) (pair 31, then pair 50) — 31/g7's post landmark pins pair 31's step at the 28:45 gap itself (the plan's "from 47:32 onward" was where it next became measurable; reconcile when the plan starts). That unblocks S1. Do not write S1 until the recenter exit is met.
 
 **Data.** Oriented baseline `gap-files/2026-08-13-repeat-terms/` (53 pairs, **317** patched gaps) and dumps `gap-files/2026-08-13-v0.6.0-oriented/`. Counts from the mixed-A/B set are superseded; both failures are correctly oriented and unchanged. See archived §0.0 before quoting any corpus rate.
 
@@ -323,7 +325,7 @@ check shipped; these remain.
 | Item | Direction |
 |------|-----------|
 | **`equivalence-calibration --replay` reads `GapScanJson`** | Today `--replay` only loads fingerprint `corpus.json` / `GapCorpus`; plain scan JSON already carries the same registration + envelope fields on every gap (`scripts/measure/scan-registration.ps1`). Teach the reader the scan shape so Apply flip/abstain counts come from the production classifier, not a hand reconstruction. Small reader change; no new measurement |
-| **Conditional donor test — investigation only** | Ask “is B non-silent *where A is silent*?” (at the registered lag) instead of independent A-floor + donor-occupancy halves — quiet periodic material can satisfy both in both masters (e.g. 10/12: 4/9 silent on each side, still `repairable_dropout`). **Do not change the gate yet.** First: count A-silent∩donor-silent coincidence on existing 39-pair scan JSON (no re-dump). That rate decides curiosity vs systematic; a wrong threshold drops real dropouts (dangerous direction). ~~Fill-level already catches the observed damage.~~ **Retracted 2026-08-06:** fill-level catches *loudness* damage only, and not reliably enough to gate on — see [Fill placement: two defects](#fill-placement-two-defects--registration-ignored-26g6-class-and-one-sided-closeability-31g7) for damage it does not see at all. No TEMP plan until the count says it is worth designing |
+| **Conditional donor test — investigation only** | Ask “is B non-silent *where A is silent*?” (at the registered lag) instead of independent A-floor + donor-occupancy halves — quiet periodic material can satisfy both in both masters (e.g. 10/12: 4/9 silent on each side, still `repairable_dropout`). **Do not change the gate yet.** First: count A-silent∩donor-silent coincidence on existing 39-pair scan JSON (no re-dump). That rate decides curiosity vs systematic; a wrong threshold drops real dropouts (dangerous direction). ~~Fill-level already catches the observed damage.~~ **Retracted 2026-08-06:** fill-level catches *loudness* damage only, and not reliably enough to gate on — see [Fill placement: two defects](#fill-placement-two-defects--registration-ignored-26g6-class-and-step-gap-with-empty-donor-bridge-31g7) for damage it does not see at all. No TEMP plan until the count says it is worth designing |
 | **33/17 placement-path investigation** | Which path placed 33/17’s fill is **unrecorded**. The dump’s `brackets` array is the oracle enumeration (`list_feasible_anchor_brackets`), not the candidate production selected; rendered seams (`pre_seam_r` 0.998 / `post_seam_r` 0.973) match **no** bracket row (scores top out ~0.43). Bound-/price-extension proposals are dead (comparator already prices move hard; default profile never runs the grid; smaller moves failed the waveform floor). **Next:** instrument the selected candidate / fit path so a later “overrun” proposal has a target; likely site if anything is tuned is the **acceptance floor**, not the comparator |
 
 ### Dual-fit confidence axis

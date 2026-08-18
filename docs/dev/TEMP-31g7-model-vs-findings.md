@@ -7,9 +7,16 @@ verification — the **Errata** at the end lists each one and why. Written after
 (`gap-files/2026-08-17-s2b-floor-probe/`, arms A/B/C complete) and the g007 fingerprint
 cross-check. Descriptive: it states the model and where the measurements land on it. **It proposes
 no change** — fix work lives in
-[TEMP-unmatchable-shoulder-plan.md](TEMP-unmatchable-shoulder-plan.md) (S2b) and BACKLOG S1.
+[TEMP-unmatchable-shoulder-plan.md](archive/TEMP-unmatchable-shoulder-plan.md) (S2b) and BACKLOG S1.
 One-sided closeability as a *gap cell* (31/g7 vs 26/g6) is parked in
-[TEMP-31g7-gap-shape-vocabulary.md](TEMP-31g7-gap-shape-vocabulary.md), not here.
+[TEMP-31g7-gap-shape-vocabulary.md](archive/TEMP-31g7-gap-shape-vocabulary.md), not here.
+
+> **Post-rev-2 measurement, 2026-08-18 (evening):** the post-shoulder ±2000 ms wide sweep found
+> 31/g7's post shoulder **uniquely at −1160 ms** — one-sided closeability is refuted (the gap is
+> the degenerate silence-splice: both shoulders live, donor bridge ≈ 0; 31/g7 *is* pair 31's map
+> step) and **S2b is refuted with it**. This note's 26/g6 findings and the model/locks/populations
+> stand; every 31/g7 "post is unmatchable" reading below silently means "within ±600 ms reach".
+> Resolution: [TEMP-31g7-gap-shape-vocabulary.md](archive/TEMP-31g7-gap-shape-vocabulary.md) §9.
 
 Pair 31 / gap 8 (`#` 1-based; dump `g7`; `a_start_secs` 1725.6968125, A gap 1.1188 s, 48 kHz).
 
@@ -623,7 +630,7 @@ That is pair 26's hole: the healthiest fingerprint in the outlier set and the wo
 the corpus is *unsayable* in current terms — every tag it carries is accurate and every one is
 reassuring. 31/g7 is a different hole. Joint registration is ill-posed there (one live shoulder,
 one dead); the missing word is one-sided closeability, a *gap* cell, parked in
-[TEMP-31g7-gap-shape-vocabulary.md](TEMP-31g7-gap-shape-vocabulary.md). Residual can group the
+[TEMP-31g7-gap-shape-vocabulary.md](archive/TEMP-31g7-gap-shape-vocabulary.md). Residual can group the
 two as patches; it cannot give them one vocabulary axis.
 
 That is why it took a post-hoc join of two separate artifacts to find two unlike gaps; the
@@ -661,7 +668,7 @@ predicate is exactly the §6.7 filter, which is post-hoc until prospectively val
 vintage; and 2-of-68 does not justify new vocabulary ahead of that validation. The **findings**
 stand — placement-vs-registration is real, measurable, and unnamed **for the well-posed
 failures** (26/g6, 17/g34); 31/g7's missing word is the gap cell, not that axis
-([TEMP-31g7-gap-shape-vocabulary.md](TEMP-31g7-gap-shape-vocabulary.md)). The **names** wait.
+([TEMP-31g7-gap-shape-vocabulary.md](archive/TEMP-31g7-gap-shape-vocabulary.md)). The **names** wait.
 
 What none of this argues for is re-tuning `min(pre, post)` at either call site. That number is
 not weak here — it is answering a different question than the one being asked of it.

@@ -94,7 +94,8 @@ Registration and shared-source are **descriptive**, not dividers — patched and
 overlapping `|step|` ranges, and every donor on this corpus is same-master. What actually separates
 patch from skip is **bracket search** result crossed with **donor** state.
 
-> **Known holes (measured 2026-08-17; split 2026-08-18): two, at different altitudes.** The
+> **Known holes (measured 2026-08-17; split 2026-08-18; Hole 2 resolved 2026-08-18): one open
+> hole, one resolved diagnosis.** The
 > corpus's two ear-confirmed wrong patches (26/g6, 31/g7) both land in the healthiest cell
 > (Bracket patch) with the calmest readout (`balanced`) — accurate on every existing axis — but
 > for **different reasons**, and they do not share a gap class. An earlier draft merged them into
@@ -111,21 +112,29 @@ patch from skip is **bracket search** result crossed with **donor** state.
 > to a backlog sketch** (findings §7.5) pending prospective validation of the confidence filter
 > on a second dump vintage.
 >
-> **Hole 2 — no cell for one-sided closeability (31/g7; joint registration ill-posed).** A's two
-> surviving edges do not jointly exist as one interval of B: the pre shoulder is uniquely
-> registered (−47 ms, r 0.829, no rival in ±2 s) and the post shoulder recovers nowhere in reach
-> (0.123 even at its own best lag; dual-fit split 1 of 308). The cells below require **both**
-> shoulders (Silence-splice) or **neither** (Decorrelated); one-in-B/one-not has no cell, so the
-> gap falls into Bracket patch on the applied seams, which are computed at the chosen fill and
-> erase the shape. This is a *gap* cell, not the choice axis — and not the lag-verdict one-dead
-> pair (13 of 308, too coarse: it includes correctly-patched gaps). The cell, the instruments
-> that already isolate it, and candidate repairs:
-> [TEMP-31g7-gap-shape-vocabulary.md](TEMP-31g7-gap-shape-vocabulary.md) §§2–5, §8. **No cell is
-> proposed to ship yet**; the vocabulary/S2b/backlog split is parked there.
+> **Hole 2 — resolved 2026-08-18: not a missing cell; a bounded-search artifact plus a detection
+> hole.** The one-sided-closeability reading of 31/g7 ("the post shoulder recovers nowhere") did
+> not survive its own reach caveat: a ±2000 ms post-shoulder wide sweep (twin of the pre
+> shoulder's, archived registration plan §4.3 method) found the post **uniquely at −1160 ms**
+> (r 0.782, prominence 0.707, single spike on a flat floor) — beyond every ±600 ms window
+> production searches. Both shoulders are registered at their own lags, so the gap is the
+> **Silence-splice** cell below — the degenerate kind: the donor bridge between the matched
+> shoulder spans is **zero-length** (`gap + post_lag − pre_lag` = −3.4…+6.0 ms, within
+> precision). B is continuous where A holds 1.12 s; the gap *is* pair 31's map step. The causal
+> story (A-inserted dead time / B-side cut / break padding) is undetermined — do not assert one.
+> No donor fill can serve such a gap — any fill duplicates adjacent program; the shipped −977 ms
+> stutter is `min`'s best compromise between the two true lags (0.437/0.437). The honest action
+> is a **reasoned skip / explicit step verdict**, predicate `|gap + post_lag − pre_lag| ≈ 0`.
+> What remains is **detection, not vocabulary**: no production instrument searches beyond
+> ±600 ms or measures bridge length, so the step gap read `High`/`balanced` end to end.
+> Derivation, probe numbers, and resolution:
+> [archive/TEMP-31g7-gap-shape-vocabulary.md](archive/TEMP-31g7-gap-shape-vocabulary.md) §9; work items:
+> BACKLOG § *Fill placement*.
 >
 > What survives either hole as a definitional fix: `Decorrelated` overclaims ("sources genuinely
 > differ" from a bounded sweep) and needs a distinct "not found in reach" reading (findings
-> §7.2). Blocker only for extending the choice check to dual-fit patches: they record placeholder
+> §7.2) — 31/g7's post shoulder is now the measured demonstration: 0.075 within ±600 ms,
+> 0.782 at −1160 ms just beyond it. Blocker only for extending the choice check to dual-fit patches: they record placeholder
 > zeros instead of their two applied per-seam lags (107 of 317); single-fill coverage is complete
 > (210/210 `fit_terms`). Full axis list (A-presence, envelope, uniqueness as diagnostic, …):
 > [redesign plan §2](archive/TEMP-gap-vocabulary-redesign-plan.md#2-principle--describe-a-gap-by-coordinates-derive-the-decision).

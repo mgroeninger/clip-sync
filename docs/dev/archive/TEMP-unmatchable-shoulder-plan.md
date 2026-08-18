@@ -1,17 +1,35 @@
 # TEMP — Unmatchable-shoulder `min` reduction (S2b)
 
-**Status:** draft, 2026-08-14; code-checked 2026-08-17. **Probe 2026-08-17: reduction defect
+**Status: REFUTED 2026-08-18 — do not code; archived 2026-08-18.** The premise ("the post
+shoulder is unmatchable") is dead by direct measurement: a ±2000 ms wide sweep found the post
+shoulder **uniquely at −1160 ms** (r 0.782, prominence 0.707) — beyond the ±600 ms reach of
+every instrument this plan reasoned from
+([TEMP-31g7-gap-shape-vocabulary.md](TEMP-31g7-gap-shape-vocabulary.md) §9). "There is no
+placement where both shoulders are good" survives, but for the opposite reason: the gap is a
+**step with a zero-length donor bridge** (`gap + post_lag − pre_lag` ≈ 0; B is continuous
+across A's 1.12 s), so this plan's goal — *still patch, at ≈ −47 ms* — is the wrong action: a
+fill at the live lag duplicates program (the same stutter by a shorter route). The honest
+action is a reasoned skip / step verdict. Detection work:
+[BACKLOG.md](../../../BACKLOG.md) § *Fill placement*;
+[TEMP-lag-envelope-recenter-plan.md](../TEMP-lag-envelope-recenter-plan.md). Open decisions
+1(a)/2/4/6 are moot. Everything below is the historical record.
+
+<details><summary>Superseded status (2026-08-14 … 2026-08-17)</summary>
+
+Draft, 2026-08-14; code-checked 2026-08-17. Probe 2026-08-17: reduction defect
 CONFIRMED, but on the bracket axis, not the start axis — do not code as written (see "Probe result"
-below).** Not started.
+below). Not started.
 Decisions **3 and 5 closed** by the code read below; **1(b) closed** — report via
 `fit_terms.waveform_term` plus a fifth `SeamShape` (`one_strong`), **not** a tier pin. Still
 open: **1(a)** (abstain vs fallback — follows the decision-4 probe), **2**, **4**, **6**.
 Do not code until they close.
 
+</details>
+
 Scope note: this plan now touches `gap_tags.rs` and `gap-repair-guide.md` as well as the
 objective. That is deliberate — S2b creates the one-strong population, so S2b names it (see
 decision 1(b)) — and it is one bucket, not a vocabulary redesign.
-Parent: [archive/TEMP-fill-placement-registration-plan.md](archive/TEMP-fill-placement-registration-plan.md)
+Parent: [archive/TEMP-fill-placement-registration-plan.md](TEMP-fill-placement-registration-plan.md)
 (§0 S2b, §4.2 min-reduction pathology, §4.3 rival refuted). Findings; do not treat §0 as a work list.
 
 31/g7 is an ear-confirmed stutter: production places at **−977 ms** (`align_adjustment_secs`
@@ -28,7 +46,7 @@ skip the gap, and it does not widen or recast the search.
 
 ## Probe result 2026-08-17 — mechanism CONFIRMED, but on the wrong axis
 
-Full interpretation against the placement model: [TEMP-31g7-model-vs-findings.md](TEMP-31g7-model-vs-findings.md).
+Full interpretation against the placement model: [TEMP-31g7-model-vs-findings.md](../TEMP-31g7-model-vs-findings.md).
 The *cell* this plan repairs — one-sided closeability, and why it is not 26/g6's defect — is
 described in [TEMP-31g7-gap-shape-vocabulary.md](TEMP-31g7-gap-shape-vocabulary.md) §§2–5.
 Arm C (±60 ms) is field-for-field identical to arm B — the alternative bracket is a real interior
@@ -55,7 +73,7 @@ That reframes the plan twice over:
   (`timing_offset` + `decorrelated`) is **13**. This gap's mark is `splice_dualfit` 0.966 / 0.123
   with `gate_pass: false` — **1 of 308**. Re-specify against that closeability split (and the
   bracket axis / E1 screen below), not against the 13-gap verdict type. See
-  [TEMP-31g7-model-vs-findings.md](TEMP-31g7-model-vs-findings.md) §8.
+  [TEMP-31g7-model-vs-findings.md](../TEMP-31g7-model-vs-findings.md) §8.
 - **Instrument.** This plan proposes to change how the `min(pre, post)` seam reduction behaves. The
   seam Pearson is the number that *accepted* the bad placement here (`waveform_min` 0.4368, a
   comfortable `High`), so tuning its reduction is tuning the instrument that failed. Do not plumb
@@ -142,7 +160,7 @@ already emits the terms.
   matchable. 17/g34 is residual-class with 26/g6 (findings §8), not this closeability class.
 - Do not plumb `lag_decision` / S1. The production path does not compute it; this plan may not
   grow a dependency on the fingerprint sweep. Residual is a patch diagnostic, not this gap's mark
-  ([TEMP-31g7-model-vs-findings.md](TEMP-31g7-model-vs-findings.md) §8).
+  ([TEMP-31g7-model-vs-findings.md](../TEMP-31g7-model-vs-findings.md) §8).
 - Do not reuse `short_gap_one_strong_seam_fallback` as-is. It is **gate-mode only** and ignored
   under `fill_mode = fit`.
 - Do not retune `LATE_START_PENALTY` / `fill_fit_early_start_penalty_scale`. S2(2) refuted a
@@ -312,7 +330,7 @@ Also update `gap-repair-guide.md`: the tag-axes row (:288) and the `seam_shape` 
 table (:373). Corpus tooling that matches on `seam_shape` strings sees a new value.
 
 The deeper re-rooting of this vocabulary stays out of scope — see
-[archive/TEMP-gap-vocabulary-redesign-plan.md](archive/TEMP-gap-vocabulary-redesign-plan.md)
+[archive/TEMP-gap-vocabulary-redesign-plan.md](TEMP-gap-vocabulary-redesign-plan.md)
 §2. This adds one accurate bucket; it does not redesign the axis.
 
 ### 2. The "unmatchable" predicate

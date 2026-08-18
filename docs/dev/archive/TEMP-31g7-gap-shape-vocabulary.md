@@ -1,10 +1,19 @@
 # TEMP — 31/g7 is a gap-shape problem (one-sided closeability)
 
 **Status:** findings note, 2026-08-18. **Parallel** to
-[TEMP-31g7-model-vs-findings.md](TEMP-31g7-model-vs-findings.md) **rev 2**. Descriptive: it
+[TEMP-31g7-model-vs-findings.md](../TEMP-31g7-model-vs-findings.md) **rev 2**. Descriptive: it
 states where the missing word sits, and (§8) which existing or drafted repairs could take the
-cell once classification is correct. It proposes no Change and no cell to ship. The parked
-decision — what of this doc moves into vocabulary / S2b / backlog — is still open.
+cell once classification is correct. It proposes no Change and no cell to ship.
+
+> **RESOLVED same day — the cell premise broke under its own §4 reach caveat (see §9).** The
+> post shoulder was found, uniquely, at **−1160 ms** by the ±2000 ms wide sweep. 31/g7 is not
+> one-sided closeability (that row now has zero known members); it is the **degenerate
+> silence-splice**: both shoulders at own lags, and the donor bridge between them is
+> **zero-length** — the gap *is* pair 31's map step. §§0–8 stand as the derivation record;
+> §9 carries the probe numbers, the reclassification, and the resolution of §8's pick
+> (reasoned skip; the one-seam fills are refuted for this gap). Durable statement:
+> [gap-vocabulary.md](../gap-vocabulary.md) § *Known holes*, Hole 2. **Archived 2026-08-18**
+> alongside the refuted S2b plan ([TEMP-unmatchable-shoulder-plan.md](TEMP-unmatchable-shoulder-plan.md)).
 
 Rev 2 incorporated this note's criticisms: the repeat-lock / "one period away" story is
 removed (refuted by the archived registration plan §4.3), the old §12 extension is withdrawn
@@ -52,7 +61,7 @@ agrees with `frac_lag_ms`.
 
 ## 2. Existing cells vs the unnamed middle
 
-[gap-vocabulary.md](gap-vocabulary.md) already carves closeability into cells. 31/g7 is the
+[gap-vocabulary.md](../gap-vocabulary.md) already carves closeability into cells. 31/g7 is the
 missing middle:
 
 | Cell | Pre in B? | Post in B? | Action |
@@ -66,7 +75,7 @@ missing middle:
 Silence-splice requires **both** shoulders to recover. Decorrelated requires **neither**.
 One-sided closeability has no cell, so 31/g7 falls into Bracket patch on the applied seams.
 
-[gap-vocabulary.md](gap-vocabulary.md)'s known-holes paragraph was rewritten 2026-08-18 to state
+[gap-vocabulary.md](../gap-vocabulary.md)'s known-holes paragraph was rewritten 2026-08-18 to state
 the split: Hole 1 (the choice axis, 26/g6-class) and Hole 2 (this cell). It is the durable
 statement; this note remains the derivation and the repair survey (§8).
 
@@ -108,14 +117,11 @@ computed at the chosen fill.
 The isolating fingerprint is closeability (sibling §8), not the lag-verdict pair, and not
 `applied − frac_lag`.
 
-**Reach caveat, open until measured:** "post recovers nowhere" is itself a bounded claim. The
-dual-fit 0.123 comes from a per-shoulder ±600 ms search — the same reach limit this table holds
-against the lag-verdict pair, and the same overclaim shape the sibling's §7.2 warns about in
-`Decorrelated`. Only the **pre** shoulder has a ±2000 ms wide sweep (archived registration plan
-§4.3); the post has no wide-sweep twin. The cheap probe that hardens "unmatchable within reach"
-toward "unmatchable": run the same wide sweep on the post shoulder. Do it before the cell's
-predicate is fixed, and before S2b commits to live-shoulder-only geometry — a post landmark
-beyond ±600 ms would change both.
+**Reach caveat — executed 2026-08-18, and it broke the premise (§9).** "Post recovers nowhere"
+was indeed the §7.2 overclaim shape: the ±2000 ms post-shoulder wide sweep found a single
+confident landmark at **−1160.3 ms** (r 0.7819, prominence 0.7067), ~513 ms beyond the
+pre-chained ±600 ms window. The table row above ("no, 0.123 even at best lag") silently meant
+"best *in-reach* lag". Everything below §4 reads as derivation history; the resolution is §9.
 
 ---
 
@@ -151,13 +157,13 @@ residual-as-class rebuilt as vocabulary: sibling §8 says residual must not beco
 then §12 names a patch-side cell from exactly that quantity.
 
 Worse, the 31/g7 "repeat-lock / one period away" story contradicts settled measurement.
-Archived S3 / [TEMP-fill-placement-registration-plan.md](archive/TEMP-fill-placement-registration-plan.md)
+Archived S3 / [TEMP-fill-placement-registration-plan.md](TEMP-fill-placement-registration-plan.md)
 §4.3 (±2000 ms pre-shoulder sweep): 31/g7 is a **single spike on a flat floor**; the predicted
 rival at −925 ms is `r` 0.087 against 0.829 at the truth. Aliasing is refuted. "31/g7 is not
 periodic at all." The 480.5 ms comb belongs to **26/g6**, and even there the true tooth still
 ranks first. Envelope `lag_ms = −1000` at 31/g7 is the coarse window's own edge
 (`max_lag_blocks = 10`), flagged `donor_registration_unreliable`;
-[TEMP-lag-envelope-recenter-plan.md](TEMP-lag-envelope-recenter-plan.md) exists because using
+[TEMP-lag-envelope-recenter-plan.md](../TEMP-lag-envelope-recenter-plan.md) exists because using
 that reading as truth would *lose* today's correct pre −47 ms. Post `0.0752` vs `0.0741` is
 `classify_lag`'s `Decorrelated` (`peak < 0.3`), not a period.
 
@@ -179,9 +185,11 @@ Parked until we decide what moves into vocabulary / S2b / backlog. Explicitly **
 - Coding any of §8. Identification is necessary and not sufficient; none of those repairs is
   live in fit, and the −47 ms fill is unmeasured.
 
-What stays true regardless of the rewrite: 31/g7 is one-sided closeability; 26/g6 is a healthy
-registration the scorer ignored; residual detects bad *patches* and does not classify gaps;
-S2b is scoped to the unmatchable-shoulder mechanism, not to a shared stutter class.
+What stays true regardless of the rewrite: ~~31/g7 is one-sided closeability~~ (**superseded by
+§9** — 31/g7 is a step gap with a zero-length donor bridge); 26/g6 is a healthy registration
+the scorer ignored; residual detects bad *patches* and does not classify gaps; ~~S2b is scoped
+to the unmatchable-shoulder mechanism~~ (**S2b's premise is refuted by §9**; the shoulder is
+matchable, out of reach).
 
 ---
 
@@ -277,5 +285,61 @@ action (if we patch) is one-seam from the live lag. Those are different cells. S
 `seam_local_peak` is fine. Sharing `try_dual_fit`'s accept contract is not. Do not loosen
 `gate_pass` to get there.
 
-Parked with the rest of this note. Pick among §8.2 / this branch / skip after the rewrite,
-not before.
+Parked with the rest of this note. ~~Pick among §8.2 / this branch / skip after the rewrite,
+not before.~~ **Picked by measurement — §9.**
+
+---
+
+## 9. Probe result 2026-08-18 — the premise broke; this note is resolved
+
+The §4 reach caveat was executed before fixing the cell's predicate, as it required. Instrument:
+offline ±2000 ms per-shoulder sweep (`gap-files/scratch_shoulder_sweep.py`, a reconstruction of
+the archived registration plan §4.3 method — 1 s template, mono downmix, sample-domain Pearson,
+250 ms peak exclusion), **validated first** by reproducing the archived pre-shoulder table to
+the decimal (0.8287 @ −38.1 ms; floor 0.0979 / 0.0974 / 0.0924 / 0.0867). WAVs regenerated via
+`--gap-listen --fingerprint-gap 8` (`gap-files/2026-08-18-post-sweep/`, stem `g007`).
+
+Post shoulder, ±2000 ms:
+
+| lag | r | |
+|---|---|---|
+| **−1160.3 ms** | **0.7819** | single spike; prominence 0.7067 |
+| +330.7 ms | 0.0752 | floor top — **verbatim** production's `post_anchor` `peak_r`: the pre-chained window [−647, +553] saw only this |
+
+### 9.1 Reclassification
+
+Both shoulders are uniquely registered at their own lags — pre −47 ms, post −1160 ms — which is
+§2's **Silence-splice** row, not the unnamed row. The unnamed cell has **zero known members**.
+But it is the *degenerate* silence-splice: the donor bridge between the two matched shoulder
+spans is zero-length —
+
+```
+bridge = gap + post_lag − pre_lag = 1118.8 − 1160.3 + 38.1 = −3.4 ms   (+6.0 ms via fine pre −47.5)
+```
+
+B is continuous across A's 1.12 s: the gap **is** pair 31's map step (31/g10's post landmark
+−1152 ms and the −1.15 s slides of gaps #9/#11/#12 are the same step, downstream). The causal
+story — A-inserted dead time, a B-side cut, break padding present in A and absent in B — is
+**undetermined**; every one of them produces this geometry. Do not assert one.
+
+### 9.2 The §8 pick, resolved by the numbers
+
+- **§8.2 (S2b one-seam fill at −47) and §8.4 (one-seam branch): refuted for this gap.** A copy
+  of B from the live lag runs directly into the material A's post shoulder already holds
+  (bridge ≈ 0), so a one-seam fill *duplicates program* — the same stutter by a shorter route.
+  No single lag serves both seams either: at −47 the seams read 0.83 / ~0.06, at −1160 they read
+  ~0.08 / 0.78, and the shipped −977 is `min`'s best compromise (0.437 / 0.437).
+- **§8.3 option 2 (reasoned skip) is the honest action**, now with a measured predicate:
+  `|gap + post_lag − pre_lag| ≈ 0`, evaluable once the post landmark is in reach.
+- Dual-fit with reach finds both seams and then has no interior to trim — its aligned-donor /
+  bridge machinery is exactly where the zero-length reading falls out naturally.
+
+### 9.3 What remains open — detection, not vocabulary
+
+Production searches ±600 ms everywhere (dual-fit at each shoulder's own *nominal* edge,
+`dual_fit.rs:118`; `lag_decision`'s post window chained on the measured pre lag,
+`measure.rs:893`) and measures no bridge length, so this gap read `High`/`balanced` end to end.
+The nominal map cannot express the step, so near a step both nominal edges carry the pre side's
+registration and the far shoulder is structurally invisible. Work items (Tier-3 wide-sweep
+diagnostic + `bridge_ms`, the 13-gap sort, the recenter plan's skip verdict):
+[BACKLOG.md](../../../BACKLOG.md) § *Fill placement*. This note is complete.

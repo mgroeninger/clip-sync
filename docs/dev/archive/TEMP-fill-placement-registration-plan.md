@@ -4,8 +4,10 @@
 > symptom: 26/g6 (source — a near-nominal placement existed and lost on score) and 31/g7
 > (gate — `min` over an unmatchable shoulder). Remaining delivery is not in this file.
 >
-> **Live plans:** [TEMP-unmatchable-shoulder-plan.md](../TEMP-unmatchable-shoulder-plan.md) (S2b);
-> [TEMP-lag-envelope-recenter-plan.md](../TEMP-lag-envelope-recenter-plan.md) (unblocks S1).
+> **Live plan:** [TEMP-lag-envelope-recenter-plan.md](../TEMP-lag-envelope-recenter-plan.md) (unblocks S1).
+> S2b ([TEMP-unmatchable-shoulder-plan.md](TEMP-unmatchable-shoulder-plan.md)) was **refuted and
+> archived 2026-08-18** — 31/g7's post shoulder is not unmatchable, it sits at −1160 ms beyond
+> the ±600 ms reach, and the gap's donor bridge is zero-length (step gap; no fill possible).
 > **Live findings:** [TEMP-31g7-model-vs-findings.md](../TEMP-31g7-model-vs-findings.md)
 > (gap signature vs patch disagreement, §11).
 > **Leftovers** (26/g6, S1 plumbing, S4 / `applied = 0`, ear-pass 17/g34 and 47/g14, α, §7):
@@ -451,7 +453,7 @@ unblocks S1, and S4 is still conditional.
 ## 0. What to actually do (added 2026-08-11)
 
 > **Superseded 2026-08-17.** This section is no longer the work list. Live delivery is
-> [TEMP-unmatchable-shoulder-plan.md](../TEMP-unmatchable-shoulder-plan.md) and
+> [TEMP-unmatchable-shoulder-plan.md](TEMP-unmatchable-shoulder-plan.md) and
 > [TEMP-lag-envelope-recenter-plan.md](../TEMP-lag-envelope-recenter-plan.md); leftovers are in
 > [BACKLOG.md](../../../BACKLOG.md) § *Fill placement*. Kept below as the investigation's own
 > sequencing record.
@@ -768,7 +770,7 @@ re-scores post after a successful snap. Corpus re-adjudication of the previously
 on the next report (same run as S2(2)'s baseline).
 
 **S2b — Fix the `min` reduction when one shoulder is unmatchable (§4.2). 31/g7's actual defect.**
-**Plan: [TEMP-unmatchable-shoulder-plan.md](../TEMP-unmatchable-shoulder-plan.md)** — draft, decisions
+**Plan: [TEMP-unmatchable-shoulder-plan.md](TEMP-unmatchable-shoulder-plan.md)** — draft, decisions
 open, not started. Do not implement from this paragraph.
 31/g7 has no placement where both shoulders score well (its post border has no match in B: dual-fit
 reaches 0.124 at its own best lag and declines). Reducing by `min` then *prefers* a placement that

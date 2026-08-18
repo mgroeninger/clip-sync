@@ -9,6 +9,15 @@ Findings; do not treat §0 as a work list.
 speed limit (`lag_correlation_curve_auto` is two FFTs either way). It assumes the pair map is
 already roughly right. On pair 31 the map is a **step** (~0 at 28:45, −1.11 s from 47:32 onward),
 so the true peak sits outside the fine window and the probe reports an interior spurious max.
+
+> **Measured 2026-08-18 (tightens the step location):** 31/g7 — the 28:45 gap itself — has its
+> post shoulder uniquely at **−1160 ms** (±2000 ms offline sweep; pre −47 ms), so the step onset
+> is at that gap's exit, not somewhere in (28:45, 47:32); "from 47:32 onward" is where it next
+> became measurable. Same measurement: the donor bridge across that gap is **zero-length**, so
+> for 31/g7 recentering enables *detection* (and a skip verdict on `bridge ≈ 0`), not a fill —
+> see [archive/TEMP-31g7-gap-shape-vocabulary.md](archive/TEMP-31g7-gap-shape-vocabulary.md) §9. This plan's
+> record-only scope is unchanged; S2b is refuted, so nothing orders ahead of this plan any more
+> (BACKLOG § *Fill placement*).
 Production still places those later gaps because the fill search is ±10 s off the same map. The
 measurement cannot confirm them.
 
