@@ -83,10 +83,13 @@ statement; this note remains the derivation and the repair survey (§8).
 | What went wrong | `min` prefers two mediocre joints; E1 accepts | scoring walked −1.45 s from a landmark both sides agree on |
 | Missing word | one-sided closeability (a **gap** cell) | placement vs registration (a **choice**, if anything) |
 
-26/g6 is the opposite gap. No shape word will catch a well-posed registration that the patcher
-ignored. "Does the placement agree with the shoulders?" is the right missing axis **there**, and
-only there. It is a different defect. S2b does not own it (sibling §8; S2b probe-result
-reframe).
+26/g6 is the opposite gap. We understand its **shape** as well as 31/g7's: both shoulders in B,
+they agree, dual-fit passes — the ordinary well-posed cell. The 480.5 ms comb (archived §4.3)
+is a lag-surface fact, not closeability, and the true tooth still ranks first. No shape word
+will catch a well-posed registration that the patcher ignored. The open question is the
+**scorer**: why axis 2's argmax preferred the third tooth. "Does the placement agree with the
+shoulders?" is the right missing axis **there**, and only there. S2b does not own it (sibling
+§8; S2b probe-result reframe).
 
 ---
 

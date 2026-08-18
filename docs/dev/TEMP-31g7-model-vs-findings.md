@@ -550,8 +550,9 @@ shoulder surface — found by the archived ±2000 ms sweep, not by `top2_spacing
   seam window at the proposed joint vs a 1 s shoulder template), so they are not formally the same
   measurement — but whatever the seam window matched at −977 ms, it was not the shoulder's content
   found again. With aliasing refuted, **the mechanism of a 0.437 Pearson at a wrong placement is
-  an open scoring question** — the same choice-vs-measurement question as pair 26, on a gap with
-  only one live shoulder.
+  an open scoring question on this gap**, not the same question as pair 26. Here the shape is
+  ill-posed (`min` over a dead post); there the shape is healthy and axis 2's argmax is
+  undiagnosed. Different windows still apply: seam Pearson at the joint vs 1 s shoulder template.
 - **17/g34** (not in the 68-gap zero-move join; the archived plan's other residual giant) is a
   third member of pair 26's class: `peak_r` 0.990 / 0.987, `peak_z` 28.7 / 26.5, prominence
   0.79 / 0.66, dual-fit pass, envelope 0 — healthy, unique, agreeing registration, and a ~1.15 s

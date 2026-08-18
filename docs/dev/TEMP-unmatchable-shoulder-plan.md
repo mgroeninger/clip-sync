@@ -36,12 +36,17 @@ optimum, radius-invariant, and arm B was not edge-pinned.
 
 ### The finding this plan actually sits inside
 
-A seam can score well because the content genuinely continues — or because A's shoulder and B's fill
-merely resemble each other: both quiet, both broadband. **The gate cannot tell
-those apart, because it never looks anywhere except at the joint it is proposing. Registration is a
-question the placement objective does not ask, and the corpus contains exactly 2 measurable gaps out
-of 68 where the answer is demonstrably no** — this gap (pair 31) and pair 26 @ 2151.69, as
-*patches*. They do not share a gap signature (findings §8).
+This plan repairs **one-sided closeability** (31/g7): one live shoulder, one dead, dual-fit
+split 0.966 / 0.123 — **1 of 308** patched, not the 13-gap lag-verdict type. See
+[TEMP-31g7-gap-shape-vocabulary.md](TEMP-31g7-gap-shape-vocabulary.md) §§2–5 and findings §8.
+
+A seam can score well because the content genuinely continues — or because A's shoulder and B's
+fill merely resemble each other (both quiet, both broadband). The gate cannot tell those apart,
+because it never looks anywhere except at the joint it is proposing. That independence is real
+(pair 50: `waveform_min` 0.52 with no landmark). It is **not** a licence to treat this gap and
+26/g6 as one class. The join finds two patches that contradict a landmark (findings §6.7); they
+share no gap signature. 26/g6 is well-posed and ignored — a scorer question, not this cell.
+This plan does not own it.
 
 That reframes the plan twice over:
 
@@ -56,9 +61,6 @@ That reframes the plan twice over:
   comfortable `High`), so tuning its reduction is tuning the instrument that failed. Do not plumb
   `lag_decision` / residual as the fix — that is a post-hoc patch check, not this gap's signature
   (findings §8; already a non-goal below).
-
-Pair 26 is a different defect (source: healthy unique registration ignored). A move there is an
-accident to inspect, not success — see findings §§6 and 8. This plan does not own it.
 
 Arms A and B ran (`gap-files/2026-08-17-s2b-floor-probe/`). Arm A reproduces the 2026-08-13 baseline
 bit-for-bit, so the binary has not drifted and arm B is interpretable. Arm B was then checked against
@@ -93,14 +95,17 @@ at **−10.1 ms**, not −47 ms. The fingerprint's pre-shoulder registration is 
 (`pre_anchor` `peak_r` 0.829, prominence 0.552, `peak_z` 18.3, `timing_offset`), so arm B's start does
 not match the truth either. Goal and §4.2 describe the same reduction on two different axes.
 
-**Two further facts from the dump that the plan does not account for:**
+**Two further items from the dump — one fact, one retired claim:**
 
-- **−977 ms is not arbitrary.** `equivalence_production.donor_registration` peaks at
-  **`lag_ms` −1000.0** with `peak_r` **0.576** against `nominal_r` **0.012** — an envelope sensor
-  (100 ms bins) independently prefers ~−1 s, though it is flagged
-  `not_evaluated_reason: donor_registration_unreliable`. With the ear calling it a stutter, that peak
-  is most likely self-similar material, consistent with `repeat_pre` / `repeat_post` 0.548 / 0.514 at
-  arm B's bracket. Any fix must beat a rival that a second sensor likes.
+- **Retired 2026-08-18** (findings rev 2 Errata, items 2–3): this section previously read the
+  `equivalence_production.donor_registration` peak at `lag_ms` −1000.0 (`peak_r` 0.576) as a second
+  sensor independently preferring ~−1 s, and concluded "any fix must beat a rival that a second
+  sensor likes." That reading is dead: the −1000 ms value is the coarse envelope window's own edge
+  (`max_lag_blocks` 10), self-flagged `donor_registration_unreliable` — not a sensor opinion. The
+  archived registration plan §4.3's ±2000 ms waveform sweep shows a single spike at −47 ms on a flat
+  floor (the −925 ms repeat rival reads r 0.087). **There is no rival to beat**; the 0.437 seam
+  score *is* the defect, and its mechanism is open (findings §6.8). The peak is still in the dump —
+  do not re-derive the old conclusion from it.
 - **A fill is available at nominal**: `donor_interior_nominal` `silence_fraction` 0.0, `rms_db` −54.0,
   `continuous: true`.
 
