@@ -2,7 +2,7 @@
 
 Open follow-up work for `clip-sync`. See [PLAN.md](PLAN.md) for architecture, [docs/pipeline.md](docs/pipeline.md) for the repair pipeline (phase by phase), [docs/dev/corpus-validation.md](docs/dev/corpus-validation.md) for the test corpus, and [docs/error-mapping.md](docs/error-mapping.md) for error handling. Shipped work is recorded in `docs/dev/archive/*` and git history.
 
-Last updated: 2026-08-17.
+Last updated: 2026-08-18.
 
 **How this doc works**
 
@@ -24,15 +24,24 @@ Last updated: 2026-08-17.
 
 ## Open work
 
-### Fill placement is accepted without checking local registration (defect)
+### Fill placement: two defects — registration ignored (26/g6-class) and one-sided closeability (31/g7)
+
+**Findings (live):** [TEMP-31g7-model-vs-findings.md](docs/dev/TEMP-31g7-model-vs-findings.md) —
+placement model vs measurements; **gap signature vs patch disagreement** (§8). Residual
+(`applied − frac_lag`) detects the two bad *patches*; the two gaps do not share a fingerprint.
+31/g7's mark is `splice_dualfit` 0.966 / 0.123 fail (1 of 308 patched); lag-verdict one-dead is a
+13-gap type. 26/g6 is a healthy unique registration that scoring ignored.
+**Parallel (rewrite landed 2026-08-18; its own parked decision — what moves into vocabulary / S2b / backlog — is still open):** [TEMP-31g7-gap-shape-vocabulary.md](docs/dev/TEMP-31g7-gap-shape-vocabulary.md)
+— 31/g7 is one-sided closeability (gap shape), not a missing placement-vs-registration axis.
+Durable two-hole statement: [gap-vocabulary.md](docs/dev/gap-vocabulary.md) § *Known holes*.
 
 **Findings (archived 2026-08-17):** [archive/TEMP-fill-placement-registration-plan.md](docs/dev/archive/TEMP-fill-placement-registration-plan.md).
-Two ear-confirmed stutters, two distinct fixes. Do not re-open the source/gate fork — it was both, on different gaps.
+Two ear-confirmed stutters, two distinct fixes. Do not re-open the source/gate fork — it was both, on different gaps. The archive's "residual is the only live discriminator" line is the patch check; superseded for gap classification by the live findings §8.
 
 | Gap | What went wrong | Live work |
 |-----|-----------------|-----------|
-| 31/g7 (−977 ms) | `min(pre, post)` prefers a stutter when post is unmatchable | [TEMP-unmatchable-shoulder-plan.md](docs/dev/TEMP-unmatchable-shoulder-plan.md) — **do this first** (changes audio). Decisions still open |
-| 26/g6 (−1450 ms) | a near-nominal placement existed and lost on score | No plan. S2(2) refuted a nominal-referenced `LATE_START_PENALTY`. A registration-referenced prior is an idea, not a Change. Do not retune `fill_fit_early_start_penalty_scale` |
+| 31/g7 (−977 ms) | `min(pre, post)` prefers a stutter when post is unmatchable; isolating fingerprint is the dual-fit split, not the lag verdict | [TEMP-unmatchable-shoulder-plan.md](docs/dev/TEMP-unmatchable-shoulder-plan.md) — **do this first** (changes audio). Decisions still open. Class vs mark: findings §8 |
+| 26/g6 (−1450 ms) | a near-nominal placement existed and lost on score; fingerprint is healthy (dual-fit passes, both shoulders live) | **Cheapest open lead:** oracle the axis-2 start sweep at this gap — what did the objective score at ≈−50 ms vs −1450 ms (findings §6.8). Unambiguous right answer; not gated on S2b or the vocabulary decision. Beyond that, no plan. S2(2) refuted a nominal-referenced `LATE_START_PENALTY`. A registration-referenced prior is an idea, not a Change. Do not retune `fill_fit_early_start_penalty_scale` |
 
 **After S2b:** [TEMP-lag-envelope-recenter-plan.md](docs/dev/TEMP-lag-envelope-recenter-plan.md) (pair 31, then pair 50). That unblocks S1. Do not write S1 until the recenter exit is met.
 
@@ -42,9 +51,9 @@ Withdrawn as discriminators (archived §1.1): pair-level drift correction, corre
 
 | Item | Direction |
 |------|-----------|
-| **S1 — record the registration residual on the patch record** | Blocked on envelope-recenter. `lag_decision` is dump-only today. After pair 31's exit, a new TEMP that is plumbing only: emit `applied − frac_lag_ms` (min-abs over confident shoulders, abstain when none) on every patched gap; no gate reads it. Do not lift the nominal-only ±600 ms sweep |
+| **S1 — record the registration residual on the patch record** | Blocked on envelope-recenter. `lag_decision` is dump-only today. After pair 31's exit, a new TEMP that is plumbing only: emit `applied − frac_lag_ms` (min-abs over confident shoulders, abstain when none) on every patched gap; no gate reads it. This is a **patch diagnostic**, not a gap class (findings §8). Do not lift the nominal-only ±600 ms sweep |
 | **S4 / `applied = 0` cohort** | Conditional ear labels for whether a residual guard's domain includes gaps that never slid. Do not run until it would change a decision. The archived §5 render list is mixed-orientation and stale |
-| **Ear-pass 17/g34 and 47/g14** | Cheapest n>2. 17/g34 is the 26/g6 class; 47/g14 is the first failure-to-move. Labels, not a TEMP |
+| **Ear-pass 17/g34 and 47/g14** | Cheapest n>2. 17/g34 is residual-class with 26/g6 (large backward slide) but **not** 26/g6's fingerprint — unique both-live, dual-fit pass (findings §8). 47/g14 is the first failure-to-move. Labels, not a TEMP |
 | **α / `border_standoff_secs`** | Fill sits ~25 ms late vs both shoulders. Hypothesis: production's 0.35 s standoff. Run existing arms through `scripts/measure/diff-patch-adjustments.ps1` or drop. Not a TEMP |
 | **+39 ms fill-start detection bias** | Archived §2.1. Cosmetic for a discriminator; required before any absolute claim about delivered position |
 | **Two gaps break the frame-672000 identity** | Archived §3.1, 589 and 4245 frames. Dump-only; needed before that join is used unconditionally |
@@ -127,7 +136,8 @@ oracle cost. **Do not retune the constants until that run is read.** What the da
 >   `repeat_post` **0.368**; 31/g7 **0.249** / **0.207** — against a 0.55 threshold and a 0.12 median.
 >   The four other large backward slides agree (31/g8 0.046/0.097, 31/g10 0.113/0.530, 31/g11
 >   0.295/−0.009, 17/g34 −0.028/0.121). **The conditional below therefore fires: the prior is aimed at
->   the wrong quantity, and the registration residual is the only live discriminator for that defect.**
+>   the wrong quantity.** Residual (`applied − frac_lag`) is a post-hoc *patch* check that groups the
+>   two duplications; they do not share a gap signature — [findings §8](docs/dev/TEMP-31g7-model-vs-findings.md).
 >
 > **Still open: the winner-only blindness** (third bullet below) — `fit_terms` reports the winner, so
 > none of this rules out the penalty demoting rivals invisibly. That needs per-candidate capture and is
@@ -153,9 +163,11 @@ oracle cost. **Do not retune the constants until that run is read.** What the da
   threshold), but ranking the rivals needs per-candidate capture, which is a bigger change and not
   proposed here.
 - **Whether the two ear-confirmed shoulder-duplication gaps score high here.** 26/g6 and 31/g7 are
-  the defect this prior nominally exists to catch; the corpus baseline contains 26/g6 (backward
-  1.450 s). If their `repeat_pre` is unremarkable, the prior is aimed at the wrong quantity and the
-  registration residual (§ Fill placement, above) is the only live discriminator.
+  the two defects whose shared *symptom* (shoulder duplication) this prior nominally exists to
+  catch — they are not one class; the corpus baseline contains 26/g6 (backward
+  1.450 s). Their `repeat_pre` is unremarkable, so the prior is aimed at the wrong quantity. Residual
+  is a patch diagnostic, not a shared gap discriminator
+  ([findings §8](docs/dev/TEMP-31g7-model-vs-findings.md)).
 
 **`REPEAT_CORR_THRESHOLD` has a second consumer — do not retune it as if the penalty owned it.**
 `score_extend_short_fill_to_gap_frames` (`gap_fill_fit.rs:1748-1779`) uses the same `0.55` as a
@@ -324,7 +336,7 @@ Phase B residue (the `gate_pass` / end-search correlation). Axis semantics:
 
 | Item | Direction |
 |------|-----------|
-| **Dual-fit `gate_pass` is a production mirror, not a discriminator — add a fingerprint confidence axis** | `gate_pass = min(pre_seam_r, post_seam_r) ≥ max(0.35, 0.12)` passes **263/263** on the 17-pair corpus. That is faithful, not broken: it reproduces the production gate exactly, and production's threshold sits far below the observed distribution (p05 of `smin` = 0.892) because `smin` is a ±600 ms argmax with no uniqueness term. Its value is provenance — "what did production decide" — so it should **not** be tightened. What's missing is a *separate fingerprint read* on whether the seam lag was unambiguous (analyzer / corpus roll-up strata — not a repair gate). The validators that discriminate are already emitted but ungated: `pre/post_seam_z` (p05 3.14, p25 4.91, median 7.86) and `pre/post_seam_prom` (p25 0.123). **Direction:** leave `gate_pass` alone (the goldens and corpus history read it); add derived fingerprint field `dualfit_confident` from min-z + min-prominence. **Do not** consolidate end-search length into dual-fit: on the throat cohort (n=65, where `span == gap`) the two disagree genuinely, not by dilution — `corr(fill−span, bridge−gap)` = +0.06, and tightening the amplitude floor drives it to −0.10; stratifying by min z reaches r = +0.68 only at n=8 / p=0.053, one of ~25 strata swept. In the z ≥ 6 cohort, 8 of 19 gaps show an end excursion of exactly 0 ms while dual-fit trims 4–28 ms. |
+| **Dual-fit `gate_pass` is a production mirror, not a discriminator — add a fingerprint confidence axis** | `gate_pass = min(pre_seam_r, post_seam_r) ≥ max(0.35, 0.12)` passes **263/263** on the 17-pair corpus. That is faithful, not broken: it reproduces the production gate exactly, and production's threshold sits far below the observed distribution (p05 of `smin` = 0.892) because `smin` is a ±600 ms argmax with no uniqueness term. Its value is provenance — "what did production decide" — so it should **not** be tightened. On the oriented 308, `gate_pass: false` is 11 patched; 31/g7's mark is the 0.966 / 0.123 *split* (1 of 308), which production already declined ([findings §8](docs/dev/TEMP-31g7-model-vs-findings.md)) — still not a reason to tighten the predicate. What's missing is a *separate fingerprint read* on whether the seam lag was unambiguous (analyzer / corpus roll-up strata — not a repair gate). The validators that discriminate are already emitted but ungated: `pre/post_seam_z` (p05 3.14, p25 4.91, median 7.86) and `pre/post_seam_prom` (p25 0.123). **Direction:** leave `gate_pass` alone (the goldens and corpus history read it); add derived fingerprint field `dualfit_confident` from min-z + min-prominence. **Do not** consolidate end-search length into dual-fit: on the throat cohort (n=65, where `span == gap`) the two disagree genuinely, not by dilution — `corr(fill−span, bridge−gap)` = +0.06, and tightening the amplitude floor drives it to −0.10; stratifying by min z reaches r = +0.68 only at n=8 / p=0.053, one of ~25 strata swept. In the z ≥ 6 cohort, 8 of 19 gaps show an end excursion of exactly 0 ms while dual-fit trims 4–28 ms. |
 
 
 ### Repair R6 follow-ups

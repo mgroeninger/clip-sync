@@ -155,6 +155,29 @@ border templates → gap signature → unified B search (structure + waveform jo
 
 Steps 3–7 in the old pedagogical list are **one joint search + gates**, not separate passes. Residual is not a separate macro stage — it applies when finalizing candidates.
 
+#### What the seam score does and does not measure
+
+A seam can score well because the content genuinely continues — or because A's shoulder and B's fill
+merely resemble each other: both quiet, both broadband. **The gate cannot tell those apart, because
+it never looks anywhere except at the joint it is proposing.**
+
+The seam Pearson answers *"does this join cleanly?"*. It does **not** answer *"did this fill come from
+the right moment of the programme?"* — **registration is a question the placement objective does not
+ask.** The two are independent: the corpus contains a gap scoring `waveform_min` 0.52 (a comfortable
+`High`) at a placement where the independent shoulder-lag sensor finds no correlation peak at all.
+
+Measured against that sensor, the disagreement is rare but real: **exactly 2 of 68 measurable gaps**
+have an applied placement that is demonstrably wrong — both disagree with a confident, in-reach
+landmark by roughly 1 s. That count is a **post-hoc patch check** (`applied` vs `frac_lag`), scoped to
+its confidence filter, not a property of the gaps: the two failures do not share a fingerprint
+signature. See [dev/TEMP-31g7-model-vs-findings.md](dev/TEMP-31g7-model-vs-findings.md)
+§6 for the measurement, its filter scope, and its validity domain (the sensor's per-shoulder
+reach — pre ±600 ms at nominal, post re-centered by the measured pre lag — vs the patcher's
+±10 s search), §8 for gap signature vs patch disagreement, and §5 for the populations:
+single-fill placements are fully recorded (210/210 `fit_terms`), but the corpus's 107 dual-fit
+silence-splice patches record only placeholder zeros — their two applied per-seam lags have no
+reporting slot, so their placement cannot be checked.
+
 ### Gate mode (legacy)
 
 Structure match on B → structure gate → waveform Pearson (optional structure-trust skip) → on failure, reactive extend end then start. No anchor seam, no residual gate, no unified fit search. See [gap-fill-modes.md](gap-fill-modes.md) § `fill_mode = gate`.

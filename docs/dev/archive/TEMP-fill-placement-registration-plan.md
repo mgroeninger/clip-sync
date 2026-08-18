@@ -6,6 +6,8 @@
 >
 > **Live plans:** [TEMP-unmatchable-shoulder-plan.md](../TEMP-unmatchable-shoulder-plan.md) (S2b);
 > [TEMP-lag-envelope-recenter-plan.md](../TEMP-lag-envelope-recenter-plan.md) (unblocks S1).
+> **Live findings:** [TEMP-31g7-model-vs-findings.md](../TEMP-31g7-model-vs-findings.md)
+> (gap signature vs patch disagreement, §11).
 > **Leftovers** (26/g6, S1 plumbing, S4 / `applied = 0`, ear-pass 17/g34 and 47/g14, α, §7):
 > [BACKLOG.md](../../../BACKLOG.md) § *Fill placement*.
 >

@@ -92,8 +92,43 @@ placement is a different fact.
 
 Registration and shared-source are **descriptive**, not dividers — patched and skipped gaps have
 overlapping `|step|` ranges, and every donor on this corpus is same-master. What actually separates
-patch from skip is **bracket search** result crossed with **donor** state. Full axis list (A-presence,
-envelope, uniqueness as diagnostic, …): [redesign plan §2](archive/TEMP-gap-vocabulary-redesign-plan.md#2-principle--describe-a-gap-by-coordinates-derive-the-decision).
+patch from skip is **bracket search** result crossed with **donor** state.
+
+> **Known holes (measured 2026-08-17; split 2026-08-18): two, at different altitudes.** The
+> corpus's two ear-confirmed wrong patches (26/g6, 31/g7) both land in the healthiest cell
+> (Bracket patch) with the calmest readout (`balanced`) — accurate on every existing axis — but
+> for **different reasons**, and they do not share a gap class. An earlier draft merged them into
+> one hole (a `Periodic` verdict / repeat-lock subtype); that merge was refuted by archived
+> measurement and withdrawn ([TEMP-31g7-model-vs-findings.md](TEMP-31g7-model-vs-findings.md)
+> §9, Errata). Do not reconstruct a shared class from their shared symptom (a large backward
+> slide); residual detects bad *patches* and does not classify gaps (findings §8).
+>
+> **Hole 1 — no axis describes the *choice* (26/g6-class; registration well-posed).** Every axis
+> above describes the gap; none compares the placement the patcher **chose** against the
+> registration the sensors **measured**. Pair 26 slid −1450 ms from a 0.997-correlation landmark
+> both shoulders agree on to within 19 ms; 17/g34 is the same class (unique agreeing registration,
+> ~1.15 s slide anyway). The finding and the measurement: findings §§6–7. **Naming is withdrawn
+> to a backlog sketch** (findings §7.5) pending prospective validation of the confidence filter
+> on a second dump vintage.
+>
+> **Hole 2 — no cell for one-sided closeability (31/g7; joint registration ill-posed).** A's two
+> surviving edges do not jointly exist as one interval of B: the pre shoulder is uniquely
+> registered (−47 ms, r 0.829, no rival in ±2 s) and the post shoulder recovers nowhere in reach
+> (0.123 even at its own best lag; dual-fit split 1 of 308). The cells below require **both**
+> shoulders (Silence-splice) or **neither** (Decorrelated); one-in-B/one-not has no cell, so the
+> gap falls into Bracket patch on the applied seams, which are computed at the chosen fill and
+> erase the shape. This is a *gap* cell, not the choice axis — and not the lag-verdict one-dead
+> pair (13 of 308, too coarse: it includes correctly-patched gaps). The cell, the instruments
+> that already isolate it, and candidate repairs:
+> [TEMP-31g7-gap-shape-vocabulary.md](TEMP-31g7-gap-shape-vocabulary.md) §§2–5, §8. **No cell is
+> proposed to ship yet**; the vocabulary/S2b/backlog split is parked there.
+>
+> What survives either hole as a definitional fix: `Decorrelated` overclaims ("sources genuinely
+> differ" from a bounded sweep) and needs a distinct "not found in reach" reading (findings
+> §7.2). Blocker only for extending the choice check to dual-fit patches: they record placeholder
+> zeros instead of their two applied per-seam lags (107 of 317); single-fill coverage is complete
+> (210/210 `fit_terms`). Full axis list (A-presence, envelope, uniqueness as diagnostic, …):
+> [redesign plan §2](archive/TEMP-gap-vocabulary-redesign-plan.md#2-principle--describe-a-gap-by-coordinates-derive-the-decision).
 
 ## The cells
 
