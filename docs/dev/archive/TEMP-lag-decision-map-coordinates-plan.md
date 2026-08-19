@@ -1,10 +1,12 @@
 # TEMP — Report `lag_decision` in map coordinates
 
-**Status:** in progress, 2026-08-19. Change landed (`LagSummary::is_landmark`, `lag_pair`
+**Status:** done, archived 2026-08-19. Change landed (`LagSummary::is_landmark`, `lag_pair`
 haystack-shift + landmark-gated chain, contract text). Exit re-run against the 14-gap census is
-done and clean (see **Exit — results**); the 9-pair smoke-join is partial and clean so far (6/9
-pairs fingerprinted), not yet closed.
-Parent: [archive/TEMP-fill-placement-registration-plan.md](archive/TEMP-fill-placement-registration-plan.md)
+done and clean; the 9-pair smoke-join is closed at full scope, 9/9 (see **Exit — results**).
+Durable behaviour: [../gap-fingerprint.md](../gap-fingerprint.md) § *`lag_decision` — decision
+registration at `b_mapped`*. Do not treat this archived doc as current behavior; links inside it
+may be stale.
+Parent: [TEMP-fill-placement-registration-plan.md](TEMP-fill-placement-registration-plan.md)
 (Step 5: `border_displacement_ms` is the reader-side correction to `frac_lag_ms`).
 Census: `gap-files/2026-08-18-one-dead-listen/wide-sweep/` (gitignored; numbers below are the
 durable record). Findings, not a work list, until **Change**.
@@ -94,7 +96,7 @@ throat; it is no longer a reader-side correction to `frac_lag_ms`.
 - Do not widen `lag_max_lag_ms` as the primary fix, and do not run a corpus fingerprint dump to
   do it. The 12 are already in reach of a throat-adjacent ±600.
 - Do not envelope-recenter these 12. Shared far offsets stay
-  [TEMP-lag-envelope-recenter-plan.md](TEMP-lag-envelope-recenter-plan.md) (31 #11).
+  [TEMP-lag-envelope-recenter-plan.md](../TEMP-lag-envelope-recenter-plan.md) (31 #11).
 - Do not change dual-fit’s `SEAM_LOCAL_SEARCH_MS`, fill search radius, or `fill_offset_mode`.
 - Do not put the result in a gate. Record-only, same as S1.
 - Do not decide 31/g7 skip-vs-one-seam. Collapsed-bridge detection is a separate predicate
@@ -158,7 +160,7 @@ two map quantities; today it compares applied map to template coordinates and ab
 
 ## Order vs envelope-recenter
 
-This plan **orders ahead of** [TEMP-lag-envelope-recenter-plan.md](TEMP-lag-envelope-recenter-plan.md).
+This plan **orders ahead of** [TEMP-lag-envelope-recenter-plan.md](../TEMP-lag-envelope-recenter-plan.md).
 Recenter’s fine sweep is existing `lag_pair`. Shipping recenter first would still chain
 uncorrected `frac_lag` on every post, and its smoke-join exit (“median `frac_lag_ms` must not
 move”; “do not spend the ~22 ms bias”) assumed the old coordinates. After this Change (census
@@ -226,26 +228,26 @@ lands live at +58 ms as predicted (not `Decorrelated` at +48); 34 was already bo
 | 31/g10 | pre stays non-landmark `decorrelated` both runs. Post **flips from the falsely-chained −1152 ms lock (r=0.995, old code's unconditional chain) to `decorrelated` at −444 ms (r=0.19)** — no longer chained off a non-landmark pre, now dead at nominal ±600 as intended until envelope-recenter. |
 | 26/g6 | stays near-nominal both shoulders (−41.75 / −45.43 ms), not the −1.45 s applied slide. `peak_z≈6.1`, `second_peak_r/peak_r` near-tie at `top2_spacing_ms=0.104` reproduce the archived plan's numbers almost exactly — same known periodic-aliasing signature, untouched by this fix (`D` here is small). |
 
-**Smoke join — partial, clean so far.** Full run needs a fresh `--gap-fingerprints` pass over
-`gap-files/extended-pairs.csv` (53 pairs) into `gap-files/2026-08-19-decision-map-oriented/`
-(in progress); `route2-consensus.ps1` reuses the existing scan dir
-(`gap-files/2026-08-13-repeat-terms/`) unchanged, since scan/patch reports don't depend on
-`lag_decision`. 6 of the 9 load-bearing pairs are fingerprinted so far
-(`-Pairs 2,3,13,14,18,22`), direct before/after on the identical set:
+**Smoke join — closed, full scope (2026-08-19).** `gap-files/extended-pairs.csv` (53 pairs)
+fingerprinted into `gap-files/2026-08-19-decision-map-oriented/`;
+`route2-consensus.ps1 -ExcludePairs 6,16 -PairTable -OutOfWindow` against the unchanged scan dir
+(`gap-files/2026-08-13-repeat-terms/`):
 
-- Cell unchanged: `peak_r` 6/6 `{2,3,13,14,18,22}`, `peak_z` 5/5 `{2,3,13,14,18}` — identical
-  membership before and after.
-- No previously-usable shoulder went dark (shoulder-usability maps byte-identical for 2, 3, 13,
-  22); pair 18 gained one previously-unusable shoulder under the z-gate (bonus rescue).
-- Bias moved by the expected `~D` amount, not a regression: peak_r −16.0 → −8.6 ms, peak_z
-  −15.8 → −8.4 ms (consensus values, which come from the scan side, are unchanged; only the
-  measured-lag side moved).
-- Agreement improved, not weakened: peak_r decisive cell 23/3/4 (n=30) → 26/2/4 (n=32); peak_z
-  11/3/1 (n=15) → 15/1/1 (n=17); big-slide collapse ratio 8.1x → 10.0x (peak_r), 10.2x → 12.3x
-  (peak_z). The one persisting contradiction, `13/g16`, is unchanged in both runs (pre-existing,
-  not this fix's territory).
+- **Cell 9/9** under `peak_r`: `{2, 3, 13, 14, 18, 22, 32, 47, 51}` all agree within 50 ms —
+  matches the pre-fix calibration membership exactly. **8/8** under `peak_z`:
+  `{2, 3, 13, 14, 18, 32, 47, 51}` (22 drops under `peak_z`, as before the fix). No pair left the
+  cell; none entered it either — membership is unchanged, only the numbers moved.
+- Pairs 32/47/51, checked directly: 32 moved +5.2 ms (both gates), 47 moved +24.1/+25.1 ms, 51
+  moved −19.0/−21.0 ms. All within the same range as the other 6 already-checked cell members;
+  no dropout, no new contradiction.
+- Bias moved by the expected `~D` amount, full-corpus: peak_r −21.9 → **−18.8 ms**, peak_z
+  −26.1 → **−18.0 ms** (same direction as the 6-pair partial subset's −16.0→−8.6 / −15.8→−8.4,
+  smaller net move now that all 9 pairs are in — expected, since the partial subset
+  over-represented the larger-`D` pairs).
+- Suspect list unchanged in kind: 31/g7 and 17/g34 remain the two landmark-contradicting gaps
+  (§6.7 of `TEMP-31g7-model-vs-findings.md`); the rest of the ten-item D-list (`47/g14`, `19/g2`,
+  `3/g10`, `13/g30`, `13/g27`, `53/g2`, `13/g16`, `26/g6`) are the same small-residual noise
+  class as before, not new regressions.
 
-**Still open:** pairs 32, 47, 51 (plus the rest of the 53-pair corpus, for `-MinUnified`) have not
-finished fingerprinting. Re-run `route2-consensus.ps1` at full scope
-(`-ExcludePairs 6,16`) once the corpus run completes and confirm cell 9/9 before flipping Status
-to done.
+No previously-unique lock became `Decorrelated`; no lock jumped by hundreds of ms. Exit criteria
+met in full — this plan is done.

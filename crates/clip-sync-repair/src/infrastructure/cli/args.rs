@@ -59,6 +59,13 @@ pub struct Args {
     #[arg(long)]
     pub fingerprint_diagnostics: bool,
 
+    /// Coarse envelope half-width (ms) that recenters `lag_decision`'s ±600 ms sweep.
+    /// Default 2000. `0` disables recenter (nominal `b_mapped`, no `envelope_*` on the wire).
+    /// Probe-only — not Apply's `max_lag_blocks`. Requires `--gap-fingerprints`.
+    #[cfg(feature = "calibration")]
+    #[arg(long, value_name = "MS")]
+    pub lag_envelope_max_lag_ms: Option<u32>,
+
     /// Output format.
     #[arg(long, default_value = "human")]
     pub format: OutputFormat,
@@ -600,7 +607,11 @@ mod tests {
 
         // The calibration producer flags are only present when the `calibration` feature is on.
         #[cfg(feature = "calibration")]
-        for needle in ["gap-fingerprints", "fingerprint-diagnostics"] {
+        for needle in [
+            "gap-fingerprints",
+            "fingerprint-diagnostics",
+            "lag-envelope-max-lag-ms",
+        ] {
             assert!(help.contains(needle), "help missing {needle:?}:\n{help}");
         }
     }

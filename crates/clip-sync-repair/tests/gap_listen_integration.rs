@@ -209,6 +209,8 @@ fn run_listen_with(
             fingerprint_dir: fixture.fingerprint_dir.clone(),
             wav_dir: fixture.wav_dir.clone(),
             fingerprint_diagnostics: false,
+            lag_envelope_max_lag_ms:
+                clip_sync_repair::application::gap_fingerprint::DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
             crossfade_ms: CROSSFADE_MS,
         },
     )
@@ -237,6 +239,8 @@ fn try_run_listen(
             fingerprint_dir: fixture.fingerprint_dir.clone(),
             wav_dir: fixture.wav_dir.clone(),
             fingerprint_diagnostics: false,
+            lag_envelope_max_lag_ms:
+                clip_sync_repair::application::gap_fingerprint::DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
             crossfade_ms: CROSSFADE_MS,
         },
     )

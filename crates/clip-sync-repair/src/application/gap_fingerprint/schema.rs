@@ -178,6 +178,12 @@ pub struct CorpusProbeRecipe {
     pub lag_window_secs: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub lag_max_lag_ms: Option<u32>,
+    /// Coarse envelope half-width (ms) behind `lag_decision` recenter. **Absent when no gap
+    /// carries `lag_decision`.** `0` is recorded when the dump ran the fine sweep with recenter
+    /// off (`--lag-envelope-max-lag-ms 0`), so an off-arm dump is not confused with a pre-field
+    /// corpus (key missing).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub lag_envelope_max_lag_ms: Option<u32>,
     /// Seam window behind `splice` / `splice_dualfit` (`fill_seam_search_secs`). **Absent when no gap
     /// carries `seams`** — the summary-only path runs with `skip_baseline_placement`, which skips
     /// `place_on_b` entirely.
@@ -938,8 +944,14 @@ pub struct LagSummary {
     pub window_ms: u32,
     pub max_lag_ms: u32,
     pub channel: LagChannel,
-    /// Correlation at lag 0 — what the seam currently sees.
-    pub lag0_r: f64,
+    /// Correlation at gross lag 0 (original `b_mapped`) — what the seam currently sees.
+    ///
+    /// Absent when the searched window does not contain lag 0: a far envelope recenter or a
+    /// sequential post whose chain shifted the fine window past nominal. Missing is **not** 0.0 —
+    /// that sample was not measured. Older corpora always wrote a number (including a fabricated
+    /// `0.0` on gross-shifted shoulders).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub lag0_r: Option<f64>,
     /// Best correlation at an integer lag.
     pub peak_r: f64,
     /// **Uniqueness guard:** the highest *competing* local-maximum correlation away from the main peak.
@@ -981,6 +993,19 @@ pub struct LagSummary {
     /// fingerprints written before this field, and on paths that do not build border templates.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub border_displacement_ms: Option<f64>,
+    /// Coarse 100 ms-bin envelope peak at `b_mapped` (ms), recorded even when the fine sweep
+    /// stays at nominal. Absent on dumps that never ran the envelope recenter
+    /// (`lag_envelope_max_lag_ms` 0, or corpora from before this field).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub envelope_lag_ms: Option<f64>,
+    /// Peak Pearson of that coarse envelope. Recenter the fine sweep iff this is ≥ scan
+    /// `min_envelope_r` (0.70) **and** [`Self::envelope_edge_pinned`] is false.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub envelope_peak_r: Option<f64>,
+    /// The coarse envelope peak sits on the last bin of ±`lag_envelope_max_lag_ms` — fail open
+    /// to `b_mapped` for this shoulder (saturated window, not a 31/g7-specific guard).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub envelope_edge_pinned: Option<bool>,
     pub verdict: LagVerdict,
 }
 

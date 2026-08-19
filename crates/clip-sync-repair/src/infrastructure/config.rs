@@ -175,6 +175,12 @@ pub struct RepairConfig {
     /// Off by default — `--gap-fingerprints` emits decision/repair (D/R) axes only unless enabled.
     #[serde(default)]
     pub fingerprint_diagnostics: bool,
+    /// Fingerprint-only: coarse envelope half-width (ms) that recenters `lag_decision`.
+    /// Default 2000. `0` disables (nominal `b_mapped`, no `envelope_*` on the wire).
+    /// Probe-only — not Apply's `max_lag_blocks`. Must match
+    /// [`crate::application::gap_fingerprint::DEFAULT_LAG_ENVELOPE_MAX_LAG_MS`].
+    #[serde(default = "default_lag_envelope_max_lag_ms")]
+    pub lag_envelope_max_lag_ms: u32,
     /// Window size (seconds) for computing A's border RMS.
     #[serde(default = "default_normalize_window_secs")]
     pub normalize_window_secs: f64,
@@ -391,6 +397,9 @@ pub fn absolute_silence_rms_i16_units(normalized: f32) -> f32 {
 fn default_true() -> bool {
     true
 }
+fn default_lag_envelope_max_lag_ms() -> u32 {
+    2000
+}
 fn default_gap_offset_tolerance_secs() -> f64 {
     0.5
 }
@@ -579,6 +588,7 @@ impl Default for RepairConfig {
             normalize_fill: default_true(),
             dual_fit: true,
             fingerprint_diagnostics: false,
+            lag_envelope_max_lag_ms: default_lag_envelope_max_lag_ms(),
             normalize_window_secs: default_normalize_window_secs(),
             max_fill_gain_db: default_max_fill_gain_db(),
             output: RepairOutputConfig::default(),

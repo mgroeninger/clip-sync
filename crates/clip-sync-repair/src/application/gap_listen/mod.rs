@@ -87,6 +87,8 @@ pub struct GapListenRequest {
     pub fingerprint_dir: PathBuf,
     pub wav_dir: PathBuf,
     pub fingerprint_diagnostics: bool,
+    /// Fingerprint-only: coarse envelope half-width (ms) for `lag_decision` recenter. `0` disables.
+    pub lag_envelope_max_lag_ms: u32,
     pub crossfade_ms: u64,
 }
 
@@ -232,6 +234,7 @@ pub fn run_gap_listen<MR: MediaReader, PW: PatchedAudioWriter>(
         &patch_request,
         fingerprint_select,
         listen.fingerprint_diagnostics,
+        listen.lag_envelope_max_lag_ms,
         progress,
     );
 

@@ -178,7 +178,7 @@ contracts! {
     /// Contract for `lag_decision` — the registration the patch/skip decision is made on.
     LAG_DECISION_CONTRACT for "lag_decision" {
         measures: "per-shoulder waveform lag the gate decides patch/skip on: peak_r, frac_lag_ms, peak_z, prominence",
-        placement: "map coords: haystack shifted by template walk-off D; post chained by map-true L_pre only if pre is landmark",
+        placement: "per-shoulder fine sweep at b_mapped+envelope_lag when that shoulder's coarse peak is interior; else b_mapped",
         window: "per shoulder window/max_lag (defaults 1000 / 600); mono; gross to b_mapped_end; D no longer corrects frac_lag_ms",
         not: "lag_editorial (diagnostic placement); prominence is not uniqueness - no exclusion radius, see top2_spacing_ms",
     }
@@ -362,6 +362,16 @@ mod tests {
         );
         assert_eq!(defaults.lag_max_lag_ms, 600, "lag_max_lag_ms default moved");
         assert_eq!(
+            defaults.lag_envelope_max_lag_ms,
+            super::super::measure::DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
+            "lag_envelope_max_lag_ms default moved"
+        );
+        assert_eq!(
+            crate::infrastructure::config::RepairConfig::default().lag_envelope_max_lag_ms,
+            defaults.lag_envelope_max_lag_ms,
+            "RepairConfig and FingerprintConfig envelope defaults drifted"
+        );
+        assert_eq!(
             defaults.fill_seam_search_secs, 0.25,
             "fill_seam_search_secs default moved; the residual contract quotes `default 250ms`"
         );
@@ -387,7 +397,7 @@ mod tests {
             window_ms: 1000,
             max_lag_ms: 600,
             channel: super::super::LagChannel::Mono,
-            lag0_r: 0.1,
+            lag0_r: Some(0.1),
             peak_r: 0.9,
             second_peak_r: Some(0.4),
             peak_z: Some(14.0),
@@ -398,6 +408,9 @@ mod tests {
             frac_lag_ms: 0.26,
             edge_pinned: Some(false),
             border_displacement_ms: Some(31.6),
+            envelope_lag_ms: None,
+            envelope_peak_r: None,
+            envelope_edge_pinned: None,
             verdict: super::super::LagVerdict::TimingOffset,
         })
         .expect("lag summary");
@@ -413,7 +426,7 @@ mod tests {
                 "`{key}` is quoted by the lag contracts but LagSummary no longer emits it"
             );
         }
-        for key in ["window_ms", "max_lag_ms"] {
+        for key in ["window_ms", "max_lag_ms", "lag0_r"] {
             assert!(
                 lag.get(key).is_some(),
                 "`{key}` is quoted by both lag contracts as where the real window is recorded"

@@ -76,6 +76,10 @@ pub fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     if args.fingerprint_diagnostics {
         config.repair.fingerprint_diagnostics = true;
     }
+    #[cfg(feature = "calibration")]
+    if let Some(ms) = args.lag_envelope_max_lag_ms {
+        config.repair.lag_envelope_max_lag_ms = ms;
+    }
     if let Some(wav_path) = &args.wav {
         config.repair.output.wav_path = Some(wav_path.clone());
         config.repair.dry_run = false;
@@ -281,8 +285,9 @@ pub(crate) fn validate_repair_profile_flags(args: &Args) -> Result<(), String> {
     Ok(())
 }
 
-/// `--fingerprint-gap`, `--fingerprint-diagnostics` and `--gap-listen` only apply when dumping a
-/// corpus; `--gap-listen` additionally rejects the run modes that cannot produce a patched WAV.
+/// `--fingerprint-gap`, `--fingerprint-diagnostics`, `--lag-envelope-max-lag-ms` and `--gap-listen`
+/// only apply when dumping a corpus; `--gap-listen` additionally rejects the run modes that cannot
+/// produce a patched WAV.
 /// The flags exist only under the `calibration` feature, so this is a no-op otherwise.
 pub(crate) fn validate_fingerprint_flags(args: &Args) -> Result<(), String> {
     #[cfg(feature = "calibration")]
@@ -298,6 +303,9 @@ pub(crate) fn validate_fingerprint_flags(args: &Args) -> Result<(), String> {
         }
         if args.fingerprint_diagnostics {
             return Err("--fingerprint-diagnostics requires --gap-fingerprints DIR".into());
+        }
+        if args.lag_envelope_max_lag_ms.is_some() {
+            return Err("--lag-envelope-max-lag-ms requires --gap-fingerprints DIR".into());
         }
         if args.gap_listen.is_some() {
             return Err("--gap-listen requires --gap-fingerprints DIR".into());
@@ -800,6 +808,22 @@ mod cli_override_tests {
 
     #[cfg(feature = "calibration")]
     #[test]
+    fn lag_envelope_max_lag_ms_without_dump_dir_is_rejected() {
+        use clap::Parser;
+
+        let args = Args::parse_from([
+            "clip-sync-repair",
+            "a.wav",
+            "b.wav",
+            "--lag-envelope-max-lag-ms",
+            "0",
+        ]);
+        let err = validate_fingerprint_flags(&args).unwrap_err();
+        assert!(err.contains("--gap-fingerprints"));
+    }
+
+    #[cfg(feature = "calibration")]
+    #[test]
     fn fingerprint_flags_ok_with_dump_dir() {
         use clap::Parser;
 
@@ -812,8 +836,11 @@ mod cli_override_tests {
             "--fingerprint-gap",
             "3",
             "--fingerprint-diagnostics",
+            "--lag-envelope-max-lag-ms",
+            "0",
         ]);
         validate_fingerprint_flags(&args).expect("valid fingerprint flag combo");
+        assert_eq!(args.lag_envelope_max_lag_ms, Some(0));
     }
 
     #[cfg(feature = "calibration")]

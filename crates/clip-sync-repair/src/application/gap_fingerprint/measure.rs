@@ -200,6 +200,10 @@ fn mono_slice_rms(b_mono: &[f64], start: usize, end: usize) -> f32 {
 /// the parabolic vertex can't be trusted and a larger lag was never scored. See [`LagSummary::edge_pinned`].
 const LAG_EDGE_TOL_MS: f64 = 2.0;
 
+/// Default coarse envelope half-width (ms) that recenters the ±`lag_max_lag_ms` fine sweep.
+/// `0` disables recenter. Probe-only — not Apply's `max_lag_blocks`.
+pub const DEFAULT_LAG_ENVELOPE_MAX_LAG_MS: u32 = 2000;
+
 /// Border standoff applied to **every** `GapBorderSpec` this probe builds — deliberately 0, and
 /// deliberately **not** `RepairConfig.border_standoff_secs` (0.35).
 ///
@@ -319,11 +323,12 @@ pub fn summarize_lag_curve(
     if curve.is_empty() {
         return None;
     }
+    // Correlation at gross lag 0 only when that sample was actually searched. A missing bin is
+    // not 0.0 (`finite_corr(NaN)` used to fabricate a dead lag-0 on far recenter / chained post).
     let lag0_r = curve
         .iter()
         .find(|(l, _)| *l == 0)
-        .map(|(_, r)| *r)
-        .unwrap_or(f64::NAN);
+        .map(|(_, r)| finite_corr(*r));
     let (pi, &(peak_lag, peak_r)) = curve
         .iter()
         .enumerate()
@@ -364,7 +369,7 @@ pub fn summarize_lag_curve(
         window_ms,
         max_lag_ms,
         channel,
-        lag0_r: finite_corr(lag0_r),
+        lag0_r,
         peak_r: finite_corr(peak_r),
         second_peak_r: second.map(|(_, r)| r),
         peak_z: (std > 1e-9).then(|| (peak_r - mean) / std),
@@ -378,6 +383,9 @@ pub fn summarize_lag_curve(
         // Stamped by the caller that owns the border templates (`lag_side_sweep`); the curve alone
         // cannot know how far the template edge sits from the gap.
         border_displacement_ms: None,
+        envelope_lag_ms: None,
+        envelope_peak_r: None,
+        envelope_edge_pinned: None,
         verdict: classify_lag(lag0_r, frac_r, peak_lag),
     })
 }
@@ -404,9 +412,11 @@ fn secondary_peak(curve: &[(i64, f64)], peak_index: usize) -> Option<(i64, f64)>
 }
 
 /// Verdict thresholds (see plan §4). `peak` is the parabolic-interpolated peak correlation.
-fn classify_lag(lag0_r: f64, peak: f64, peak_lag: i64) -> LagVerdict {
+/// `lag0_r` is `None` when lag 0 was not on the searched curve; offset-away then rests on
+/// `peak_lag` alone (a far recenter always has `|peak_lag| ≫ 1`).
+fn classify_lag(lag0_r: Option<f64>, peak: f64, peak_lag: i64) -> LagVerdict {
     let recoverable = peak >= 0.5;
-    let offset_away = peak_lag.abs() > 1 || (peak - lag0_r) > 0.2;
+    let offset_away = peak_lag.abs() > 1 || lag0_r.is_some_and(|l0| (peak - l0) > 0.2);
     if recoverable && offset_away {
         LagVerdict::TimingOffset
     } else if peak < 0.3 {
@@ -447,6 +457,10 @@ pub struct FingerprintConfig {
     pub fill_absolute_floor: f32,
     pub max_refine_secs: f64,
     pub lag_max_lag_ms: u32,
+    /// Coarse per-shoulder envelope half-width (ms) that recenters the ±`lag_max_lag_ms` fine
+    /// sweep. Default [`DEFAULT_LAG_ENVELOPE_MAX_LAG_MS`]. `0` disables recenter (nominal
+    /// `b_mapped`, no `envelope_*` on the wire). Probe-only — not Apply's `max_lag_blocks`.
+    pub lag_envelope_max_lag_ms: u32,
     /// Window (seconds) for the lag-uniqueness measurement. §3.6a froze this at **1 s** — it separates
     /// real registration from periodic ambiguity (250 ms is ambiguous on quiet produced audio, where a
     /// rival local max is nearly as tall; 1 s breaks the tie). Drives `peak_z` / `prominence`.
@@ -476,6 +490,7 @@ impl Default for FingerprintConfig {
             fill_absolute_floor: 0.12,
             max_refine_secs: 0.75,
             lag_max_lag_ms: 600,
+            lag_envelope_max_lag_ms: DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
             lag_window_secs: 1.0,
         }
     }
@@ -674,6 +689,8 @@ impl CorpusProbeRecipe {
             noise_collar_secs: cfg.noise_collar_secs,
             lag_window_secs: measured_lag.then_some(cfg.lag_window_secs),
             lag_max_lag_ms: measured_lag.then_some(cfg.lag_max_lag_ms),
+            // Include `0` so an off-arm dump is distinguishable from a pre-field corpus.
+            lag_envelope_max_lag_ms: measured_lag.then_some(cfg.lag_envelope_max_lag_ms),
             seam_window_secs: measured_seams.then_some(cfg.fill_seam_search_secs),
             border_standoff_secs: probe_border_standoff_secs(sample_rate),
         }
@@ -878,21 +895,29 @@ fn lag_pair(
     gap_frames: usize,
     params: LagSweepParams,
     displacement: Option<(usize, usize)>,
+    env_pre: i64,
+    env_post: i64,
 ) -> (Option<LagSummary>, Option<LagSummary>) {
     // Map coordinates (docs/dev/TEMP-lag-decision-map-coordinates-plan.md § Change, point 1): each
     // template's gap-facing edge sits `D` frames outward of the raw gap edge (walk-off + trim), so
     // the haystack anchor is shifted by that same `D` — pre anchor at `gap_start - D_pre`, post
     // (nominal, pre-chain) at `gap_end + D_post`. A perfectly registered pair then reads
     // `frac_lag_ms ≈ 0` on both shoulders instead of `∓D`.
+    //
+    // Envelope recenter (docs/dev/TEMP-lag-envelope-recenter-plan.md § Change): each shoulder may
+    // shift that map-true anchor by a coarse envelope peak (`env_*`, 0 when the guard fails open).
+    // `gross_lag_shift` puts `frac_lag_ms` back on original `b_mapped` so it stays commensurable
+    // with `align_adjustment_secs`. Landmark chain uses the *fine residual* (`L_pre − env_pre`),
+    // not gross `L_pre` — otherwise a shared-far envelope would double-count.
     let (d_pre, d_post) = displacement.unwrap_or((0, 0));
-    let pre_anchor = start_frame.saturating_sub(d_pre);
+    let pre_anchor = (start_frame as i64 + env_pre - d_pre as i64).max(0) as usize;
     let pre = lag_side_sweep(
         LagSideSweep {
             a_border: a_pre,
             b_signal,
             anchor_frame: pre_anchor,
             pre_shoulder: true,
-            gross_lag_shift: 0,
+            gross_lag_shift: env_pre,
             border_displacement_frames: displacement.map(|(pre, _)| pre),
         },
         params,
@@ -908,16 +933,16 @@ fn lag_pair(
     let post_nominal = start_frame + gap_frames + d_post;
     let pre_shift = pre
         .filter(LagSummary::is_landmark)
-        .map(|p| p.frac_lag_samples.round() as i64)
+        .map(|p| p.frac_lag_samples.round() as i64 - env_pre)
         .unwrap_or(0);
-    let post_base = (post_nominal as i64 + pre_shift).max(0) as usize;
+    let post_base = (post_nominal as i64 + env_post + pre_shift).max(0) as usize;
     let post = lag_side_sweep(
         LagSideSweep {
             a_border: a_post,
             b_signal,
             anchor_frame: post_base,
             pre_shoulder: false,
-            gross_lag_shift: pre_shift,
+            gross_lag_shift: env_post + pre_shift,
             border_displacement_frames: displacement.map(|(_, post)| post),
         },
         params,
@@ -938,6 +963,109 @@ struct LagAtPlacementInput<'a> {
     sample_rate: u32,
 }
 
+/// Coarse 100 ms-bin envelope peak at one shoulder's `b_mapped` (before the fine ±600 ms sweep).
+#[derive(Clone, Copy)]
+struct EnvelopePeak {
+    lag_ms: f64,
+    peak_r: f64,
+    edge_pinned: bool,
+}
+
+fn envelope_peak_at(
+    a_win: &[f64],
+    b_ctx: &[f64],
+    sample_rate: u32,
+    env_bin: usize,
+    max_lag_samples: usize,
+) -> Option<EnvelopePeak> {
+    if a_win.len() < env_bin.max(8) {
+        return None;
+    }
+    let rate = f64::from(sample_rate).max(1.0);
+    let ea = fine_rms_envelope(a_win, env_bin);
+    let eb = fine_rms_envelope(b_ctx, env_bin);
+    if ea.len() < 3 {
+        return None;
+    }
+    let env_max_lag = (max_lag_samples / env_bin.max(1)) as i64;
+    if env_max_lag < 1 {
+        return None;
+    }
+    let curve = lag_correlation_curve(&ea, &eb, env_max_lag);
+    if curve.is_empty() {
+        return None;
+    }
+    let &(peak_lag_bin, peak_r) = curve
+        .iter()
+        .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))?;
+    let lo = curve.first().map(|(l, _)| *l).unwrap_or(peak_lag_bin);
+    let hi = curve.last().map(|(l, _)| *l).unwrap_or(peak_lag_bin);
+    // ≥1 bin inside the searched coarse window; a peak on the last searched bin is saturated.
+    let edge_pinned = peak_lag_bin == lo || peak_lag_bin == hi;
+    Some(EnvelopePeak {
+        lag_ms: peak_lag_bin as f64 * env_bin as f64 * 1000.0 / rate,
+        peak_r: finite_corr(peak_r),
+        edge_pinned,
+    })
+}
+
+fn envelope_shoulder(
+    a_border: &[f64],
+    b_signal: &[f64],
+    anchor_frame: usize,
+    pre_shoulder: bool,
+    window: usize,
+    max_lag: usize,
+    sample_rate: u32,
+    env_bin: usize,
+) -> Option<EnvelopePeak> {
+    let w = window.min(a_border.len());
+    if w < env_bin.max(8) {
+        return None;
+    }
+    let (a_win, lo, hi) = if pre_shoulder {
+        if anchor_frame < w + max_lag {
+            return None;
+        }
+        let lo = anchor_frame - w - max_lag;
+        let hi = (anchor_frame + max_lag).min(b_signal.len());
+        (&a_border[a_border.len() - w..], lo, hi)
+    } else {
+        if anchor_frame < max_lag {
+            return None;
+        }
+        let lo = anchor_frame.saturating_sub(max_lag);
+        let hi = (anchor_frame + w + max_lag).min(b_signal.len());
+        (&a_border[..w], lo, hi)
+    };
+    if hi <= lo {
+        return None;
+    }
+    envelope_peak_at(a_win, &b_signal[lo..hi], sample_rate, env_bin, max_lag)
+}
+
+fn envelope_recenter_frames(peak: Option<EnvelopePeak>, sample_rate: u32) -> i64 {
+    let Some(p) = peak else {
+        return 0;
+    };
+    let min_r = crate::domain::gap_equivalence::DonorRegistrationParams::default().min_envelope_r;
+    if p.peak_r >= min_r && !p.edge_pinned {
+        (p.lag_ms / 1000.0 * f64::from(sample_rate)).round() as i64
+    } else {
+        0
+    }
+}
+
+fn stamp_envelope(summary: Option<LagSummary>, peak: Option<EnvelopePeak>) -> Option<LagSummary> {
+    let mut s = summary?;
+    if let Some(p) = peak {
+        s.envelope_lag_ms = Some(p.lag_ms);
+        s.envelope_peak_r = Some(p.peak_r);
+        s.envelope_edge_pinned = Some(p.edge_pinned);
+    }
+    Some(s)
+}
+
 /// Lag fingerprint for a placement: A's kept border vs the B haystack swept over ±`max_lag`, on the
 /// mono downmix **and** the gate-selected channel (where a multichannel failure lives).
 fn lag_at_placement(input: &LagAtPlacementInput<'_>) -> LagFingerprint {
@@ -954,11 +1082,21 @@ fn lag_at_placement(input: &LagAtPlacementInput<'_>) -> LagFingerprint {
     } = *input;
     let ch = channels.max(1);
     let gap_frames = refined.end_frame.saturating_sub(refined.start_frame);
+    let rate = f64::from(sample_rate).max(1.0);
     // §3.6a: uniqueness needs a ~1 s window. Discover that much border (plus the lag-search slack) so the
     // template isn't capped to the ~150 ms `bin_frames*3` used for the structure probe.
-    let window = ((cfg.lag_window_secs * f64::from(sample_rate)).round() as usize).max(8);
-    let max_lag = ((cfg.lag_max_lag_ms as f64 / 1000.0) * f64::from(sample_rate)).round() as i64;
-    let border_spec = probe_border_spec(&refined, window + max_lag.max(0) as usize, cfg);
+    let window = ((cfg.lag_window_secs * rate).round() as usize).max(8);
+    let max_lag = ((cfg.lag_max_lag_ms as f64 / 1000.0) * rate).round() as i64;
+    let env_on = cfg.lag_envelope_max_lag_ms > 0;
+    let env_window = ((WIDE_ENV_WINDOW_SECS * rate).round() as usize).max(8);
+    let env_lag = ((cfg.lag_envelope_max_lag_ms as f64 / 1000.0) * rate).round() as usize;
+    let env_bin = ((WIDE_ENV_BIN_MS / 1000.0) * rate).round().max(1.0) as usize;
+    let border_need = if env_on {
+        (window + max_lag.max(0) as usize).max(env_window + env_lag)
+    } else {
+        window + max_lag.max(0) as usize
+    };
+    let border_spec = probe_border_spec(&refined, border_need, cfg);
     let (a_pre, a_post) = border_templates_for_gap(a_samples, ch, &border_spec);
     let (a_pre_ch, a_post_ch) = border_templates_per_channel_for_gap(a_samples, ch, &border_spec);
 
@@ -986,6 +1124,39 @@ fn lag_at_placement(input: &LagAtPlacementInput<'_>) -> LagFingerprint {
     let mono_displacement =
         border_edge_displacement_frames(a_samples, ch, &border_spec, a_pre.len(), a_post.len());
 
+    let (env_pre_peak, env_post_peak) = if env_on {
+        let d_pre = mono_displacement.0;
+        let d_post = mono_displacement.1;
+        let pre_anchor = start_frame.saturating_sub(d_pre);
+        let post_anchor = start_frame + gap_frames + d_post;
+        (
+            envelope_shoulder(
+                &a_pre,
+                b_mono,
+                pre_anchor,
+                true,
+                env_window,
+                env_lag,
+                sample_rate,
+                env_bin,
+            ),
+            envelope_shoulder(
+                &a_post,
+                b_mono,
+                post_anchor,
+                false,
+                env_window,
+                env_lag,
+                sample_rate,
+                env_bin,
+            ),
+        )
+    } else {
+        (None, None)
+    };
+    let env_pre = envelope_recenter_frames(env_pre_peak, sample_rate);
+    let env_post = envelope_recenter_frames(env_post_peak, sample_rate);
+
     let (pre, post) = lag_pair(
         &a_pre,
         &a_post,
@@ -994,8 +1165,13 @@ fn lag_at_placement(input: &LagAtPlacementInput<'_>) -> LagFingerprint {
         gap_frames,
         sweep,
         Some(mono_displacement),
+        env_pre,
+        env_post,
     );
-    add(pre, post);
+    add(
+        stamp_envelope(pre, env_pre_peak),
+        stamp_envelope(post, env_post_peak),
+    );
 
     if let Some(sel) = selected {
         if sel < b_ch.len()
@@ -1003,6 +1179,41 @@ fn lag_at_placement(input: &LagAtPlacementInput<'_>) -> LagFingerprint {
             && sel < a_post_ch.len()
             && !a_pre_ch[sel].is_empty()
         {
+            let sel_disp = border_edge_displacement_frames(
+                a_samples,
+                ch,
+                &border_spec,
+                a_pre_ch[sel].len(),
+                a_post_ch[sel].len(),
+            );
+            let (sel_env_pre_peak, sel_env_post_peak) = if env_on {
+                let pre_anchor = start_frame.saturating_sub(sel_disp.0);
+                let post_anchor = start_frame + gap_frames + sel_disp.1;
+                (
+                    envelope_shoulder(
+                        &a_pre_ch[sel],
+                        &b_ch[sel],
+                        pre_anchor,
+                        true,
+                        env_window,
+                        env_lag,
+                        sample_rate,
+                        env_bin,
+                    ),
+                    envelope_shoulder(
+                        &a_post_ch[sel],
+                        &b_ch[sel],
+                        post_anchor,
+                        false,
+                        env_window,
+                        env_lag,
+                        sample_rate,
+                        env_bin,
+                    ),
+                )
+            } else {
+                (None, None)
+            };
             let (pre, post) = lag_pair(
                 &a_pre_ch[sel],
                 &a_post_ch[sel],
@@ -1014,15 +1225,14 @@ fn lag_at_placement(input: &LagAtPlacementInput<'_>) -> LagFingerprint {
                     ..sweep
                 },
                 // The 12 %-of-peak trim runs per buffer, so this channel's displacement is its own.
-                Some(border_edge_displacement_frames(
-                    a_samples,
-                    ch,
-                    &border_spec,
-                    a_pre_ch[sel].len(),
-                    a_post_ch[sel].len(),
-                )),
+                Some(sel_disp),
+                envelope_recenter_frames(sel_env_pre_peak, sample_rate),
+                envelope_recenter_frames(sel_env_post_peak, sample_rate),
             );
-            add(pre, post);
+            add(
+                stamp_envelope(pre, sel_env_pre_peak),
+                stamp_envelope(post, sel_env_post_peak),
+            );
         }
     }
     out
@@ -1866,6 +2076,7 @@ impl FingerprintConfig {
     pub(crate) fn from_request(
         request: &crate::application::PatchAudioRequest,
         silence_peak_fraction: f32,
+        lag_envelope_max_lag_ms: u32,
     ) -> Self {
         const GAP_EDGE_REFINE_SECS: f64 = 0.75;
         Self {
@@ -1891,6 +2102,7 @@ impl FingerprintConfig {
             // manufactures false one-sided-dead/decorrelated verdicts. 600 ms matches the width already
             // validated offline (SPLICE_EXP_FINE_LAG_MS=600, §1b-i/§3.6).
             lag_max_lag_ms: 600,
+            lag_envelope_max_lag_ms,
             lag_window_secs: 1.0,
         }
     }
@@ -2448,6 +2660,7 @@ pub fn characterize_gaps_from_decode(
     request: &crate::application::PatchAudioRequest,
     select: &[usize],
     include_diagnostics: bool,
+    lag_envelope_max_lag_ms: u32,
     progress: &dyn clip_sync::ProgressReporter,
 ) -> GapCorpus {
     use crate::domain::gap_repair_spec::{
@@ -2473,7 +2686,11 @@ pub fn characterize_gaps_from_decode(
             );
         }
     }
-    let cfg = FingerprintConfig::from_request(request, report.recipe.silence_peak_fraction());
+    let cfg = FingerprintConfig::from_request(
+        request,
+        report.recipe.silence_peak_fraction(),
+        lag_envelope_max_lag_ms,
+    );
     let mut corpus = characterize_gaps(report, pcm, &cfg, select);
     // Seam-gate floors used for every bracket `failure_stage` on this dump — stamped once at corpus
     // level (same idea as equivalence `thresholds`). Summary-only `characterize_gaps` leaves this None.
@@ -3596,10 +3813,22 @@ mod tests {
             s.peak_r
         );
         assert!(
-            s.lag0_r < 0.5,
-            "lag-0 is depressed by the offset, got {}",
+            s.lag0_r.expect("lag 0 is on this curve") < 0.5,
+            "lag-0 is depressed by the offset, got {:?}",
             s.lag0_r
         );
+        assert_eq!(s.verdict, LagVerdict::TimingOffset);
+    }
+
+    #[test]
+    fn summarize_lag_curve_omits_lag0_r_when_zero_not_on_curve() {
+        // Gross-shifted fine window: lags around +202 samples, no lag 0. Fabricating 0.0 here
+        // was the far-recenter / chained-post foot-gun.
+        let curve: Vec<(i64, f64)> = (200i64..=204)
+            .map(|l| (l, 0.9 - (l - 202).unsigned_abs() as f64 * 0.02))
+            .collect();
+        let s = summarize_lag_curve(&curve, 48_000, 1000, 600, LagChannel::Mono).expect("summary");
+        assert_eq!(s.lag0_r, None, "lag 0 was not searched; do not write 0.0");
         assert_eq!(s.verdict, LagVerdict::TimingOffset);
     }
 
@@ -3734,8 +3963,9 @@ mod tests {
         let b_mono: Vec<f64> = a.iter().map(|&v| f64::from(v)).collect();
 
         let config = FingerprintConfig {
-            lag_window_secs: 0.01, // 480 frames
-            lag_max_lag_ms: 20,    // ±960 frames — comfortably past both displacements
+            lag_window_secs: 0.01,      // 480 frames
+            lag_max_lag_ms: 20,         // ±960 frames — comfortably past both displacements
+            lag_envelope_max_lag_ms: 0, // isolate map-coordinates; this fixture is too short for ±2 s
             ..FingerprintConfig::default()
         };
         let out = lag_at_placement(&LagAtPlacementInput {
@@ -3772,6 +4002,169 @@ mod tests {
             "post reads {} ms, not 0 — map coordinates should absorb D_post",
             post.frac_lag_ms
         );
+    }
+
+    fn lag_at_ms(rate: u32, ms: i64) -> usize {
+        (ms.unsigned_abs() as f64 / 1000.0 * f64::from(rate)).round() as usize
+    }
+
+    /// 31/g7 class: unique pre near 0, unique post at −1160 ms. Recenter is per-shoulder —
+    /// sharing one gap-level envelope would yank pre onto the post lag.
+    #[test]
+    fn lag_at_placement_envelope_recenter_is_per_shoulder() {
+        const RATE: u32 = 48_000;
+        let pre_len = lag_at_ms(RATE, 3000);
+        let gap = lag_at_ms(RATE, 2000);
+        let post_len = lag_at_ms(RATE, 3000);
+        let post_lag = lag_at_ms(RATE, 1160);
+        let gap_start = pre_len;
+        let gap_end = pre_len + gap;
+        let total = gap_end + post_len + lag_at_ms(RATE, 500);
+
+        let mut a = vec![0.0f32; total];
+        write_shaped_noise(&mut a, 0, gap_start, 11, 0.5, true);
+        write_shaped_noise(&mut a, gap_end, gap_end + post_len, 23, 0.5, false);
+
+        let mut b_mono = vec![0.0f64; total];
+        for (i, &v) in a.iter().take(gap_start).enumerate() {
+            b_mono[i] = f64::from(v);
+        }
+        let b_post_at = gap_end - post_lag;
+        for i in 0..post_len {
+            b_mono[b_post_at + i] = f64::from(a[gap_end + i]);
+        }
+
+        let out = lag_at_placement(&LagAtPlacementInput {
+            a_samples: &a,
+            channels: 1,
+            refined: RefinedGapFrames {
+                start_frame: gap_start,
+                end_frame: gap_end,
+            },
+            b_mono: &b_mono,
+            b_ch: &[],
+            selected: None,
+            start_frame: gap_start,
+            cfg: &FingerprintConfig::default(),
+            sample_rate: RATE,
+        });
+        let pre = out.pre_anchor.first().copied().expect("pre shoulder");
+        let post = out.post_anchor.first().copied().expect("post shoulder");
+        assert!(
+            pre.peak_r > 0.8 && pre.frac_lag_ms.abs() < 50.0,
+            "pre must stay the near-nominal landmark, got r={} lag={} ms",
+            pre.peak_r,
+            pre.frac_lag_ms
+        );
+        assert!(
+            post.peak_r > 0.8 && (post.frac_lag_ms - (-1160.0)).abs() < 50.0,
+            "post should unlock near -1160, got r={} lag={} ms",
+            post.peak_r,
+            post.frac_lag_ms
+        );
+        assert_eq!(post.edge_pinned, Some(false));
+        assert_eq!(post.envelope_edge_pinned, Some(false));
+        assert!(
+            pre.lag0_r.is_some(),
+            "pre stays near nominal, so lag 0 is on the fine curve"
+        );
+        // Post's envelope center is ~−1160 but 100 ms bins can leave lag 0 on the +600 ms edge
+        // of the fine window. If it is present it must be the measured dead-at-b_mapped value,
+        // not a fabricated 0.0 from a missing bin (that case is `summarize_lag_curve_omits_*`
+        // and the shared-far test, where |center| > 600 ms).
+        if let Some(l0) = post.lag0_r {
+            assert!(
+                l0.abs() < 0.2,
+                "post lag 0 on the curve is dead at original b_mapped, got {l0}"
+            );
+        }
+    }
+
+    /// 31/g10 class: both shoulders true at ~−1153 ms. Off, both are dead at ±600; on, both lock.
+    #[test]
+    fn lag_at_placement_envelope_shared_far_unlocks_both() {
+        const RATE: u32 = 48_000;
+        let shift = lag_at_ms(RATE, 1153);
+        let pre_len = lag_at_ms(RATE, 3000);
+        let gap = lag_at_ms(RATE, 300);
+        let post_len = lag_at_ms(RATE, 3000);
+        // Pad so the −1153 ms B copy of pre still sits inside the haystack (2 s envelope + lag).
+        let pad = shift + lag_at_ms(RATE, 500);
+        let gap_start = pad + pre_len;
+        let gap_end = gap_start + gap;
+        let total = gap_end + post_len + shift;
+
+        let mut a = vec![0.0f32; total];
+        write_shaped_noise(&mut a, pad, gap_start, 13, 0.5, true);
+        write_shaped_noise(&mut a, gap_end, gap_end + post_len, 17, 0.5, false);
+
+        // B carries the same program 1153 ms earlier: A at t matches B at t − 1153.
+        let b_mono: Vec<f64> = (0..total)
+            .map(|i| {
+                let j = i + shift;
+                if j < a.len() {
+                    f64::from(a[j])
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+
+        let run = |env_ms: u32| {
+            let config = FingerprintConfig {
+                lag_envelope_max_lag_ms: env_ms,
+                ..FingerprintConfig::default()
+            };
+            lag_at_placement(&LagAtPlacementInput {
+                a_samples: &a,
+                channels: 1,
+                refined: RefinedGapFrames {
+                    start_frame: gap_start,
+                    end_frame: gap_end,
+                },
+                b_mono: &b_mono,
+                b_ch: &[],
+                selected: None,
+                start_frame: gap_start,
+                cfg: &config,
+                sample_rate: RATE,
+            })
+        };
+
+        let off = run(0);
+        let pre_off = off.pre_anchor.first().copied().expect("pre off");
+        let post_off = off.post_anchor.first().copied().expect("post off");
+        assert!(
+            pre_off.envelope_lag_ms.is_none() && post_off.envelope_lag_ms.is_none(),
+            "knob 0 must omit envelope_*"
+        );
+        assert!(
+            pre_off.frac_lag_ms.abs() < 600.0 && post_off.frac_lag_ms.abs() < 600.0,
+            "off: fine window stays ±600 of nominal"
+        );
+
+        let on = run(2000);
+        let pre = on.pre_anchor.first().copied().expect("pre on");
+        let post = on.post_anchor.first().copied().expect("post on");
+        assert!(
+            pre.peak_r > 0.8 && (pre.frac_lag_ms - (-1153.0)).abs() < 50.0,
+            "pre shared-far lock, got r={} lag={} ms",
+            pre.peak_r,
+            pre.frac_lag_ms
+        );
+        assert!(
+            post.peak_r > 0.8 && (post.frac_lag_ms - (-1153.0)).abs() < 50.0,
+            "post shared-far lock, got r={} lag={} ms",
+            post.peak_r,
+            post.frac_lag_ms
+        );
+        assert_eq!(pre.edge_pinned, Some(false));
+        assert_eq!(post.edge_pinned, Some(false));
+        assert_eq!(
+            pre.lag0_r, None,
+            "shared-far lock: original b_mapped is outside the fine window"
+        );
+        assert_eq!(post.lag0_r, None);
     }
 
     /// Pre-fix post search: center on `start_frame + gap_frames` with no pre-shift — stacks
@@ -3848,6 +4241,8 @@ mod tests {
             gap_frames,
             sweep,
             None,
+            0,
+            0,
         );
         let pre = pre.expect("pre shoulder");
         let post_seq = post_seq.expect("sequential post shoulder");
@@ -3923,7 +4318,7 @@ mod tests {
                 window_ms: 1000,
                 max_lag_ms: 200,
                 channel: LagChannel::Mono,
-                lag0_r: 0.1,
+                lag0_r: Some(0.1),
                 peak_r: 0.99,
                 second_peak_r: Some(0.2),
                 peak_z: Some(16.0),
@@ -3934,13 +4329,16 @@ mod tests {
                 frac_lag_ms: -10.5,
                 edge_pinned: Some(false),
                 border_displacement_ms: None,
+                envelope_lag_ms: None,
+                envelope_peak_r: None,
+                envelope_edge_pinned: None,
                 verdict: LagVerdict::TimingOffset,
             }],
             post_anchor: vec![LagSummary {
                 window_ms: 1000,
                 max_lag_ms: 200,
                 channel: LagChannel::Mono,
-                lag0_r: 0.2,
+                lag0_r: Some(0.2),
                 peak_r: 0.96,
                 second_peak_r: Some(0.3),
                 peak_z: Some(14.0),
@@ -3951,6 +4349,9 @@ mod tests {
                 frac_lag_ms: -6.2,
                 edge_pinned: Some(false),
                 border_displacement_ms: None,
+                envelope_lag_ms: None,
+                envelope_peak_r: None,
+                envelope_edge_pinned: None,
                 verdict: LagVerdict::TimingOffset,
             }],
         };
@@ -4042,6 +4443,23 @@ mod tests {
     fn write_noise(buf: &mut [f32], start: usize, end: usize, seed: u64, amp: f32) {
         for (f, slot) in buf.iter_mut().enumerate().take(end).skip(start) {
             *slot = noise(seed, f) as f32 * amp;
+        }
+    }
+
+    /// White noise with a slow unique envelope so 100 ms-bin correlation can lock (flat noise cannot).
+    fn write_shaped_noise(
+        buf: &mut [f32],
+        start: usize,
+        end: usize,
+        seed: u64,
+        amp: f32,
+        rising: bool,
+    ) {
+        let span = (end - start).max(1) as f64;
+        for (f, slot) in buf.iter_mut().enumerate().take(end).skip(start) {
+            let t = (f - start) as f64 / span;
+            let env = if rising { t } else { 1.0 - t };
+            *slot = noise(seed, f) as f32 * amp * (0.2 + 0.8 * env) as f32;
         }
     }
 
@@ -4140,8 +4558,8 @@ mod tests {
             "levels runs on every path, so the collar is always reportable"
         );
         assert_eq!(
-            (recipe.lag_window_secs, recipe.lag_max_lag_ms, recipe.seam_window_secs),
-            (None, None, None),
+            (recipe.lag_window_secs, recipe.lag_max_lag_ms, recipe.lag_envelope_max_lag_ms, recipe.seam_window_secs),
+            (None, None, None, None),
             "a summary-only corpus has no lag_decision and no seams — reporting their windows would \
              describe sweeps that never ran"
         );
@@ -4362,6 +4780,7 @@ mod tests {
                 .expect("default All gap selection"),
             &[],
             false,
+            DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
             &clip_sync_repair_fixtures::NoOpProgressReporter,
         );
         let eq = corpus.gaps[0]
@@ -4415,6 +4834,7 @@ mod tests {
                 .expect("default All gap selection"),
             &[],
             false,
+            DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
             &clip_sync_repair_fixtures::NoOpProgressReporter,
         );
         let eq = corpus.gaps[0]
@@ -4467,6 +4887,7 @@ mod tests {
             &request,
             &[],
             false,
+            DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
             &NoOpProgressReporter,
         );
         assert_eq!(
@@ -4499,13 +4920,22 @@ mod tests {
             .probe_recipe
             .as_ref()
             .expect("from-decode dump stamps the probe recipe");
-        let cfg = FingerprintConfig::from_request(&request, report.recipe.silence_peak_fraction());
+        let cfg = FingerprintConfig::from_request(
+            &request,
+            report.recipe.silence_peak_fraction(),
+            DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
+        );
         assert_eq!(
             probe.lag_window_secs,
             Some(cfg.lag_window_secs),
             "a dump that swept lag_decision must report the window it swept with"
         );
         assert_eq!(probe.lag_max_lag_ms, Some(cfg.lag_max_lag_ms));
+        assert_eq!(
+            probe.lag_envelope_max_lag_ms,
+            Some(cfg.lag_envelope_max_lag_ms),
+            "a dump that swept lag_decision must record the envelope knob, including 0"
+        );
         assert_eq!(probe.noise_collar_secs, request.normalize_window_secs);
         assert_eq!(
             probe.border_standoff_secs,
@@ -4718,6 +5148,7 @@ mod tests {
             &request,
             &[],
             false,
+            DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
             &NoOpProgressReporter,
         );
         let fp = &corpus.gaps[0];
@@ -4752,6 +5183,7 @@ mod tests {
                 .expect("default All gap selection"),
             &[],
             false,
+            DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
             &clip_sync_repair_fixtures::NoOpProgressReporter,
         );
         let fp = &corpus.gaps[0];
@@ -4909,6 +5341,7 @@ mod tests {
                 &request,
                 &[],
                 false,
+                DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
                 &NoOpProgressReporter,
             )
             .gaps
@@ -5088,6 +5521,7 @@ mod tests {
             &request,
             &[],
             false,
+            DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
             &progress,
         );
         assert_eq!(with_sources.source.a_source.codec.as_deref(), Some("flac"));
@@ -5180,6 +5614,7 @@ mod tests {
             &request,
             &[],
             false,
+            DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
             &progress,
         );
         // The descriptor-less call must leave provenance absent, not defaulted.
@@ -5195,6 +5630,7 @@ mod tests {
             &request,
             &[],
             true,
+            DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
             &progress,
         );
 
@@ -5319,6 +5755,7 @@ mod tests {
             &request,
             &[],
             false,
+            DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
             &NoOpProgressReporter,
         );
         assert_eq!(
@@ -5403,7 +5840,7 @@ mod tests {
                         window_ms: 250,
                         max_lag_ms: 200,
                         channel: LagChannel::Mono,
-                        lag0_r: 0.02,
+                        lag0_r: Some(0.02),
                         peak_r: 0.99,
                         second_peak_r: Some(0.20),
                         peak_z: Some(12.5),
@@ -5414,6 +5851,9 @@ mod tests {
                         frac_lag_ms: -16.2,
                         edge_pinned: Some(false),
                         border_displacement_ms: None,
+                        envelope_lag_ms: None,
+                        envelope_peak_r: None,
+                        envelope_edge_pinned: None,
                         verdict: LagVerdict::TimingOffset,
                     }],
                     post_anchor: vec![],

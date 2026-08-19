@@ -381,15 +381,17 @@ Details: [gap-fill-modes.md](gap-fill-modes.md) § Dual-fit rescue.
 **Gap-fingerprint dump (`--gap-fingerprints`):** after a normal repair run (align → scan → patch plan →
 patch when write mode), optionally writes a licensing-safe corpus under `DIR`. stderr phase:
 `characterizing gaps for fingerprinting`. Default output is decision/repair (D/R) axes only; add
-`--fingerprint-diagnostics` for Tier-3 analyzer fields. `--fingerprint-gap N` (repeatable, **1-based**
+`--fingerprint-diagnostics` for Tier-3 analyzer fields. `--lag-envelope-max-lag-ms MS` recenters
+`lag_decision` (default 2000; `0` disables). `--fingerprint-gap N` (repeatable, **1-based**
 — copy `N` from the gap table's `#` column; `0` and out-of-range are rejected) limits full per-bracket
 detail to the named gaps; other gaps get summary rows in `corpus.json`. Corpus filenames stay 0-based
 and are `<a8>_<b4>_t<hh-mm-ss>_g<idx>_<detail-tier>.json` (`--fingerprint-gap 3` → `…_g002_full.json`).
 They carry **no verdict token** — one was dropped 2026-08-12 because it named the fingerprint's
 bracket gate, which production routinely overrides (a `skip` fingerprint is often a patched gap);
 read `outcome.tier` in the JSON or `manifest.json` instead. Ignored when
-`--mux` is set (warning). `--fingerprint-gap` / `--fingerprint-diagnostics` without
-`--gap-fingerprints` are rejected at startup. Schema: [gap-fingerprint.md](dev/gap-fingerprint.md).
+`--mux` is set (warning). `--fingerprint-gap` / `--fingerprint-diagnostics` /
+`--lag-envelope-max-lag-ms` without `--gap-fingerprints` are rejected at startup. Schema:
+[gap-fingerprint.md](dev/gap-fingerprint.md).
 
 **Listen clips (`--gap-listen`, calibration builds):** alongside the dump, writes `<stem>_a_surround.wav`,
 `<stem>_b_surround.wav` and — only when production patched and the splice applied — `<stem>_a_patched.wav`,

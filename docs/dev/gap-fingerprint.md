@@ -35,6 +35,9 @@ clip-sync-repair A.mkv B.m4v --gap-fingerprints gap-files/ [--fingerprint-gap 3]
 - `--fingerprint-diagnostics` — also write the **Tier-3 X-set** (`seam_probe`, `wide_envelope`,
   `b_levels`, `lag_editorial`). Off by default (decision/repair fields only); slower. Needed for the
   analyzer's seam-probe reports.
+- `--lag-envelope-max-lag-ms MS` — coarse envelope half-width that recenters `lag_decision`'s ±600 ms
+  sweep (default **2000**). `0` disables recenter (nominal `b_mapped`, no `envelope_*` on the wire).
+  Probe-only — not Apply's `max_lag_blocks`. Same binary, on vs off, is the envelope-recenter exit.
 
 **`--only-gaps` / `--skip-gaps` do not narrow a dump.** They filter the *repair* plan; the dump
 selects with `--fingerprint-gap`. On a **scan-only** run (no `--wav` / `--mux` / `--repair-preview`)
@@ -377,6 +380,7 @@ where the geometry has to be recovered from the binary that wrote them):
 |-------|----------|------|
 | `noise_collar_secs` | always | pre-gap noise collar behind `levels` (fed from `normalize_window_secs`) |
 | `lag_window_secs` / `lag_max_lag_ms` | when some gap carries `lag_decision` | per-shoulder sweep (§3.6a, 1 s / 600 ms) |
+| `lag_envelope_max_lag_ms` | when some gap carries `lag_decision` | coarse envelope recenter half-width (default 2000; `0` = off) |
 | `seam_window_secs` | when some gap carries `seams` | seam window behind `splice` / `splice_dualfit` |
 | `border_standoff_secs` | always | converted from `PROBE_BORDER_STANDOFF_FRAMES` (currently 0 frames) at the dump's sample rate — the same constant every probe `GapBorderSpec` is built with |
 
@@ -385,8 +389,8 @@ every gap at `DetailTier::Summary` with `skip_baseline_placement`, which calls n
 `lag_at_placement` nor `place_on_b` — so although its `FingerprintConfig` carries those windows,
 nothing swept with them. `CorpusProbeRecipe::for_corpus` reads the built gaps rather than the config,
 and `characterize_gaps_from_decode` re-stamps after its `DetailTier::Full` rebuild, when the
-measurements exist. A `--gap-fingerprints` dump therefore carries all four keys; a bare
-`characterize_gaps` corpus carries the collar and the standoff only.
+measurements exist. A `--gap-fingerprints` dump therefore carries the lag/seam keys (including
+`lag_envelope_max_lag_ms`); a bare `characterize_gaps` corpus carries the collar and the standoff only.
 
 The standoff is recorded rather than omitted precisely so a reader never assumes production's 0.35
 applied to a measurement: adopting it would push the template a third of a second off the gap edge and
@@ -752,11 +756,25 @@ at the placement it defines — never compare across placements.**
 > serde alias, but the dotted paths inside `source.not_measured` are **data**, not schema — readers
 > must fold `baseline_lag.*` onto `lag_decision.*` themselves (the harness health check does).
 
-Each shoulder is swept **mono** over ±600 ms centered on the geometry **`b_mapped`** nominal, and the post
-shoulder is registered **sequentially** (its search is centered on `S + D_A + round(L_pre)`, not the naive
-`S + D_A`) so `L_pre` doesn't stack into the post lag. Per shoulder, `summarize_lag_curve` records:
+Each shoulder is swept **mono** over ±600 ms, **in map coordinates**, optionally **recentered** on a
+coarse 100 ms-bin envelope peak at `b_mapped` (2026-08-19,
+[TEMP-lag-envelope-recenter-plan.md](TEMP-lag-envelope-recenter-plan.md)). The B haystack is shifted by that
+shoulder's own template-edge walk-off `D` (`border_edge_displacement_frames`), so `frac_lag_ms` reads the
+true A↔B map offset (~0 at true registration) rather than `∓D` (2026-08-19,
+[archive/TEMP-lag-decision-map-coordinates-plan.md](archive/TEMP-lag-decision-map-coordinates-plan.md)).
+When that shoulder's envelope peak is interior and `peak_r ≥ 0.70`, the fine sweep centers on
+`b_mapped + envelope_lag` and `frac_lag_ms` stays **gross to original `b_mapped`**; a saturated or
+low-`r` envelope fails open to `b_mapped` (per-shoulder — 31/g7 pre can stay near nominal while post
+recenters). The post shoulder is then registered **sequentially, but only when pre is a landmark**
+(`peak_r ≥ 0.8 AND peak_z ≥ 12`, `LagSummary::is_landmark`): its search centers on
+`post_nominal + envelope_post + round(L_pre − envelope_pre)` so a shared-far envelope is not
+double-counted and a non-landmark pre fails open instead of chaining off an unreliable lock. Per shoulder,
+`summarize_lag_curve` records:
 
 - `peak_r` / `frac_lag_ms` — best correlation and its (fractional) lag.
+- **`lag0_r`** — correlation at gross lag 0 (original `b_mapped`). **Omitted** when the searched
+  window does not contain lag 0 (far envelope recenter, or a sequential post whose chain shifted the
+  fine window past nominal). A missing field is unmeasured, not a dead lag-0.
 - **`peak_z`** — the peak's z-score over the whole lag curve. The periodicity-robust uniqueness metric
   (the primary addressability gate; unique ≈ ≥12 at the 1 s window). Deflates on periodic/leveled content
   where a single-rival `prominence` would not.
@@ -765,6 +783,9 @@ shoulder is registered **sequentially** (its search is centered on `S + D_A + ro
 - **`edge_pinned`** — the integer peak sits within ~2 ms of the searched boundary (read from the curve
   extremes, so high-side masking counts). The optimum may lie **beyond** ±600 ms, so `frac_lag_ms` /
   `peak_r` are a window-clipped lower bound → `step_ms` is unreliable. Widen the sweep to clear it.
+- **`envelope_lag_ms` / `envelope_peak_r` / `envelope_edge_pinned`** — the coarse 100 ms-bin envelope
+  peak at `b_mapped` (±`lag_envelope_max_lag_ms`, default 2000). Recorded even when the guard fails
+  open. Absent when the knob is 0, and on corpora from before this field.
 
 ### `splice` — the registration step
 

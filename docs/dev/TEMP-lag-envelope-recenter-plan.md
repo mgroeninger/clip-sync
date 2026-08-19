@@ -1,7 +1,8 @@
 # TEMP — Envelope-recenter `lag_decision`
 
-**Status:** draft, 2026-08-19. Not started. Inherits map-coordinate `lag_pair` from the 14-gap
-census re-run (clean 2026-08-19); map-coordinates smoke-join still open (6/9).
+**Status:** in progress, 2026-08-19. Inherits map-coordinate `lag_pair` from the 14-gap
+census re-run (clean 2026-08-19); map-coordinates smoke-join closed at full scope, 9/9
+(2026-08-19) — that plan is now done.
 Parent: [archive/TEMP-fill-placement-registration-plan.md](archive/TEMP-fill-placement-registration-plan.md)
 (§1.2 saturation, §7 retired widened-sweep, S1 blocked on re-scoping the measurement).
 Findings; do not treat §0 as a work list.
@@ -20,7 +21,7 @@ so the true peak sits outside the fine window and the probe reports an interior 
 > record-only scope is unchanged. S2b is refuted.
 >
 > **Measured 2026-08-19 (map-coordinates census exit):**
-> [TEMP-lag-decision-map-coordinates-plan.md](TEMP-lag-decision-map-coordinates-plan.md) landed
+> [TEMP-lag-decision-map-coordinates-plan.md](archive/TEMP-lag-decision-map-coordinates-plan.md) landed
 > haystack-shift + landmark-gated chain. The 12 `shared_near_false_dead` rows are rescued (not
 > this plan's). 31/g7 pre is a unique map-true lock at **−38.1 ms** (moved from −47.5 by exactly
 > `D_pre` = 9.4 ms); post still `decorrelated` at nominal ±600 (true −1160). 31/g10 is the current
@@ -124,7 +125,7 @@ FFTs per gap plus a decode-free envelope that scan already computed.
 
 ## Exit
 
-Same binary, `lag_envelope_max_lag_ms` on vs off. Not a corpus fingerprint pass.
+Same binary, `--lag-envelope-max-lag-ms` **2000** (or omitted) vs **0**. Not a corpus fingerprint pass.
 
 **Pair 31** (the original case):
 
@@ -144,13 +145,16 @@ all agreeing within 50 ms; rebuilt 2026-08-14, archived registration plan §0.0 
 itself must not move median `frac_lag_ms` beyond re-quantization of a shifted center (a few ms):
 none of these pairs' coarse peaks should be interior-and-far enough to trigger a recenter.
 
-Compare against the **post-map-coordinates** baseline, not Step 5’s −21.9 ms. Map-coordinates
-already spent the probe-`D` half: on the 6/9 fingerprinted so far (`{2,3,13,14,18,22}`),
-measured-lag medians moved peak_r −16.0 → **−8.6 ms**, peak_z −15.8 → **−8.4 ms**. Recenter
-moves neither remaining term. Do not spend that ~`D` move as a recenter failure, and do not
-spend production α (~25 ms late) as a tolerance either. Full 9/9 (pairs 32, 47, 51) is still
-open on the map-coordinates smoke-join; this plan’s own join re-checks the same cell. See
-[TEMP-lag-decision-map-coordinates-plan.md](TEMP-lag-decision-map-coordinates-plan.md) Exit —
+Compare against the **post-map-coordinates** baseline, not Step 5’s −21.9 ms / −26.1 ms. Full
+9/9 (`{2,3,13,14,18,22,32,47,51}` peak_r; 8/8 dropping 22 under peak_z), map-coordinates already
+spent the probe-`D` half: measured-lag medians moved peak_r −21.9 → **−18.8 ms**, peak_z
+−26.1 → **−18.0 ms**. (The 6-pair partial subset checked mid-run had suggested a larger move,
+−16.0→−8.6 / −15.8→−8.4 — that overstated the full-corpus shift because it over-represented the
+larger-`D` pairs; the number above supersedes it.) Recenter moves neither remaining term. Do not
+spend that ~`D` move as a recenter failure, and do not spend production α (~25 ms late) as a
+tolerance either. This plan’s own smoke join re-checks the same cell against these numbers, not
+Step 5’s. See
+[TEMP-lag-decision-map-coordinates-plan.md](archive/TEMP-lag-decision-map-coordinates-plan.md) Exit —
 results, and archived
 [§ Step 5](archive/TEMP-fill-placement-registration-plan.md#step-5-result-2026-08-14--the-bias-is-two-terms-and-only-one-is-the-probe).
 

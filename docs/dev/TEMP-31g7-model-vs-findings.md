@@ -7,7 +7,7 @@ verification — the **Errata** at the end lists each one and why. Written after
 (`gap-files/2026-08-17-s2b-floor-probe/`, arms A/B/C complete) and the g007 fingerprint
 cross-check. Descriptive: it states the model and where the measurements land on it. **It proposes
 no change** — S2b was refuted the same day and archived; live fix work is
-[TEMP-lag-decision-map-coordinates-plan.md](TEMP-lag-decision-map-coordinates-plan.md),
+[TEMP-lag-decision-map-coordinates-plan.md](archive/TEMP-lag-decision-map-coordinates-plan.md),
 [TEMP-lag-envelope-recenter-plan.md](TEMP-lag-envelope-recenter-plan.md), and BACKLOG S1.
 One-sided closeability as a *gap cell* (31/g7 vs 26/g6) is parked in
 [TEMP-31g7-gap-shape-vocabulary.md](archive/TEMP-31g7-gap-shape-vocabulary.md), not here.
@@ -24,7 +24,7 @@ One-sided closeability as a *gap cell* (31/g7 vs 26/g6) is parked in
 > sorted **12** in-reach false-deads (walk-off template / uncorrected `frac_lag` chain), **1**
 > collapsed-bridge (31/g7), **1** shared-far offset (31/g10; not in the 13 — `peak_z` 8.6 < 12).
 > Hole 2 is still empty. Change:
-> [TEMP-lag-decision-map-coordinates-plan.md](TEMP-lag-decision-map-coordinates-plan.md).
+> [TEMP-lag-decision-map-coordinates-plan.md](archive/TEMP-lag-decision-map-coordinates-plan.md).
 > Recenter still owns the far offsets. Do not read "type" in §8 as a cell or an S2b population.
 >
 > **Map-coordinates landed and confirmed, 2026-08-19.** `lag_pair` now shifts each shoulder's B
@@ -40,7 +40,7 @@ One-sided closeability as a *gap cell* (31/g7 vs 26/g6) is parked in
 > from a post-map-coordinates dump before being cited as current — the corpus-wide join is not
 > expected to change the 2-of-68 headline (outliers are 930–1390 ms; the fix moves things by tens
 > of ms), but has not been re-run. See
-> [TEMP-lag-decision-map-coordinates-plan.md](TEMP-lag-decision-map-coordinates-plan.md) § Exit —
+> [TEMP-lag-decision-map-coordinates-plan.md](archive/TEMP-lag-decision-map-coordinates-plan.md) § Exit —
 > results for the validated shoulder-level numbers this callout draws from.
 
 Pair 31 / gap 8 (`#` 1-based; dump `g7`; `a_start_secs` 1725.6968125, A gap 1.1188 s, 48 kHz).

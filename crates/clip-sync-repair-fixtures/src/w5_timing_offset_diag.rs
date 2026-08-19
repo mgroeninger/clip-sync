@@ -167,7 +167,7 @@ const CSV_FIELDS: &[&str] = &[
 fn lag_field_vals(l: Option<&LagSummary>) -> [String; 4] {
     match l {
         Some(s) => [
-            format!("{:.4}", s.lag0_r),
+            s.lag0_r.map(|r| format!("{r:.4}")).unwrap_or_default(),
             format!("{:.4}", s.peak_r),
             format!("{:.3}", s.frac_lag_ms),
             verdict_str(s.verdict).to_string(),

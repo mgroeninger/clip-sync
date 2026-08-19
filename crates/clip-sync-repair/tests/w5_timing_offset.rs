@@ -40,8 +40,8 @@ fn timing_offset_fixture_reproduces_g003_signature() {
 
     // 1. Dead at lag 0 — this is the `waveform_floor` skip the seam gate produces.
     assert!(
-        pre.lag0_r < 0.3 && post.lag0_r < 0.3,
-        "expected lag-0 seam dead: pre_lag0={:.3} post_lag0={:.3}",
+        pre.lag0_r.expect("lag 0 in window") < 0.3 && post.lag0_r.expect("lag 0 in window") < 0.3,
+        "expected lag-0 seam dead: pre_lag0={:?} post_lag0={:?}",
         pre.lag0_r,
         post.lag0_r
     );
@@ -165,7 +165,10 @@ fn g003_real_fingerprint_is_timing_offset_exemplar() {
             s.peak_r > 0.9,
             "g003 recovers strongly under a shift: {s:?}"
         );
-        assert!(s.lag0_r.abs() < 0.35, "g003 seam dead at lag 0: {s:?}");
+        assert!(
+            s.lag0_r.expect("lag 0 in window").abs() < 0.35,
+            "g003 seam dead at lag 0: {s:?}"
+        );
     }
 
     // The recovered offset drifts across the gap, |pre| > |post| (−16 vs −8 ms) — the asymmetry the

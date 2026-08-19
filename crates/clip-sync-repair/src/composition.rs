@@ -188,6 +188,7 @@ fn gap_listen(
             fingerprint_dir: fingerprint_dir.to_path_buf(),
             wav_dir,
             fingerprint_diagnostics: config.repair.fingerprint_diagnostics,
+            lag_envelope_max_lag_ms: config.repair.lag_envelope_max_lag_ms,
             crossfade_ms: config.repair.crossfade_ms,
         },
     )
@@ -248,6 +249,7 @@ fn dump_gap_fingerprints(
         &request,
         &select,
         config.repair.fingerprint_diagnostics,
+        config.repair.lag_envelope_max_lag_ms,
         progress,
     );
     if let Some(reason) = corpus.source.incomparable {
