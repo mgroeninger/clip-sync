@@ -16,8 +16,11 @@ so the true peak sits outside the fine window and the probe reports an interior 
 > became measurable. Same measurement: the donor bridge across that gap is **zero-length**, so
 > for 31/g7 recentering enables *detection* (and a skip verdict on `bridge ≈ 0`), not a fill —
 > see [archive/TEMP-31g7-gap-shape-vocabulary.md](archive/TEMP-31g7-gap-shape-vocabulary.md) §9. This plan's
-> record-only scope is unchanged; S2b is refuted, so nothing orders ahead of this plan any more
-> (BACKLOG § *Fill placement*).
+> record-only scope is unchanged. S2b is refuted, but
+> [TEMP-lag-decision-map-coordinates-plan.md](TEMP-lag-decision-map-coordinates-plan.md)
+> **orders ahead**: this plan's fine sweep is existing `lag_pair`, and the 13-gap census found
+> 12 in-reach false-deads that are not recenter customers (only 31/g10 is the shared-far member
+> of that set). Do not merge the plans.
 Production still places those later gaps because the fill search is ±10 s off the same map. The
 measurement cannot confirm them.
 
@@ -46,6 +49,9 @@ reported lag is `envelope_center + fine_residual`.
   or Apply’s `max_lag_blocks = 10` (equivalence gate). The recenter probe may use a **wider**
   envelope window than Apply; that must be a separate parameter.
 - Do not put the result in a gate. Record-only, same as S1.
+- Do not treat lag-verdict one-dead as this plan's population. The 12 in-reach false-deads
+  belong to map-coordinates; this plan owns **shared far offsets** (31/g10, pair 31's later
+  gaps, pair 50).
 
 ---
 
@@ -77,9 +83,13 @@ In `lag_at_placement` (fingerprint path now; production path when S1 is re-scope
    envelope. Record `envelope_lag_ms`, `envelope_peak_r`, `envelope_edge_pinned`.
 2. **Guard.** Recenter iff `envelope_peak_r ≥ min_envelope_r` (reuse 0.70) **and** the peak is
    ≥1 bin inside the coarse window. Otherwise `start_frame` stays `b_mapped`.
-3. **Fine.** Existing `lag_pair` ±`lag_max_lag_ms` (600) / 1 s template, centered on
-   `b_mapped + round(envelope_lag)`. Report `frac_lag_ms` gross to original `b_mapped`.
-   `edge_pinned` remains a property of the **fine** window around the new center.
+3. **Fine.** `lag_pair` ±`lag_max_lag_ms` (600) / 1 s template, centered on
+   `b_mapped + round(envelope_lag)`, **after** map-coordinates (search and chain in map
+   coordinates; post chained only if pre is a unique landmark). Report `frac_lag_ms` gross to
+   original `b_mapped`. `edge_pinned` remains a property of the **fine** window around the new
+   center. Until map-coordinates lands, 31/g10's post reaching −1152 is a weak-pre chain, not
+   this recenter — after landmark-only chain that post is *supposed* to look dead at nominal
+   ±600 until this plan runs.
 
 Contract `_contract.placement` must say so: “fine sweep at `b_mapped + envelope_lag` when the
 coarse peak is interior; else `b_mapped`.” Old corpora stay valid (`envelope_*` absent ⇒
@@ -99,7 +109,8 @@ Same binary, `lag_envelope_max_lag_ms` on vs off. Not a corpus fingerprint pass.
 | gap | expect |
 |-----|--------|
 | 31/g7 (failure, true ≈ −40 ms) | coarse edge-pinned or low-`r` → **no recenter**; `frac_lag_ms` stays ≈ −50 ms |
-| 31/g8, g10, g11 (true ≈ −1.11 s) | coarse interior ≈ −1.11 s; fine `frac_lag_ms` agrees within ~50 ms; `peak_r` usable; fine `edge_pinned` false |
+| 31/g10, between map-coordinates and this plan | pre still weak / non-landmark; **post dead at nominal ±600** (no weak-pre chain). Not a regression |
+| 31/g8, g10, g11 (true ≈ −1.11 s), after this plan | coarse interior ≈ −1.11 s; fine `frac_lag_ms` agrees within ~50 ms; `peak_r` usable; fine `edge_pinned` false |
 
 **Pair 50** (same class, larger). Consensus **+2.7891 s**, last six gaps unmeasurable under ±600 ms
 (`. . . . X X X X X X` against pair 31's `. . X X X`). At +2.79 s it is outside the proposed
@@ -107,12 +118,15 @@ Same binary, `lag_envelope_max_lag_ms` on vs off. Not a corpus fingerprint pass.
 the right size — if the coarse window has to reach 3 s to see pair 50, set it deliberately.
 
 **Smoke join** on the oriented load-bearing cell `{2, 3, 13, 14, 18, 22, 32, 47, 51}` (9 pairs,
-all agreeing within 50 ms; rebuilt 2026-08-14, archived registration plan §0.0 Step 3). Median
-`frac_lag_ms` must not move beyond re-quantization of a shifted center (a few ms): none of these
-pairs' coarse peaks should be interior-and-far enough to trigger a recenter. Do not spend the
-~22 ms signed bias as a tolerance — that bias is two terms (probe `D`, recorded per shoulder as
-`border_displacement_ms`; production α ≈ 25 ms late) and a recenter moves neither. See archived
-[§ Step 5](archive/TEMP-fill-placement-registration-plan.md#step-5-result-2026-08-14--the-bias-is-two-terms-and-only-one-is-the-probe).
+all agreeing within 50 ms; rebuilt 2026-08-14, archived registration plan §0.0 Step 3). Recenter
+itself must not move median `frac_lag_ms` beyond re-quantization of a shifted center (a few ms):
+none of these pairs' coarse peaks should be interior-and-far enough to trigger a recenter.
+Map-coordinates **will** move that median: the probe-`D` half of Step 5's −21.9 ms bias leaves
+`frac_lag_ms` on purpose and stays on `border_displacement_ms`. Do not spend that move as a
+recenter failure, and do not spend production α (~25 ms late) as a tolerance either — a
+recenter moves neither remaining term. See archived
+[§ Step 5](archive/TEMP-fill-placement-registration-plan.md#step-5-result-2026-08-14--the-bias-is-two-terms-and-only-one-is-the-probe)
+and [TEMP-lag-decision-map-coordinates-plan.md](TEMP-lag-decision-map-coordinates-plan.md) Exit.
 
 26/g6 must stay near-nominal (≈ −50 ms), not follow the −1.45 s slide.
 

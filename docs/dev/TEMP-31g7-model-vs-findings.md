@@ -6,8 +6,9 @@ that archived measurement had already refuted; this revision removes every claim
 verification — the **Errata** at the end lists each one and why. Written after the S2b floor probe
 (`gap-files/2026-08-17-s2b-floor-probe/`, arms A/B/C complete) and the g007 fingerprint
 cross-check. Descriptive: it states the model and where the measurements land on it. **It proposes
-no change** — fix work lives in
-[TEMP-unmatchable-shoulder-plan.md](archive/TEMP-unmatchable-shoulder-plan.md) (S2b) and BACKLOG S1.
+no change** — S2b was refuted the same day and archived; live fix work is
+[TEMP-lag-decision-map-coordinates-plan.md](TEMP-lag-decision-map-coordinates-plan.md),
+[TEMP-lag-envelope-recenter-plan.md](TEMP-lag-envelope-recenter-plan.md), and BACKLOG S1.
 One-sided closeability as a *gap cell* (31/g7 vs 26/g6) is parked in
 [TEMP-31g7-gap-shape-vocabulary.md](archive/TEMP-31g7-gap-shape-vocabulary.md), not here.
 
@@ -17,6 +18,14 @@ One-sided closeability as a *gap cell* (31/g7 vs 26/g6) is parked in
 > step) and **S2b is refuted with it**. This note's 26/g6 findings and the model/locks/populations
 > stand; every 31/g7 "post is unmatchable" reading below silently means "within ±600 ms reach".
 > Resolution: [TEMP-31g7-gap-shape-vocabulary.md](archive/TEMP-31g7-gap-shape-vocabulary.md) §9.
+>
+> **Same evening, 13-gap census:** the §8 lag-verdict one-dead row is a **dump predicate**, not a
+> media class. A throat-adjacent non-chained ±2000 ms sweep on the 13 (plus 31/g10 as control)
+> sorted **12** in-reach false-deads (walk-off template / uncorrected `frac_lag` chain), **1**
+> collapsed-bridge (31/g7), **1** shared-far offset (31/g10; not in the 13 — `peak_z` 8.6 < 12).
+> Hole 2 is still empty. Change:
+> [TEMP-lag-decision-map-coordinates-plan.md](TEMP-lag-decision-map-coordinates-plan.md).
+> Recenter still owns the far offsets. Do not read "type" in §8 as a cell or an S2b population.
 
 Pair 31 / gap 8 (`#` 1-based; dump `g7`; `a_start_secs` 1725.6968125, A gap 1.1188 s, 48 kHz).
 
@@ -568,7 +577,8 @@ shoulder surface — found by the archived ±2000 ms sweep, not by `top2_spacing
 ### 6.9 What this changes
 
 1. Among the 68, the S2b *symptom* (one confident landmark, large backward slide) is **1 of 68**.
-   That is not the same as the lag-verdict one-dead *type*, which is 13 of 308 patched (§8).
+   That is not the same as the lag-verdict one-dead **dump predicate**, which is 13 of 308 patched
+   (§8) — and is mostly sensor error, not a class (banner).
 2. **Pair 26 is the better lead for the source defect**: every sensor healthy and agreeing, a
    measured comb, a first-ranked truth — and a defined one-probe experiment. It is not the S2b
    plan's class.
@@ -688,7 +698,7 @@ gaps carry both shoulders. No `align_adjustment_secs` in these cuts:
 
 | fingerprint test (no `applied`) | n | who |
 |---|---|---|
-| one unique (`peak_r ≥ 0.8`, `peak_z ≥ 12`) + one no-peak (`prominence < 0.02` or `peak_r < 0.3`) | **13** | lag-verdict one-dead type — includes 31/g7, also 31/g10 (a *good* patch: post landmark at −1152 ms, followed) |
+| one unique (`peak_r ≥ 0.8`, `peak_z ≥ 12`) + one no-peak (`prominence < 0.02` or `peak_r < 0.3`) | **13** | lag-verdict one-dead **dump predicate** — includes 31/g7; **not** 31/g10 (`peak_z` 8.6 < 12). Census 2026-08-18: 12 of 13 are in-reach false-deads, not a media class (banner) |
 | `splice_dualfit` `max ≥ 0.9` and `min < 0.20` and `gate_pass: false` | **1** | **31/g7** (0.966 / 0.123) |
 | `splice_dualfit.gate_pass: true` | 297 / 308 | so a bare `gate_pass: false` is 11 gaps, not a mark |
 
@@ -700,7 +710,8 @@ production already declined.
 post with no peak (`r` 0.075 vs 0.074, prominence 0.001), dual-fit 0.966 / 0.123 fail. (The
 envelope reads the window edge and is self-flagged unreliable — a caveat, not a signature; rev 1's
 `|lag| ≥ 900` signature row is withdrawn, see Errata.) S2b's "one dead shoulder ⇒ change `min`"
-is aimed at the 13-gap verdict type, not at this mark.
+was aimed at this dump predicate, not at this mark — and the predicate itself is mostly sensor
+error (banner), so it was never a population for changing `min`.
 
 **26/g6** is the opposite fingerprint: both shoulders live, dual-fit **passes** (0.993 / 0.931),
 envelope `lag_ms` 0 with `peak_r == nominal_r`. §6.8's curve shape is a **broad unique spike**
