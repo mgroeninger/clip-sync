@@ -2,14 +2,14 @@
 
 Open follow-up work for `clip-sync`. See [PLAN.md](PLAN.md) for architecture, [docs/pipeline.md](docs/pipeline.md) for the repair pipeline (phase by phase), [docs/dev/corpus-validation.md](docs/dev/corpus-validation.md) for the test corpus, and [docs/error-mapping.md](docs/error-mapping.md) for error handling. Shipped work is recorded in `docs/dev/archive/*` and git history.
 
-Last updated: 2026-08-18.
+Last updated: 2026-08-19.
 
 **How this doc works**
 
 - **Open** — actionable items below (problem / direction kept for open work only).
 - **Plans** — active drafts under `docs/dev/TEMP-*.md`; archive when shipped.
 
-**Next:** [Fill placement](#fill-placement-two-defects--registration-ignored-26g6-class-and-step-gap-with-empty-donor-bridge-31g7) — 31/g7 diagnosis complete (step gap, empty bridge; S2b refuted); 13-gap census complete (12 of 13 are in-reach false-deads): [TEMP-lag-decision-map-coordinates-plan.md](docs/dev/TEMP-lag-decision-map-coordinates-plan.md) orders ahead of recenter; 26/g6 axis-2 start-sweep oracle still the cheapest open probe; [TEMP-lag-envelope-recenter-plan.md](docs/dev/TEMP-lag-envelope-recenter-plan.md) (unblocked after map-coordinates; unblocks S1); [Donor registration leftovers](#donor-registration-leftovers); [Repair R6](#repair-r6-follow-ups); [Residual gate](#residual-gate-follow-ups).
+**Next:** [Fill placement](#fill-placement-two-defects--registration-ignored-26g6-class-and-step-gap-with-empty-donor-bridge-31g7) — 31/g7 diagnosis complete (step gap, empty bridge; S2b refuted); 13-gap census complete. [TEMP-lag-decision-map-coordinates-plan.md](docs/dev/TEMP-lag-decision-map-coordinates-plan.md): Change landed 2026-08-19, 14-gap census exit clean, 9-pair smoke-join 6/9 (pairs 32, 47, 51 open). [TEMP-lag-envelope-recenter-plan.md](docs/dev/TEMP-lag-envelope-recenter-plan.md) is the next Change in this chain (inherits that `lag_pair`; unblocks S1). 26/g6 axis-2 start-sweep oracle still the cheapest open probe (parallel, not this chain). [Donor registration leftovers](#donor-registration-leftovers); [Repair R6](#repair-r6-follow-ups); [Residual gate](#residual-gate-follow-ups).
 
 ---
 
@@ -17,8 +17,8 @@ Last updated: 2026-08-18.
 
 | Plan | Covers |
 |------|--------|
-| [TEMP-lag-decision-map-coordinates-plan.md](docs/dev/TEMP-lag-decision-map-coordinates-plan.md) | Search and chain `lag_decision` in map coordinates so in-reach locks are not reported `Decorrelated` when the A template walked off the throat — draft, not started; orders ahead of envelope-recenter |
-| [TEMP-lag-envelope-recenter-plan.md](docs/dev/TEMP-lag-envelope-recenter-plan.md) | Recenter `lag_decision`'s ±600 ms sweep on a coarse envelope peak (independent of the fill search) so pair 31's −1.11 s offset is measurable — draft, not started; waits on map-coordinates (`lag_pair` is the fine sweep) |
+| [TEMP-lag-decision-map-coordinates-plan.md](docs/dev/TEMP-lag-decision-map-coordinates-plan.md) | Search and chain `lag_decision` in map coordinates so in-reach locks are not reported `Decorrelated` when the A template walked off the throat — in progress, 2026-08-19; Change landed (`lag_pair` haystack-shift + landmark-gated chain); 14-gap census exit clean; 9-pair smoke-join 6/9 (pairs 32, 47, 51 open). Orders ahead of envelope-recenter |
+| [TEMP-lag-envelope-recenter-plan.md](docs/dev/TEMP-lag-envelope-recenter-plan.md) | Recenter `lag_decision`'s ±600 ms sweep on a coarse envelope peak (independent of the fill search) so pair 31's −1.11 s offset is measurable — draft, not started; inherits the landed map-coordinate `lag_pair` (14-gap census is the off-knob baseline: 31/g10 both dead at nominal). Own smoke-join re-checks the same 9-pair cell against the post-map-coordinates baseline |
 | [TEMP-nway-donor-alignment-plan.md](docs/dev/TEMP-nway-donor-alignment-plan.md) | N-way donor alignment: repair one damaged copy from multiple donors — draft, not started |
 | [TEMP-flac-output-plan.md](docs/dev/TEMP-flac-output-plan.md) | In-process `--flac` lossless output (peer of `--wav`, no ffmpeg) — draft, not started |
 
@@ -45,16 +45,18 @@ Two ear-confirmed stutters, two distinct fixes. Do not re-open the source/gate f
 
 | Gap | What went wrong | Live work |
 |-----|-----------------|-----------|
-| 31/g7 (−977 ms) | **Diagnosis complete 2026-08-18:** the gap *is* pair 31's map step — post shoulder uniquely at −1160 ms (wide sweep, gap-shape §9), pre at −47 ms, donor bridge zero-length; B is continuous, so **any** donor fill duplicates program, and the shipped −977 is `min`'s best compromise between the two true lags (0.437/0.437). Neither one-seam fill nor dual-fit-with-reach can patch it; honest action = reasoned skip / step verdict | S2b **refuted; archived 2026-08-18** ([archive/TEMP-unmatchable-shoulder-plan.md](docs/dev/archive/TEMP-unmatchable-shoulder-plan.md)). **Census complete 2026-08-18** (14 rows: 13 one-dead + 31/g10 control): 12 `shared_near_false_dead`, 1 `collapsed_bridge` (this gap), 1 `shared_far_offset` (31/g10). Hole 2 still empty. Sensor honesty, in order: (1) [TEMP-lag-decision-map-coordinates-plan.md](docs/dev/TEMP-lag-decision-map-coordinates-plan.md) — the 12 are in-reach; dump searched/chained in template coordinates; (2) [TEMP-lag-envelope-recenter-plan.md](docs/dev/TEMP-lag-envelope-recenter-plan.md) — 31/g10 and pair 31's later gaps; (3) collapsed-bridge skip verdict — spec after (1) so `bridge_ms` is measured in map coordinates. Do not add a dump ±2000 field as the fix for the 12 |
+| 31/g7 (−977 ms) | **Diagnosis complete 2026-08-18:** the gap *is* pair 31's map step — post shoulder uniquely at −1160 ms (wide sweep, gap-shape §9), pre map-true **−38.1 ms** (`D_pre` = 9.4; was −47.5 in template coordinates), donor bridge zero-length; B is continuous, so **any** donor fill duplicates program, and the shipped −977 is `min`'s best compromise between the two true lags (0.437/0.437). Neither one-seam fill nor dual-fit-with-reach can patch it; honest action = reasoned skip / step verdict | S2b **refuted; archived 2026-08-18** ([archive/TEMP-unmatchable-shoulder-plan.md](docs/dev/archive/TEMP-unmatchable-shoulder-plan.md)). **Census complete 2026-08-18** (14 rows: 13 one-dead + 31/g10 control): 12 `shared_near_false_dead`, 1 `collapsed_bridge` (this gap), 1 `shared_far_offset` (31/g10). Hole 2 still empty. Sensor honesty, in order: (1) [TEMP-lag-decision-map-coordinates-plan.md](docs/dev/TEMP-lag-decision-map-coordinates-plan.md) — Change landed; the 12 rescued; 9-pair smoke-join 6/9 remaining; (2) [TEMP-lag-envelope-recenter-plan.md](docs/dev/TEMP-lag-envelope-recenter-plan.md) — 31/g10, pair 31's later gaps, and this gap's **post** (detection only; pre is already a map-true landmark); (3) collapsed-bridge skip verdict — spec after (1) so `bridge_ms` is measured in map coordinates. Do not add a dump ±2000 field as the fix for the 12 |
 | 26/g6 (−1450 ms) | a near-nominal placement existed and lost on score; fingerprint is healthy (dual-fit passes, both shoulders live) | **Cheapest open lead:** oracle the axis-2 start sweep at this gap — what did the objective score at ≈−50 ms vs −1450 ms (findings §6.8). Unambiguous right answer; not gated on S2b or the vocabulary decision. Beyond that, no plan. S2(2) refuted a nominal-referenced `LATE_START_PENALTY`. A registration-referenced prior is an idea, not a Change. Do not retune `fill_fit_early_start_penalty_scale` |
 
-**Recenter plan unblocked (S2b refuted 2026-08-18), ordered after map-coordinates:**
+**Recenter plan unblocked (S2b refuted 2026-08-18); next Change after map-coordinates:**
 [TEMP-lag-envelope-recenter-plan.md](docs/dev/TEMP-lag-envelope-recenter-plan.md) (pair 31, then
-pair 50) — 31/g7's post landmark pins pair 31's step at the 28:45 gap itself (the plan's "from
-47:32 onward" was where it next became measurable; reconcile when the plan starts). Its fine
-sweep is `lag_pair`, so [TEMP-lag-decision-map-coordinates-plan.md](docs/dev/TEMP-lag-decision-map-coordinates-plan.md)
-lands first (census: 31/g10 is the one shared-far member of the 14; the 12 are not recenter
-customers). That unblocks S1. Do not write S1 until the recenter exit is met.
+pair 50). 31/g7's post uniquely at −1160 ms pins the step at that gap's exit (28:45); "from
+47:32 onward" was where it next became measurable. Map-coordinates Change landed 2026-08-19
+(`lag_pair` is already the fine sweep recenter inherits); remaining there is the 9-pair
+smoke-join (6/9). Recenter's own join re-checks the same cell against that post-map-coordinates
+baseline. Census: 31/g10 is the one shared-far member of the 14; the 12 are not recenter
+customers; 31/g7 pre (−38.1 ms) is already a map-true landmark. That unblocks S1. Do not write
+S1 until the recenter exit is met.
 
 **Data.** Oriented baseline `gap-files/2026-08-13-repeat-terms/` (53 pairs, **317** patched gaps) and dumps `gap-files/2026-08-13-v0.6.0-oriented/`. Counts from the mixed-A/B set are superseded; both failures are correctly oriented and unchanged. See archived §0.0 before quoting any corpus rate.
 

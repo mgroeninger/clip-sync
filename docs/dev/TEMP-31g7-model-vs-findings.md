@@ -26,6 +26,22 @@ One-sided closeability as a *gap cell* (31/g7 vs 26/g6) is parked in
 > Hole 2 is still empty. Change:
 > [TEMP-lag-decision-map-coordinates-plan.md](TEMP-lag-decision-map-coordinates-plan.md).
 > Recenter still owns the far offsets. Do not read "type" in §8 as a cell or an S2b population.
+>
+> **Map-coordinates landed and confirmed, 2026-08-19.** `lag_pair` now shifts each shoulder's B
+> search anchor by that shoulder's own `border_edge_displacement_frames`, removing the
+> uncorrected-`D` offset §6.3 point 2 flagged. Both of this doc's exemplars moved by exactly the
+> predicted `D`, not qualitatively: **31/g7 pre** −47.46 → **−38.1 ms** (`D_pre` 9.36 ms), still
+> the unique landmark, `peak_r`-class unchanged; post stays `decorrelated` at nominal ±600 (true
+> −1160, recenter's territory, unchanged). **26/g6** now reads **−41.75 / −45.43 ms** both
+> shoulders (was −59.77 / −40.89), matching the archived plan's independent −41 ms figure almost
+> exactly — still both-live, still `balanced`, still the −1.45 s slide is the same unexplained
+> scoring choice (§6.8). **Every other number in §§2, 5, 6, 8 is pre-fix-vintage** (`peak_r`,
+> `peak_z`, the percentile table, the 68/13/308-gap population counts) and should be re-derived
+> from a post-map-coordinates dump before being cited as current — the corpus-wide join is not
+> expected to change the 2-of-68 headline (outliers are 930–1390 ms; the fix moves things by tens
+> of ms), but has not been re-run. See
+> [TEMP-lag-decision-map-coordinates-plan.md](TEMP-lag-decision-map-coordinates-plan.md) § Exit —
+> results for the validated shoulder-level numbers this callout draws from.
 
 Pair 31 / gap 8 (`#` 1-based; dump `g7`; `a_start_secs` 1725.6968125, A gap 1.1188 s, 48 kHz).
 
@@ -135,7 +151,7 @@ the archived registration plan's wide sweep
 | sensor | what it measures | reading |
 |---|---|---|
 | `lag_decision.pre_anchor` | waveform lag, 1 s window at `b_mapped`, ±600 ms | **−47.46 ms**, `peak_r` 0.829, prominence 0.552, `peak_z` 18.3, `timing_offset` |
-| `lag_decision.post_anchor` | same, post shoulder (window re-centered by the pre lag, §6.6) | **no peak**: `peak_r` 0.0752 vs `second_peak_r` 0.0741, prominence 0.0011, `decorrelated` |
+| `lag_decision.post_anchor` | same, post shoulder (window re-centered by the pre lag **only if pre clears the landmark bar**, §6.6 — moot here, pre is a landmark) | **no peak**: `peak_r` 0.0752 vs `second_peak_r` 0.0741, prominence 0.0011, `decorrelated` |
 | archived §4.3 wide sweep | pre-shoulder template Pearson at **every integer lag in ±2000 ms** | **single spike at −47 ms (r 0.829), flat floor everywhere else**. At −925.1 ms — where a one-period-back rival would sit — r is **0.0867**, 9.6× below the peak. Quote: *"31/g7 is not periodic at all"* |
 | `splice.step_ms` | disagreement between the two shoulders | 378.30 ms |
 | `splice_dualfit` | each shoulder at its own best lag | pre **0.966**, post **0.123**, `gate_pass: false` |
@@ -439,6 +455,15 @@ The patcher reached **930 ms earlier in B** than the surviving audio points to.
 3. **The corrections are tens of milliseconds.** The outliers below are 930–3057 ms — 40–100×
    larger. Applying the correction would sharpen the core and cannot move the outlier set.
 
+> **Convention changed 2026-08-19 (map-coordinates landed).** Point 2's `−D_pre` / `+D_post`
+> zero-offset was a property of the pre-fix `lag_pair`, not a permanent fact about `frac_lag_ms`.
+> `lag_pair` now shifts each shoulder's own search anchor by its own displacement, so under
+> current code a perfectly registered pair reads **~0**, not `∓D`. §6.4's `post_lag − pre_lag =
+> D_pre + D_post` decomposition (median +7.81 ms) is therefore a pre-fix-vintage measurement of a
+> convention that no longer applies going forward — a new dump should show that quantity shrink
+> toward 0, not reproduce +7.81 ms. That is expected and is not evidence the decomposition was
+> wrong; it is evidence the offset it was measuring has since been corrected out at the source.
+
 ### 6.4 The corpus reproduces the documented decomposition, which validates the axis
 
 On the 64 agreeing gaps:
@@ -488,15 +513,23 @@ The patcher searches ±10 s. The sensor does **not** have one fixed window:
 
 - The **pre** shoulder is swept ±600 ms around nominal (`lag_max_lag_ms`, default pinned at
   `contract.rs:363`).
-- The **post** sweep is **re-centered by the measured pre lag** (sequential registration, ledger
-  A2; `lag_pair` at `measure.rs:893`), and its `frac_lag_ms` is reported **gross** — relative
-  to nominal, not to its own window center.
+- The **post** sweep is **re-centered by the measured pre lag, but only when the pre lock clears
+  the §6.7 landmark bar** (`peak_r ≥ 0.8 AND peak_z ≥ 12`, `LagSummary::is_landmark`; sequential
+  registration, ledger A2; `lag_pair` at `measure.rs:900-913`). A non-landmark pre no longer
+  recenters post at all — post fails open to nominal. Its `frac_lag_ms` is reported **gross** —
+  relative to nominal, not to its own window center.
 
-Rev 1 described both shoulders as ±600 ms at nominal; that is wrong, and 31/g10 is the proof: its
-post reads `frac_lag_ms` **−1152.1 ms** (`peak_r` 0.995) under a 600 ms max lag, by chaining off a
-weak pre (−553.6 ms, `peak_r` 0.158). Consequences: "in reach" must be judged **per shoulder**; a
-confident post landmark can legitimately sit beyond ±600 ms of nominal; and a dead pre does not
-widen the post's reach — it only recenters it by whatever the pre reported.
+Rev 1 described both shoulders as ±600 ms at nominal; that is wrong, but the original proof of it
+is now historical, not reproducible. **Corrected 2026-08-19 (map-coordinates landed):** on the
+pre-fix dump, 31/g10's post read `frac_lag_ms` **−1152.1 ms** (`peak_r` 0.995) under a 600 ms max
+lag by chaining off a weak, non-landmark pre (−553.6 ms, `peak_r` 0.158) — that unconditional
+chain was itself a bug. Landmark-gating fixed it: post-fix, 31/g10's post reads `decorrelated` at
+−444 ms, `r` 0.19, because its pre never clears the landmark bar and post correctly fails open.
+Consequences, restated: "in reach" must be judged **per shoulder**; a confident post landmark can
+legitimately sit beyond ±600 ms of nominal (this is exactly what recenter's post-map-coordinates
+world needs to handle for 31/g8/g10/g11, see
+[TEMP-lag-envelope-recenter-plan.md](TEMP-lag-envelope-recenter-plan.md)); and a non-landmark pre
+no longer widens or recenters the post's reach at all — it fails open, full stop.
 
 Beyond its window the sensor cannot report a misplacement, only silence about it. `decorrelated`
 means *"not found in reach"*, never *"the patcher is wrong"* (§7.2).
@@ -826,7 +859,10 @@ Rev 1 is in git history at this path. Removed, with reasons:
    6.4). What remains for pair 26 is the sharper open question in §6.8.
 8. **Symmetric "±600 ms on both shoulders" reach.** The post sweep is re-centered by the measured
    pre lag and reported gross (§6.6); 31/g10 reads a post landmark at −1152 ms under a 600 ms max
-   lag. Conclusions survived; the reach arithmetic did not.
+   lag. Conclusions survived; the reach arithmetic did not. **Note (2026-08-19):** the mechanism
+   this item flagged — post chaining off *any* pre lag, weak or not — was itself a bug, fixed by
+   map-coordinates' landmark-gating. Do not go looking for 31/g10's −1152 ms post on a new dump;
+   it now reads `decorrelated` at −444 ms (§6.6).
 9. **The old §12 vocabulary extension as a proposal** — the provenance axis with values, the
    `Misregistered` / `Unverifiable` patch cells. Withdrawn to a backlog sketch pending prospective
    validation of the §6.7 filter (§7.5). The findings stand; the names wait.

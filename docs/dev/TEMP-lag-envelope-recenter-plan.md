@@ -1,6 +1,7 @@
 # TEMP — Envelope-recenter `lag_decision`
 
-**Status:** draft, 2026-08-13. Not started.
+**Status:** draft, 2026-08-19. Not started. Inherits map-coordinate `lag_pair` from the 14-gap
+census re-run (clean 2026-08-19); map-coordinates smoke-join still open (6/9).
 Parent: [archive/TEMP-fill-placement-registration-plan.md](archive/TEMP-fill-placement-registration-plan.md)
 (§1.2 saturation, §7 retired widened-sweep, S1 blocked on re-scoping the measurement).
 Findings; do not treat §0 as a work list.
@@ -16,11 +17,16 @@ so the true peak sits outside the fine window and the probe reports an interior 
 > became measurable. Same measurement: the donor bridge across that gap is **zero-length**, so
 > for 31/g7 recentering enables *detection* (and a skip verdict on `bridge ≈ 0`), not a fill —
 > see [archive/TEMP-31g7-gap-shape-vocabulary.md](archive/TEMP-31g7-gap-shape-vocabulary.md) §9. This plan's
-> record-only scope is unchanged. S2b is refuted, but
-> [TEMP-lag-decision-map-coordinates-plan.md](TEMP-lag-decision-map-coordinates-plan.md)
-> **orders ahead**: this plan's fine sweep is existing `lag_pair`, and the 13-gap census found
-> 12 in-reach false-deads that are not recenter customers (only 31/g10 is the shared-far member
-> of that set). Do not merge the plans.
+> record-only scope is unchanged. S2b is refuted.
+>
+> **Measured 2026-08-19 (map-coordinates census exit):**
+> [TEMP-lag-decision-map-coordinates-plan.md](TEMP-lag-decision-map-coordinates-plan.md) landed
+> haystack-shift + landmark-gated chain. The 12 `shared_near_false_dead` rows are rescued (not
+> this plan's). 31/g7 pre is a unique map-true lock at **−38.1 ms** (moved from −47.5 by exactly
+> `D_pre` = 9.4 ms); post still `decorrelated` at nominal ±600 (true −1160). 31/g10 is the current
+> world this plan walks into: both shoulders dead at nominal; the old post lock at −1152 ms (`r`
+> 0.995) was a weak-pre chain and is gone (`decorrelated` at −444 ms, `r` 0.19). Do not merge the
+> plans.
 Production still places those later gaps because the fill search is ±10 s off the same map. The
 measurement cannot confirm them.
 
@@ -49,9 +55,13 @@ reported lag is `envelope_center + fine_residual`.
   or Apply’s `max_lag_blocks = 10` (equivalence gate). The recenter probe may use a **wider**
   envelope window than Apply; that must be a separate parameter.
 - Do not put the result in a gate. Record-only, same as S1.
-- Do not treat lag-verdict one-dead as this plan's population. The 12 in-reach false-deads
-  belong to map-coordinates; this plan owns **shared far offsets** (31/g10, pair 31's later
-  gaps, pair 50).
+- Do not treat lag-verdict one-dead as this plan's population. The 12 in-reach false-deads are
+  rescued; this plan owns **shared far offsets** (31/g10, pair 31's later gaps, pair 50) plus
+  31/g7's **post shoulder** specifically (true −1160 ms, outside ±600 — detection only, not a
+  fill; see the skip-vs-one-seam non-goal below). 31/g7's pre shoulder is already a map-true
+  landmark and is not this plan's business.
+- Do not decide 31/g7 skip-vs-one-seam. Unlocking post at −1160 is detection, not a fill.
+  Collapsed-bridge is a separate predicate (`|gap + post_lag − pre_lag| ≈ 0`).
 
 ---
 
@@ -63,13 +73,23 @@ dB envelopes on the **shoulders**, decode-free, independent of placement. Defaul
 saturates at the edge. Fingerprint `wide_envelope` is the wrong reuse: it is also centered on
 `b_mapped` and only ±400 ms (`WIDE_ENV_MAX_LAG_MS`).
 
-The failure gap is the load-bearing caveat. At 31/g7, true registration is **−40 ms**, but
-`donor_registration.lag_ms` reads **−1000 ms** — the coarse window’s own edge, not the truth.
-Blind recentering would move the fine sweep to −1.0 s and **lose** today’s correct
-`lag_decision.pre` (−47.5 ms, `peak_r` 0.829). So recenter only when the coarse peak is
-**interior**. An edge-pinned / low-`r` envelope falls back to today’s nominal center (fail
-open). That keeps 31/g7 on nominal and still lets a *widened* coarse window unlock 31’s later
-gaps, whose true peak is interior only once the envelope can see past 1.0 s.
+**Edge-pin is the fail-open for a saturated envelope, not a 31/g7-specific guard.** At 31/g7,
+scan `donor_registration.lag_ms` reads **−1000 ms** — the ±1.0 s window’s own edge, not the
+truth. Blind reuse of that *single* number would move the fine sweep to −1.0 s and lose the
+unique pre lock (now **−38.1 ms**, `peak_r` 0.829-class). An edge-pinned / low-`r` envelope still
+falls back to `b_mapped`.
+
+Once this plan widens the coarse window to 2 s, 31/g7’s post peak (−1160) is interior (~840 ms
+from the edge). Edge-pin will not fire on that shoulder. Map-coordinates made the disagreement
+dump-visible; that is the remaining protection:
+
+| gap | after map-coordinates (current) | what recenter does |
+|-----|---------------------------------|--------------------|
+| 31/g7 | pre landmark **−38.1 ms**; post dead at nominal (true −1160); `bridge_ms` ≈ 0 | **Per-shoulder.** Pre envelope ~−40: recenter is a no-op for ±600. Post envelope ~−1160: unlocks record-only detection. Sharing one gap-level lag would throw away the unique pre lock. |
+| 31/g10 | both dead at nominal; both true ~−1153. Pre looking non-landmark is window starvation, not a weak shoulder | **Shared far.** Both shoulders recenter onto the interior coarse peak. |
+
+Do not reuse the single scan `donor_registration.lag_ms` as the recenter center. Shoulder
+envelopes (Change step 1) are load-bearing.
 
 ---
 
@@ -77,23 +97,25 @@ gaps, whose true peak is interior only once the envelope can see past 1.0 s.
 
 In `lag_at_placement` (fingerprint path now; production path when S1 is re-scoped):
 
-1. **Coarse.** Shoulder envelope correlation at `b_mapped`, ±`lag_envelope_max_lag_ms`
+1. **Coarse.** *Per-shoulder* envelope correlation at `b_mapped`, ±`lag_envelope_max_lag_ms`
    (new, default **2000** — 20×100 ms bins, or the existing `register_donor_window` with a
    probe-only `max_lag_blocks`). Prefer the scan envelopes already in hand over a second PCM
-   envelope. Record `envelope_lag_ms`, `envelope_peak_r`, `envelope_edge_pinned`.
-2. **Guard.** Recenter iff `envelope_peak_r ≥ min_envelope_r` (reuse 0.70) **and** the peak is
-   ≥1 bin inside the coarse window. Otherwise `start_frame` stays `b_mapped`.
+   envelope, but only as per-shoulder series — not the one gap-level `donor_registration.lag_ms`.
+   Record `envelope_lag_ms`, `envelope_peak_r`, `envelope_edge_pinned` on each shoulder.
+2. **Guard.** Recenter **that shoulder** iff `envelope_peak_r ≥ min_envelope_r` (reuse 0.70)
+   **and** the peak is ≥1 bin inside the coarse window. Otherwise that shoulder’s `start_frame`
+   stays `b_mapped`. Fail open is per-shoulder: 31/g7 pre can stay near nominal while post
+   recenters.
 3. **Fine.** `lag_pair` ±`lag_max_lag_ms` (600) / 1 s template, centered on
    `b_mapped + round(envelope_lag)`, **after** map-coordinates (search and chain in map
    coordinates; post chained only if pre is a unique landmark). Report `frac_lag_ms` gross to
    original `b_mapped`. `edge_pinned` remains a property of the **fine** window around the new
-   center. Until map-coordinates lands, 31/g10's post reaching −1152 is a weak-pre chain, not
-   this recenter — after landmark-only chain that post is *supposed* to look dead at nominal
-   ±600 until this plan runs.
+   center. Map-coordinates census is landed: 31/g10’s both-shoulder dead-at-nominal is the
+   current world, not a transitional prediction. After this plan, both should lock near −1153.
 
-Contract `_contract.placement` must say so: “fine sweep at `b_mapped + envelope_lag` when the
-coarse peak is interior; else `b_mapped`.” Old corpora stay valid (`envelope_*` absent ⇒
-nominal center).
+Contract `_contract.placement` must say so: “per-shoulder fine sweep at `b_mapped + envelope_lag`
+when that shoulder’s coarse peak is interior; else `b_mapped`.” Old corpora stay valid
+(`envelope_*` absent ⇒ nominal center).
 
 S1, when unblocked, plumbs **this** measurement, not the nominal-only sweep. Cost is still two
 FFTs per gap plus a decode-free envelope that scan already computed.
@@ -108,9 +130,9 @@ Same binary, `lag_envelope_max_lag_ms` on vs off. Not a corpus fingerprint pass.
 
 | gap | expect |
 |-----|--------|
-| 31/g7 (failure, true ≈ −40 ms) | coarse edge-pinned or low-`r` → **no recenter**; `frac_lag_ms` stays ≈ −50 ms |
-| 31/g10, between map-coordinates and this plan | pre still weak / non-landmark; **post dead at nominal ±600** (no weak-pre chain). Not a regression |
-| 31/g8, g10, g11 (true ≈ −1.11 s), after this plan | coarse interior ≈ −1.11 s; fine `frac_lag_ms` agrees within ~50 ms; `peak_r` usable; fine `edge_pinned` false |
+| 31/g7 (failure; pre map-true **−38.1 ms**, post true −1160) | Per-shoulder. Pre stays the unique landmark (~−38 ms — not the old template-coordinate −47.5 / ≈ −50). A saturated / edge-pinned envelope still fails open. Post may unlock at −1160 as record-only detection. **Fail if pre is lost** (recenter yanked onto a shared −1160 / −1000). Skip-vs-fill is not this exit. |
+| 31/g10, current world (this plan off) | both shoulders dead at nominal ±600. Pre non-landmark; post **not** the old chained −1152. Not a regression. |
+| 31/g8, g10, g11 (true ≈ −1.11 s), after this plan | coarse interior ≈ −1.11 s on each live shoulder; fine `frac_lag_ms` agrees within ~50 ms; `peak_r` usable; fine `edge_pinned` false. 31/g10 specifically: **both** shoulders ~−1153 (pre was window-starved, not weak). |
 
 **Pair 50** (same class, larger). Consensus **+2.7891 s**, last six gaps unmeasurable under ±600 ms
 (`. . . . X X X X X X` against pair 31's `. . X X X`). At +2.79 s it is outside the proposed
@@ -121,14 +143,19 @@ the right size — if the coarse window has to reach 3 s to see pair 50, set it 
 all agreeing within 50 ms; rebuilt 2026-08-14, archived registration plan §0.0 Step 3). Recenter
 itself must not move median `frac_lag_ms` beyond re-quantization of a shifted center (a few ms):
 none of these pairs' coarse peaks should be interior-and-far enough to trigger a recenter.
-Map-coordinates **will** move that median: the probe-`D` half of Step 5's −21.9 ms bias leaves
-`frac_lag_ms` on purpose and stays on `border_displacement_ms`. Do not spend that move as a
-recenter failure, and do not spend production α (~25 ms late) as a tolerance either — a
-recenter moves neither remaining term. See archived
-[§ Step 5](archive/TEMP-fill-placement-registration-plan.md#step-5-result-2026-08-14--the-bias-is-two-terms-and-only-one-is-the-probe)
-and [TEMP-lag-decision-map-coordinates-plan.md](TEMP-lag-decision-map-coordinates-plan.md) Exit.
 
-26/g6 must stay near-nominal (≈ −50 ms), not follow the −1.45 s slide.
+Compare against the **post-map-coordinates** baseline, not Step 5’s −21.9 ms. Map-coordinates
+already spent the probe-`D` half: on the 6/9 fingerprinted so far (`{2,3,13,14,18,22}`),
+measured-lag medians moved peak_r −16.0 → **−8.6 ms**, peak_z −15.8 → **−8.4 ms**. Recenter
+moves neither remaining term. Do not spend that ~`D` move as a recenter failure, and do not
+spend production α (~25 ms late) as a tolerance either. Full 9/9 (pairs 32, 47, 51) is still
+open on the map-coordinates smoke-join; this plan’s own join re-checks the same cell. See
+[TEMP-lag-decision-map-coordinates-plan.md](TEMP-lag-decision-map-coordinates-plan.md) Exit —
+results, and archived
+[§ Step 5](archive/TEMP-fill-placement-registration-plan.md#step-5-result-2026-08-14--the-bias-is-two-terms-and-only-one-is-the-probe).
+
+26/g6 must stay near-nominal (map-coordinates left it at −41.75 / −45.43 ms), not follow the
+−1.45 s slide.
 
 If pair 31's later gaps still miss with a 2 s envelope, stop: that is a different question
 (envelope locked onto the same wrong peak as the fill), not a window problem, and this plan

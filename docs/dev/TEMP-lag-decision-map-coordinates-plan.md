@@ -1,8 +1,9 @@
 # TEMP — Report `lag_decision` in map coordinates
 
-**Status:** in progress, 2026-08-18. Change landed (`LagSummary::is_landmark`, `lag_pair`
-haystack-shift + landmark-gated chain, contract text); Exit re-run against the 14-gap census not
-yet done.
+**Status:** in progress, 2026-08-19. Change landed (`LagSummary::is_landmark`, `lag_pair`
+haystack-shift + landmark-gated chain, contract text). Exit re-run against the 14-gap census is
+done and clean (see **Exit — results**); the 9-pair smoke-join is partial and clean so far (6/9
+pairs fingerprinted), not yet closed.
 Parent: [archive/TEMP-fill-placement-registration-plan.md](archive/TEMP-fill-placement-registration-plan.md)
 (Step 5: `border_displacement_ms` is the reader-side correction to `frac_lag_ms`).
 Census: `gap-files/2026-08-18-one-dead-listen/wide-sweep/` (gitignored; numbers below are the
@@ -160,13 +161,17 @@ two map quantities; today it compares applied map to template coordinates and ab
 This plan **orders ahead of** [TEMP-lag-envelope-recenter-plan.md](TEMP-lag-envelope-recenter-plan.md).
 Recenter’s fine sweep is existing `lag_pair`. Shipping recenter first would still chain
 uncorrected `frac_lag` on every post, and its smoke-join exit (“median `frac_lag_ms` must not
-move”; “do not spend the ~22 ms bias”) assumes the old coordinates. After this Change:
+move”; “do not spend the ~22 ms bias”) assumed the old coordinates. After this Change (census
+landed 2026-08-19; smoke-join 6/9):
 
 - Recenter’s fine sweep inherits map-true search and landmark-only chain.
-- Recenter’s smoke join must expect the probe-`D` half of the −21.9 ms bias to **leave**
-  `frac_lag_ms` (it remains on `border_displacement_ms`). The production-α ~25 ms late term is
-  unchanged.
-- 31/g10’s post looking dead between this Change and recenter is expected, not a regression.
+- Recenter’s smoke join compares against the **post-map-coordinates** baseline: the probe-`D`
+  half of the −21.9 ms bias has **left** `frac_lag_ms` (it remains on `border_displacement_ms`;
+  6-pair medians peak_r −16.0 → −8.6, peak_z −15.8 → −8.4). The production-α ~25 ms late term is
+  unchanged. Recenter must not spend either remaining term.
+- 31/g10’s both-shoulder dead-at-nominal is **observed**, not a regression (post no longer
+  chained to −1152). Recenter’s 31/g7 guard is per-shoulder disagreement, not the ±1 s
+  edge-pin, once its coarse window is 2 s.
 
 Independent populations, shared function. Do not merge the plans.
 
@@ -197,3 +202,50 @@ unique near-zero lock becomes `Decorrelated`, or if a lock jumps by hundreds of 
 
 If any of the 12 remain one-dead after map-true search *and* landmark-only chain, stop: that
 row is a new question, not this plan.
+
+---
+
+## Exit — results (2026-08-19)
+
+Re-run: `gap-files/2026-08-18-one-dead-listen-decision-map/` (14-gap census + 26/g6 control,
+patched binary) against `gap-files/2026-08-18-one-dead-listen/` (pre-fix). All 14 census gaps
+present and correctly mapped (12 singles + 31 carrying both g7 and g10 + 45 carrying both g4 and
+g5).
+
+**The 12.** All rescued, all within ~1 ms of the census throat-adjacent lag (well inside the 10 ms
+bar) — 12, 20, 24, 35, 42, 45/g4, 45/g5, 48, 49 rescued on `pre` or `post` from spurious
+`decorrelated` (`peak_r` 0.06–0.27) to a real `timing_offset` lock (`peak_r` 0.93–0.99); 27's post
+lands live at +58 ms as predicted (not `Decorrelated` at +48); 34 was already both-live pre-fix
+(tiny `D`, near-unchanged). No gap remains one-dead.
+
+**Must not move — all pass.**
+
+| gap | result |
+|---|---|
+| 31/g7 | pre stays a landmark lock, −47.5 → −38.1 ms (moves by exactly `D_pre` = 9.4 ms, within the smoke-join's own "~`D`" tolerance); post stays `decorrelated` (~331 ms) both runs — still unreachable at ±600 (true −1160). Not accidentally solved. |
+| 31/g10 | pre stays non-landmark `decorrelated` both runs. Post **flips from the falsely-chained −1152 ms lock (r=0.995, old code's unconditional chain) to `decorrelated` at −444 ms (r=0.19)** — no longer chained off a non-landmark pre, now dead at nominal ±600 as intended until envelope-recenter. |
+| 26/g6 | stays near-nominal both shoulders (−41.75 / −45.43 ms), not the −1.45 s applied slide. `peak_z≈6.1`, `second_peak_r/peak_r` near-tie at `top2_spacing_ms=0.104` reproduce the archived plan's numbers almost exactly — same known periodic-aliasing signature, untouched by this fix (`D` here is small). |
+
+**Smoke join — partial, clean so far.** Full run needs a fresh `--gap-fingerprints` pass over
+`gap-files/extended-pairs.csv` (53 pairs) into `gap-files/2026-08-19-decision-map-oriented/`
+(in progress); `route2-consensus.ps1` reuses the existing scan dir
+(`gap-files/2026-08-13-repeat-terms/`) unchanged, since scan/patch reports don't depend on
+`lag_decision`. 6 of the 9 load-bearing pairs are fingerprinted so far
+(`-Pairs 2,3,13,14,18,22`), direct before/after on the identical set:
+
+- Cell unchanged: `peak_r` 6/6 `{2,3,13,14,18,22}`, `peak_z` 5/5 `{2,3,13,14,18}` — identical
+  membership before and after.
+- No previously-usable shoulder went dark (shoulder-usability maps byte-identical for 2, 3, 13,
+  22); pair 18 gained one previously-unusable shoulder under the z-gate (bonus rescue).
+- Bias moved by the expected `~D` amount, not a regression: peak_r −16.0 → −8.6 ms, peak_z
+  −15.8 → −8.4 ms (consensus values, which come from the scan side, are unchanged; only the
+  measured-lag side moved).
+- Agreement improved, not weakened: peak_r decisive cell 23/3/4 (n=30) → 26/2/4 (n=32); peak_z
+  11/3/1 (n=15) → 15/1/1 (n=17); big-slide collapse ratio 8.1x → 10.0x (peak_r), 10.2x → 12.3x
+  (peak_z). The one persisting contradiction, `13/g16`, is unchanged in both runs (pre-existing,
+  not this fix's territory).
+
+**Still open:** pairs 32, 47, 51 (plus the rest of the 53-pair corpus, for `-MinUnified`) have not
+finished fingerprinting. Re-run `route2-consensus.ps1` at full scope
+(`-ExcludePairs 6,16`) once the corpus run completes and confirm cell 9/9 before flipping Status
+to done.
