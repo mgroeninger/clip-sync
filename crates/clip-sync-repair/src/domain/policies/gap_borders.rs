@@ -245,11 +245,12 @@ pub fn border_templates_for_gap(
 /// channel's — the trim is per-buffer, so the displacement is too).
 ///
 /// Both values are **≥ 0** — every step moves the edge outward, never toward the dropout. That
-/// matters to anything that correlates a template against a B window anchored on the *gap* edge
-/// (`gap_fingerprint::measure::lag_at_placement`): at true registration such a sweep reads `−pre` on
-/// the pre shoulder and `+post` on the post one, because the A content it is holding sits that far
-/// from where the anchor claims. See `docs/dev/archive/TEMP-fill-placement-registration-plan.md` § "Step 5
-/// result".
+/// matters to anything that correlates a template against a B window: `gap_fingerprint::measure::lag_pair`
+/// shifts its B anchor by this same amount (map coordinates —
+/// `docs/dev/TEMP-lag-decision-map-coordinates-plan.md` § Change) so a sweep anchored on the *gap*
+/// edge instead of the *template* edge still reads `frac_lag_ms ≈ 0` at true registration. A caller
+/// that anchors on the raw gap edge without this shift reads `−pre` on the pre shoulder and `+post`
+/// on the post one. See `docs/dev/archive/TEMP-fill-placement-registration-plan.md` § "Step 5 result".
 pub fn border_edge_displacement_frames(
     samples: &[f32],
     channels: usize,

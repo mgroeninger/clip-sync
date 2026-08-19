@@ -1,6 +1,8 @@
 # TEMP — Report `lag_decision` in map coordinates
 
-**Status:** draft, 2026-08-18. Not started.
+**Status:** in progress, 2026-08-18. Change landed (`LagSummary::is_landmark`, `lag_pair`
+haystack-shift + landmark-gated chain, contract text); Exit re-run against the 14-gap census not
+yet done.
 Parent: [archive/TEMP-fill-placement-registration-plan.md](archive/TEMP-fill-placement-registration-plan.md)
 (Step 5: `border_displacement_ms` is the reader-side correction to `frac_lag_ms`).
 Census: `gap-files/2026-08-18-one-dead-listen/wide-sweep/` (gitignored; numbers below are the
@@ -137,8 +139,12 @@ In `lag_pair` / `lag_at_placement` (fingerprint path now; production path when S
 
 Contract `_contract.placement` must say so: “fine sweep in map coordinates (B haystack follows
 template-edge displacement); post chained by map-true `L_pre` only when pre is a unique
-landmark.” Old corpora stay readable: absent recipe flag ⇒ apply `frac_lag ± D` as today.
-New corpora: do **not** apply `D` a second time.
+landmark.” No consumer of `frac_lag_ms` / `border_displacement_ms` applies the old `± D`
+correction in code (checked: `project.rs`, `gap_repair_spec.rs`'s `RegistrationTags`, the harness
+corpus analysis/check modules, `route2-consensus.ps1`, `seam_local.rs`'s FFT-vs-naive test) — the
+correction lived only in plan-doc prose and manual verification, so this Change needs no
+backward-compatibility flag. Old fingerprint dumps remain readable; only their `frac_lag_ms`
+values predate the coordinate fix.
 
 The unit test that currently locks “true registration reads `−D` / `+D`”
 (`lag_at_placement_reads_border_displacement_at_true_registration`) becomes the proof of the

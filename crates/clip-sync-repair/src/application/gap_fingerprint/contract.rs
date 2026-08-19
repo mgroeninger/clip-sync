@@ -178,8 +178,8 @@ contracts! {
     /// Contract for `lag_decision` — the registration the patch/skip decision is made on.
     LAG_DECISION_CONTRACT for "lag_decision" {
         measures: "per-shoulder waveform lag the gate decides patch/skip on: peak_r, frac_lag_ms, peak_z, prominence",
-        placement: "b_mapped nominal, not the throat; post shoulder on S + D_A + round(L_pre); never compare across placements",
-        window: "per shoulder window/max_lag (defaults 1000 / 600); mono; gross to b_mapped_end; zero -pre/+post border_displacement_ms",
+        placement: "map coords: haystack shifted by template walk-off D; post chained by map-true L_pre only if pre is landmark",
+        window: "per shoulder window/max_lag (defaults 1000 / 600); mono; gross to b_mapped_end; D no longer corrects frac_lag_ms",
         not: "lag_editorial (diagnostic placement); prominence is not uniqueness - no exclusion radius, see top2_spacing_ms",
     }
 

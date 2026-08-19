@@ -879,27 +879,38 @@ fn lag_pair(
     params: LagSweepParams,
     displacement: Option<(usize, usize)>,
 ) -> (Option<LagSummary>, Option<LagSummary>) {
+    // Map coordinates (docs/dev/TEMP-lag-decision-map-coordinates-plan.md § Change, point 1): each
+    // template's gap-facing edge sits `D` frames outward of the raw gap edge (walk-off + trim), so
+    // the haystack anchor is shifted by that same `D` — pre anchor at `gap_start - D_pre`, post
+    // (nominal, pre-chain) at `gap_end + D_post`. A perfectly registered pair then reads
+    // `frac_lag_ms ≈ 0` on both shoulders instead of `∓D`.
+    let (d_pre, d_post) = displacement.unwrap_or((0, 0));
+    let pre_anchor = start_frame.saturating_sub(d_pre);
     let pre = lag_side_sweep(
         LagSideSweep {
             a_border: a_pre,
             b_signal,
-            anchor_frame: start_frame,
+            anchor_frame: pre_anchor,
             pre_shoulder: true,
             gross_lag_shift: 0,
             border_displacement_frames: displacement.map(|(pre, _)| pre),
         },
         params,
     );
-    // Sequential per-shoulder registration (ledger A2 sequential registration): center the post
-    // search on `start_frame + gap_frames + round(L_pre)`, not the naive `start_frame + gap_frames`.
-    // Un-shifted centering forces `|L_pre + (D_B - D_A)|` (clip offset stacked with bridge-length
-    // mismatch) into one ±max_lag window; shifting by the measured pre lag isolates the bridge mismatch
-    // alone in the post search. The returned post lags are then shifted back so callers keep receiving
-    // "gross" lags relative to `start_frame + gap_frames` (`b_mapped_end`) — i.e. `L_post_gross =
-    // L_pre + L_post_fine` — for compatibility with existing consumers (`splice_summary_from_lag`,
-    // `b_mapped_end`-relative alignment).
-    let pre_shift = pre.map(|p| p.frac_lag_samples.round() as i64).unwrap_or(0);
-    let post_base = (start_frame as i64 + gap_frames as i64 + pre_shift).max(0) as usize;
+    // Sequential per-shoulder registration (ledger A2), point 3 of the same Change: center the post
+    // search on `post_nominal + round(L_pre)`, not the naive `post_nominal`, but only when the pre
+    // lock clears the findings-§8 landmark bar (`LagSummary::is_landmark`) — a weak or ambiguous pre
+    // must not become the prior for the post search (fail open to `post_nominal` otherwise). Because
+    // `pre`'s lag is already map-true (point 1), chaining it does not re-apply `D_pre`. The returned
+    // post lags are shifted back so callers keep receiving lags relative to `post_nominal` — i.e.
+    // `L_post_gross = L_pre + L_post_fine` — for compatibility with existing consumers
+    // (`splice_summary_from_lag`, `b_mapped_end`-relative alignment).
+    let post_nominal = start_frame + gap_frames + d_post;
+    let pre_shift = pre
+        .filter(LagSummary::is_landmark)
+        .map(|p| p.frac_lag_samples.round() as i64)
+        .unwrap_or(0);
+    let post_base = (post_nominal as i64 + pre_shift).max(0) as usize;
     let post = lag_side_sweep(
         LagSideSweep {
             a_border: a_post,
@@ -3697,11 +3708,12 @@ mod tests {
         assert!(curve.iter().all(|(_, r)| r.is_finite()));
     }
 
-    /// A *perfectly* registered pair does not read lag 0. The A templates start `D_pre` / `D_post`
-    /// away from the gap edges (fade trimmed at 12 % of peak) while the B anchors sit on the edges
-    /// themselves, so the sweep reads `−D_pre` on the pre shoulder and `+D_post` on the post one —
-    /// and `border_displacement_ms` is exactly the correction. This is the −21.9 ms corpus bias
-    /// against `align_adjustment_secs` (registration plan § "Step 5 result").
+    /// A *perfectly* registered pair reads lag 0 on both shoulders. The A templates start `D_pre` /
+    /// `D_post` away from the gap edges (fade trimmed at 12 % of peak); map coordinates
+    /// (`docs/dev/TEMP-lag-decision-map-coordinates-plan.md` § Change) shift the B haystack anchor by
+    /// the same `D` so the sweep is centered on the template's true corresponding B-time, not the raw
+    /// gap edge. `border_displacement_ms` stays on the wire as a record of that walk-off — it is no
+    /// longer a reader-side correction to `frac_lag_ms`.
     #[test]
     fn lag_at_placement_reads_border_displacement_at_true_registration() {
         const RATE: u32 = 48_000;
@@ -3751,13 +3763,13 @@ mod tests {
         assert_eq!(pre.border_displacement_ms, Some(ms(d_pre)));
         assert_eq!(post.border_displacement_ms, Some(ms(d_post)));
         assert!(
-            (pre.frac_lag_ms + ms(d_pre)).abs() < 0.05,
-            "pre reads -D_pre ({} ms), not 0",
+            pre.frac_lag_ms.abs() < 0.05,
+            "pre reads {} ms, not 0 — map coordinates should absorb D_pre",
             pre.frac_lag_ms
         );
         assert!(
-            (post.frac_lag_ms - ms(d_post)).abs() < 0.05,
-            "post gross reads +D_post ({} ms), not 0 — the pre shift is added back out",
+            post.frac_lag_ms.abs() < 0.05,
+            "post reads {} ms, not 0 — map coordinates should absorb D_post",
             post.frac_lag_ms
         );
     }

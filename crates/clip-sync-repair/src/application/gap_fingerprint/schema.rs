@@ -971,25 +971,37 @@ pub struct LagSummary {
     /// (ledger A5/C6). `None` for fingerprints written before this field. Widen the sweep to clear it.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub edge_pinned: Option<bool>,
-    /// **Zero correction (ms).** This shoulder's A template does not start at the gap edge: the
-    /// silence walk-off, the standoff, and the 12 %-of-peak trim pull its gap-facing edge outward by
-    /// this much (`border_edge_displacement_frames`; always ≥ 0). The B window is anchored on the gap
-    /// edge itself, so a *perfectly* registered pair does not read 0. It reads **`−`** this value on
-    /// the pre shoulder and **`+`** it on the post one — the post sweep's pre-shift is added back
-    /// out, so post does *not* inherit the pre shoulder's displacement. True registration is:
-    ///
-    /// - pre:  `frac_lag_ms + border_displacement_ms`
-    /// - post: `frac_lag_ms − border_displacement_ms`
-    ///
-    /// so `post − pre` over the raw lags is `D_pre + D_post`: the probe's total displacement, and the
-    /// half of the corpus's −21.9 ms bias against `align_adjustment_secs` that belongs to the probe
-    /// (median 11.3 ms; the other ~25 ms is the applied placement itself sitting late — see
-    /// `docs/dev/archive/TEMP-fill-placement-registration-plan.md` § "Step 5 result"). Content-dependent per
-    /// gap, not a constant — do not substitute the median. `None` for fingerprints written before
-    /// this field, and on paths that do not build border templates.
+    /// **Template walk-off (ms), diagnostic only.** This shoulder's A template does not start at the
+    /// gap edge: the silence walk-off, the standoff, and the 12 %-of-peak trim pull its gap-facing
+    /// edge outward by this much (`border_edge_displacement_frames`; always ≥ 0). The B search window
+    /// is shifted by exactly this amount before the sweep runs (map coordinates — see
+    /// `docs/dev/TEMP-lag-decision-map-coordinates-plan.md` § Change), so a *perfectly* registered pair
+    /// reads `frac_lag_ms ≈ 0` on **both** shoulders; this field is no longer a reader-side correction
+    /// to `frac_lag_ms`, only a record of how far the template itself sat from the throat. `None` for
+    /// fingerprints written before this field, and on paths that do not build border templates.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub border_displacement_ms: Option<f64>,
     pub verdict: LagVerdict,
+}
+
+/// Peak correlation floor for [`LagSummary::is_landmark`] — findings §8's "unique" bar
+/// (`docs/dev/TEMP-31g7-model-vs-findings.md` § 8: "one unique (`peak_r ≥ 0.8`, `peak_z ≥ 12`)").
+pub const LAG_LANDMARK_MIN_PEAK_R: f64 = 0.8;
+/// Peak z-score floor for [`LagSummary::is_landmark`] — see [`LAG_LANDMARK_MIN_PEAK_R`].
+pub const LAG_LANDMARK_MIN_PEAK_Z: f64 = 12.0;
+
+impl LagSummary {
+    /// Is this shoulder's lock confident enough to chain the *other* shoulder's search off it?
+    ///
+    /// Findings §8's bar, ported from the Python census prototype
+    /// (`docs/dev/TEMP-lag-decision-map-coordinates-plan.md` § Change, point 3): a weak or ambiguous
+    /// pre lock must not become the prior for the post search — that is how 31/g10's post reached a
+    /// false −1152 ms under a 600 ms max lag by chaining off a `peak_r` 0.158 pre. `peak_z` absent
+    /// (curve had no spread) counts as not a landmark, not an exemption.
+    pub fn is_landmark(&self) -> bool {
+        self.peak_r >= LAG_LANDMARK_MIN_PEAK_R
+            && self.peak_z.is_some_and(|z| z >= LAG_LANDMARK_MIN_PEAK_Z)
+    }
 }
 
 /// Read a residual dB that the writer emits as JSON `null` when it was non-finite (a fully-silent gap cancels
