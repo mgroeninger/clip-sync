@@ -1,30 +1,33 @@
 # `gap_fingerprint/measure.rs` folder split — plan
 
+> **Archived 2026-08-20.** Planned M-MOD leftover `measure.rs` peel; shipped. Record only.
+> As-landed, `SEAM_PROBE_*` is `pub(crate)` on `measure::probes` (`contract.rs` imports that path)
+> rather than a `pub(super)` facade re-export.
+
 Status: **done** (2026-08-20, P0–P8 landed; see §3 as-landed DAG correction).
 Maintainability-only peel of the remaining
 `measure.rs` monolith into `gap_fingerprint/measure/` (folder + submodules).
 Byte-preserving moves; never bundled into a behavior-change PR.
 
 This is the **second half** of the 2026-07-23
-[`TEMP-gap-fingerprint-module-split-plan.md`](archive/TEMP-gap-fingerprint-module-split-plan.md):
+[`TEMP-gap-fingerprint-module-split-plan.md`](TEMP-gap-fingerprint-module-split-plan.md):
 that split extracted `schema` / `project` / `contract` and left **the entire PCM
 measurement body in one file**. The file is now **6271 lines** (2026-08-20 recount;
 ~3427 production + ~2844 colocated tests) — larger than the pre-split
 `gap_fingerprint.rs` monolith. The growth since the 5990-line count this plan was
 drafted against is the nominal-first envelope-rescue mechanism
-([TEMP-lag-nominal-first-plan.md](TEMP-lag-nominal-first-plan.md)), already landed in
+([TEMP-lag-nominal-first-plan.md](../TEMP-lag-nominal-first-plan.md)), already landed in
 source (see `lag.rs` ownership below) even though that plan's own status header still
 reads "draft, not started" — it is mid real-media validation, not unimplemented.
 
-Companions: [archive/TEMP-gap-fingerprint-module-split-plan.md](archive/TEMP-gap-fingerprint-module-split-plan.md)
+Companions: [TEMP-gap-fingerprint-module-split-plan.md](TEMP-gap-fingerprint-module-split-plan.md)
 (parent split + `schema ← project ← measure` DAG; **keep the cycle guard**),
-[archive/TEMP-policies-module-split-plan.md](archive/TEMP-policies-module-split-plan.md)
-(template), [gap-fingerprint.md](gap-fingerprint.md) (product docs; path note only
-when the tree lands).
+[TEMP-policies-module-split-plan.md](TEMP-policies-module-split-plan.md)
+(template), [gap-fingerprint.md](../gap-fingerprint.md) (product docs).
 
 ---
 
-## 1. Problem
+## 1. Problem (resolved)
 
 `application/gap_fingerprint/measure.rs` still mixes every PCM→fingerprint concern
 in one file. Cohesion slices already exist as builders and a header comment
@@ -243,7 +246,7 @@ placement/probes deps). Tests: `lag_curve_*`, `summarize_lag_curve_*`, `lag_summ
 `lag_at_placement_envelope_recenter_is_per_shoulder`,
 `lag_at_placement_envelope_shared_far_unlocks_both`,
 `lag_at_placement_post_unaffected_by_a_rescued_pre`, and any others
-[TEMP-lag-nominal-first-plan.md](TEMP-lag-nominal-first-plan.md)'s exit bar adds).
+[TEMP-lag-nominal-first-plan.md](../TEMP-lag-nominal-first-plan.md)'s exit bar adds).
 Leave `tags_from_measurements` in the remainder even though it currently sits
 immediately above this block.
 
@@ -329,8 +332,8 @@ Confirm `-Tier pr-repair` still green including `gap_repair_spec_diff` /
 
 ## Related
 
-- [archive/TEMP-gap-fingerprint-module-split-plan.md](archive/TEMP-gap-fingerprint-module-split-plan.md) — parent split (done); this is the leftover `measure.rs` peel
-- [gap-fingerprint.md](gap-fingerprint.md) — product docs (add a one-line module-map note when the tree lands)
-- [archive/TEMP-fingerprint-field-clarity-plan.md](archive/TEMP-fingerprint-field-clarity-plan.md) — why `SEAM_PROBE_*` are `pub(super)` (contract drift-guards)
-- `crates/clip-sync-repair/src/application/gap_fingerprint/measure.rs` — current monolith
-- Sibling [TEMP-patch-audio-region-module-split-plan.md](TEMP-patch-audio-region-module-split-plan.md)
+- [TEMP-gap-fingerprint-module-split-plan.md](TEMP-gap-fingerprint-module-split-plan.md) — parent split (done); this is the leftover `measure.rs` peel
+- [gap-fingerprint.md](../gap-fingerprint.md) — product docs
+- [TEMP-fingerprint-field-clarity-plan.md](TEMP-fingerprint-field-clarity-plan.md) — why `SEAM_PROBE_*` exist (contract drift-guards). As-landed they are `pub(crate)` on `measure::probes`, not a facade `pub(super)` re-export
+- `crates/clip-sync-repair/src/application/gap_fingerprint/measure/` — live split tree
+- Sibling [TEMP-patch-audio-region-module-split-plan.md](../TEMP-patch-audio-region-module-split-plan.md)

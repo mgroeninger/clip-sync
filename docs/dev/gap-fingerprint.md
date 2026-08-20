@@ -5,7 +5,7 @@ floor, energy contour, editorial anchors, structure/seam scores, and a lag finge
 samples, no transcripts**. Fingerprints from real (licensed) media can be committed as a
 regression/calibration corpus.
 
-Source: `application/gap_fingerprint/` (`mod.rs`, `measure.rs`, `schema.rs`, `project.rs`). Plan
+Source: `application/gap_fingerprint/` (`mod.rs`, `measure/`, `schema.rs`, `project.rs`, `contract.rs`). Plan
 (archived): [TEMP-gap-fingerprint-plan.md](archive/TEMP-gap-fingerprint-plan.md).
 
 > Status: **shipped** — schema + builder + from-decode dump (`characterize_gaps_from_decode`) +
@@ -191,7 +191,7 @@ exception to the warn-and-ignore rule: with `--mux` it **errors** rather than be
 
 The dump characterizes **every selected gap at full detail** — it runs the **full per-bracket oracle**
 (`oracle_score_fit_candidate` over all feasible brackets via `compute_region_measurements` in
-`gap_fingerprint/measure.rs`), with **no routing or short-circuit** like the production patch path.
+`gap_fingerprint/measure/overlay.rs`), with **no routing or short-circuit** like the production patch path.
 That per-bracket structure+seam search over the `--fill-border-search-secs` haystack is the dominant
 cost.
 
@@ -207,7 +207,7 @@ path, which §3 measures at 2.7–4.1 s/bracket. Both numbers are snapshots; cit
 a bare figure forward.
 
 **This is a dump cost, and `--gap-listen` inherits all of it.** The per-bracket loop
-(`measure.rs:1680`) is gated on `DetailTier::Full` and runs over every feasible bracket
+(`measure/overlay.rs`) is gated on `DetailTier::Full` and runs over every feasible bracket
 **unconditionally** — nothing about it is triggered by the gate's verdict. Measured on a synthetic
 non-matching donor (2026-08-02): ~350 s total, of which the production gate's refusal was **0.65 s**
 and the rest was the dump's `anchor_matchability` / `local_anchor_xcorr` sweep. A plain production

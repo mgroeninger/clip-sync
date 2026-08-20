@@ -1,6 +1,10 @@
 # TEMP — Nominal-first ordering for the `lag_decision` envelope rescue
 
-**Status:** draft, not started, 2026-08-19.
+**Status:** implemented + validated, 2026-08-20. Unit tests (all 5 Exit shapes) and the 12-pair
+real-media re-run (`gap-files/2026-08-20-nominal-first-{off,on}-decoupled-unconditioned`) both meet
+every Exit bar: 0 mismatches across 505 shoulders (not_consulted/declined), manifest byte-identical,
+31/g7–g11 and pair-50 g8–g19 match the stated values exactly. Record-only; S1 production plumbing
+(see § Non-goals) is next.
 Parent: [archive/TEMP-lag-envelope-recenter-plan.md](archive/TEMP-lag-envelope-recenter-plan.md)
 (superseded — its Change shipped the envelope mechanism this plan reorders; its Result sections
 are this plan's validation baselines). Sibling:

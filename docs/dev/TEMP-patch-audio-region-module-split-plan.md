@@ -248,4 +248,4 @@ exercise `PatchAudio::execute` and the anchored-retry `prepare_region_patch` shi
 - [archive/TEMP-region-characterization-collapse-plan.md](archive/TEMP-region-characterization-collapse-plan.md) — characterize→execute boundary (done; do not reopen)
 - [archive/TEMP-patch-audio-bracket-fill-elimination-plan.md](archive/TEMP-patch-audio-bracket-fill-elimination-plan.md) — why `execute_bracket_fill` is a reconstruction primitive
 - `crates/clip-sync-repair/src/application/patch_audio/region.rs` — current monolith
-- Sibling [TEMP-gap-fingerprint-measure-module-split-plan.md](TEMP-gap-fingerprint-measure-module-split-plan.md)
+- Sibling [TEMP-gap-fingerprint-measure-module-split-plan.md](archive/TEMP-gap-fingerprint-measure-module-split-plan.md) (done / archived)
