@@ -222,8 +222,8 @@ mod tests {
         let mut a = vec![0f32; frames(2.0)];
         // 100 ms of tone hard against the gap edge; everything before it is silent, so a collar wider
         // than 100 ms averages in that silence and the RMS/peak ratio falls.
-        for i in frames(0.9)..gap_start {
-            a[i] = (i as f32 * 0.05).sin() * 0.5;
+        for (i, slot) in a.iter_mut().enumerate().take(gap_start).skip(frames(0.9)) {
+            *slot = (i as f32 * 0.05).sin() * 0.5;
         }
 
         let measure = |collar_secs: f64| {
@@ -281,8 +281,8 @@ mod tests {
         let rate = 48_000u32;
         let frames = |s: f64| (s * f64::from(rate)) as usize;
         let mut a = vec![0f32; frames(2.0)];
-        for i in frames(0.9)..frames(1.0) {
-            a[i] = (i as f32 * 0.05).sin() * 0.5;
+        for (i, slot) in a.iter_mut().enumerate().take(frames(1.0)).skip(frames(0.9)) {
+            *slot = (i as f32 * 0.05).sin() * 0.5;
         }
         let config = FingerprintConfig::default();
         let inputs = GapInputs {
