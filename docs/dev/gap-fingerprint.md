@@ -248,7 +248,7 @@ approaches were refuted by measurement. Full analysis + cost hierarchy: that pla
 | `equivalence_diagnostic` | B present | **gap-equivalence class (diagnostic)** — does this gap need patching? (silence-character; see below) |
 | `equivalence_production` | scan classified | the **authoritative production** verdict for the same gap (`GapReport::gap_equivalence`; block size = the `scan_block_ms` knob), copied in so one dump holds both readings for calibration. **This is the authoritative one** — see below |
 | `lag_editorial` | diagnostics | **Tier-3** per pre/post anchor lag fingerprint at the best-energy **editorial** bracket / structure throat — a *diagnostic* placement, not the decision seam. Requires `--fingerprint-diagnostics`. Wire key was `lag` before 2026-08-07 (serde alias reads old corpora) |
-| `wide_envelope` | diagnostics | **Tier-3** 100 ms-bin RMS-envelope lag peak at `b_mapped` — cross-scale confirmer of `lag_decision` |
+| `wide_envelope` | diagnostics | **Tier-3** 100 ms-bin RMS-envelope lag peak at `b_mapped` (±400 ms). Not a confirmer of a far `lag_decision` (that rescue is ±`lag_envelope_max_lag_ms`, default 2000) |
 | `seam_probe` | diagnostics | **Tier-3** encoding-robust seam metrics (R2/R4/spectrum/env/recovered); not used by any gate |
 | `b_levels` | diagnostics | **Tier-3** symmetric B-side `LevelProfile` (validation instrument for the program-quiet hypothesis) |
 
@@ -828,7 +828,13 @@ shoulder is placed with `seam_local_peak` re-anchored on **nominal `b_mapped`** 
 scored at those placements against the **unchanged** gate thresholds:
 
 - `pre_seam_r` / `post_seam_r` and **`gate_pass`** — do both clear `min_fill_correlation` and
-  `fill_absolute_floor`?
+  `fill_absolute_floor`? This is a **production mirror**, not a discriminator: it reproduces the
+  dual-fit gate exactly and should **not** be tightened. On the 17-pair corpus it passed **263/263**
+  (p05 of `smin` = 0.892, far above the 0.35/0.12 floors, because `smin` is a ±600 ms argmax with no
+  uniqueness term). On the oriented 308, `gate_pass: false` is 11 patched; 31/g7's 0.966 / 0.123
+  *split* is 1 of 308 and production already declined it ([findings §8](archive/TEMP-31g7-model-vs-findings.md)).
+  Uniqueness is a separate fingerprint read (`pre/post_seam_z`, prominence) — open:
+  [BACKLOG.md](../BACKLOG.md) § *Dual-fit confidence axis*.
 - `gap_frames` / `bridge_frames` / `trim_frames` (`bridge − gap`, = the step in frames; the interior
   trim/pad amount).
 - **`post_seam_global_r`** — the post seam scored at the *pre* offset (step forced to 0). If it also passes,
@@ -851,8 +857,9 @@ than being computed against a clipped template.
 
 `wide_envelope`, `seam_probe`, `lag_editorial`, and `b_levels` are **Tier-3** — emitted only with
 `--fingerprint-diagnostics`. They are **not gated on** by any repair decision; they explain decisions and
-validate hypotheses. See the analyzer's `legend_text()` for the authoritative placement/window of every
-field.
+validate hypotheses. `wide_envelope` is still ±400 ms at `b_mapped` and is **not** a confirmer of a far
+`lag_decision` (that envelope lives on the shoulder as `envelope_lag_ms`, default ±2000 ms). See the
+analyzer's `legend_text()` for the authoritative placement/window of every field.
 
 ## Source identity & the corpus library
 

@@ -28,7 +28,7 @@ Build, test, corpus, and design plans. Operator guides and output contracts stay
 
 ## Plans
 
-- **Active drafts:** `TEMP-*.md` in this folder. Currently: [TEMP-envelope-adaptive-widen-plan.md](TEMP-envelope-adaptive-widen-plan.md) (envelope window sizing + rescue-branch guard refinement; re-scoped to the rescue branch after nominal-first), [TEMP-nway-donor-alignment-plan.md](TEMP-nway-donor-alignment-plan.md), [TEMP-flac-output-plan.md](TEMP-flac-output-plan.md).
+- **Active drafts:** `TEMP-*.md` in this folder. Currently: [TEMP-envelope-adaptive-widen-plan.md](TEMP-envelope-adaptive-widen-plan.md) (envelope window sizing + rescue-branch guard refinement; re-scoped to the rescue branch after nominal-first), [TEMP-patch-audio-region-module-split-plan.md](TEMP-patch-audio-region-module-split-plan.md) (folder split of `region.rs`; draft / not started), [TEMP-nway-donor-alignment-plan.md](TEMP-nway-donor-alignment-plan.md), [TEMP-flac-output-plan.md](TEMP-flac-output-plan.md).
 - **One deliverable per plan.** Each active plan carries a verification rule: a `file:line` reference belongs only in a checklist item that is about to be executed; design sections state the decision and its reason. Adjacent debt: [BACKLOG.md](../../BACKLOG.md) § Gap-selection parked debt.
 - **Archived plans & closed review ledgers:** [archive/](archive/) — historical design records only. Index: [archive/README.md](archive/README.md). Do not treat archive docs as current behavior; links inside them may be stale. Current equivalence-path behaviour is in [gap-fingerprint.md](gap-fingerprint.md) § *`equivalence_diagnostic` vs `equivalence_production`*.
 

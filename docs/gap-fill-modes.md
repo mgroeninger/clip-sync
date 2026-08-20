@@ -244,19 +244,31 @@ a *different* window from the seam Pearson: it correlates A's pre-border tail ag
 interior** (and A's post-border head against the fill's tail), asking whether the donor repeats material A has
 already played. It fires on one of two live conditions — weak seams (`min(pre, post) < 0.45`) with a repeat
 correlation above **0.55**, or a lopsided post seam (`post > 0.55`, `post − pre > 0.35`) with a post repeat
-above 0.55. **Those thresholds are hard-coded, not config**: the weight scales the penalty *after* the
-condition is evaluated, so raising it makes an already-firing penalty heavier and cannot make a non-firing one
-fire. Setting it to `0` disables the term outright. On the 2026-08-12 39-pair baseline it is `0.0` on every
-patched gap's winning placement — see BACKLOG § "Repeat-at-seam prior is inert on every winner" before tuning
-it on the strength of the guide's "↑ `fill_repeat_penalty_weight`" advice for boundary gaps. The winner's
-`repeat_pre` / `repeat_post` now ship on `fit_terms` (2026-08-13) so that zero is a calibration statement
-rather than only a branch outcome.
+above 0.55. A third arm in the code (`repeat_sum > 1.1` and weak seams) is **unreachable**:
+`REPEAT_SUM_CEILING` is exactly `2 × REPEAT_CORR_THRESHOLD`, so the sum cannot clear 1.1 once
+`repeat_max ≤ 0.55`. Delete that arm; do not "repair" the ceiling. **Those thresholds are hard-coded, not
+config**: the weight scales the penalty *after* the condition is evaluated, so raising it makes an
+already-firing penalty heavier and cannot make a non-firing one fire. Setting it to `0` disables the term
+outright.
+
+On the oriented 2026-08-13 run (`gap-files/2026-08-13-repeat-terms/`: 53 pairs, 317 patched, **210**
+carrying `fit_terms`) `repeat_penalty` is `0.0` on **every** winner. Repeat pairs sit far under threshold
+(`repeat_pre` median **0.123** / p90 0.354; `repeat_post` median **0.124** / p90 0.338; only **9 of 210**
+have `repeat_max > 0.55`). The two arm-1 conditions are **anti-correlated**: every high-repeat winner has
+`wave_min ≥ 0.45`, so lowering 0.55 alone would not have fired arm 1 on any of the 9. The two ear-confirmed
+duplications are unremarkable on this quantity (26/g6 **0.153 / 0.368**, 31/g7 **0.249 / 0.207**); the
+prior is aimed at the wrong quantity for that defect. Do not raise the weight on the guide's
+"↑ `fill_repeat_penalty_weight`" advice expecting it to catch them, and do not lower 0.55 until that
+anti-correlation is explained. The winner's `repeat_pre` / `repeat_post` ship on `fit_terms` so a zero is a
+calibration statement rather than only a branch outcome. Open leftovers:
+[BACKLOG.md](../BACKLOG.md) § *Repeat-at-seam prior is inert on every winner*.
 
 The same repeat correlation, at the same hard-coded `0.55`, is **also the stop condition for short-bracket
 extension** (below) — where it acts as a veto rather than a weight, so `fill_repeat_penalty_weight = 0` turns
 the penalty off and leaves that one running. The two move together and in opposite directions: a lower
 threshold makes the placement penalty more sensitive *and* halts extension earlier, producing shorter fills and
-more zero-pad. Treat the constant as shared, not as the penalty's.
+more zero-pad. If a retune is ever justified, **split the constant first** — the two consumers answer
+different questions. Treat the constant as shared, not as the penalty's.
 
 ### Gate waveform gate
 
@@ -591,7 +603,7 @@ Most keys below drive **fit** placement. `dual_fit` is shared: G6 rescue runs af
 
 **Fit-mode short B bracket:** when structure match returns fewer frames than the A gap, fit mode greedily extends into contiguous B audio frame-by-frame while padded `min(pre, post)` does not fall and `fill_repeat_correlations` post-repeat stays bounded; remaining frames are zero-padded. Gate mode still blind-extends then pads.
 
-"Stays bounded" is two clauses, both of which stop extension on the first frame that fails: the post repeat must stay **at or below the same hard-coded `0.55`** the placement penalty uses, *and* it must not increase from the previous frame. This is the **second consumer** of that constant (see § Fit unified search) and it differs from the penalty in three ways — post side only, measured on the **assembled fill** rather than a B candidate, and a **veto** that `fill_repeat_penalty_weight` does not scale or disable. So a threshold change made to tune placement scoring also changes delivered fill length here: lower stops extension sooner and zero-pads more. Which of the two clauses actually binds in practice has not been measured.
+"Stays bounded" is two clauses, both of which stop extension on the first frame that fails: the post repeat must stay **at or below the same hard-coded `0.55`** the placement penalty uses, *and* it must not increase from the previous frame. This is the **second consumer** of that constant (see § Fit unified search) and it differs from the penalty in three ways — post side only, measured on the **assembled fill** rather than a B candidate, and a **veto** that `fill_repeat_penalty_weight` does not scale or disable. So a threshold change made to tune placement scoring also changes delivered fill length here: lower stops extension sooner and zero-pads more. Which of the two clauses actually binds in practice has not been measured — if the monotone clause always stops first, the threshold is free to move on the penalty side after the constants are split ([BACKLOG.md](../BACKLOG.md) § *Repeat-at-seam prior is inert on every winner*).
 
 CLI: `--fill-fit-structure-weight`, `--fill-fit-waveform-weight`, and the B haystack flags above override config when passed on the command line.
 

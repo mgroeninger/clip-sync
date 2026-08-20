@@ -339,14 +339,22 @@ repairs. What separated them was where the excess lived, which is what `edge_del
 
 **Amended 2026-08-12 — what made that clip uniformly hot was our own gain.** The +15.93 dB row
 carries `normalize_gain = 3.88` (+11.78 dB) and renders clean with `--no-normalize`, so it was
-normalize boosting a fill against a non-local reference, not a donor-level mismatch (BACKLOG.md
-§ *Fill normalize boosts against a non-local reference*). Two consequences for reading this section.
-The table's conclusion **strengthens**: a uniform gain error is exactly the shape `edge_delta_db`
-catches and `peak_delta_db` cannot. But the **numbers are gain-contaminated** — every delta here is
-measured on `gained_fill` against ungained shoulders, so each row is inflated by its own gap's boost
-(0–12 dB, and not recorded at all before 2026-08-12). Backing this one out gives ≈4.15 dB, the
-*lowest* in the labelled set rather than the second-highest. Do not compare these deltas across gaps
-without dividing out `normalize_gain` first.
+normalize boosting a fill against a non-local reference, not a donor-level mismatch (open work:
+[BACKLOG.md](../BACKLOG.md) § *Fill normalize boosts against a non-local reference*). Two
+consequences for reading this section. The table's conclusion **strengthens**: a uniform gain error
+is exactly the shape `edge_delta_db` catches and `peak_delta_db` cannot. But the **numbers are
+gain-contaminated** — every delta here is measured on `gained_fill` against ungained shoulders, so
+each row is inflated by its own gap's boost (0–12 dB, and not recorded at all before 2026-08-12).
+Backing this one out gives ≈4.15 dB. Do not compare these deltas across gaps without dividing out
+`normalize_gain` first.
+
+The 2026-08-06 / 2026-08-08 ear labels also include **mixed A/B orientation**.
+`2026-08-08-edge-listen` covers pairs 24, 8, 12, 7, 31 — pairs **7, 8 and 12 are swapped**, so 3 of
+its 5 labels are of the reverse pairing and do not transfer ([archive/TEMP-fill-placement-registration-plan.md](dev/archive/TEMP-fill-placement-registration-plan.md)
+§0.0). Do not quote "the lowest clip ever labelled clean" as a bound until those are re-labelled.
+The oriented fill-level roll-up is `gap-files/2026-08-13-repeat-terms/fill-level-rollup.csv` (317
+rows); the CSV has no `normalize_gain` column — join it from the run's per-pair JSON
+(`status.patched.normalize_gain` on 317/317).
 
 `edge_delta_db` takes the **quieter** seam, so it takes both seams sitting high to read as hot — the
 same conservatism as `reference_db` taking the louder shoulder. On a one-bin fill the head, tail and
@@ -372,7 +380,7 @@ more crossfade-sensitive of the two deltas. `reference_at_floor` rows must be dr
 histogram. And **this pass measures level, not placement**: two of the ten labelled clips carried
 damage it cannot see — a fill that duplicated the shoulder before the missing content, and one
 running seconds longer than the gap — both at unremarkable deltas. A clean `fill_level` is not a
-clean repair. See BACKLOG.md § *Fill placement is accepted without checking local registration*.
+clean repair. See [BACKLOG.md](../BACKLOG.md) § *Fill placement*.
 
 A third field, `reference_spread_db` (the reference shoulder's loudest bin minus its median), was
 recorded here briefly on 2026-08-06 and **removed the same day**: two rounds of labels showed no
@@ -421,20 +429,22 @@ as a calibration statement (`0.31` against a `0.55` threshold) rather than only 
 They are omitted with `fit_terms` when the objective did not run. A zero window (`repeat_window_frames == 0`)
 does not measure, and reports `0.0` / `0.0`.
 
-**A zero does not mean the prior is doing no work, and the two zeros do not mean the same thing.** Over the
-2026-08-12 39-pair baseline both are `0.0` on all 128 patched gaps, for unrelated reasons. `anchor_penalty` is a
-**configuration** zero: the prior is only constructed under `--fill-offset anchored-retry` (second pass), with
-`fill_anchor_search_prior_weight > 0` (default `0.0`) and a non-empty patch-anchor table, so on any default run
-it is structurally absent rather than declined. `repeat_penalty` is a **behavioural** zero: the term is enabled
-at stock config and its correlations are measured on every candidate, but its thresholds are not reached.
-`repeat_pre` / `repeat_post` are how to read that zero; dumps from 2026-08-12 lack the pair. Note
-these terms are reported for the **winning** placement only — a penalty that demoted a rival below the winner
-leaves no trace in the report at all, so "zero on every gap" bounds what the prior did to the *chosen*
-placement and says nothing about the candidates it removed. And `repeat_penalty: 0.0` does **not** mean the
-repeat correlation had no effect on this gap: the same hard-coded `0.55` threshold is separately a stop
-condition for short-bracket extension, which is a veto this weight neither scales nor disables, and which
-changes the delivered fill length rather than any reported term. See BACKLOG § "Repeat-at-seam prior is inert
-on every winner" and [gap-fill-modes.md](gap-fill-modes.md) § Fit unified search.
+**A zero does not mean the prior is doing no work, and the two zeros do not mean the same thing.** On the
+oriented 2026-08-13 run (`gap-files/2026-08-13-repeat-terms/`, 210 `fit_terms` rows) both are `0.0` on every
+winner, for unrelated reasons. `anchor_penalty` is a **configuration** zero: the prior is only constructed
+under `--fill-offset anchored-retry` (second pass), with `fill_anchor_search_prior_weight > 0` (default `0.0`)
+and a non-empty patch-anchor table, so on any default run it is structurally absent rather than declined.
+`repeat_penalty` is a **behavioural** zero: the term is enabled at stock config and its correlations are
+measured on every candidate, but its thresholds are not reached — pairs sit far under 0.55, and the weak-seam
+guard is anti-correlated with a high repeat, so lowering the threshold would not have fired the live arm
+either ([gap-fill-modes.md](gap-fill-modes.md) § Fit unified search). `repeat_pre` / `repeat_post` are how to
+read that zero; dumps from 2026-08-12 lack the pair. Note these terms are reported for the **winning**
+placement only — a penalty that demoted a rival below the winner leaves no trace in the report at all, so
+"zero on every gap" bounds what the prior did to the *chosen* placement and says nothing about the candidates
+it removed. And `repeat_penalty: 0.0` does **not** mean the repeat correlation had no effect on this gap: the
+same hard-coded `0.55` threshold is separately a stop condition for short-bracket extension, which is a veto
+this weight neither scales nor disables, and which changes the delivered fill length rather than any reported
+term. Open leftovers: [BACKLOG.md](../BACKLOG.md) § *Repeat-at-seam prior is inert on every winner*.
 
 Two asymmetries matter when reading them. `late_start_penalty` is **one field for two
 directions**: a *forward* slide is scaled by `fill_fit_late_start_penalty_scale` (default `1.0`), a *backward*

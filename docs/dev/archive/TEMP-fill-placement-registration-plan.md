@@ -146,9 +146,10 @@ Ear labels exist only in the first cohort, and only a dozen of those 119 were la
 ### The recount answers the repeat-prior run that BACKLOG was waiting on
 
 This baseline is the `--patch-only` run that [BACKLOG.md § Repeat-at-seam prior is inert on every
-winner](../../../BACKLOG.md#repeat-at-seam-prior-is-inert-on-every-winner-one-branch-is-unreachable) shipped
-the `repeat_pre` / `repeat_post` emit for. Full answers are recorded there; the one that lands **in this
-plan** is its fourth open question:
+winner](../../../BACKLOG.md#repeat-at-seam-prior-is-inert-on-every-winner-one-branch-is-unreachable)
+shipped the `repeat_pre` / `repeat_post` emit for. Durable answers now live in
+[gap-fill-modes.md](../../gap-fill-modes.md) § Fit unified search; open leftovers remain in that
+BACKLOG section. The one that lands **in this plan** is its fourth open question:
 
 **The repeat window does not see the two duplications this prior exists to catch.** On 26/g6 the pair
 is `repeat_pre` 0.153 / `repeat_post` 0.368; on 31/g7 it is 0.249 / 0.207 — against a 0.55 threshold, on

@@ -10,9 +10,10 @@ obligation transfers to nominal-first as "must never *enter* the rescue branch" 
 ordering, tested by its bit-identical exit bar), not to a coarse-pass floor here.
 Parent: [archive/TEMP-lag-envelope-recenter-plan.md](archive/TEMP-lag-envelope-recenter-plan.md)
 (superseded — Change landed, ordering refuted by 26/g6; Result 2026-08-19 pair 31/50 dump).
-Corresponds to BACKLOG item "Pair 50 envelope ~3 s" — this
+Corresponds to the fill-placement leftover that was "Pair 50 envelope ~3 s" — this
 plan replaces that item's flat "dump at 3000 ms" direction with an adaptive one and adds the
-floor question that item didn't cover.
+floor question that item didn't cover. **Keep the default 2000 ms until this plan's ladder dump
+locks pair 50's +2.79 s interior**; do not raise the 0.70 envelope guard here either.
 
 ## Problem
 
@@ -133,9 +134,8 @@ nothing else. The reduction the fine pass already does is one function reuse awa
    them, so the ladder must be a no-op there — same bar the recenter plan's own smoke join used).
    `26/g6` is not a widen case (its false peak is interior at 1400 ms, well inside 2000) and not
    the ladder's problem — under nominal-first it never enters the rescue branch at all.
-3. Only after both dumps land: decide the guard threshold change (if any) and update
-   `BACKLOG.md`'s "Pair 50 envelope ~3 s" entry to point here instead of the flat-3000-dump
-   direction it currently describes.
+3. Only after both dumps land: decide the guard threshold change (if any). Do not raise the
+   production default off this plan's draft.
 
 **Ordering:** [TEMP-lag-nominal-first-plan.md](archive/TEMP-lag-nominal-first-plan.md) landed
 2026-08-20; this plan's dumps run on that binary so the ladder and guard
