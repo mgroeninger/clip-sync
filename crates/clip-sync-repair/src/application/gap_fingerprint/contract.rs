@@ -178,7 +178,7 @@ contracts! {
     /// Contract for `lag_decision` — the registration the patch/skip decision is made on.
     LAG_DECISION_CONTRACT for "lag_decision" {
         measures: "per-shoulder waveform lag the gate decides patch/skip on: peak_r, frac_lag_ms, peak_z, prominence",
-        placement: "per-shoulder fine sweep at b_mapped+envelope_lag when that shoulder's coarse peak is interior; else b_mapped",
+        placement: "fine sweep at b_mapped; dead (r<0.5) retries at b_mapped+envelope_lag if peak clears 0.70; kept only if recoverable",
         window: "per shoulder window/max_lag (defaults 1000 / 600); mono; gross to b_mapped_end; D no longer corrects frac_lag_ms",
         not: "lag_editorial (diagnostic placement); prominence is not uniqueness - no exclusion radius, see top2_spacing_ms",
     }
@@ -411,6 +411,7 @@ mod tests {
             envelope_lag_ms: None,
             envelope_peak_r: None,
             envelope_edge_pinned: None,
+            envelope_rescue: None,
             verdict: super::super::LagVerdict::TimingOffset,
         })
         .expect("lag summary");

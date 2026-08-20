@@ -987,7 +987,7 @@ pub struct LagSummary {
     /// gap edge: the silence walk-off, the standoff, and the 12 %-of-peak trim pull its gap-facing
     /// edge outward by this much (`border_edge_displacement_frames`; always ≥ 0). The B search window
     /// is shifted by exactly this amount before the sweep runs (map coordinates — see
-    /// `docs/dev/TEMP-lag-decision-map-coordinates-plan.md` § Change), so a *perfectly* registered pair
+    /// `docs/dev/archive/TEMP-lag-decision-map-coordinates-plan.md` § Change), so a *perfectly* registered pair
     /// reads `frac_lag_ms ≈ 0` on **both** shoulders; this field is no longer a reader-side correction
     /// to `frac_lag_ms`, only a record of how far the template itself sat from the throat. `None` for
     /// fingerprints written before this field, and on paths that do not build border templates.
@@ -1006,7 +1006,31 @@ pub struct LagSummary {
     /// to `b_mapped` for this shoulder (saturated window, not a 31/g7-specific guard).
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub envelope_edge_pinned: Option<bool>,
+    /// Which branch of the nominal-first measure → triage → rescue → accept ordering produced
+    /// this summary (`docs/dev/TEMP-lag-nominal-first-plan.md` § Change). `None` only when the
+    /// envelope mechanism is off (`lag_envelope_max_lag_ms == 0`). Unlike `envelope_lag_ms`, this
+    /// is still `Some` (`NotConsulted`) when the mechanism is on but the shoulder was already
+    /// recoverable at nominal, since the envelope was never run to produce a peak.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub envelope_rescue: Option<EnvelopeRescue>,
     pub verdict: LagVerdict,
+}
+
+/// Which branch of the nominal-first rescue ordering a shoulder's [`LagSummary`] came from. See
+/// [`LagSummary::envelope_rescue`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EnvelopeRescue {
+    /// Recoverable at nominal (`peak_r` ≥ 0.5) — the envelope was never consulted; this shoulder
+    /// cannot be moved by it.
+    NotConsulted,
+    /// Non-recoverable at nominal; the coarse envelope proposed a center and the retry there was
+    /// itself recoverable, so the retry replaced the nominal reading.
+    Rescued,
+    /// Non-recoverable at nominal; either the envelope guard did not propose a center (`peak_r` <
+    /// 0.70 or edge-pinned) or the retry was still non-recoverable. The honest nominal reading
+    /// was kept.
+    Declined,
 }
 
 /// Peak correlation floor for [`LagSummary::is_landmark`] — findings §8's "unique" bar
@@ -1019,7 +1043,7 @@ impl LagSummary {
     /// Is this shoulder's lock confident enough to chain the *other* shoulder's search off it?
     ///
     /// Findings §8's bar, ported from the Python census prototype
-    /// (`docs/dev/TEMP-lag-decision-map-coordinates-plan.md` § Change, point 3): a weak or ambiguous
+    /// (`docs/dev/archive/TEMP-lag-decision-map-coordinates-plan.md` § Change, point 3): a weak or ambiguous
     /// pre lock must not become the prior for the post search — that is how 31/g10's post reached a
     /// false −1152 ms under a 600 ms max lag by chaining off a `peak_r` 0.158 pre. `peak_z` absent
     /// (curve had no spread) counts as not a landmark, not an exemption.

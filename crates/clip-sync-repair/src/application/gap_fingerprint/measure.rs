@@ -386,6 +386,7 @@ pub fn summarize_lag_curve(
         envelope_lag_ms: None,
         envelope_peak_r: None,
         envelope_edge_pinned: None,
+        envelope_rescue: None,
         verdict: classify_lag(lag0_r, frac_r, peak_lag),
     })
 }
@@ -887,6 +888,102 @@ fn lag_side_sweep(side: LagSideSweep<'_>, params: LagSweepParams) -> Option<LagS
     summary
 }
 
+/// Coarse-envelope config for the rescue branch — `None` disables rescue entirely
+/// (`--lag-envelope-max-lag-ms 0`).
+#[derive(Clone, Copy)]
+struct EnvelopeCfg {
+    window: usize,
+    max_lag: usize,
+    bin: usize,
+}
+
+/// A shoulder is recoverable — and therefore untouchable by the envelope rescue — once its own
+/// fine sweep clears `peak_r ≥ 0.5` (`classify_lag`'s recoverable line, `measure.rs:418`; the
+/// nominal-first plan's triage predicate, **not** `LagSummary::is_landmark` — see "The
+/// `is_landmark` trap", `docs/dev/TEMP-lag-nominal-first-plan.md`).
+fn is_recoverable(s: &LagSummary) -> bool {
+    s.peak_r >= 0.5
+}
+
+fn stamp_rescue(
+    mut s: LagSummary,
+    peak: Option<EnvelopePeak>,
+    rescue: EnvelopeRescue,
+) -> LagSummary {
+    if let Some(p) = peak {
+        s.envelope_lag_ms = Some(p.lag_ms);
+        s.envelope_peak_r = Some(p.peak_r);
+        s.envelope_edge_pinned = Some(p.edge_pinned);
+    }
+    s.envelope_rescue = Some(rescue);
+    s
+}
+
+/// Measure → triage → rescue → accept for one shoulder (`docs/dev/TEMP-lag-nominal-first-plan.md`
+/// § Change). `nominal` is that shoulder's zero-envelope-shift fine sweep, already run by the
+/// caller. Alive shoulders (`is_recoverable`) are returned untouched — the envelope is never
+/// consulted, so it can never move them. A dead shoulder is rescued only if the coarse envelope
+/// proposes a center (`envelope_recenter_frames`'s guard) *and* the retry there is itself
+/// recoverable; otherwise the honest nominal reading is kept with the declined candidate stamped
+/// on the `envelope_*` fields.
+#[allow(clippy::too_many_arguments)]
+fn rescue_shoulder(
+    nominal: Option<LagSummary>,
+    envelope: Option<EnvelopeCfg>,
+    a_border: &[f64],
+    b_signal: &[f64],
+    envelope_anchor: usize,
+    pre_shoulder: bool,
+    chain_shift: i64,
+    params: LagSweepParams,
+    border_displacement_frames: Option<usize>,
+) -> Option<LagSummary> {
+    let nominal = nominal?;
+    let Some(env_cfg) = envelope else {
+        return Some(nominal);
+    };
+    if is_recoverable(&nominal) {
+        return Some(LagSummary {
+            envelope_rescue: Some(EnvelopeRescue::NotConsulted),
+            ..nominal
+        });
+    }
+    let peak = envelope_shoulder(
+        a_border,
+        b_signal,
+        envelope_anchor,
+        pre_shoulder,
+        env_cfg.window,
+        env_cfg.max_lag,
+        params.sample_rate,
+        env_cfg.bin,
+    );
+    let env_frames = envelope_recenter_frames(peak, params.sample_rate);
+    if env_frames == 0 {
+        return Some(stamp_rescue(nominal, peak, EnvelopeRescue::Declined));
+    }
+    let rescued_anchor = (envelope_anchor as i64 + chain_shift + env_frames).max(0) as usize;
+    let rescued = lag_side_sweep(
+        LagSideSweep {
+            a_border,
+            b_signal,
+            anchor_frame: rescued_anchor,
+            pre_shoulder,
+            gross_lag_shift: chain_shift + env_frames,
+            border_displacement_frames,
+        },
+        params,
+    );
+    match rescued {
+        Some(r) if is_recoverable(&r) => Some(stamp_rescue(r, peak, EnvelopeRescue::Rescued)),
+        _ => Some(stamp_rescue(nominal, peak, EnvelopeRescue::Declined)),
+    }
+}
+
+/// Measure → triage → rescue → accept ordering for one shoulder pair
+/// (`docs/dev/TEMP-lag-nominal-first-plan.md` § Change). Both shoulders are always swept at their
+/// nominal (zero envelope shift) center first; `envelope` gates whether either may be rescued from
+/// there. Only a dead shoulder (`peak_r < 0.5` at nominal) ever pays the coarse envelope pass.
 fn lag_pair(
     a_pre: &[f64],
     a_post: &[f64],
@@ -895,57 +992,72 @@ fn lag_pair(
     gap_frames: usize,
     params: LagSweepParams,
     displacement: Option<(usize, usize)>,
-    env_pre: i64,
-    env_post: i64,
+    envelope: Option<EnvelopeCfg>,
 ) -> (Option<LagSummary>, Option<LagSummary>) {
-    // Map coordinates (docs/dev/TEMP-lag-decision-map-coordinates-plan.md § Change, point 1): each
+    // Map coordinates (docs/dev/archive/TEMP-lag-decision-map-coordinates-plan.md § Change, point 1): each
     // template's gap-facing edge sits `D` frames outward of the raw gap edge (walk-off + trim), so
     // the haystack anchor is shifted by that same `D` — pre anchor at `gap_start - D_pre`, post
     // (nominal, pre-chain) at `gap_end + D_post`. A perfectly registered pair then reads
     // `frac_lag_ms ≈ 0` on both shoulders instead of `∓D`.
-    //
-    // Envelope recenter (docs/dev/archive/TEMP-lag-envelope-recenter-plan.md § Change): each shoulder may
-    // shift that map-true anchor by a coarse envelope peak (`env_*`, 0 when the guard fails open).
-    // `gross_lag_shift` puts `frac_lag_ms` back on original `b_mapped` so it stays commensurable
-    // with `align_adjustment_secs`. Landmark chain uses the *fine residual* (`L_pre − env_pre`),
-    // not gross `L_pre` — otherwise a shared-far envelope would double-count.
     let (d_pre, d_post) = displacement.unwrap_or((0, 0));
-    let pre_anchor = (start_frame as i64 + env_pre - d_pre as i64).max(0) as usize;
-    let pre = lag_side_sweep(
+    let pre_anchor = (start_frame as i64 - d_pre as i64).max(0) as usize;
+    let pre_nominal = lag_side_sweep(
         LagSideSweep {
             a_border: a_pre,
             b_signal,
             anchor_frame: pre_anchor,
             pre_shoulder: true,
-            gross_lag_shift: env_pre,
+            gross_lag_shift: 0,
             border_displacement_frames: displacement.map(|(pre, _)| pre),
         },
         params,
     );
-    // Sequential per-shoulder registration (ledger A2), point 3 of the same Change: center the post
-    // search on `post_nominal + round(L_pre)`, not the naive `post_nominal`, but only when the pre
-    // lock clears the findings-§8 landmark bar (`LagSummary::is_landmark`) — a weak or ambiguous pre
-    // must not become the prior for the post search (fail open to `post_nominal` otherwise). Because
-    // `pre`'s lag is already map-true (point 1), chaining it does not re-apply `D_pre`. The returned
-    // post lags are shifted back so callers keep receiving lags relative to `post_nominal` — i.e.
-    // `L_post_gross = L_pre + L_post_fine` — for compatibility with existing consumers
-    // (`splice_summary_from_lag`, `b_mapped_end`-relative alignment).
+    // Sequential per-shoulder registration (ledger A2): center the post search on
+    // `post_nominal + round(L_pre)`, not the naive `post_nominal`, but only when the pre lock
+    // clears the findings-§8 landmark bar (`LagSummary::is_landmark`) — a weak or ambiguous pre
+    // must not become the prior for the post search (fail open to `post_nominal` otherwise). This
+    // chain is always read from the **nominal** pre — never a rescued one
+    // (`docs/dev/TEMP-lag-nominal-first-plan.md` § Change, "Landmark chain stays anchored to the
+    // nominal pass") — so a rescue on either shoulder can never move the other's search center.
     let post_nominal = start_frame + gap_frames + d_post;
-    let pre_shift = pre
+    let pre_shift = pre_nominal
         .filter(LagSummary::is_landmark)
-        .map(|p| p.frac_lag_samples.round() as i64 - env_pre)
+        .map(|p| p.frac_lag_samples.round() as i64)
         .unwrap_or(0);
-    let post_base = (post_nominal as i64 + env_post + pre_shift).max(0) as usize;
-    let post = lag_side_sweep(
+    let post_base_nominal = (post_nominal as i64 + pre_shift).max(0) as usize;
+    let post_nominal_summary = lag_side_sweep(
         LagSideSweep {
             a_border: a_post,
             b_signal,
-            anchor_frame: post_base,
+            anchor_frame: post_base_nominal,
             pre_shoulder: false,
-            gross_lag_shift: env_post + pre_shift,
+            gross_lag_shift: pre_shift,
             border_displacement_frames: displacement.map(|(_, post)| post),
         },
         params,
+    );
+
+    let pre = rescue_shoulder(
+        pre_nominal,
+        envelope,
+        a_pre,
+        b_signal,
+        pre_anchor,
+        true,
+        0,
+        params,
+        displacement.map(|(pre, _)| pre),
+    );
+    let post = rescue_shoulder(
+        post_nominal_summary,
+        envelope,
+        a_post,
+        b_signal,
+        post_nominal,
+        false,
+        pre_shift,
+        params,
+        displacement.map(|(_, post)| post),
     );
     (pre, post)
 }
@@ -1056,16 +1168,6 @@ fn envelope_recenter_frames(peak: Option<EnvelopePeak>, sample_rate: u32) -> i64
     }
 }
 
-fn stamp_envelope(summary: Option<LagSummary>, peak: Option<EnvelopePeak>) -> Option<LagSummary> {
-    let mut s = summary?;
-    if let Some(p) = peak {
-        s.envelope_lag_ms = Some(p.lag_ms);
-        s.envelope_peak_r = Some(p.peak_r);
-        s.envelope_edge_pinned = Some(p.edge_pinned);
-    }
-    Some(s)
-}
-
 /// Lag fingerprint for a placement: A's kept border vs the B haystack swept over ±`max_lag`, on the
 /// mono downmix **and** the gate-selected channel (where a multichannel failure lives).
 fn lag_at_placement(input: &LagAtPlacementInput<'_>) -> LagFingerprint {
@@ -1106,6 +1208,13 @@ fn lag_at_placement(input: &LagAtPlacementInput<'_>) -> LagFingerprint {
         sample_rate,
         channel: LagChannel::Mono,
     };
+    // Nominal-first: the envelope is only ever consulted by `rescue_shoulder` for a shoulder that
+    // is dead at nominal, never up front (`docs/dev/TEMP-lag-nominal-first-plan.md` § Change).
+    let envelope_cfg = env_on.then_some(EnvelopeCfg {
+        window: env_window,
+        max_lag: env_lag,
+        bin: env_bin,
+    });
 
     let mut out = LagFingerprint::default();
     let mut add = |pre: Option<LagSummary>, post: Option<LagSummary>| {
@@ -1124,39 +1233,6 @@ fn lag_at_placement(input: &LagAtPlacementInput<'_>) -> LagFingerprint {
     let mono_displacement =
         border_edge_displacement_frames(a_samples, ch, &border_spec, a_pre.len(), a_post.len());
 
-    let (env_pre_peak, env_post_peak) = if env_on {
-        let d_pre = mono_displacement.0;
-        let d_post = mono_displacement.1;
-        let pre_anchor = start_frame.saturating_sub(d_pre);
-        let post_anchor = start_frame + gap_frames + d_post;
-        (
-            envelope_shoulder(
-                &a_pre,
-                b_mono,
-                pre_anchor,
-                true,
-                env_window,
-                env_lag,
-                sample_rate,
-                env_bin,
-            ),
-            envelope_shoulder(
-                &a_post,
-                b_mono,
-                post_anchor,
-                false,
-                env_window,
-                env_lag,
-                sample_rate,
-                env_bin,
-            ),
-        )
-    } else {
-        (None, None)
-    };
-    let env_pre = envelope_recenter_frames(env_pre_peak, sample_rate);
-    let env_post = envelope_recenter_frames(env_post_peak, sample_rate);
-
     let (pre, post) = lag_pair(
         &a_pre,
         &a_post,
@@ -1165,13 +1241,9 @@ fn lag_at_placement(input: &LagAtPlacementInput<'_>) -> LagFingerprint {
         gap_frames,
         sweep,
         Some(mono_displacement),
-        env_pre,
-        env_post,
+        envelope_cfg,
     );
-    add(
-        stamp_envelope(pre, env_pre_peak),
-        stamp_envelope(post, env_post_peak),
-    );
+    add(pre, post);
 
     if let Some(sel) = selected {
         if sel < b_ch.len()
@@ -1186,34 +1258,6 @@ fn lag_at_placement(input: &LagAtPlacementInput<'_>) -> LagFingerprint {
                 a_pre_ch[sel].len(),
                 a_post_ch[sel].len(),
             );
-            let (sel_env_pre_peak, sel_env_post_peak) = if env_on {
-                let pre_anchor = start_frame.saturating_sub(sel_disp.0);
-                let post_anchor = start_frame + gap_frames + sel_disp.1;
-                (
-                    envelope_shoulder(
-                        &a_pre_ch[sel],
-                        &b_ch[sel],
-                        pre_anchor,
-                        true,
-                        env_window,
-                        env_lag,
-                        sample_rate,
-                        env_bin,
-                    ),
-                    envelope_shoulder(
-                        &a_post_ch[sel],
-                        &b_ch[sel],
-                        post_anchor,
-                        false,
-                        env_window,
-                        env_lag,
-                        sample_rate,
-                        env_bin,
-                    ),
-                )
-            } else {
-                (None, None)
-            };
             let (pre, post) = lag_pair(
                 &a_pre_ch[sel],
                 &a_post_ch[sel],
@@ -1226,13 +1270,9 @@ fn lag_at_placement(input: &LagAtPlacementInput<'_>) -> LagFingerprint {
                 },
                 // The 12 %-of-peak trim runs per buffer, so this channel's displacement is its own.
                 Some(sel_disp),
-                envelope_recenter_frames(sel_env_pre_peak, sample_rate),
-                envelope_recenter_frames(sel_env_post_peak, sample_rate),
+                envelope_cfg,
             );
-            add(
-                stamp_envelope(pre, sel_env_pre_peak),
-                stamp_envelope(post, sel_env_post_peak),
-            );
+            add(pre, post);
         }
     }
     out
@@ -3939,7 +3979,7 @@ mod tests {
 
     /// A *perfectly* registered pair reads lag 0 on both shoulders. The A templates start `D_pre` /
     /// `D_post` away from the gap edges (fade trimmed at 12 % of peak); map coordinates
-    /// (`docs/dev/TEMP-lag-decision-map-coordinates-plan.md` § Change) shift the B haystack anchor by
+    /// (`docs/dev/archive/TEMP-lag-decision-map-coordinates-plan.md` § Change) shift the B haystack anchor by
     /// the same `D` so the sweep is centered on the template's true corresponding B-time, not the raw
     /// gap edge. `border_displacement_ms` stays on the wire as a record of that walk-off — it is no
     /// longer a reader-side correction to `frac_lag_ms`.
@@ -4167,6 +4207,287 @@ mod tests {
         assert_eq!(post.lag0_r, None);
     }
 
+    /// 26/g6 shape: a healthy nominal lock (`peak_r` well above 0.5) with a perfect decoy match
+    /// inside the envelope's own search radius — if the envelope were consulted here it would
+    /// lock onto the decoy immediately (identical content, correlation ~1). Nominal-first must
+    /// never even look: a recoverable shoulder short-circuits before the envelope is touched.
+    #[test]
+    fn rescue_shoulder_never_consults_the_envelope_when_nominal_is_already_recoverable() {
+        let n = 4000usize;
+        let a_border: Vec<f64> = (0..n).map(|i| noise(7, i)).collect();
+        let mut b_signal = vec![0.0f64; 20_000];
+        let decoy_at = 12_000usize;
+        for (i, &v) in a_border.iter().enumerate() {
+            b_signal[decoy_at + i] = v;
+        }
+        let params = LagSweepParams {
+            window: 2000,
+            max_lag: 1000,
+            sample_rate: 48_000,
+            channel: LagChannel::Mono,
+        };
+        let envelope = Some(EnvelopeCfg {
+            window: 2000,
+            max_lag: 1000,
+            bin: 100,
+        });
+        // Alive at nominal but *not* a landmark (`peak_z` well under 12) — the is_landmark trap:
+        // triage must key off `peak_r`, not `is_landmark`, or this shape would be misread as dead.
+        let nominal = LagSummary {
+            window_ms: 1000,
+            max_lag_ms: 600,
+            channel: LagChannel::Mono,
+            lag0_r: Some(0.55),
+            peak_r: 0.55,
+            second_peak_r: None,
+            peak_z: Some(6.0),
+            prominence: Some(0.1),
+            top2_spacing_ms: None,
+            peak_lag_samples: 0,
+            frac_lag_samples: 0.0,
+            frac_lag_ms: 0.0,
+            edge_pinned: Some(false),
+            border_displacement_ms: None,
+            envelope_lag_ms: None,
+            envelope_peak_r: None,
+            envelope_edge_pinned: None,
+            envelope_rescue: None,
+            verdict: LagVerdict::TimingOffset,
+        };
+        assert!(
+            !nominal.is_landmark(),
+            "fixture must sit below the landmark bar to exercise the trap"
+        );
+
+        let out = rescue_shoulder(
+            Some(nominal),
+            envelope,
+            &a_border,
+            &b_signal,
+            11_500,
+            true,
+            0,
+            params,
+            None,
+        )
+        .expect("recoverable shoulder is always returned");
+
+        assert_eq!(
+            LagSummary {
+                envelope_rescue: None,
+                ..out
+            },
+            nominal,
+            "a recoverable shoulder must be returned untouched — the envelope must never move \
+             it, even with a perfect decoy match inside its search radius"
+        );
+        assert_eq!(out.envelope_rescue, Some(EnvelopeRescue::NotConsulted));
+    }
+
+    /// The `is_landmark` trap, narrowly: 26/g6's *real* nominal numbers (`peak_r` 0.997, `peak_z`
+    /// only 6.13 — well under the landmark's `peak_z >= 12` bar) must still triage as alive.
+    #[test]
+    fn rescue_shoulder_triage_uses_peak_r_not_is_landmark() {
+        let nominal = LagSummary {
+            window_ms: 1000,
+            max_lag_ms: 600,
+            channel: LagChannel::Mono,
+            lag0_r: Some(0.997),
+            peak_r: 0.997,
+            second_peak_r: Some(0.9),
+            peak_z: Some(6.13),
+            prominence: Some(0.097),
+            top2_spacing_ms: Some(10.0),
+            peak_lag_samples: -2,
+            frac_lag_samples: -2.0,
+            frac_lag_ms: -0.04,
+            edge_pinned: Some(false),
+            border_displacement_ms: None,
+            envelope_lag_ms: None,
+            envelope_peak_r: None,
+            envelope_edge_pinned: None,
+            envelope_rescue: None,
+            verdict: LagVerdict::TimingOffset,
+        };
+        assert!(is_recoverable(&nominal), "peak_r 0.997 must be recoverable");
+        assert!(
+            !nominal.is_landmark(),
+            "peak_z 6.13 must fail the landmark bar (>= 12)"
+        );
+
+        let out = rescue_shoulder(
+            Some(nominal),
+            Some(EnvelopeCfg {
+                window: 100,
+                max_lag: 100,
+                bin: 10,
+            }),
+            &[0.0; 200],
+            &[0.0; 400],
+            150,
+            true,
+            0,
+            LagSweepParams {
+                window: 100,
+                max_lag: 50,
+                sample_rate: 48_000,
+                channel: LagChannel::Mono,
+            },
+            None,
+        )
+        .expect("recoverable shoulder is always returned");
+        assert_eq!(out.envelope_rescue, Some(EnvelopeRescue::NotConsulted));
+    }
+
+    /// pair-50 shape: dead at nominal, and the envelope proposes nothing usable (unrelated noise
+    /// on both sides — no real match at any lag, coarse or fine). The honest nominal reading must
+    /// be kept, with the declined candidate stamped.
+    #[test]
+    fn rescue_shoulder_declines_a_still_dead_candidate() {
+        let a_border: Vec<f64> = (0..2000).map(|i| noise(3, i)).collect();
+        let b_signal: Vec<f64> = (0..10_000).map(|i| noise(9, i)).collect();
+        let nominal = LagSummary {
+            window_ms: 1000,
+            max_lag_ms: 600,
+            channel: LagChannel::Mono,
+            lag0_r: Some(0.05),
+            peak_r: 0.2,
+            second_peak_r: Some(0.15),
+            peak_z: Some(1.0),
+            prominence: Some(0.05),
+            top2_spacing_ms: Some(20.0),
+            peak_lag_samples: 5,
+            frac_lag_samples: 5.0,
+            frac_lag_ms: 0.1,
+            edge_pinned: Some(false),
+            border_displacement_ms: None,
+            envelope_lag_ms: None,
+            envelope_peak_r: None,
+            envelope_edge_pinned: None,
+            envelope_rescue: None,
+            verdict: LagVerdict::Decorrelated,
+        };
+        let params = LagSweepParams {
+            window: 1000,
+            max_lag: 600,
+            sample_rate: 48_000,
+            channel: LagChannel::Mono,
+        };
+        let envelope = Some(EnvelopeCfg {
+            window: 1000,
+            max_lag: 600,
+            bin: 100,
+        });
+
+        let out = rescue_shoulder(
+            Some(nominal),
+            envelope,
+            &a_border,
+            &b_signal,
+            5000,
+            true,
+            0,
+            params,
+            None,
+        )
+        .expect("dead shoulder is still returned");
+
+        assert_eq!(out.envelope_rescue, Some(EnvelopeRescue::Declined));
+        assert_eq!(
+            out.peak_r, 0.2,
+            "declined candidate keeps the honest nominal reading"
+        );
+        assert_eq!(out.verdict, LagVerdict::Decorrelated);
+    }
+
+    /// Chain-isolation shape: dead pre + alive post. The post's reported summary must be
+    /// unaffected by whatever the pre's rescue does — bit-identical whether or not the envelope
+    /// (and therefore the pre's rescue) runs at all. `pre_shift` is derived from the *nominal*
+    /// pre only (`docs/dev/TEMP-lag-nominal-first-plan.md` § Change, "Landmark chain stays
+    /// anchored to the nominal pass"), so rescuing pre can never move post's own search center.
+    #[test]
+    fn lag_at_placement_post_unaffected_by_a_rescued_pre() {
+        const RATE: u32 = 48_000;
+        let pre_lag = lag_at_ms(RATE, 1160);
+        let pre_len = lag_at_ms(RATE, 2500);
+        let gap = lag_at_ms(RATE, 2000);
+        let post_len = lag_at_ms(RATE, 3000);
+        let front_pad = pre_lag + lag_at_ms(RATE, 500);
+        let gap_start = front_pad + pre_len;
+        let gap_end = gap_start + gap;
+        let total = gap_end + post_len;
+
+        let mut a = vec![0.0f32; total];
+        write_shaped_noise(&mut a, front_pad, gap_start, 11, 0.5, true);
+        write_shaped_noise(&mut a, gap_end, gap_end + post_len, 23, 0.5, false);
+
+        let mut b_mono = vec![0.0f64; total];
+        // Post: identical at nominal (alive, r ~= 1).
+        for i in 0..post_len {
+            b_mono[gap_end + i] = f64::from(a[gap_end + i]);
+        }
+        // Pre: true content sits `pre_lag` earlier than nominal — dead at nominal (outside the
+        // ±600 ms fine window), rescuable via the envelope.
+        let b_pre_at = gap_start - pre_lag - pre_len;
+        for i in 0..pre_len {
+            b_mono[b_pre_at + i] = f64::from(a[front_pad + i]);
+        }
+
+        let run = |env_ms: u32| {
+            let config = FingerprintConfig {
+                lag_envelope_max_lag_ms: env_ms,
+                ..FingerprintConfig::default()
+            };
+            lag_at_placement(&LagAtPlacementInput {
+                a_samples: &a,
+                channels: 1,
+                refined: RefinedGapFrames {
+                    start_frame: gap_start,
+                    end_frame: gap_end,
+                },
+                b_mono: &b_mono,
+                b_ch: &[],
+                selected: None,
+                start_frame: gap_start,
+                cfg: &config,
+                sample_rate: RATE,
+            })
+        };
+
+        let off = run(0);
+        let on = run(2000);
+        let pre_off = off.pre_anchor.first().copied().expect("pre off");
+        let post_off = off.post_anchor.first().copied().expect("post off");
+        let pre_on = on.pre_anchor.first().copied().expect("pre on");
+        let post_on = on.post_anchor.first().copied().expect("post on");
+
+        assert!(
+            post_off.peak_r > 0.8,
+            "post must be alive at nominal, got {}",
+            post_off.peak_r
+        );
+        assert!(
+            pre_off.peak_r < 0.5,
+            "pre must be dead at nominal (env off), got {}",
+            pre_off.peak_r
+        );
+        assert!(
+            pre_on.peak_r > 0.8 && (pre_on.frac_lag_ms - (-1160.0)).abs() < 50.0,
+            "pre must be rescued when the envelope is on, got r={} lag={} ms",
+            pre_on.peak_r,
+            pre_on.frac_lag_ms
+        );
+        assert_eq!(pre_on.envelope_rescue, Some(EnvelopeRescue::Rescued));
+        assert_eq!(
+            LagSummary {
+                envelope_rescue: None,
+                ..post_on
+            },
+            post_off,
+            "post must be bit-identical whether or not the dead pre gets rescued"
+        );
+    }
+
     /// Pre-fix post search: center on `start_frame + gap_frames` with no pre-shift — stacks
     /// `L_pre + (D_B - D_A)` into one ±max_lag window (ledger A2).
     fn naive_lag_pair_post(
@@ -4241,8 +4562,7 @@ mod tests {
             gap_frames,
             sweep,
             None,
-            0,
-            0,
+            None,
         );
         let pre = pre.expect("pre shoulder");
         let post_seq = post_seq.expect("sequential post shoulder");
@@ -4332,6 +4652,7 @@ mod tests {
                 envelope_lag_ms: None,
                 envelope_peak_r: None,
                 envelope_edge_pinned: None,
+                envelope_rescue: None,
                 verdict: LagVerdict::TimingOffset,
             }],
             post_anchor: vec![LagSummary {
@@ -4352,6 +4673,7 @@ mod tests {
                 envelope_lag_ms: None,
                 envelope_peak_r: None,
                 envelope_edge_pinned: None,
+                envelope_rescue: None,
                 verdict: LagVerdict::TimingOffset,
             }],
         };
@@ -5854,6 +6176,7 @@ mod tests {
                         envelope_lag_ms: None,
                         envelope_peak_r: None,
                         envelope_edge_pinned: None,
+                        envelope_rescue: None,
                         verdict: LagVerdict::TimingOffset,
                     }],
                     post_anchor: vec![],
