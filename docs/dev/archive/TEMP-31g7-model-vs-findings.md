@@ -1,7 +1,7 @@
 # TEMP — The placement model, and 31/g7's findings set against it
 
 **Status:** findings note, **rev 2, 2026-08-18; archived 2026-08-19** (stable — everything it
-tracked has landed, been refuted, or moved to live plans; §§2, 5, 6, 8 numbers are
+tracked has landed, been refuted, or moved to successor plans; nominal-first archived 2026-08-20; §§2, 5, 6, 8 numbers are
 pre-map-coordinates vintage, see the 2026-08-19 callout below). A full rewrite of the 2026-08-17
 rev 1 (in git history at `docs/dev/TEMP-31g7-model-vs-findings.md`) after two secondary reviews. Rev 1 carried a repeat/aliasing story for 31/g7
 that archived measurement had already refuted; this revision removes every claim that failed
@@ -11,8 +11,8 @@ cross-check. Descriptive: it states the model and where the measurements land on
 no change** — S2b was refuted the same day and archived; the fix work it pointed at was
 [TEMP-lag-decision-map-coordinates-plan.md](TEMP-lag-decision-map-coordinates-plan.md) (done),
 [TEMP-lag-envelope-recenter-plan.md](TEMP-lag-envelope-recenter-plan.md) (superseded), and
-BACKLOG S1; the live successor is
-[../TEMP-lag-nominal-first-plan.md](../TEMP-lag-nominal-first-plan.md).
+BACKLOG S1; the ordering successor is
+[TEMP-lag-nominal-first-plan.md](TEMP-lag-nominal-first-plan.md) (done 2026-08-20).
 One-sided closeability as a *gap cell* (31/g7 vs 26/g6) is parked in
 [TEMP-31g7-gap-shape-vocabulary.md](TEMP-31g7-gap-shape-vocabulary.md), not here.
 

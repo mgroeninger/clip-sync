@@ -1,7 +1,7 @@
 # TEMP — Envelope adaptive widen + self-referential floor
 
 **Status:** draft, not started, 2026-08-19. **Re-scoped 2026-08-19 to the rescue branch:**
-[TEMP-lag-nominal-first-plan.md](TEMP-lag-nominal-first-plan.md) lands first (it needs no new
+[TEMP-lag-nominal-first-plan.md](archive/TEMP-lag-nominal-first-plan.md) landed 2026-08-20 (it needed no new
 threshold and no dump) and confines everything in this plan — the widen ladder *and* any guard
 refinement — to shoulders that are already dead at nominal (`peak_r` < 0.5). That collapses the
 stakes of Problem §2: a wrong guard decision inside the rescue branch costs a wasted fine sweep
@@ -124,7 +124,7 @@ nothing else. The reduction the fine pass already does is one function reuse awa
    despite the high r** (its raw `prominence` is 0.0137/0.0127, roughly half its own true-peak
    reading of 0.0254/0.0271 off-run — suggestive but not yet proven as a clean separator)?
    26/g6 stays in this dump as a *calibration point* for the statistics; its must-not-recenter
-   obligation now lives in [TEMP-lag-nominal-first-plan.md](TEMP-lag-nominal-first-plan.md)'s
+   obligation now lives in [TEMP-lag-nominal-first-plan.md](archive/TEMP-lag-nominal-first-plan.md)'s
    exit bar (bit-identical to off-run), which protects it whether or not any revised guard here
    would.
 2. Ladder dump: pair 50 at the 2000→3000→4000 ladder vs the flat 2000 baseline. Confirm the true
@@ -137,6 +137,6 @@ nothing else. The reduction the fine pass already does is one function reuse awa
    `BACKLOG.md`'s "Pair 50 envelope ~3 s" entry to point here instead of the flat-3000-dump
    direction it currently describes.
 
-**Ordering:** [TEMP-lag-nominal-first-plan.md](TEMP-lag-nominal-first-plan.md) lands and
-validates first; this plan's dumps then run on the nominal-first binary so the ladder and guard
+**Ordering:** [TEMP-lag-nominal-first-plan.md](archive/TEMP-lag-nominal-first-plan.md) landed
+2026-08-20; this plan's dumps run on that binary so the ladder and guard
 statistics are measured in the rescue branch they will actually live in.

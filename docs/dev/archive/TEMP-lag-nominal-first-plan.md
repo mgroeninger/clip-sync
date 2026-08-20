@@ -1,14 +1,19 @@
 # TEMP — Nominal-first ordering for the `lag_decision` envelope rescue
 
+> **Archived 2026-08-20.** Planned `lag_at_placement` reorder (measure → triage → rescue → accept);
+> shipped and Exit-validated. Record only. Durable behaviour:
+> [gap-fingerprint.md](../gap-fingerprint.md) § *`lag_decision`*. S1 production plumbing is
+> next ([BACKLOG.md](../../../BACKLOG.md) § *Fill placement*).
+
 **Status:** implemented + validated, 2026-08-20. Unit tests (all 5 Exit shapes) and the 12-pair
 real-media re-run (`gap-files/2026-08-20-nominal-first-{off,on}-decoupled-unconditioned`) both meet
 every Exit bar: 0 mismatches across 505 shoulders (not_consulted/declined), manifest byte-identical,
 31/g7–g11 and pair-50 g8–g19 match the stated values exactly. Record-only; S1 production plumbing
 (see § Non-goals) is next.
-Parent: [archive/TEMP-lag-envelope-recenter-plan.md](archive/TEMP-lag-envelope-recenter-plan.md)
+Parent: [TEMP-lag-envelope-recenter-plan.md](TEMP-lag-envelope-recenter-plan.md)
 (superseded — its Change shipped the envelope mechanism this plan reorders; its Result sections
 are this plan's validation baselines). Sibling:
-[TEMP-envelope-adaptive-widen-plan.md](TEMP-envelope-adaptive-widen-plan.md) (window sizing +
+[TEMP-envelope-adaptive-widen-plan.md](../TEMP-envelope-adaptive-widen-plan.md) (window sizing +
 rescue-branch guard refinement — re-scoped by this plan; see § Relation to adaptive-widen).
 
 ---
@@ -94,7 +99,7 @@ shoulder off", a different question; pair 26 is direct evidence that healthy gap
   disables rescue entirely.
 - Do not tune any threshold. Both numbers this plan uses (0.5 recoverable, 0.70 envelope guard)
   are existing, recorded values; changing them is
-  [TEMP-envelope-adaptive-widen-plan.md](TEMP-envelope-adaptive-widen-plan.md)'s business, now
+  [TEMP-envelope-adaptive-widen-plan.md](../TEMP-envelope-adaptive-widen-plan.md)'s business, now
   confined to the rescue branch.
 - Do not address the alive-but-wrong-at-nominal case (a repetition alias inside ±600 with
   `r ≥ 0.5` while the true peak is far). Nominal-first cannot see it, envelope-first could not fix
@@ -141,7 +146,7 @@ No ear pass needed: no audio output changes while record-only.
 ## Relation to adaptive-widen
 
 This plan lands first and does not wait on
-[TEMP-envelope-adaptive-widen-plan.md](TEMP-envelope-adaptive-widen-plan.md)'s diagnostic dump —
+[TEMP-envelope-adaptive-widen-plan.md](../TEMP-envelope-adaptive-widen-plan.md)'s diagnostic dump —
 it introduces no new threshold. Adaptive-widen is re-scoped by it: the widen ladder and any
 `envelope_peak_z` / `envelope_prominence` guard refinement live **inside the rescue branch**,
 where a wrong guard decision costs a wasted fine sweep or an honestly-kept `decorrelated` row,

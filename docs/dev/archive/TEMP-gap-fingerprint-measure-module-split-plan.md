@@ -16,9 +16,8 @@ measurement body in one file**. The file is now **6271 lines** (2026-08-20 recou
 ~3427 production + ~2844 colocated tests) — larger than the pre-split
 `gap_fingerprint.rs` monolith. The growth since the 5990-line count this plan was
 drafted against is the nominal-first envelope-rescue mechanism
-([TEMP-lag-nominal-first-plan.md](../TEMP-lag-nominal-first-plan.md)), already landed in
-source (see `lag.rs` ownership below) even though that plan's own status header still
-reads "draft, not started" — it is mid real-media validation, not unimplemented.
+([TEMP-lag-nominal-first-plan.md](TEMP-lag-nominal-first-plan.md)), already landed in
+source (see `lag.rs` ownership below).
 
 Companions: [TEMP-gap-fingerprint-module-split-plan.md](TEMP-gap-fingerprint-module-split-plan.md)
 (parent split + `schema ← project ← measure` DAG; **keep the cycle guard**),
@@ -246,7 +245,7 @@ placement/probes deps). Tests: `lag_curve_*`, `summarize_lag_curve_*`, `lag_summ
 `lag_at_placement_envelope_recenter_is_per_shoulder`,
 `lag_at_placement_envelope_shared_far_unlocks_both`,
 `lag_at_placement_post_unaffected_by_a_rescued_pre`, and any others
-[TEMP-lag-nominal-first-plan.md](../TEMP-lag-nominal-first-plan.md)'s exit bar adds).
+[TEMP-lag-nominal-first-plan.md](TEMP-lag-nominal-first-plan.md)'s exit bar adds).
 Leave `tags_from_measurements` in the remainder even though it currently sits
 immediately above this block.
 

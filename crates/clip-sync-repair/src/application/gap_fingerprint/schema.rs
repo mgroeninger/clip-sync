@@ -993,13 +993,13 @@ pub struct LagSummary {
     /// fingerprints written before this field, and on paths that do not build border templates.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub border_displacement_ms: Option<f64>,
-    /// Coarse 100 ms-bin envelope peak at `b_mapped` (ms), recorded even when the fine sweep
-    /// stays at nominal. Absent on dumps that never ran the envelope recenter
-    /// (`lag_envelope_max_lag_ms` 0, or corpora from before this field).
+    /// Coarse 100 ms-bin envelope peak at `b_mapped` (ms). Present on `rescued` / `declined`
+    /// shoulders (the envelope ran). Absent on `not_consulted` (alive at nominal — envelope never
+    /// run), when `lag_envelope_max_lag_ms` is 0, and on corpora from before this field.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub envelope_lag_ms: Option<f64>,
-    /// Peak Pearson of that coarse envelope. Recenter the fine sweep iff this is ≥ scan
-    /// `min_envelope_r` (0.70) **and** [`Self::envelope_edge_pinned`] is false.
+    /// Peak Pearson of that coarse envelope. A dead-at-nominal shoulder retries at this peak iff
+    /// it is ≥ scan `min_envelope_r` (0.70) **and** [`Self::envelope_edge_pinned`] is false.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub envelope_peak_r: Option<f64>,
     /// The coarse envelope peak sits on the last bin of ±`lag_envelope_max_lag_ms` — fail open
@@ -1007,7 +1007,7 @@ pub struct LagSummary {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub envelope_edge_pinned: Option<bool>,
     /// Which branch of the nominal-first measure → triage → rescue → accept ordering produced
-    /// this summary (`docs/dev/TEMP-lag-nominal-first-plan.md` § Change). `None` only when the
+    /// this summary (`docs/dev/archive/TEMP-lag-nominal-first-plan.md` § Change). `None` only when the
     /// envelope mechanism is off (`lag_envelope_max_lag_ms == 0`). Unlike `envelope_lag_ms`, this
     /// is still `Some` (`NotConsulted`) when the mechanism is on but the shoulder was already
     /// recoverable at nominal, since the envelope was never run to produce a peak.

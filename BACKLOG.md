@@ -2,14 +2,14 @@
 
 Open follow-up work for `clip-sync`. See [PLAN.md](PLAN.md) for architecture, [docs/pipeline.md](docs/pipeline.md) for the repair pipeline (phase by phase), [docs/dev/corpus-validation.md](docs/dev/corpus-validation.md) for the test corpus, and [docs/error-mapping.md](docs/error-mapping.md) for error handling. Shipped work is recorded in `docs/dev/archive/*` and git history.
 
-Last updated: 2026-08-19.
+Last updated: 2026-08-20.
 
 **How this doc works**
 
 - **Open** — actionable items below (problem / direction kept for open work only).
 - **Plans** — active drafts under `docs/dev/TEMP-*.md`; archive when shipped.
 
-**Next:** [Fill placement](#fill-placement-two-defects--registration-ignored-26g6-class-and-step-gap-with-empty-donor-bridge-31g7) — [TEMP-lag-nominal-first-plan.md](docs/dev/TEMP-lag-nominal-first-plan.md) (nominal-first ordering for the envelope rescue; the recenter smoke join failed 26/g6 and that plan is archived superseded; this unblocks S1). 26/g6 axis-2 start-sweep oracle (parallel, not this chain). [Donor registration leftovers](#donor-registration-leftovers); [Repair R6](#repair-r6-follow-ups); [Residual gate](#residual-gate-follow-ups).
+**Next:** [Fill placement](#fill-placement-two-defects--registration-ignored-26g6-class-and-step-gap-with-empty-donor-bridge-31g7) — **S1** (record `applied − frac_lag_ms` on the patch record; nominal-first Exit is met, so this is unblocked). 26/g6 axis-2 start-sweep oracle (parallel, not this chain). [Donor registration leftovers](#donor-registration-leftovers); [Repair R6](#repair-r6-follow-ups); [Residual gate](#residual-gate-follow-ups).
 
 ---
 
@@ -17,8 +17,7 @@ Last updated: 2026-08-19.
 
 | Plan | Covers |
 |------|--------|
-| [TEMP-lag-nominal-first-plan.md](docs/dev/TEMP-lag-nominal-first-plan.md) | **Do first.** Reorder `lag_at_placement` to measure → triage → rescue → accept: fine sweep at nominal always; envelope consulted only for shoulders dead at nominal (`peak_r` < 0.5); rescue kept only if itself recoverable. Fixes the recenter smoke join's 26/g6 false lock by construction (alive shoulders are never moved — must come back bit-identical to the off-run). Successor to [archive/TEMP-lag-envelope-recenter-plan.md](docs/dev/archive/TEMP-lag-envelope-recenter-plan.md); inherits its `gap-files/2026-08-19-recenter-*` dumps as baselines. Unblocks S1 — draft, not started |
-| [TEMP-envelope-adaptive-widen-plan.md](docs/dev/TEMP-envelope-adaptive-widen-plan.md) | Self-referential `envelope_peak_z`/`prominence` floor (reuse the fine sweep's own curve-statistics, no media-spec tuning, no gap content) plus a per-shoulder adaptive widen ladder (2000→3000→4000 ms) instead of a flat default bump — draft, not started; **re-scoped 2026-08-19 to the rescue branch** (runs after nominal-first lands); supersedes the flat "Pair 50 envelope ~3 s" direction below |
+| [TEMP-envelope-adaptive-widen-plan.md](docs/dev/TEMP-envelope-adaptive-widen-plan.md) | Self-referential `envelope_peak_z`/`prominence` floor (reuse the fine sweep's own curve-statistics, no media-spec tuning, no gap content) plus a per-shoulder adaptive widen ladder (2000→3000→4000 ms) instead of a flat default bump — draft, not started; **re-scoped to the rescue branch** (nominal-first landed 2026-08-20); supersedes the flat "Pair 50 envelope ~3 s" direction below |
 | [TEMP-nway-donor-alignment-plan.md](docs/dev/TEMP-nway-donor-alignment-plan.md) | N-way donor alignment: repair one damaged copy from multiple donors — draft, not started |
 | [TEMP-flac-output-plan.md](docs/dev/TEMP-flac-output-plan.md) | In-process `--flac` lossless output (peer of `--wav`, no ffmpeg) — draft, not started |
 
@@ -45,7 +44,7 @@ Two ear-confirmed stutters, two distinct fixes. Do not re-open the source/gate f
 
 | Gap | What went wrong | Live work |
 |-----|-----------------|-----------|
-| 31/g7 (−977 ms) | **Diagnosis complete 2026-08-18:** the gap *is* pair 31's map step — post shoulder uniquely at −1160 ms (wide sweep, gap-shape §9), pre map-true **−38.1 ms** (`D_pre` = 9.4; was −47.5 in template coordinates), donor bridge zero-length; B is continuous, so **any** donor fill duplicates program, and the shipped −977 is `min`'s best compromise between the two true lags (0.437/0.437). Neither one-seam fill nor dual-fit-with-reach can patch it; honest action = reasoned skip / step verdict | S2b **refuted; archived 2026-08-18** ([archive/TEMP-unmatchable-shoulder-plan.md](docs/dev/archive/TEMP-unmatchable-shoulder-plan.md)). **Census complete 2026-08-18** (14 rows: 13 one-dead + 31/g10 control): 12 `shared_near_false_dead`, 1 `collapsed_bridge` (this gap), 1 `shared_far_offset` (31/g10). Hole 2 still empty. Sensor honesty, in order: (1) [TEMP-lag-decision-map-coordinates-plan.md](docs/dev/archive/TEMP-lag-decision-map-coordinates-plan.md) — **done 2026-08-19**; the 12 rescued; 9-pair smoke-join closed 9/9; (2) envelope rescue for the far offsets — mechanism validated on pair 31 ([archive/TEMP-lag-envelope-recenter-plan.md](docs/dev/archive/TEMP-lag-envelope-recenter-plan.md): g7 pre stayed −38.07 ms; post unlocked at −1160.25 ms as detection only), but its smoke join failed 26/g6 (envelope-first ordering false-locked a healthy gap) and the plan is **archived superseded**; the live step is [TEMP-lag-nominal-first-plan.md](docs/dev/TEMP-lag-nominal-first-plan.md); (3) collapsed-bridge skip verdict — spec after nominal-first Exit so `bridge_ms` uses the now-measurable post; independent of S1. Do not add a dump ±2000 field as the fix for the 12 |
+| 31/g7 (−977 ms) | **Diagnosis complete 2026-08-18:** the gap *is* pair 31's map step — post shoulder uniquely at −1160 ms (wide sweep, gap-shape §9), pre map-true **−38.1 ms** (`D_pre` = 9.4; was −47.5 in template coordinates), donor bridge zero-length; B is continuous, so **any** donor fill duplicates program, and the shipped −977 is `min`'s best compromise between the two true lags (0.437/0.437). Neither one-seam fill nor dual-fit-with-reach can patch it; honest action = reasoned skip / step verdict | S2b **refuted; archived 2026-08-18** ([archive/TEMP-unmatchable-shoulder-plan.md](docs/dev/archive/TEMP-unmatchable-shoulder-plan.md)). **Census complete 2026-08-18** (14 rows: 13 one-dead + 31/g10 control): 12 `shared_near_false_dead`, 1 `collapsed_bridge` (this gap), 1 `shared_far_offset` (31/g10). Hole 2 still empty. Sensor honesty, in order: (1) [TEMP-lag-decision-map-coordinates-plan.md](docs/dev/archive/TEMP-lag-decision-map-coordinates-plan.md) — **done 2026-08-19**; the 12 rescued; 9-pair smoke-join closed 9/9; (2) envelope rescue for the far offsets — [archive/TEMP-lag-nominal-first-plan.md](docs/dev/archive/TEMP-lag-nominal-first-plan.md) **done 2026-08-20** (measure → triage → rescue → accept; 26/g6-class rows stay bit-identical to envelope-off; pair 31 far locks kept); the superseded envelope-first attempt is [archive/TEMP-lag-envelope-recenter-plan.md](docs/dev/archive/TEMP-lag-envelope-recenter-plan.md); (3) collapsed-bridge skip verdict — spec now; `bridge_ms` can use the measurable post; independent of S1. Do not add a dump ±2000 field as the fix for the 12 |
 | 26/g6 (−1450 ms) | a near-nominal placement existed and lost on score; fingerprint is healthy (dual-fit passes, both shoulders live) | **Cheapest open lead:** oracle the axis-2 start sweep at this gap — what did the objective score at ≈−50 ms vs −1450 ms (findings §6.8). Unambiguous right answer; not gated on S2b or the vocabulary decision. Beyond that, no plan. S2(2) refuted a nominal-referenced `LATE_START_PENALTY`. A registration-referenced prior is an idea, not a Change. Do not retune `fill_fit_early_start_penalty_scale` |
 
 **Recenter plan closed — superseded 2026-08-19:**
@@ -57,26 +56,26 @@ both shoulders ~−1153; pair 50 honestly saturated at ±2000 ms). The smoke joi
 0.997/0.993) with a confident false one at +1.88 s (comb content; cleared the 0.70 guard, not
 edge-pinned, shoulders agreeing). Diagnosis: an **ordering** defect, not a guard-threshold
 defect — the envelope must be a rescue for dead-at-nominal shoulders, never a pre-step on alive
-ones. **Until nominal-first lands, the shipped default (2000 ms, envelope-first) corrupts
-26/g6-class `lag_decision` rows — pass `--lag-envelope-max-lag-ms 0` on any dump whose lag rows
-must be trusted.**
+ones. **Nominal-first landed 2026-08-20**
+([archive/TEMP-lag-nominal-first-plan.md](docs/dev/archive/TEMP-lag-nominal-first-plan.md)):
+the default 2000 ms envelope is a rescue for dead-at-nominal shoulders only, so 26/g6-class
+`lag_decision` rows stay bit-identical to `--lag-envelope-max-lag-ms 0`. Durable behaviour:
+[gap-fingerprint.md](docs/dev/gap-fingerprint.md) § *`lag_decision`*.
 
 **Order of work** (do not raise the 0.70 envelope guard; do not raise the 2000 ms default until
 the adaptive-widen ladder dump says to):
 
-1. **Nominal-first ordering** — [TEMP-lag-nominal-first-plan.md](docs/dev/TEMP-lag-nominal-first-plan.md):
-   measure at nominal always; triage on `peak_r` < 0.5 (not `is_landmark` — 26/g6's healthy z is
-   6.1); rescue dead shoulders via the envelope; accept only recoverable rescues. Exit re-runs
-   the four 2026-08-19 dumps with tightened bars (alive shoulders bit-identical to off-run).
-   Unblocks S1.
+1. **Nominal-first ordering** — [archive/TEMP-lag-nominal-first-plan.md](docs/dev/archive/TEMP-lag-nominal-first-plan.md)
+   **done 2026-08-20.** Measure at nominal always; triage on `peak_r` < 0.5 (not `is_landmark`);
+   rescue dead shoulders via the envelope; accept only recoverable rescues. Unblocked S1.
 2. **Recenter leftovers** — cheap, no TEMP. Stamp `envelope_*` when the fine sweep is `None`
    (31/g12 post is silent today). Saturated-envelope unit test (50/g9 post is a real
    `envelope_edge_pinned` fail-open). Note that `wide_envelope` is still ±400 ms at `b_mapped`
    and is not a confirmer of a far `lag_decision`. Optional stale `lag_pair` comment.
-3. **S1** — next Change after nominal-first: new TEMP, plumbing only (row below). Does not wait
+3. **S1** — next Change: new TEMP, plumbing only (row below). Does not wait
    for (4)–(6).
-4. **Collapsed-bridge skip verdict** — 31/g7 row (3) above. Independent of S1; spec after
-   nominal-first Exit so post at −1160 is in the measurement.
+4. **Collapsed-bridge skip verdict** — 31/g7 row (3) above. Independent of S1; post at −1160
+   is in the measurement.
 5. **Adaptive widen + rescue-branch guard** —
    [TEMP-envelope-adaptive-widen-plan.md](docs/dev/TEMP-envelope-adaptive-widen-plan.md): the
    2000→3000→4000 ms ladder for pair 50's +2.79 s, plus `envelope_peak_z`/`prominence`
@@ -91,10 +90,10 @@ Withdrawn as discriminators (archived §1.1): pair-level drift correction, corre
 
 | Item | Direction |
 |------|-----------|
-| **Recenter leftovers** | After nominal-first Exit, before S1 if touching `measure.rs`; otherwise anytime. Stamp `envelope_*` when fine is `None`; saturated-envelope unit test; `wide_envelope` is not a far-lag confirmer. No TEMP |
-| **S1 — record the registration residual on the patch record** | Blocked on [TEMP-lag-nominal-first-plan.md](docs/dev/TEMP-lag-nominal-first-plan.md) Exit (the recenter smoke join failed 26/g6; envelope-first is not a trustworthy `lag_decision`). After that Exit, a new TEMP that is plumbing only: emit `applied − frac_lag_ms` (min-abs over confident shoulders, abstain when none) on every patched gap; no gate reads it. This is a **patch diagnostic**, not a gap class (findings §8). S1 consumes the nominal-first `lag_decision` (nominal measurement, envelope rescue for dead shoulders) and must reuse production's already-decoded shoulder PCM, not re-decode |
-| **Collapsed-bridge skip verdict** | After nominal-first Exit; independent of S1. 31/g7 honest action once post at −1160 is in `lag_decision`. Spec `|gap + post_lag − pre_lag| ≈ 0`; do not treat as one-seam fill |
-| **Pair 50 envelope ~3 s** | Superseded by [TEMP-envelope-adaptive-widen-plan.md](docs/dev/TEMP-envelope-adaptive-widen-plan.md) (ladder 2000→3000→4000 in the rescue branch, after nominal-first; does not hold S1). Keep default 2000 until its ladder dump locks +2.79 s interior. Watch g12/g18/g19 false interiors |
+| **Recenter leftovers** | Anytime. Stamp `envelope_*` when fine is `None`; saturated-envelope unit test; `wide_envelope` is not a far-lag confirmer. No TEMP |
+| **S1 — record the registration residual on the patch record** | **Unblocked.** New TEMP, plumbing only: emit `applied − frac_lag_ms` (min-abs over confident shoulders, abstain when none) on every patched gap; no gate reads it. This is a **patch diagnostic**, not a gap class (findings §8). S1 consumes the nominal-first `lag_decision` ([archive/TEMP-lag-nominal-first-plan.md](docs/dev/archive/TEMP-lag-nominal-first-plan.md)) and must reuse production's already-decoded shoulder PCM, not re-decode |
+| **Collapsed-bridge skip verdict** | Independent of S1. 31/g7 honest action; post at −1160 is in `lag_decision`. Spec `|gap + post_lag − pre_lag| ≈ 0`; do not treat as one-seam fill |
+| **Pair 50 envelope ~3 s** | Superseded by [TEMP-envelope-adaptive-widen-plan.md](docs/dev/TEMP-envelope-adaptive-widen-plan.md) (ladder 2000→3000→4000 in the rescue branch; does not hold S1). Keep default 2000 until its ladder dump locks +2.79 s interior. Watch g12/g18/g19 false interiors |
 | **`lag_editorial` shares recenter** | After S1, or piggyback on a `--fingerprint-diagnostics` dump. Confirm the diagnostic placement recenters the same way; do not treat disagreement with `lag_decision` as a gate signal |
 | **S4 / `applied = 0` cohort** | Conditional ear labels for whether a residual guard's domain includes gaps that never slid. Do not run until it would change a decision. The archived §5 render list is mixed-orientation and stale |
 | **Ear-pass 17/g34 and 47/g14** | Cheapest n>2. 17/g34 is the same well-posed class as 26/g6 (unique both-live, dual-fit pass, ignored; findings §8). Residual is what also groups it with 31/g7 — do not read that as a shared fingerprint. 47/g14 is the first failure-to-move. Labels, not a TEMP |

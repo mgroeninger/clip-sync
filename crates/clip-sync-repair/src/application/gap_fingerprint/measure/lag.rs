@@ -255,7 +255,7 @@ pub(in crate::application::gap_fingerprint::measure) struct EnvelopeCfg {
 /// A shoulder is recoverable — and therefore untouchable by the envelope rescue — once its own
 /// fine sweep clears `peak_r ≥ 0.5` (`classify_lag`'s recoverable line, `measure.rs:418`; the
 /// nominal-first plan's triage predicate, **not** `LagSummary::is_landmark` — see "The
-/// `is_landmark` trap", `docs/dev/TEMP-lag-nominal-first-plan.md`).
+/// `is_landmark` trap", `docs/dev/archive/TEMP-lag-nominal-first-plan.md`).
 pub(in crate::application::gap_fingerprint::measure) fn is_recoverable(s: &LagSummary) -> bool {
     s.peak_r >= 0.5
 }
@@ -272,7 +272,7 @@ pub(in crate::application::gap_fingerprint::measure) fn stamp_rescue(
     s.envelope_rescue = Some(rescue);
     s
 }
-/// Measure → triage → rescue → accept for one shoulder (`docs/dev/TEMP-lag-nominal-first-plan.md`
+/// Measure → triage → rescue → accept for one shoulder (`docs/dev/archive/TEMP-lag-nominal-first-plan.md`
 /// § Change). `nominal` is that shoulder's zero-envelope-shift fine sweep, already run by the
 /// caller. Alive shoulders (`is_recoverable`) are returned untouched — the envelope is never
 /// consulted, so it can never move them. A dead shoulder is rescued only if the coarse envelope
@@ -285,7 +285,7 @@ pub(in crate::application::gap_fingerprint::measure) fn stamp_rescue(
 ///
 /// `wide_a_border` lazily supplies a *wider* A-side capture for the envelope peak search only —
 /// called only once a shoulder is confirmed dead at nominal, never up front
-/// (`docs/dev/TEMP-lag-nominal-first-plan.md` § Change). The narrow nominal capture in `side.a_border`
+/// (`docs/dev/archive/TEMP-lag-nominal-first-plan.md` § Change). The narrow nominal capture in `side.a_border`
 /// is enough for the fine ±`max_lag` sweep (both here and the retry below); only
 /// `envelope_shoulder`'s coarse search needs the wider reach. `None` — env off, no source supplied
 /// (e.g. direct test calls), or the source returns nothing usable — falls back to `side.a_border`.
@@ -349,7 +349,7 @@ pub(in crate::application::gap_fingerprint::measure) struct LagPairInput<'a> {
     pub(in crate::application::gap_fingerprint::measure) post_wide: Option<&'a dyn Fn() -> Option<Vec<f64>>>,
 }
 /// Measure → triage → rescue → accept ordering for one shoulder pair
-/// (`docs/dev/TEMP-lag-nominal-first-plan.md` § Change). Both shoulders are always swept at their
+/// (`docs/dev/archive/TEMP-lag-nominal-first-plan.md` § Change). Both shoulders are always swept at their
 /// nominal (zero envelope shift) center first; `envelope` gates whether either may be rescued from
 /// there. Only a dead shoulder (`peak_r < 0.5` at nominal) ever pays the coarse envelope pass.
 pub(in crate::application::gap_fingerprint::measure) fn lag_pair(
@@ -387,7 +387,7 @@ pub(in crate::application::gap_fingerprint::measure) fn lag_pair(
     // clears the findings-§8 landmark bar (`LagSummary::is_landmark`) — a weak or ambiguous pre
     // must not become the prior for the post search (fail open to `post_nominal` otherwise). This
     // chain is always read from the **nominal** pre — never a rescued one
-    // (`docs/dev/TEMP-lag-nominal-first-plan.md` § Change, "Landmark chain stays anchored to the
+    // (`docs/dev/archive/TEMP-lag-nominal-first-plan.md` § Change, "Landmark chain stays anchored to the
     // nominal pass") — so a rescue on either shoulder can never move the other's search center.
     let post_nominal = start_frame + gap_frames + d_post;
     let pre_shift = pre_nominal
@@ -551,7 +551,7 @@ pub(in crate::application::gap_fingerprint::measure) fn lag_at_placement(input: 
     // sweep's own reach (`window + max_lag`), never `env_window + env_lag`. Widening it unconditionally
     // here paid the wider capture's cost (and let its 12%-of-peak trim shift) on every gap edge, even
     // when no shoulder is ever dead enough to consult the envelope
-    // (`docs/dev/TEMP-lag-nominal-first-plan.md` § Change). The wide reach is instead fetched lazily,
+    // (`docs/dev/archive/TEMP-lag-nominal-first-plan.md` § Change). The wide reach is instead fetched lazily,
     // per shoulder, only inside `rescue_shoulder` — see `pre_wide`/`post_wide` below.
     let border_need = window + max_lag.max(0) as usize;
     let border_spec = probe_border_spec(&refined, border_need, cfg);
@@ -579,7 +579,7 @@ pub(in crate::application::gap_fingerprint::measure) fn lag_at_placement(input: 
         channel: LagChannel::Mono,
     };
     // Nominal-first: the envelope is only ever consulted by `rescue_shoulder` for a shoulder that
-    // is dead at nominal, never up front (`docs/dev/TEMP-lag-nominal-first-plan.md` § Change).
+    // is dead at nominal, never up front (`docs/dev/archive/TEMP-lag-nominal-first-plan.md` § Change).
     let envelope_cfg = env_on.then_some(EnvelopeCfg {
         window: env_window,
         max_lag: env_lag,
@@ -1298,7 +1298,7 @@ mod tests {
     /// Chain-isolation shape: dead pre + alive post. The post's reported summary must be
     /// unaffected by whatever the pre's rescue does — bit-identical whether or not the envelope
     /// (and therefore the pre's rescue) runs at all. `pre_shift` is derived from the *nominal*
-    /// pre only (`docs/dev/TEMP-lag-nominal-first-plan.md` § Change, "Landmark chain stays
+    /// pre only (`docs/dev/archive/TEMP-lag-nominal-first-plan.md` § Change, "Landmark chain stays
     /// anchored to the nominal pass"), so rescuing pre can never move post's own search center.
     #[test]
     fn lag_at_placement_post_unaffected_by_a_rescued_pre() {

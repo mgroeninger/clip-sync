@@ -4,7 +4,7 @@
 The Change below **shipped** (`lag_at_placement` envelope recenter, default 2000 ms) and the
 mechanism was validated on pair 31, but the smoke join found the *ordering* is wrong (26/g6
 false lock, § Result); the Exit was **not** met as written and S1 never unblocked under this
-plan. Successor: [../TEMP-lag-nominal-first-plan.md](../TEMP-lag-nominal-first-plan.md)
+plan. Successor: [TEMP-lag-nominal-first-plan.md](TEMP-lag-nominal-first-plan.md)
 (measure → triage → rescue → accept; inherits this plan's dumps as baselines). Inherits
 map-coordinate `lag_pair` from the 14-gap census re-run (clean 2026-08-19); map-coordinates
 smoke-join closed at full scope, 9/9 (2026-08-19) — that plan is done.
@@ -287,7 +287,7 @@ What survives, and where it went:
 - **The mechanism** (per-shoulder coarse envelope, 0.70/interior guard, `envelope_*` wire
   fields, `--lag-envelope-max-lag-ms`) shipped under this plan and stays — demoted from
   unconditional pre-step to rescue path by the successor,
-  [../TEMP-lag-nominal-first-plan.md](../TEMP-lag-nominal-first-plan.md).
+  [TEMP-lag-nominal-first-plan.md](TEMP-lag-nominal-first-plan.md).
 - **The validation runs** (`gap-files/2026-08-19-recenter-on`/`-off`,
   `-smoke-join-on`/`-off`) are the successor's diff baselines; its exit bars are this plan's,
   tightened (alive shoulders must be bit-identical to the off-run, not merely within
@@ -295,6 +295,6 @@ What survives, and where it went:
 - **The window-sizing question** (pair 50 needs ~3 s) and any residual coarse-pass guard
   refinement live in [../TEMP-envelope-adaptive-widen-plan.md](../TEMP-envelope-adaptive-widen-plan.md),
   re-scoped to the rescue branch.
-- **Until the successor lands**, the shipped default (2000 ms, envelope-first) corrupts 26/g6's
-  `lag_decision` row in any fingerprint dump — pass `--lag-envelope-max-lag-ms 0` on runs whose
-  lag rows must be trusted.
+- **The successor landed 2026-08-20.** The default 2000 ms envelope is a rescue for
+  dead-at-nominal shoulders only; 26/g6-class `lag_decision` rows stay bit-identical to
+  `--lag-envelope-max-lag-ms 0`. See [TEMP-lag-nominal-first-plan.md](TEMP-lag-nominal-first-plan.md).
