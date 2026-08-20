@@ -1493,5 +1493,117 @@ mod tests {
         );
     }
 
+    /// Saturated envelope (50/g9 class): a coarse peak on the last searched bin fail-opens to
+    /// `b_mapped` even when `peak_r` clears 0.70. Interior + high-r still recenters; a missing
+    /// peak and an interior peak below `min_envelope_r` also fail open.
+    #[test]
+    fn envelope_recenter_frames_fail_opens_when_edge_pinned() {
+        const RATE: u32 = 48_000;
+        let expected_interior = (-1160.0 / 1000.0 * f64::from(RATE)).round() as i64;
+        assert_eq!(
+            envelope_recenter_frames(
+                Some(EnvelopePeak {
+                    lag_ms: -1160.0,
+                    peak_r: 0.95,
+                    edge_pinned: false,
+                }),
+                RATE
+            ),
+            expected_interior,
+            "interior peak at r 0.95 must recenter"
+        );
+        assert_eq!(
+            envelope_recenter_frames(
+                Some(EnvelopePeak {
+                    lag_ms: -2000.0,
+                    peak_r: 0.95,
+                    edge_pinned: true,
+                }),
+                RATE
+            ),
+            0,
+            "edge-pinned peak must fail open even at r 0.95"
+        );
+        assert_eq!(
+            envelope_recenter_frames(
+                Some(EnvelopePeak {
+                    lag_ms: -1160.0,
+                    peak_r: 0.50,
+                    edge_pinned: false,
+                }),
+                RATE
+            ),
+            0,
+            "r below min_envelope_r (0.70) fail-opens even when interior"
+        );
+        assert_eq!(envelope_recenter_frames(None, RATE), 0);
+    }
 
+    /// 50/g9 class through `lag_at_placement`: unique post at exactly −2000 ms (the default
+    /// envelope half-width). The coarse peak sits on the last bin, so rescue fail-opens; the
+    /// fine sweep stays at nominal and does not inherit the far lock.
+    #[test]
+    fn lag_at_placement_envelope_edge_pinned_fail_opens() {
+        const RATE: u32 = 48_000;
+        let pre_len = lag_at_ms(RATE, 3000);
+        let gap = lag_at_ms(RATE, 2000);
+        let post_len = lag_at_ms(RATE, 3000);
+        let post_lag = lag_at_ms(RATE, 2000);
+        let gap_start = pre_len;
+        let gap_end = pre_len + gap;
+        let total = gap_end + post_len + lag_at_ms(RATE, 500);
+
+        let mut a = vec![0.0f32; total];
+        write_shaped_noise(&mut a, 0, gap_start, 11, 0.5, true);
+        write_shaped_noise(&mut a, gap_end, gap_end + post_len, 23, 0.5, false);
+
+        let mut b_mono = vec![0.0f64; total];
+        for (i, &v) in a.iter().take(gap_start).enumerate() {
+            b_mono[i] = f64::from(v);
+        }
+        let b_post_at = gap_end - post_lag;
+        for i in 0..post_len {
+            b_mono[b_post_at + i] = f64::from(a[gap_end + i]);
+        }
+
+        let out = lag_at_placement(&LagAtPlacementInput {
+            a_samples: &a,
+            channels: 1,
+            refined: RefinedGapFrames {
+                start_frame: gap_start,
+                end_frame: gap_end,
+            },
+            b_mono: &b_mono,
+            b_ch: &[],
+            selected: None,
+            start_frame: gap_start,
+            cfg: &FingerprintConfig::default(),
+            sample_rate: RATE,
+        });
+        let pre = out.pre_anchor.first().copied().expect("pre shoulder");
+        let post = out.post_anchor.first().copied().expect("post shoulder");
+        assert!(
+            pre.peak_r > 0.8 && pre.frac_lag_ms.abs() < 50.0,
+            "pre must stay the near-nominal landmark, got r={} lag={} ms",
+            pre.peak_r,
+            pre.frac_lag_ms
+        );
+        assert_eq!(post.envelope_edge_pinned, Some(true));
+        assert_eq!(post.envelope_rescue, Some(EnvelopeRescue::Declined));
+        assert!(
+            post.envelope_lag_ms.is_some_and(|ms| (ms - (-2000.0)).abs() < 150.0),
+            "coarse peak should sit on the −2000 ms bin, got {:?}",
+            post.envelope_lag_ms
+        );
+        assert!(
+            (post.frac_lag_ms - (-2000.0)).abs() > 500.0,
+            "fail-open must not move the fine sweep onto the saturated peak, got {} ms",
+            post.frac_lag_ms
+        );
+        assert!(
+            !is_recoverable(&post),
+            "nominal ±600 cannot see a −2000 ms lock, got r={}",
+            post.peak_r
+        );
+    }
 }
