@@ -34,8 +34,8 @@ Findings and closed sensor work: [TEMP-31g7-model-vs-findings.md](docs/dev/archi
 
 | Item | Direction |
 |------|-----------|
-| **Recenter leftovers** | Stamp `envelope_*` when the fine sweep is `None` (31/g12 post is silent today). Saturated-envelope unit test (50/g9 post is a real `envelope_edge_pinned` fail-open). `wide_envelope` is still ±400 ms at `b_mapped` and is not a confirmer of a far `lag_decision` ([gap-fingerprint.md](docs/dev/gap-fingerprint.md)). Optional stale `lag_pair` comment. No TEMP |
-| **S1 — record the registration residual on the patch record** | New TEMP, plumbing only: emit `applied − frac_lag_ms` (min-abs over confident shoulders, abstain when none) on every patched gap; no gate reads it. Patch diagnostic, not a gap class (findings §8). Reuse production's already-decoded shoulder PCM, not re-decode |
+| **Recenter leftovers** | Stamp `envelope_*` when the fine sweep is `None` (31/g12 post) — wire shape still open. Saturated-envelope unit test **done 2026-08-20**. `wide_envelope` is not a confirmer of a far `lag_decision` ([gap-fingerprint.md](docs/dev/gap-fingerprint.md)). Optional stale comment on `DEFAULT_LAG_ENVELOPE_MAX_LAG_MS`. No TEMP |
+| **S1 — record the registration residual on the patch record** | [TEMP-registration-residual-plan.md](docs/dev/TEMP-registration-residual-plan.md) — plumbing only: emit `applied − frac_lag_ms` (min-abs over confident shoulders, abstain when none) on every patched gap; no gate reads it. Patch diagnostic, not a gap class (findings §8). Reuse production's already-decoded shoulder PCM, not re-decode |
 | **Collapsed-bridge skip verdict** | Independent of S1. 31/g7 honest action. Spec `\|gap + post_lag − pre_lag\| ≈ 0` |
 | **Adaptive widen** | [TEMP-envelope-adaptive-widen-plan.md](docs/dev/TEMP-envelope-adaptive-widen-plan.md) (ladder 2000→3000→4000 in the rescue branch). Keep default 2000 until its ladder dump locks +2.79 s interior |
 | **`lag_editorial` shares `lag_at_placement`** | After S1, or piggyback on a `--fingerprint-diagnostics` dump. Confirm the diagnostic placement follows the same rescue ordering; do not treat disagreement with `lag_decision` as a gate signal |
