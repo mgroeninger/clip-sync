@@ -11,7 +11,7 @@ across A's 1.12 s), so this plan's goal — *still patch, at ≈ −47 ms* — i
 fill at the live lag duplicates program (the same stutter by a shorter route). The honest
 action is a reasoned skip / step verdict. Detection work:
 [BACKLOG.md](../../../BACKLOG.md) § *Fill placement*;
-[TEMP-lag-envelope-recenter-plan.md](../TEMP-lag-envelope-recenter-plan.md). Open decisions
+[TEMP-lag-envelope-recenter-plan.md](TEMP-lag-envelope-recenter-plan.md). Open decisions
 1(a)/2/4/6 are moot. Everything below is the historical record.
 
 <details><summary>Superseded status (2026-08-14 … 2026-08-17)</summary>
@@ -46,7 +46,7 @@ skip the gap, and it does not widen or recast the search.
 
 ## Probe result 2026-08-17 — mechanism CONFIRMED, but on the wrong axis
 
-Full interpretation against the placement model: [TEMP-31g7-model-vs-findings.md](../TEMP-31g7-model-vs-findings.md).
+Full interpretation against the placement model: [TEMP-31g7-model-vs-findings.md](TEMP-31g7-model-vs-findings.md).
 The *cell* this plan repairs — one-sided closeability, and why it is not 26/g6's defect — is
 described in [TEMP-31g7-gap-shape-vocabulary.md](TEMP-31g7-gap-shape-vocabulary.md) §§2–5.
 Arm C (±60 ms) is field-for-field identical to arm B — the alternative bracket is a real interior
@@ -73,7 +73,7 @@ That reframes the plan twice over:
   (`timing_offset` + `decorrelated`) is **13**. This gap's mark is `splice_dualfit` 0.966 / 0.123
   with `gate_pass: false` — **1 of 308**. Re-specify against that closeability split (and the
   bracket axis / E1 screen below), not against the 13-gap verdict type. See
-  [TEMP-31g7-model-vs-findings.md](../TEMP-31g7-model-vs-findings.md) §8.
+  [TEMP-31g7-model-vs-findings.md](TEMP-31g7-model-vs-findings.md) §8.
 - **Instrument.** This plan proposes to change how the `min(pre, post)` seam reduction behaves. The
   seam Pearson is the number that *accepted* the bad placement here (`waveform_min` 0.4368, a
   comfortable `High`), so tuning its reduction is tuning the instrument that failed. Do not plumb
@@ -160,7 +160,7 @@ already emits the terms.
   matchable. 17/g34 is residual-class with 26/g6 (findings §8), not this closeability class.
 - Do not plumb `lag_decision` / S1. The production path does not compute it; this plan may not
   grow a dependency on the fingerprint sweep. Residual is a patch diagnostic, not this gap's mark
-  ([TEMP-31g7-model-vs-findings.md](../TEMP-31g7-model-vs-findings.md) §8).
+  ([TEMP-31g7-model-vs-findings.md](TEMP-31g7-model-vs-findings.md) §8).
 - Do not reuse `short_gap_one_strong_seam_fallback` as-is. It is **gate-mode only** and ignored
   under `fill_mode = fit`.
 - Do not retune `LATE_START_PENALTY` / `fill_fit_early_start_penalty_scale`. S2(2) refuted a

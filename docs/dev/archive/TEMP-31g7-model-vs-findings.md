@@ -1,30 +1,34 @@
 # TEMP — The placement model, and 31/g7's findings set against it
 
-**Status:** findings note, **rev 2, 2026-08-18** — a full rewrite of the 2026-08-17 rev 1 (in git
-history at this path) after two secondary reviews. Rev 1 carried a repeat/aliasing story for 31/g7
+**Status:** findings note, **rev 2, 2026-08-18; archived 2026-08-19** (stable — everything it
+tracked has landed, been refuted, or moved to live plans; §§2, 5, 6, 8 numbers are
+pre-map-coordinates vintage, see the 2026-08-19 callout below). A full rewrite of the 2026-08-17
+rev 1 (in git history at `docs/dev/TEMP-31g7-model-vs-findings.md`) after two secondary reviews. Rev 1 carried a repeat/aliasing story for 31/g7
 that archived measurement had already refuted; this revision removes every claim that failed
 verification — the **Errata** at the end lists each one and why. Written after the S2b floor probe
 (`gap-files/2026-08-17-s2b-floor-probe/`, arms A/B/C complete) and the g007 fingerprint
 cross-check. Descriptive: it states the model and where the measurements land on it. **It proposes
-no change** — S2b was refuted the same day and archived; live fix work is
-[TEMP-lag-decision-map-coordinates-plan.md](archive/TEMP-lag-decision-map-coordinates-plan.md),
-[TEMP-lag-envelope-recenter-plan.md](TEMP-lag-envelope-recenter-plan.md), and BACKLOG S1.
+no change** — S2b was refuted the same day and archived; the fix work it pointed at was
+[TEMP-lag-decision-map-coordinates-plan.md](TEMP-lag-decision-map-coordinates-plan.md) (done),
+[TEMP-lag-envelope-recenter-plan.md](TEMP-lag-envelope-recenter-plan.md) (superseded), and
+BACKLOG S1; the live successor is
+[../TEMP-lag-nominal-first-plan.md](../TEMP-lag-nominal-first-plan.md).
 One-sided closeability as a *gap cell* (31/g7 vs 26/g6) is parked in
-[TEMP-31g7-gap-shape-vocabulary.md](archive/TEMP-31g7-gap-shape-vocabulary.md), not here.
+[TEMP-31g7-gap-shape-vocabulary.md](TEMP-31g7-gap-shape-vocabulary.md), not here.
 
 > **Post-rev-2 measurement, 2026-08-18 (evening):** the post-shoulder ±2000 ms wide sweep found
 > 31/g7's post shoulder **uniquely at −1160 ms** — one-sided closeability is refuted (the gap is
 > the degenerate silence-splice: both shoulders live, donor bridge ≈ 0; 31/g7 *is* pair 31's map
 > step) and **S2b is refuted with it**. This note's 26/g6 findings and the model/locks/populations
 > stand; every 31/g7 "post is unmatchable" reading below silently means "within ±600 ms reach".
-> Resolution: [TEMP-31g7-gap-shape-vocabulary.md](archive/TEMP-31g7-gap-shape-vocabulary.md) §9.
+> Resolution: [TEMP-31g7-gap-shape-vocabulary.md](TEMP-31g7-gap-shape-vocabulary.md) §9.
 >
 > **Same evening, 13-gap census:** the §8 lag-verdict one-dead row is a **dump predicate**, not a
 > media class. A throat-adjacent non-chained ±2000 ms sweep on the 13 (plus 31/g10 as control)
 > sorted **12** in-reach false-deads (walk-off template / uncorrected `frac_lag` chain), **1**
 > collapsed-bridge (31/g7), **1** shared-far offset (31/g10; not in the 13 — `peak_z` 8.6 < 12).
 > Hole 2 is still empty. Change:
-> [TEMP-lag-decision-map-coordinates-plan.md](archive/TEMP-lag-decision-map-coordinates-plan.md).
+> [TEMP-lag-decision-map-coordinates-plan.md](TEMP-lag-decision-map-coordinates-plan.md).
 > Recenter still owns the far offsets. Do not read "type" in §8 as a cell or an S2b population.
 >
 > **Map-coordinates landed and confirmed, 2026-08-19.** `lag_pair` now shifts each shoulder's B
@@ -40,7 +44,7 @@ One-sided closeability as a *gap cell* (31/g7 vs 26/g6) is parked in
 > from a post-map-coordinates dump before being cited as current — the corpus-wide join is not
 > expected to change the 2-of-68 headline (outliers are 930–1390 ms; the fix moves things by tens
 > of ms), but has not been re-run. See
-> [TEMP-lag-decision-map-coordinates-plan.md](archive/TEMP-lag-decision-map-coordinates-plan.md) § Exit —
+> [TEMP-lag-decision-map-coordinates-plan.md](TEMP-lag-decision-map-coordinates-plan.md) § Exit —
 > results for the validated shoulder-level numbers this callout draws from.
 
 Pair 31 / gap 8 (`#` 1-based; dump `g7`; `a_start_secs` 1725.6968125, A gap 1.1188 s, 48 kHz).
@@ -86,7 +90,7 @@ turns that failure into an admission criterion, and the Errata lists the pieces.
 
 ## 1. The model, as built
 
-Execution order is [pipeline.md](../pipeline.md) §§1–5. Placement is decided entirely inside §4
+Execution order is [pipeline.md](../../pipeline.md) §§1–5. Placement is decided entirely inside §4
 (`prepare_region_patch`), and the part that matters here has **two nested axes of freedom**:
 
 ```text
@@ -145,7 +149,7 @@ axis-1 pooled ranking. `TEMP-unmatchable-shoulder-plan.md` addresses only the fi
 
 From `2026-08-13-v0.6.0-oriented/31/919e5368_91d1_t00-28-45_g007_full.json`, the probe arms, and
 the archived registration plan's wide sweep
-([archive/TEMP-fill-placement-registration-plan.md](archive/TEMP-fill-placement-registration-plan.md)
+([TEMP-fill-placement-registration-plan.md](TEMP-fill-placement-registration-plan.md)
 §4.3 — settled measurement, quoted here, not re-run).
 
 | sensor | what it measures | reading |
@@ -673,7 +677,7 @@ That is pair 26's hole: the healthiest fingerprint in the outlier set and the wo
 the corpus is *unsayable* in current terms — every tag it carries is accurate and every one is
 reassuring. 31/g7 is a different hole. Joint registration is ill-posed there (one live shoulder,
 one dead); the missing word is one-sided closeability, a *gap* cell, parked in
-[TEMP-31g7-gap-shape-vocabulary.md](archive/TEMP-31g7-gap-shape-vocabulary.md). Residual can group the
+[TEMP-31g7-gap-shape-vocabulary.md](TEMP-31g7-gap-shape-vocabulary.md). Residual can group the
 two as patches; it cannot give them one vocabulary axis.
 
 That is why it took a post-hoc join of two separate artifacts to find two unlike gaps; the
@@ -711,7 +715,7 @@ predicate is exactly the §6.7 filter, which is post-hoc until prospectively val
 vintage; and 2-of-68 does not justify new vocabulary ahead of that validation. The **findings**
 stand — placement-vs-registration is real, measurable, and unnamed **for the well-posed
 failures** (26/g6, 17/g34); 31/g7's missing word is the gap cell, not that axis
-([TEMP-31g7-gap-shape-vocabulary.md](archive/TEMP-31g7-gap-shape-vocabulary.md)). The **names** wait.
+([TEMP-31g7-gap-shape-vocabulary.md](TEMP-31g7-gap-shape-vocabulary.md)). The **names** wait.
 
 What none of this argues for is re-tuning `min(pre, post)` at either call site. That number is
 not weak here — it is answering a different question than the one being asked of it.

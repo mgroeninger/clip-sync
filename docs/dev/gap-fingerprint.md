@@ -758,7 +758,7 @@ at the placement it defines — never compare across placements.**
 
 Each shoulder is swept **mono** over ±600 ms, **in map coordinates**, optionally **recentered** on a
 coarse 100 ms-bin envelope peak at `b_mapped` (2026-08-19,
-[TEMP-lag-envelope-recenter-plan.md](TEMP-lag-envelope-recenter-plan.md)). The B haystack is shifted by that
+[TEMP-lag-envelope-recenter-plan.md](archive/TEMP-lag-envelope-recenter-plan.md)). The B haystack is shifted by that
 shoulder's own template-edge walk-off `D` (`border_edge_displacement_frames`), so `frac_lag_ms` reads the
 true A↔B map offset (~0 at true registration) rather than `∓D` (2026-08-19,
 [archive/TEMP-lag-decision-map-coordinates-plan.md](archive/TEMP-lag-decision-map-coordinates-plan.md)).

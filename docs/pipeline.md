@@ -170,7 +170,7 @@ Measured against that sensor, the disagreement is rare but real: **exactly 2 of 
 have an applied placement that is demonstrably wrong — both disagree with a confident, in-reach
 landmark by roughly 1 s. That count is a **post-hoc patch check** (`applied` vs `frac_lag`), scoped to
 its confidence filter, not a property of the gaps: the two failures do not share a fingerprint
-signature. See [dev/TEMP-31g7-model-vs-findings.md](dev/TEMP-31g7-model-vs-findings.md)
+signature. See [dev/TEMP-31g7-model-vs-findings.md](dev/archive/TEMP-31g7-model-vs-findings.md)
 §6 for the measurement, its filter scope, and its validity domain (the sensor's per-shoulder
 reach — pre ±600 ms at nominal, post re-centered by the measured pre lag — vs the patcher's
 ±10 s search), §8 for gap signature vs patch disagreement, and §5 for the populations:

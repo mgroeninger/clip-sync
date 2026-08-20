@@ -96,7 +96,7 @@ throat; it is no longer a reader-side correction to `frac_lag_ms`.
 - Do not widen `lag_max_lag_ms` as the primary fix, and do not run a corpus fingerprint dump to
   do it. The 12 are already in reach of a throat-adjacent ±600.
 - Do not envelope-recenter these 12. Shared far offsets stay
-  [TEMP-lag-envelope-recenter-plan.md](../TEMP-lag-envelope-recenter-plan.md) (31 #11).
+  [TEMP-lag-envelope-recenter-plan.md](TEMP-lag-envelope-recenter-plan.md) (31 #11).
 - Do not change dual-fit’s `SEAM_LOCAL_SEARCH_MS`, fill search radius, or `fill_offset_mode`.
 - Do not put the result in a gate. Record-only, same as S1.
 - Do not decide 31/g7 skip-vs-one-seam. Collapsed-bridge detection is a separate predicate
@@ -160,7 +160,7 @@ two map quantities; today it compares applied map to template coordinates and ab
 
 ## Order vs envelope-recenter
 
-This plan **orders ahead of** [TEMP-lag-envelope-recenter-plan.md](../TEMP-lag-envelope-recenter-plan.md).
+This plan **orders ahead of** [TEMP-lag-envelope-recenter-plan.md](TEMP-lag-envelope-recenter-plan.md).
 Recenter’s fine sweep is existing `lag_pair`. Shipping recenter first would still chain
 uncorrected `frac_lag` on every post, and its smoke-join exit (“median `frac_lag_ms` must not
 move”; “do not spend the ~22 ms bias”) assumed the old coordinates. After this Change (census

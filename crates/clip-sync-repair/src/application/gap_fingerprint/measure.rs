@@ -904,7 +904,7 @@ fn lag_pair(
     // (nominal, pre-chain) at `gap_end + D_post`. A perfectly registered pair then reads
     // `frac_lag_ms ≈ 0` on both shoulders instead of `∓D`.
     //
-    // Envelope recenter (docs/dev/TEMP-lag-envelope-recenter-plan.md § Change): each shoulder may
+    // Envelope recenter (docs/dev/archive/TEMP-lag-envelope-recenter-plan.md § Change): each shoulder may
     // shift that map-true anchor by a coarse envelope peak (`env_*`, 0 when the guard fails open).
     // `gross_lag_shift` puts `frac_lag_ms` back on original `b_mapped` so it stays commensurable
     // with `align_adjustment_secs`. Landmark chain uses the *fine residual* (`L_pre − env_pre`),

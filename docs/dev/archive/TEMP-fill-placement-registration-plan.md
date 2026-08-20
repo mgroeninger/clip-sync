@@ -4,11 +4,11 @@
 > symptom: 26/g6 (source — a near-nominal placement existed and lost on score) and 31/g7
 > (gate — `min` over an unmatchable shoulder). Remaining delivery is not in this file.
 >
-> **Live plan:** [TEMP-lag-envelope-recenter-plan.md](../TEMP-lag-envelope-recenter-plan.md) (unblocks S1).
+> **Live plan:** [TEMP-lag-envelope-recenter-plan.md](TEMP-lag-envelope-recenter-plan.md) (unblocks S1).
 > S2b ([TEMP-unmatchable-shoulder-plan.md](TEMP-unmatchable-shoulder-plan.md)) was **refuted and
 > archived 2026-08-18** — 31/g7's post shoulder is not unmatchable, it sits at −1160 ms beyond
 > the ±600 ms reach, and the gap's donor bridge is zero-length (step gap; no fill possible).
-> **Live findings:** [TEMP-31g7-model-vs-findings.md](../TEMP-31g7-model-vs-findings.md)
+> **Live findings:** [TEMP-31g7-model-vs-findings.md](TEMP-31g7-model-vs-findings.md)
 > (gap signature vs patch disagreement, §11).
 > **Leftovers** (26/g6, S1 plumbing, S4 / `applied = 0`, ear-pass 17/g34 and 47/g14, α, §7):
 > [BACKLOG.md](../../../BACKLOG.md) § *Fill placement*.
@@ -303,7 +303,7 @@ itself the reduction-discipline point, measured.
 usable shoulder at all. Pair 31 reproduces its published signature exactly (`. . X X X`, consensus
 −1.1086 s). So the "true offset outside the ±600 ms sweep" class has **two** members, one of them in
 the never-measured cohort, and it is no longer a single-pair observation. This is direct, independent
-support for [TEMP-lag-envelope-recenter-plan.md](../TEMP-lag-envelope-recenter-plan.md) and it gives that
+support for [TEMP-lag-envelope-recenter-plan.md](TEMP-lag-envelope-recenter-plan.md) and it gives that
 plan a **second** validation pair.
 
 #### The suspect list, re-derived (step 4)
@@ -454,7 +454,7 @@ unblocks S1, and S4 is still conditional.
 
 > **Superseded 2026-08-17.** This section is no longer the work list. Live delivery is
 > [TEMP-unmatchable-shoulder-plan.md](TEMP-unmatchable-shoulder-plan.md) and
-> [TEMP-lag-envelope-recenter-plan.md](../TEMP-lag-envelope-recenter-plan.md); leftovers are in
+> [TEMP-lag-envelope-recenter-plan.md](TEMP-lag-envelope-recenter-plan.md); leftovers are in
 > [BACKLOG.md](../../../BACKLOG.md) § *Fill placement*. Kept below as the investigation's own
 > sequencing record.
 
@@ -485,7 +485,7 @@ its precondition is false (found 2026-08-12).**
 > **Re-scope 2026-08-13:** the measurement S1 would plumb is itself blind to pair 31's genuine
 > −1.11 s offset (fine window ±600 ms around `b_mapped`; fill search ±10 s). Do not lift the
 > nominal-only sweep. Recenter the fine sweep on a coarse envelope peak first —
-> [TEMP-lag-envelope-recenter-plan.md](../TEMP-lag-envelope-recenter-plan.md) — then S1 records that.
+> [TEMP-lag-envelope-recenter-plan.md](TEMP-lag-envelope-recenter-plan.md) — then S1 records that.
 
 Emit the §2 quantity (`applied − frac_lag_ms`, reduced by minimum absolute value over shoulders with
 `peak_r ≥ τ`, abstain when none) as a field on the patch record, alongside the shoulder `peak_r` /
@@ -658,7 +658,7 @@ dual-fit zeros §1.1 had to retract. (iii) Six gaps where a coherent measurement
 (21.7) clear the `peak_z` bar.
 
 *Next, in order:* re-gate the join on `peak_z ≥ 12` (free); read the widened-envelope measurement plan
-([TEMP-lag-envelope-recenter-plan.md](../TEMP-lag-envelope-recenter-plan.md)) before any pair-31 run; then
+([TEMP-lag-envelope-recenter-plan.md](TEMP-lag-envelope-recenter-plan.md)) before any pair-31 run; then
 explain the −23 ms bias by reading `lag_at_placement`'s window construction against the objective's
 seam window. The backward-penalty sweep is **not** on this list.
 
@@ -1674,7 +1674,7 @@ threshold.
   the two failures already read `edge_pinned: false` (§4.3's dumps), but they are the wrong gaps for
   it — the hypothesis is about pair 31 **#9–#12**, whose true registration is ≈ −1150 ms.
   **Successor 2026-08-13:** do not widen the fine sweep; recenter it on a coarse envelope peak.
-  [TEMP-lag-envelope-recenter-plan.md](../TEMP-lag-envelope-recenter-plan.md). Pair 31 only to start;
+  [TEMP-lag-envelope-recenter-plan.md](TEMP-lag-envelope-recenter-plan.md). Pair 31 only to start;
   not a corpus pass.
 - **The +39 ms systematic bias** in fill-start detection (§2.1). Cosmetic for a discriminator;
   required before any absolute claim about delivered position.

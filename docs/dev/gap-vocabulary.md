@@ -100,7 +100,7 @@ patch from skip is **bracket search** result crossed with **donor** state.
 > (Bracket patch) with the calmest readout (`balanced`) — accurate on every existing axis — but
 > for **different reasons**, and they do not share a gap class. An earlier draft merged them into
 > one hole (a `Periodic` verdict / repeat-lock subtype); that merge was refuted by archived
-> measurement and withdrawn ([TEMP-31g7-model-vs-findings.md](TEMP-31g7-model-vs-findings.md)
+> measurement and withdrawn ([TEMP-31g7-model-vs-findings.md](archive/TEMP-31g7-model-vs-findings.md)
 > §9, Errata). Do not reconstruct a shared class from their shared symptom (a large backward
 > slide); residual detects bad *patches* and does not classify gaps (findings §8).
 >

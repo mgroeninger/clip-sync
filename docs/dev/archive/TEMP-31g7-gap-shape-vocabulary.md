@@ -1,7 +1,7 @@
 # TEMP — 31/g7 is a gap-shape problem (one-sided closeability)
 
 **Status:** findings note, 2026-08-18. **Parallel** to
-[TEMP-31g7-model-vs-findings.md](../TEMP-31g7-model-vs-findings.md) **rev 2**. Descriptive: it
+[TEMP-31g7-model-vs-findings.md](TEMP-31g7-model-vs-findings.md) **rev 2**. Descriptive: it
 states where the missing word sits, and (§8) which existing or drafted repairs could take the
 cell once classification is correct. It proposes no Change and no cell to ship.
 
@@ -163,7 +163,7 @@ rival at −925 ms is `r` 0.087 against 0.829 at the truth. Aliasing is refuted.
 periodic at all." The 480.5 ms comb belongs to **26/g6**, and even there the true tooth still
 ranks first. Envelope `lag_ms = −1000` at 31/g7 is the coarse window's own edge
 (`max_lag_blocks = 10`), flagged `donor_registration_unreliable`;
-[TEMP-lag-envelope-recenter-plan.md](../TEMP-lag-envelope-recenter-plan.md) exists because using
+[TEMP-lag-envelope-recenter-plan.md](TEMP-lag-envelope-recenter-plan.md) exists because using
 that reading as truth would *lose* today's correct pre −47 ms. Post `0.0752` vs `0.0741` is
 `classify_lag`'s `Decorrelated` (`peak < 0.3`), not a period.
 

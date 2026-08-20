@@ -1010,7 +1010,7 @@ pub struct LagSummary {
 }
 
 /// Peak correlation floor for [`LagSummary::is_landmark`] — findings §8's "unique" bar
-/// (`docs/dev/TEMP-31g7-model-vs-findings.md` § 8: "one unique (`peak_r ≥ 0.8`, `peak_z ≥ 12`)").
+/// (`docs/dev/archive/TEMP-31g7-model-vs-findings.md` § 8: "one unique (`peak_r ≥ 0.8`, `peak_z ≥ 12`)").
 pub const LAG_LANDMARK_MIN_PEAK_R: f64 = 0.8;
 /// Peak z-score floor for [`LagSummary::is_landmark`] — see [`LAG_LANDMARK_MIN_PEAK_R`].
 pub const LAG_LANDMARK_MIN_PEAK_Z: f64 = 12.0;
