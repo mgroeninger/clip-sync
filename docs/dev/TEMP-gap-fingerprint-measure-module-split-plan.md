@@ -1,14 +1,20 @@
 # `gap_fingerprint/measure.rs` folder split — plan
 
-Status: **draft / not started**. Maintainability-only peel of the remaining
+Status: **done** (2026-08-20, P0–P8 landed; see §3 as-landed DAG correction).
+Maintainability-only peel of the remaining
 `measure.rs` monolith into `gap_fingerprint/measure/` (folder + submodules).
 Byte-preserving moves; never bundled into a behavior-change PR.
 
 This is the **second half** of the 2026-07-23
 [`TEMP-gap-fingerprint-module-split-plan.md`](archive/TEMP-gap-fingerprint-module-split-plan.md):
 that split extracted `schema` / `project` / `contract` and left **the entire PCM
-measurement body in one file**. The file is now **5990 lines** (~3430 production +
-~2560 colocated tests) — larger than the pre-split `gap_fingerprint.rs` monolith.
+measurement body in one file**. The file is now **6271 lines** (2026-08-20 recount;
+~3427 production + ~2844 colocated tests) — larger than the pre-split
+`gap_fingerprint.rs` monolith. The growth since the 5990-line count this plan was
+drafted against is the nominal-first envelope-rescue mechanism
+([TEMP-lag-nominal-first-plan.md](TEMP-lag-nominal-first-plan.md)), already landed in
+source (see `lag.rs` ownership below) even though that plan's own status header still
+reads "draft, not started" — it is mid real-media validation, not unimplemented.
 
 Companions: [archive/TEMP-gap-fingerprint-module-split-plan.md](archive/TEMP-gap-fingerprint-module-split-plan.md)
 (parent split + `schema ← project ← measure` DAG; **keep the cycle guard**),
@@ -78,11 +84,13 @@ fingerprint feature work (thresholds, new fields, 8g.5).
 ```text
 application/gap_fingerprint/measure/
   mod.rs              # thin facade; re-exports the pre-split pub / pub(crate) / pub(super) surface
-  pcm.rs              # level_profile, noise_floor_probe*, mono_*, to_db, median, structure_params_for
+  pcm.rs              # level_profile, noise_floor_probe*, mono_*, to_db, median, structure_params_for,
+                       # probe_border_*, PROBE_BORDER_STANDOFF_FRAMES, fine_rms_envelope
   config.rs           # FingerprintConfig, GapInputs, DEFAULT_LAG_ENVELOPE_MAX_LAG_MS, from_request
   lag.rs              # summarize_lag_curve, sweeps, envelope recenter, lag_at_placement, seam_local re-export
-  placement.rs        # place_on_b, probe_border_*, PROBE_BORDER_STANDOFF_FRAMES, CorpusProbeRecipe::for_corpus
-  probes.rs           # seam_probe_* + splice_dualfit_* + wide_envelope_* + SEAM_PROBE_* consts
+  placement.rs        # place_on_b, impl CorpusProbeRecipe
+  probes.rs           # seam_probe_* + splice_dualfit_* + wide_envelope_* + SEAM_PROBE_* consts +
+                       # weighted_downmix_rms
   build.rs            # build_gap_fingerprint, classify_bracket_stage
   overlay.rs          # RegionMeasurements, compute_region_measurements, tags_from_measurements, stage_of
   characterize.rs     # characterize_gaps*, CharacterizeAbPcm, write_corpus_dir, entry_stem
@@ -90,11 +98,11 @@ application/gap_fingerprint/measure/
 
 | Module | Owns | Notes |
 |--------|------|-------|
-| `pcm.rs` | `LevelProfileSpan`, `level_profile`, `noise_floor_probe` / `noise_floor_probe_grid`, `mono_slice_rms`, `to_db`, `finite_corr`, `mono_rms`, `mono_peak`, `median`, `flatness`, `structure_params_for` | Leaf. Uses `schema::SILENCE_FLOOR_DB` / `LevelProfile`. No `FingerprintConfig` |
+| `pcm.rs` | `LevelProfileSpan`, `level_profile`, `noise_floor_probe` / `noise_floor_probe_grid`, `mono_slice_rms`, `to_db`, `finite_corr`, `mono_rms`, `mono_peak`, `median`, `flatness`, `structure_params_for`, `PROBE_BORDER_STANDOFF_FRAMES`, `probe_border_standoff_secs`, `probe_border_spec`, `fine_rms_envelope` | Leaf. Uses `schema::SILENCE_FLOOR_DB` / `LevelProfile`. No `FingerprintConfig` param dependency beyond what's passed in. `PROBE_BORDER_STANDOFF_FRAMES` stays `pub(crate)` via facade (`schema.rs` docs) |
 | `config.rs` | `DEFAULT_LAG_ENVELOPE_MAX_LAG_MS`, `FingerprintConfig` (+ `Default` + `from_request`), `GapInputs` | Leaf w.r.t. siblings. `from_request` moves *with* the struct, out of the post-builder locus |
-| `lag.rs` | `LAG_EDGE_TOL_MS`, `LagSweepParams`, `LagSideSweep`, `seam_prominence`, `summarize_lag_curve`, `secondary_peak`, `classify_lag`, `lag_side_sweep`, `lag_pair`, envelope recenter helpers, `lag_at_placement`, `pub use domain::seam_local::{…}` | Depends on `pcm` (`finite_corr`) + `config`. Public: `summarize_lag_curve` + seam_local re-export |
-| `placement.rs` | `PROBE_BORDER_STANDOFF_FRAMES`, `probe_border_standoff_secs` / `probe_border_spec`, `impl CorpusProbeRecipe`, `PlacementScores`, `PlaceOnBInput`, `place_on_b`, `b_mapped_frame_in_haystack` | Depends on `pcm` + `config`. `PROBE_BORDER_STANDOFF_FRAMES` stays `pub(crate)` via facade (`schema.rs` docs + `CorpusProbeRecipe`) |
-| `probes.rs` | `fine_rms_envelope`, `weighted_downmix_rms`, `SEAM_PROBE_FINE_LAG_MS` / `SEAM_PROBE_ENV_BIN_MS` (`pub(super)` via facade), `seam_probe_*`, `DUALFIT_SEAM_UNIQ_LAG_MS` / `SEAM_LOCAL_SEARCH_MS`, `splice_dualfit_at`, `mono_lag_side`, `splice_summary_from_lag`, `wide_envelope_*` | Three independent builders in one file so we do not pay three phases for ~150-line slices. Depends on `lag` + `pcm` + `config`. Public: `splice_summary_from_lag` |
+| `lag.rs` | `LAG_EDGE_TOL_MS`, `LagSweepParams`, `LagSideSweep`, `seam_prominence`, `summarize_lag_curve`, `secondary_peak`, `classify_lag`, `lag_side_sweep`, `EnvelopeCfg`, `is_recoverable`, `stamp_rescue`, `rescue_shoulder`, `lag_pair`, envelope recenter helpers (`EnvelopePeak`, `envelope_peak_at`, `envelope_shoulder`, `envelope_recenter_frames`), `lag_at_placement`, `pub use domain::seam_local::{…}` | Depends on `pcm` (`finite_corr`, `probe_border_spec`, `fine_rms_envelope`) + `config`. Public: `summarize_lag_curve` + seam_local re-export. `EnvelopeCfg`/`is_recoverable`/`stamp_rescue`/`rescue_shoulder` are the nominal-first triage/rescue helpers (2026-08 addition, ~L894–985 today) — self-contained: they call only `lag_side_sweep` + the existing envelope-recenter helpers, no new DAG edges |
+| `placement.rs` | `impl CorpusProbeRecipe`, `PlacementScores`, `PlaceOnBInput`, `place_on_b`, `b_mapped_frame_in_haystack` | Depends on `pcm` + `config`. Calls `pcm::probe_border_standoff_secs` / `pcm::probe_border_spec` (relocated from here — see as-landed note below) |
+| `probes.rs` | `weighted_downmix_rms`, `SEAM_PROBE_FINE_LAG_MS` / `SEAM_PROBE_ENV_BIN_MS` (`pub(super)` via facade), `seam_probe_*`, `DUALFIT_SEAM_UNIQ_LAG_MS` / `SEAM_LOCAL_SEARCH_MS`, `splice_dualfit_at`, `mono_lag_side`, `splice_summary_from_lag`, `wide_envelope_*` | Three independent builders in one file so we do not pay three phases for ~150-line slices. Depends on `lag` + `pcm` (`fine_rms_envelope`, `probe_border_spec`) + `config`. Public: `splice_summary_from_lag` |
 | `build.rs` | `classify_bracket_stage`, `build_gap_fingerprint` | One-gap summary builder. Depends on pcm/config/lag/placement/probes. **Must not import `overlay` or `characterize`** |
 | `overlay.rs` | `tags_from_measurements`, `BracketStageDetail`, `stage_of`, `anchor_params_from_gate`, `RegionMeasurements`, `RegionMeasureInput`, `compute_region_measurements` | Gate-oracle overlay. **Cycle guard:** owns `tags_from_measurements` (consumes `RegionMeasurements`; calls `project::tags_from_fields`). Depends on pcm/config/lag/placement/probes. **Must not import `build` or `characterize`** |
 | `characterize.rs` | `refused_channel_mismatch_corpus`, `channel_layout_mismatch`, `CharacterizeAbPcm`, `characterize_gaps_from_decode`, `characterize_gaps`, `detail_tier_str` / `lag_verdict_str` / `hms`, `entry_stem`, `Manifest*`, `write_corpus_dir` | Pair orchestrator + disk writer. Depends on build + overlay + config + placement (`CorpusProbeRecipe::for_corpus`) |
@@ -112,10 +120,11 @@ oracle overlay are a distinct cohesion slice.
 |--------|-------|-----|
 | `tags_from_measurements` | **`overlay`** | Parent-plan cycle guard: it takes `RegionMeasurements`. Today it sits above the lag section (~L284) — do **not** move it with lag |
 | `FingerprintConfig::from_request` | **`config`** | Inherent impl; currently after `build_gap_fingerprint`. Move with the struct |
-| `impl CorpusProbeRecipe` | **`placement`** | Needs `FingerprintConfig` + `probe_border_standoff_secs`. Type stays in `schema.rs` |
-| `PROBE_BORDER_STANDOFF_FRAMES` | **`placement`** | Every probe `GapBorderSpec` is built with it. Facade `pub(crate) use` so `schema.rs`'s `super::measure::PROBE_BORDER_STANDOFF_FRAMES` doc link and any `gap_fingerprint::` consumer keep working |
+| `impl CorpusProbeRecipe` | **`placement`** | Needs `FingerprintConfig` + `pcm::probe_border_standoff_secs`. Type stays in `schema.rs` |
+| `PROBE_BORDER_STANDOFF_FRAMES` / `probe_border_standoff_secs` / `probe_border_spec` | **`pcm`** (moved from the original plan's `placement`) | As-landed correction: `probe_border_spec` is called directly by `lag_at_placement` (`lag.rs`) and by two `seam_probe_*` builders (`probes.rs`), not only by `placement`. The original DAG text ("`lag` must not import `placement`"; `probes ← lag, pcm, config` with no `placement`) didn't trace this call graph — it already existed in the pre-split monolith. Rather than add `lag → placement` / `probes → placement` edges the DAG forbids, the const + both helper fns move down to `pcm` (a leaf both already depend on, taking no `FingerprintConfig`/`PlacementScores` state), making both call sites legal under the *existing* `← pcm` edge with zero new edges. `impl CorpusProbeRecipe` stays in `placement.rs` (it genuinely needs `FingerprintConfig`) and calls the relocated `pcm::` fns. Facade `pub(crate) use pcm::PROBE_BORDER_STANDOFF_FRAMES;` so `schema.rs`'s `super::measure::PROBE_BORDER_STANDOFF_FRAMES` doc link and any `gap_fingerprint::` consumer keep resolving at the same path |
 | `SEAM_PROBE_FINE_LAG_MS` / `SEAM_PROBE_ENV_BIN_MS` | **`probes`** | `contract.rs` tests reach them as `super::super::measure::SEAM_PROBE_*`. Facade **must** `pub(super) use` both or those tests break without an import sweep |
-| `fine_rms_envelope` / `weighted_downmix_rms` | **`probes`** | Only `seam_probe_side` calls them today. If lag later needs them, lift to `pcm` in a follow-up — not this plan |
+| `fine_rms_envelope` | **`pcm`** (moved from the original plan's `probes`) | As-landed correction: the plan's own note here said "only `seam_probe_side` calls them today; if lag later needs them, lift to `pcm` in a follow-up — not this plan" — but `lag_at_placement`'s envelope-recenter path (the nominal-first rescue mechanism, landed after this plan was drafted) already calls it directly. That follow-up condition was met before this split started, so `lag → probes` would otherwise be a new forbidden edge; moved to `pcm` (leaf) for the same zero-new-edges reason as `probe_border_spec` above |
+| `weighted_downmix_rms` | **`probes`** | Only `seam_probe_side` calls it; no cross-module callers found, stays put |
 | `seam_prominence` | **`lag`** | Lag-uniqueness helper; dual-fit probe may call it — `probes` may import `lag`, not the reverse |
 | `splice_summary_from_lag` | **`probes`** | Public; only needs `LagFingerprint` (schema) + `mono_lag_side`. Keep next to dual-fit splice, not in `lag` |
 | `classify_bracket_stage` | **`build`** | Only `build_gap_fingerprint` calls it. Overlay uses `stage_of` (gate failure → fingerprint stage), a different mapper |
@@ -130,7 +139,7 @@ These paths are load-bearing and must keep resolving **without** editing callers
 | `crate::application::gap_fingerprint::{build_gap_fingerprint, characterize_gaps, characterize_gaps_from_decode, CharacterizeAbPcm, FingerprintConfig, GapInputs, summarize_lag_curve, splice_summary_from_lag, DEFAULT_LAG_ENVELOPE_MAX_LAG_MS, lag_correlation_curve, …}` | `measure/mod.rs` `pub use` the same names (parent `gap_fingerprint/mod.rs` already `pub use measure::*`) |
 | `crate::application::gap_fingerprint::{write_corpus_dir, entry_stem, PROBE_BORDER_STANDOFF_FRAMES}` (`pub(crate)`) | facade `pub(crate) use` |
 | `super::super::measure::SEAM_PROBE_{FINE_LAG,ENV_BIN}_MS` from `contract.rs` tests (`pub(super)`) | facade `pub(super) use probes::{…}` |
-| `super::measure::PROBE_BORDER_STANDOFF_FRAMES` in `schema.rs` docs | facade `pub(crate) use placement::PROBE_BORDER_STANDOFF_FRAMES` |
+| `super::measure::PROBE_BORDER_STANDOFF_FRAMES` in `schema.rs` docs | facade `pub(crate) use pcm::PROBE_BORDER_STANDOFF_FRAMES` (as-landed: relocated from `placement` to `pcm`, see §3 contested-helpers) |
 
 ### Internal visibility
 
@@ -143,6 +152,19 @@ These paths are load-bearing and must keep resolving **without** editing callers
 
 ### Dependency direction (must hold)
 
+**As-landed correction (2026-08-20):** the DAG text below was drafted from the
+§3 locus table without tracing `probe_border_spec`'s / `fine_rms_envelope`'s
+real call graph, which already crossed these lines in the pre-split monolith
+(`lag_at_placement` and two `seam_probe_*` builders call `probe_border_spec`;
+`lag_at_placement`'s envelope-recenter path calls `fine_rms_envelope`). Rather
+than add the `lag → placement`, `probes → placement`, and `lag → probes` edges
+this text forbids, both symbol groups were relocated to `pcm` (see §3
+contested-helpers) — a leaf every affected module already depends on — so the
+diagram below is satisfied with zero new edges. `characterize → pcm` is added
+outright below: `pcm` is a zero-dependency leaf, so any number of modules
+depending on it directly can never create a cycle; `characterize_gaps*` calls
+`noise_floor_probe` / `noise_floor_probe_grid` directly and always did.
+
 ```text
 schema, contract, project     (unchanged parent DAG)
 
@@ -153,7 +175,7 @@ placement ←  pcm, config, schema
 probes    ←  lag, pcm, config, schema
 build     ←  pcm, config, lag, placement, probes, schema
 overlay   ←  pcm, config, lag, placement, probes, schema, project   # tags_from_fields only
-characterize ← build, overlay, config, placement, schema, project
+characterize ← build, overlay, pcm, config, placement, schema, project
 
 gap_fingerprint/mod.rs  pub use measure::*
 ```
@@ -182,15 +204,15 @@ Extract **one cohesion slice per phase**. Do not combine with behavior PRs.
 
 | Phase | Slice | Status |
 |-------|-------|--------|
-| **P0** | `git mv` `measure.rs` → `measure/mod.rs` | not started |
-| **P1** | `pcm.rs` (level / RMS / noise-floor probes) | not started |
-| **P2** | `config.rs` (`FingerprintConfig` / `GapInputs` / `DEFAULT_*` / `from_request`) | not started |
-| **P3** | `lag.rs` (summarize / sweep / envelope / `lag_at_placement` + seam_local re-export) | not started |
-| **P4** | `placement.rs` (`place_on_b` + probe borders + `CorpusProbeRecipe::for_corpus`) | not started |
-| **P5** | `probes.rs` (seam-probe + dual-fit splice + wide-envelope) | not started |
-| **P6** | `build.rs` (`build_gap_fingerprint`) | not started |
-| **P7** | `overlay.rs` (`RegionMeasurements` + `tags_from_measurements` + `compute_region_measurements`) | not started |
-| **P8** | Remainder → `characterize.rs` + thin `mod.rs` facade | not started |
+| **P0** | `git mv` `measure.rs` → `measure/mod.rs` | done |
+| **P1** | `pcm.rs` (level / RMS / noise-floor probes) | done — also gained `probe_border_*`/`PROBE_BORDER_STANDOFF_FRAMES` (from placement) and `fine_rms_envelope` (from probes); see as-landed DAG correction in §3 |
+| **P2** | `config.rs` (`FingerprintConfig` / `GapInputs` / `DEFAULT_*` / `from_request`) | done |
+| **P3** | `lag.rs` (summarize / sweep / envelope / `lag_at_placement` + seam_local re-export) | done |
+| **P4** | `placement.rs` (`place_on_b` + probe borders + `CorpusProbeRecipe::for_corpus`) | done — probe-border const/fns relocated to `pcm.rs` (§3 as-landed correction), `impl CorpusProbeRecipe` still here calling them via `pcm::*` |
+| **P5** | `probes.rs` (seam-probe + dual-fit splice + wide-envelope) | done — `fine_rms_envelope` relocated to `pcm.rs` (§3 as-landed correction) |
+| **P6** | `build.rs` (`build_gap_fingerprint`) | done |
+| **P7** | `overlay.rs` (`RegionMeasurements` + `tags_from_measurements` + `compute_region_measurements`) | done |
+| **P8** | Remainder → `characterize.rs` + thin `mod.rs` facade | done |
 
 **Suggested order rationale.** PCM first (no sibling deps; noise-floor tests move
 cleanly). Config next — lag/placement/probes all take `&FingerprintConfig`, so it
@@ -213,8 +235,15 @@ resolves and `pub use measure::*;` is unchanged. Rust forbids a leftover
 No unit tests are config-owned today.
 
 **P3 notes.** Take the `pub use domain::seam_local::{…}` block with lag (callers
-reach it as `gap_fingerprint::lag_correlation_curve`). Tests: `lag_curve_*`,
-`summarize_lag_curve_*`, `lag_summary_*`, `lag_at_placement_*`, `lag_pair_*`.
+reach it as `gap_fingerprint::lag_correlation_curve`). Also take the nominal-first
+rescue helpers (`EnvelopeCfg`, `is_recoverable`, `stamp_rescue`, `rescue_shoulder`) —
+they sit between `lag_side_sweep` and `lag_pair` and are pure lag-internal (no
+placement/probes deps). Tests: `lag_curve_*`, `summarize_lag_curve_*`, `lag_summary_*`,
+`lag_at_placement_*`, `lag_pair_*` (including the nominal-first shapes —
+`lag_at_placement_envelope_recenter_is_per_shoulder`,
+`lag_at_placement_envelope_shared_far_unlocks_both`,
+`lag_at_placement_post_unaffected_by_a_rescued_pre`, and any others
+[TEMP-lag-nominal-first-plan.md](TEMP-lag-nominal-first-plan.md)'s exit bar adds).
 Leave `tags_from_measurements` in the remainder even though it currently sits
 immediately above this block.
 
@@ -270,21 +299,31 @@ Confirm `-Tier pr-repair` still green including `gap_repair_spec_diff` /
 
 ## 6. Success criteria
 
-- [ ] `application/gap_fingerprint/measure/` is a directory (`mod` + eight
+- [x] `application/gap_fingerprint/measure/` is a directory (`mod` + eight
       submodules); no leftover sibling `measure.rs`.
-- [ ] `measure/mod.rs` is a thin facade (re-exports only).
-- [ ] Public import paths unchanged (`gap_fingerprint::*`, including
+- [x] `measure/mod.rs` is a thin facade (re-exports only).
+- [x] Public import paths unchanged (`gap_fingerprint::*`, including
       `pub(crate)` `write_corpus_dir` / `entry_stem` / `PROBE_BORDER_STANDOFF_FRAMES`
-      and `pub(super)` `SEAM_PROBE_*`).
-- [ ] DAG in §3 holds (no `project → measure`; no `build ↔ overlay`; no
-      `lag → probes`).
-- [ ] `tags_from_measurements` lives in `overlay.rs` next to `RegionMeasurements`.
-- [ ] `FingerprintConfig::from_request` lives in `config.rs` next to the struct.
-- [ ] Intra-folder vis uses `pub(in crate::application::gap_fingerprint::measure)`
+      and `pub(super)` `SEAM_PROBE_*`). Individually re-verified 2026-08-20 against
+      `composition.rs`, `gap_listen/mod.rs`, `equivalence_calibration.rs`,
+      `fingerprint_corpus_fixtures.rs`, `contract.rs`, `schema.rs`.
+- [x] DAG in §3 holds (no `project → measure`; no `build ↔ overlay`; no
+      `lag → probes`) — as landed with the §3 as-landed correction (`probe_border_*`
+      and `fine_rms_envelope` relocated to `pcm.rs`, a leaf both `lag` and `probes`
+      already imported, closing the forbidden edges with zero new ones;
+      `characterize → pcm` accepted as a docs-only addition since `pcm` is a leaf).
+- [x] `tags_from_measurements` lives in `overlay.rs` next to `RegionMeasurements`.
+- [x] `FingerprintConfig::from_request` lives in `config.rs` next to the struct.
+- [x] Intra-folder vis uses `pub(in crate::application::gap_fingerprint::measure)`
       for formerly-private items; no crate-wide widening.
-- [ ] JSON corpus shape unchanged (round-trip / curated fixtures still green).
-- [ ] Unit tests colocated per submodule.
-- [ ] Byte-preserving: no intentional behavior / string / threshold / serde changes.
+- [x] JSON corpus shape unchanged (round-trip / curated fixtures still green).
+- [x] Unit tests colocated per submodule (small pure test helpers — `noise`,
+      `base_noise`, `lerp`, `shifted_pair`, `write_speech`, `write_noise`,
+      `write_shaped_noise` — duplicated per-file where used cross-module in the
+      original monolith, since Rust test modules are private per file).
+- [x] Byte-preserving: no intentional behavior / string / threshold / serde changes
+      (production code moves are byte-preserving; test-code extraction preserves
+      behavior but is not strictly byte-identical, per plan scope).
 
 ---
 

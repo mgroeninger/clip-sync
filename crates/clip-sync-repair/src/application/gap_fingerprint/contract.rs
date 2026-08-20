@@ -326,6 +326,7 @@ mod tests {
     #[test]
     fn quoted_c2_constants_still_match_the_code() {
         use crate::domain::donor::DONOR_CONTINUITY_MS;
+        use super::super::measure::probes::{SEAM_PROBE_ENV_BIN_MS, SEAM_PROBE_FINE_LAG_MS};
 
         assert_eq!(
             DONOR_CONTINUITY_MS, 150.0,
@@ -340,12 +341,12 @@ mod tests {
         }
 
         assert_eq!(
-            super::super::measure::SEAM_PROBE_ENV_BIN_MS,
+            SEAM_PROBE_ENV_BIN_MS,
             10.0,
             "SEAM_PROBE_ENV_BIN_MS moved; the seam_probe contract quotes `10ms`"
         );
         assert_eq!(
-            super::super::measure::SEAM_PROBE_FINE_LAG_MS,
+            SEAM_PROBE_FINE_LAG_MS,
             25.0,
             "SEAM_PROBE_FINE_LAG_MS moved; the seam_probe contract quotes `+/-25ms`"
         );
