@@ -1,14 +1,24 @@
 # TEMP — Step-boundary census (`gap-fingerprint-stats --steps`)
 
-**Status:** draft, not started, 2026-08-21. **One deliverable:** a new analysis mode on the
+> **PARKED 2026-08-21 — its deliverable was obtained without it.** The §4–§5 contract was applied
+> offline to the CSV the shipped bin already exports (`GAP_FP_CSV=1`), and the answer is a null:
+> 935 admitted rows, largest trustworthy step **63.9 ms**, nothing above 100 ms, both known
+> boundaries censored. Recorded in the parent census, **Result 8**. Do not implement `--steps` to
+> re-derive a null on a disposable corpus. What the exercise *did* establish, and what any future
+> reader should take from this file: the **Arm B dead-shoulder gate (§4) is load-bearing** — without
+> it pair 50 reports a 1040/985/942 ms staircase assembled from noise peaks. Next instrument is
+> [TEMP-shoulder-sweep-bin-plan.md](../TEMP-shoulder-sweep-bin-plan.md); its queue is pairs 31 and 50.
+> Un-park only if a `--steps` mode is wanted as the durable, CI-guarded form of that measurement.
+
+**Status:** ~~draft, not started~~ **parked**, 2026-08-21. **One deliverable:** a new analysis mode on the
 existing `gap-fingerprint-stats` bin that, per pair, orders gaps along the file and reports
 where the seam registration **changes level** — the map-step boundaries — plus a corpus base
 rate for them. Descriptive first: this is a census, not a detector and not a repair change.
 
-Parent: [TEMP-collapsed-bridge-census-2026-08-20.md](TEMP-collapsed-bridge-census-2026-08-20.md)
+Parent: [TEMP-collapsed-bridge-census-2026-08-20.md](../TEMP-collapsed-bridge-census-2026-08-20.md)
 (Q8, re-aimed to High after Result 7). Sibling evidence:
-[TEMP-pair50-anchor-seam-outcomes-2026-08-21.md](TEMP-pair50-anchor-seam-outcomes-2026-08-21.md).
-Does **not** implement the Collapsed-bridge skip verdict ([BACKLOG.md](../../BACKLOG.md) § Fill
+[TEMP-pair50-anchor-seam-outcomes-2026-08-21.md](../TEMP-pair50-anchor-seam-outcomes-2026-08-21.md).
+Does **not** implement the Collapsed-bridge skip verdict ([BACKLOG.md](../../../BACKLOG.md) § Fill
 placement) — it establishes whether that item's population is big enough to be worth a verdict.
 
 > **Verification rule.** `file:line` references belong only in a checklist item about to be
@@ -49,7 +59,7 @@ cutoff — pair 31's 1.15 s and a pair whose seams scatter by 40 ms are not the 
 - No repair-behaviour change, no new production predicate, no `collapsed_bridge` tuning. The
   memory note stands: don't build a `|bridge_ms| ≤ 50 ms` detector.
 - No WAV decoding. This is a dump-only pass over JSON already on disk; the WAV instrument is
-  [TEMP-shoulder-sweep-bin-plan.md](TEMP-shoulder-sweep-bin-plan.md) and stays separate (§9).
+  [TEMP-shoulder-sweep-bin-plan.md](../TEMP-shoulder-sweep-bin-plan.md) and stays separate (§9).
 - No golden/CI baseline in the first cut. Add one only if the numbers turn out to be worth
   regressing against.
 
@@ -152,8 +162,14 @@ the honest ceiling of a dump-only test and belongs in the note before the run, n
 
 The dead-shoulder censoring above *widens* that limit rather than adding a new one: the corpus's
 two known map steps are exactly the regions whose shoulders read dead, so the pairs most likely
-to carry a boundary are the pairs Arm A can say least about. A near-empty Arm A is a plausible
-and reportable outcome — it would mean "dump-only cannot see this," not "boundaries are rare."
+to carry a boundary are the pairs Arm A can say least about.
+
+**Measured 2026-08-21 (Result 8), and the shape of the limit is worse than "Arm A goes thin."**
+Arm A is *large* — 935 of 997 matched rows admit, only 62 censor. It is nonetheless **empty of the
+phenomenon**: its largest step corpus-wide is 63.9 ms, and both real boundaries sit in the 62. So
+a well-fed Arm A returning zero is the expected outcome, and it means "dump-only cannot see this,"
+never "boundaries are rare." An earlier draft of this paragraph predicted a near-empty Arm A; that
+was wrong in magnitude and right in consequence.
 
 **Media hygiene.** Pair label + gap index only. No filenames, titles, or paths — same rule the
 existing report and `census-residual-measured.ps1` follow.
@@ -216,6 +232,14 @@ so the result can't be re-read afterwards:
   whatever *other* pairs show, and that number — including zero — is the census result. Do not
   read a thin Arm A as evidence that step boundaries are rare; §4's known limit already predicts
   it.
+
+**Outcome (2026-08-21, parent census Result 8) — the run happened offline against the CSV, and
+every prediction above held.** Pair 31 admitted 6 of 12 rows (g7 censored at post r 0.0752), pair
+50 admitted 7 of 19 (g8–g17 all censored), and Arm A's yield was **zero boundaries at any floor
+≥ 50 ms**. At the 2 ms `CLEAN_STEP_MS` floor it reports 18 pairs / 29 "boundaries" of 2–41 ms —
+`6 × MAD` collapsing to the floor on pairs whose steps are all ~0 — with no plateau between 2 ms
+and 50 ms from which to pick a defensible threshold. That sensitivity is the reason this mode
+would have needed a calibration argument it does not have.
 
 ## 7. Docs at implement
 
