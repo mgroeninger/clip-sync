@@ -17,6 +17,18 @@ locks pair 50's +2.79 s interior**; do not raise the 0.70 envelope guard here ei
 
 ## Problem
 
+**Second false-peak instance (2026-08-21).** `31/g8`'s pre-shoulder: the rescue branch reports a
+declined "+800 ms candidate, r 0.82", but an independent sample-domain sweep locks the shoulder at
+**-1146.1 ms, r 0.9896** (prominence 0.799), agreeing with its own post within 8.4 ms — and reads only
+**r 0.1777** at +680 ms. An envelope r of 0.82 sitting where the waveform reads 0.18 is the same
+coarse-envelope false peak as `26/g6`. **The difference matters for this plan's re-scope:** 26/g6 is
+now handled by nominal-first ordering (it was alive at nominal, so it never enters the branch), but
+31/g8's shoulders are genuinely dead at nominal (r -0.02) — it enters the rescue branch *legitimately*
+and then picks the wrong peak. So the "confident false peak" problem is **not** fully retired by
+nominal-first; it survives inside the branch, which is exactly where Problem section 2's floor question
+still lives. Evidence:
+[TEMP-collapsed-bridge-census-2026-08-20.md](TEMP-collapsed-bridge-census-2026-08-20.md) Result 7.
+
 **Stakes note (2026-08-21).** [TEMP-pair50-anchor-seam-outcomes-2026-08-21.md](TEMP-pair50-anchor-seam-outcomes-2026-08-21.md)
 measured what production actually does with pair 50's +2.789 s region: all six `patch`-tier gaps there
 are already placed at the correct offset by the editorial anchor-seam bracket search

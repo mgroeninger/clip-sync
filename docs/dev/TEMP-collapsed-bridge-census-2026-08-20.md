@@ -7,6 +7,11 @@ from its single positive example (31/g7) against a larger population, and re-val
 BACKLOG's "Collapsed-bridge skip verdict" item, which is currently designed against n=1. **This
 note proposes no change.** Each open question below needs more measurement or ear-validation
 before any of it becomes a Change plan.
+
+**Headline (2026-08-21, Result 7):** the corpus contains **one** collapsed-bridge gap, and the
+predicate turns out to be an arithmetic coincidence — `bridge_ms = gap + step`, so `~= 0` fires only
+when a pair's map step happens to equal minus the gap's duration. The real invariant is the **step
+boundary**. The BACKLOG item should be re-aimed; see Result 7 and Question 8.
 Parent: [archive/TEMP-lag-decision-map-coordinates-plan.md](archive/TEMP-lag-decision-map-coordinates-plan.md)
 (the fix this census re-validates), [archive/TEMP-31g7-gap-shape-vocabulary.md](archive/TEMP-31g7-gap-shape-vocabulary.md)
 §9 (origin of the predicate and the original 14-gap census).
@@ -23,7 +28,7 @@ deleted; the numbers below are the durable record — see **Reproduction**.
   Instrument: `scratch_shoulder_sweep.py`, 1 s template, ±2000 ms, non-chained, 250 ms peak
   exclusion. This is the source of the original three buckets: 12 `shared_near_false_dead`, 1
   `collapsed_bridge` (31/g7), 1 `shared_far_offset` (31/g10).
-- **Full-corpus post-fix re-scan**, `gap-files/2026-08-19-decision-map-oriented/` — 53 pairs, 971
+- **Full-corpus post-fix re-scan**, `gap-files/2026-08-19-decision-map-oriented/` — **51 pairs** (the full deduplicated manifest; see Question 10), 971
   gaps carrying `lag_decision` on both shoulders, current binary (map-coordinates search, ±600 ms
   window). Queried ad hoc for this note (not a committed script); see **Reproduction**.
 - **Production patch baseline**, `gap-files/2026-08-13-repeat-terms/` — 53 pairs,
@@ -101,7 +106,8 @@ both-dead plus 25/g11 and 50/g18's one-dead cases) have not.
 
 ## Result 3 — no near-zero `bridge_ms` hides among the "both shoulders live" gaps
 
-Among the 954 gaps (of 971) where both shoulders register a real in-window lock, the closest any
+Among the 952 gaps (of 971) where both shoulders register a real in-window lock (954 as first
+counted; two of those carry an `ambiguous` shoulder — Question 9 — and both are `skip`-tier), the closest any
 `bridge_ms` comes to zero is **505 ms** — nothing between that and true zero. This addresses the
 earlier concern that a short gap could collapse its bridge with a lag swing small enough to keep
 both shoulders inside ±600 ms and register as an ordinary shared-registration gap: at least in
@@ -118,7 +124,7 @@ Production's own dead-shoulder rescue (`--lag-envelope-max-lag-ms`, default 2000
 
 | pair/gap | pre `envelope_rescue` | post `envelope_rescue` | reading |
 |---|---|---|---|
-| 31/g8 | declined (800 ms candidate, r 0.82, failed fine re-sweep) | **rescued**, −1137.7 ms, r 0.94 | ~~asymmetric — strongest new `collapsed_bridge` candidate~~ **Reclassified 2026-08-21 (review): almost certainly `shared_far_offset`, not collapsed-bridge.** The envelope-first dump locks **both** g8 shoulders at −1137.7 ms (r 0.96–0.98), agreeing with g9/g11 — so the "declined pre / 800 ms candidate" here is likely a wrong coarse peak on the current nominal-first rescue path, not a genuinely unknown or near-zero pre. The ear note independently agrees: the clips are misaligned *from the opening*, which is a far-offset signature, not g7's line-up-then-diverge shape. An +800 ms pre would also predict B **earlier**, the opposite of what was heard. |
+| 31/g8 | declined (800 ms candidate, r 0.82, failed fine re-sweep) | **rescued**, −1137.7 ms, r 0.94 | ~~asymmetric — strongest new `collapsed_bridge` candidate~~ **Reclassified 2026-08-21 (review), then CONFIRMED by independent sweep (Result 7): `shared_far_offset`, not collapsed-bridge** — pre -1146.1 ms r 0.9896, post -1137.7 ms, agreeing within 8.4 ms. The envelope-first dump locks **both** g8 shoulders at −1137.7 ms (r 0.96–0.98), agreeing with g9/g11 — so the "declined pre / 800 ms candidate" here is likely a wrong coarse peak on the current nominal-first rescue path, not a genuinely unknown or near-zero pre. The ear note independently agrees: the clips are misaligned *from the opening*, which is a far-offset signature, not g7's line-up-then-diverge shape. An +800 ms pre would also predict B **earlier**, the opposite of what was heard. |
 | 31/g10 | rescued, −1151.6 ms | rescued, −1155.4 ms | symmetric, `bridge_ms` ≈ `gap_ms` (1861.6) — confirms `shared_far_offset`, not collapsed-bridge. |
 | 31/g11 | rescued, −1158.4 ms | rescued, −1158.4 ms | symmetric, `bridge_ms` ≈ `gap_ms` (600.6) — same far-offset shape as g10, adjacent gap index. g10/g11 look like one contiguous far-offset region, not independent phenomena. |
 | 50/g8, g9, g10, g14, g15, g16 | declined (all 6) | declined (all 6) | every shoulder's coarse envelope peak (r 0.44–0.72) failed fine re-sweep, even at the full ±2000 ms search. Unresolved, not confirmed either way — pair 50's cluster remains open. |
@@ -183,7 +189,7 @@ Two confirmed defects. ~~Two different mechanisms~~ — **the two-mechanism spli
   r = 1? — moved to the [pair-50 note](TEMP-pair50-anchor-seam-outcomes-2026-08-21.md), Question 1.
 - ~~**31/g8** did not reproduce 31/g7's audible defect despite reproducing its numeric shape — the
   clearest single data point against treating the collapsed-bridge shape as a reliable defect
-  predictor.~~ **Withdrawn 2026-08-21 (review).** 31/g8 is most likely `shared_far_offset`, not a
+  predictor.~~ **Withdrawn 2026-08-21 (review; confirmed by measurement, Result 7).** 31/g8 is `shared_far_offset`, not a
   collapsed-bridge gap (Result 4's reclassified row), so it is not a collapsed-bridge counterexample
   at all — the load-bearing claim here rested on a mis-assigned class. This does not make the
   collapsed-bridge shape a good predictor; it means this batch never tested it.
@@ -208,6 +214,72 @@ census needs from it is two sentences:
 Both of this census's pair-50 follow-ups moved with that evidence: 50/g10's echo and the 50/g11–g13
 skip anomaly are now Questions 1 and 2 of the split note.
 
+## Result 7 — 31/g8 confirmed `shared_far_offset`, and the predicate is an arithmetic coincidence (2026-08-21)
+
+Question 4 answered by independent measurement. The disagreement was between two *production* paths
+(the envelope-first dump reading both g8 shoulders at -1137.7 ms; the nominal-first path declining the
+pre with an "+800 ms candidate, r 0.82"), so neither could arbitrate the other. Ran
+`scratch_shoulder_sweep.py` — sample-domain Pearson, 1 s template, +/-2000 ms, 250 ms exclusion — against
+the existing `2026-08-20-collapsed-bridge-listen/31` clips. No new media run.
+
+**Instrument validated first** on 31/g7's pre, per the script's own docstring: peak **0.8287 @ -38.1 ms**,
+floor 0.0979 — reproducing the archived section 4.3 table exactly.
+
+**31/g8 result:**
+
+| shoulder | top peak | r | floor (outside +/-250 ms) | prominence |
+|---|---|---|---|---|
+| pre | **-1146.1 ms** | **0.9896** | 0.1911 | 0.7985 |
+| post | **-1137.7 ms** | **0.9362** | 0.2171 | 0.7191 |
+
+Both shoulders lock hard and **agree within 8.4 ms**. `bridge_ms` = 623.8 + (-1137.7) - (-1146.1) =
+**+632.2 ms ~= `gap_ms` (623.8)** — the `shared_far_offset` signature, not `|bridge_ms| ~= 0`.
+**31/g8 is confirmed `shared_far_offset` and leaves the collapsed-bridge population.** Question 8 stays
+at n=1, now by measurement rather than by inference.
+
+The "+800 ms candidate at r 0.82" is confirmed spurious: at +679.8 ms the waveform sweep reads
+**r 0.1777**, ordinary floor. An envelope-domain r of 0.82 coexisting with a waveform r of 0.18 is the
+known coarse-envelope false-peak mode (`26/g6`, [archive/TEMP-lag-envelope-recenter-plan.md](archive/TEMP-lag-envelope-recenter-plan.md)
+Result). **This is a second real instance of it**, and unlike 26/g6 it is not caught by nominal-first
+ordering — g8's shoulders are genuinely dead at nominal (r -0.02), so the rescue branch is entered
+legitimately and then picks the wrong peak. Handed to
+[TEMP-envelope-adaptive-widen-plan.md](TEMP-envelope-adaptive-widen-plan.md), which owns the
+rescue-branch guard.
+
+### What this does to the predicate
+
+Pair 31 carries a **pair-level map step of ~-1.15 s**, exactly like pair 50's +2.8 s. The far-offset
+gaps are its *interior*: g8 (-1146/-1138), g10 (-1152/-1155), g11 (-1158/-1158) all sit past the step
+with both shoulders agreeing. **31/g7 is the step's boundary** — its pre is still at the old
+registration (-38.1 ms) and its post is already at the new one (-1160 ms). Same step, different side
+of it.
+
+So `collapsed_bridge` is not a distinct gap *class*. It is what a **step-boundary gap** looks like when
+one number happens to match another:
+
+| | 31/g7 |
+|---|---|
+| step size (`post - pre`) | -1121.9 ms |
+| gap duration | 1118.8 ms |
+| difference | **3.1 ms** |
+
+`bridge_ms = gap_ms + post_lag - pre_lag`, and at a boundary `post_lag - pre_lag` *is* the step. So
+`bridge_ms ~= 0` exactly when **step ~= -gap_duration**. 31/g7 satisfies that to 3.1 ms — a coincidence
+of this gap's duration against this pair's step size, not a property of the shape.
+
+Two consequences, both testable and neither yet tested:
+
+- **A positive step can never produce `|bridge_ms| ~= 0`.** `bridge = gap + step` with `gap > 0`, so a
+  positive step drives it *away* from zero. Pair 50's +2.789 s step therefore cannot yield a
+  collapsed-bridge gap at any gap duration — consistent with Result 3 finding nothing near zero.
+  A detector on `|bridge_ms| <= 50 ms` is structurally blind to every positive-step boundary.
+- **The detectable thing is the step boundary, not the collapsed bridge.** A boundary gap is
+  "pre and post disagree by ~= the pair's step size" — which needs no coincidence and covers both signs.
+  `|bridge_ms| ~= 0` is a lossy proxy that fires on the subset where step ~= -gap.
+
+This is the census's most consequential finding for the BACKLOG item, and it argues the item is aimed
+at the wrong invariant. It rests on one boundary gap; see the revised Question 8.
+
 ## Follow-up questions (open, prioritized)
 
 | # | Question | Why it matters | Priority |
@@ -215,13 +287,13 @@ skip anomaly are now Questions 1 and 2 of the split note.
 | 1 | ~~Wide-sweep the 9 `patch`-tier both-dead gaps~~ **done 2026-08-20 via production's own `--lag-envelope-max-lag-ms` rescue** (see Result 4); pair 50's "declined" outcome fully explained by Result 6 — the 2.8 s true offset exceeds the 600 ms nominal and 2000 ms envelope search radii. **The production explanation is the search radius alone**, not clip overrun (which is a listen-export artifact) and not the 1000 ms window length. | — | Done |
 | 2 | ~~Ear-check the 9 `patch`-tier gaps~~ **done 2026-08-20/21** (see Result 5) — only 2 of 9 have an audible defect. **Scope narrowed 2026-08-21 (review):** the supported claim is that *both-dead-in-window / envelope-declined* does not predict a defect. The batch contained no confirmed collapsed-bridge gap (31/g8 reclassified as `shared_far_offset`), so it does **not** undercut a collapsed-bridge detector — that predicate was never tested here. | Undercuts a detector built from the `lag_decision`/envelope shape, at n=9. Does **not** speak to `|bridge_ms| ≈ 0`. | Done |
 | 3 | ~~Investigate 50/g10's echo directly~~ **Moved 2026-08-21 to [pair-50 note](TEMP-pair50-anchor-seam-outcomes-2026-08-21.md), Question 1.** It is a patch-quality question about a gap that patches at the *correct* offset, not a `bridge_ms` question — and both models this census raised for it (silent-onset, unreached region) are dead. | — | Moved |
-| 4 | ~~Why did 31/g8 reproduce 31/g7's exact numeric shape without reproducing its audible defect?~~ **Mis-aimed — replaced 2026-08-21 (review).** The premise is probably false: 31/g8 looks like `shared_far_offset`, not collapsed-bridge. Replacement question: **confirm 31/g8's pre-shoulder is the −1137.7 ms lock** the envelope-first dump reports (r 0.96–0.98, agreeing with g9/g11), rather than the unresolved/near-zero pre the nominal-first rescue path reported. If confirmed, 31/g8 leaves the collapsed-bridge population entirely and Question 8's n stays 1. | Decides whether this census has *any* second collapsed-bridge candidate, or whether the predicate is still n=1. Also a check on the nominal-first rescue path picking a wrong coarse peak. | **High** |
+| 4 | ~~Confirm 31/g8's pre-shoulder is the -1137.7 ms lock~~ **Answered 2026-08-21 by independent sweep - see Result 7.** Pre locks at **-1146.1 ms, r 0.9896** (prominence 0.799), post at -1137.7 ms; shoulders agree within 8.4 ms, `bridge_ms` ~= `gap_ms`. **31/g8 is `shared_far_offset`** and leaves the collapsed-bridge population. The nominal-first path's "+800 ms candidate, r 0.82" is a coarse-envelope false peak (waveform r there is 0.1777) - handed to the envelope plan. | Settled: this census adds no second collapsed-bridge case. | Done |
 | 5 | ~~Is `envelope_rescue: declined` worth treating as a warning signal for pair 50~~ **answered by Result 6: no** — decline is structurally expected for the whole cluster (true offset exceeds both search radii), so it carries no defect information on its own; 5 of 6 patched cleanly anyway. | — | Done |
 | 6 | Is pair 50's cluster (g8–g10, g14–g16) one map-step rather than six independent gaps? | **Answered — recorded, not "confirmed contiguous."** Same ~2.8 s offset on all 6: yes. *Contiguous*: **no** — `a_start_secs` = 2494, 2627, 2711, 3424, 3544, 3777, spanning ~21 min with `skip`-tier gaps interleaved. It is a persistent pair-level step. The coordinate check dismissed as "adding nothing" would in fact have shown this. | Done |
 | 7 | Wide-sweep the remaining `skip`-tier both-dead gaps (31/g9; 50/g17) and 25/g11's coordinate-fix status. **50/g11–g13 moved 2026-08-21** to [pair-50 note](TEMP-pair50-anchor-seam-outcomes-2026-08-21.md) (Question 2) — they are inside pair 50's map-step region, flanked by correctly-resolved gaps, so their failure is an anchor-seam question, not a census gap. | Lower risk (already declined for unrelated reasons) but needed for a complete census before finalizing any detector. | Low |
-| 8 | Once ≥2–3 confirmed `collapsed_bridge` cases exist, revisit the `|bridge_ms| ≤ 50 ms` threshold. **Still n=1 — but for a different reason than first recorded (review, 2026-08-21):** not "31/g8 failed to confirm," rather 31/g8 was probably never a member (see Question 4). This census did not add a second case and did not refute the first. | Given Result 5, the bar for "confirmed" is audible defect + shape, not shape alone. | Low (blocked) |
-| 9 | What does the `ambiguous` verdict (seen on 50/g18's pre-shoulder) mean, and does it belong in the one-dead/both-dead split at all? | This note's ad hoc script only branched on `== "decorrelated"`; `ambiguous` may be a distinct verdict that changes the counts above if mis-bucketed. | Low |
-| 10 | Is `2026-08-19-decision-map-oriented` (53 pairs) the largest available fingerprint corpus, or is there a bigger one not yet swept? | [[corpus-fingerprint-run-protocol]] — runs are expensive, one pair at a time; worth confirming before assuming 53 pairs is the full population for base-rate claims. | Low |
+| 8 | ~~Once 2-3 confirmed `collapsed_bridge` cases exist, revisit the 50 ms `bridge_ms` threshold.~~ **Re-aimed 2026-08-21 by Result 7 - the threshold is the wrong question.** `collapsed_bridge` is a **step-boundary gap** whose step size happens to equal its gap duration (31/g7: step -1121.9 ms vs gap 1118.8 ms, differing by 3.1 ms). `bridge_ms = gap + step`, so `~= 0` requires a *negative* step of exactly that magnitude, and **no positive step can ever satisfy it** (pair 50's +2.789 s cannot, at any gap duration). Replacement question: **detect the step boundary directly** - pre and post disagreeing by ~= the pair's map step - which is sign-agnostic and needs no coincidence. Verify on pair 31 (boundary at g7, interior g8-g11 confirmed) and pair 50 (interior confirmed; its boundary gap is not yet identified). | Redirects the BACKLOG item from a coincidence-dependent proxy to the invariant it is a proxy for. | **High** |
+| 9 | ~~What does the `ambiguous` verdict mean, and does it belong in the one-dead/both-dead split?~~ **Answered 2026-08-21 — yes it is a distinct verdict, and no it does not change the counts.** `LagVerdict::Ambiguous` (`gap_fingerprint/schema.rs:932`) is a third verdict, "partial; weak shared content" — so the ad hoc script's `== "decorrelated"` branch did under-count dead shoulders. Measured on the same corpus: of 1942 shoulder verdicts, **1908 `timing_offset`, 31 `decorrelated`, 3 `ambiguous`**. Exactly **2 gaps** were bucketed "both live" despite carrying an ambiguous shoulder (32/g1 post r 0.409; 49/g37 post r 0.426) — **both `skip`-tier**, neither `patch`-tier. Result 3's "954 of 971 both-live" is properly 952; no `patch`-tier gap moves, so Result 2's 9-gap risk list is unchanged. | — | Done |
+| 10 | ~~Is `2026-08-19-decision-map-oriented` (53 pairs) the largest available fingerprint corpus?~~ **Answered 2026-08-21 — it is the whole corpus, and it is already deduplicated.** It holds **51** pair dirs, 1049 `*_full.json`, 971 gaps with both anchors. The corpus manifest (`gap-files/extended-pairs.csv`) carries exactly **51 active pair rows**; labels 6 and 16 are commented out as duplicate media (same `a_id` *and* `b_id` as 22 and 28), and this run already omits them — so its 971 gaps are 971 *independent* gaps and no base rate here needs a dedup correction. Note the count in this note's Data sources ("53 pairs") is the label count, not the dir count. Nothing in the manifest is unswept. | — | Done |
 
 ---
 
@@ -243,7 +315,7 @@ pre.frac_lag_ms`. Bucket by whether either/both verdicts equal `"decorrelated"`.
   review — the earlier wording here did exactly that). What Result 5 supports is narrower: a
   *dead-in-window / envelope-declined* shoulder does not predict an audible defect (7 of 9 clean).
   The 9 gaps were mostly far-offset cases; **31/g8 did not reproduce 31/g7's class** — it is most
-  likely `shared_far_offset` (Question 4) — and 31/g7 was not in the batch. So the collapsed-bridge
+  **confirmed** `shared_far_offset` (Result 7) — and 31/g7 was not in the batch. So the collapsed-bridge
   predicate was **never tested here**: not confirmed, not refuted, still n=1. Build or reject a
   detector on its own evidence, not on this listen set.
 - Do not treat `envelope_rescue: declined` as a defect signal by itself — for pair 50's 6 gaps it is
