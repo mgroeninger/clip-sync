@@ -351,9 +351,24 @@ noise, and it would have outranked every genuine measurement in the corpus.
 
 **Conclusion.** The dump-visible step-boundary base rate is **zero**, on a 935-row denominator
 that is an upper bound. The step boundary is real (pairs 31 and 50, measured by WAV sweep in
-Result 7) but is **structurally invisible to `lag_decision` dumps**: a step past the search radius
-kills the shoulder correlation that would have measured it. Any census of it needs the WAV
-instrument, and its work queue is exactly two pairs — 31 and 50.
+Result 7) but is **invisible to `lag_decision` dumps as currently run**: a step past the search
+radius kills the shoulder correlation that would have measured it.
+
+> **Narrowed 2026-08-21 (review of the shoulder-sweep plan).** The original wording here —
+> "structurally invisible… any census of it needs the WAV instrument" — overstates the null. The
+> censoring cause this result itself identifies is the **search radius**, and the fix for a radius
+> is a wider radius, not a different domain. `envelope_rescue` / `envelope_lag_ms` are per-shoulder
+> dump fields (Result 4 read them), and at `--lag-envelope-max-lag-ms 3000` both known steps come
+> inside. So a **re-fingerprint at a wider envelope** is a live route to the corpus base rate, and
+> a cheaper one than the WAV route: a dump run against the existing corpus versus a corpus-wide
+> `--gap-listen` run that does not exist and has not been justified. The WAV sweep
+> ([TEMP-shoulder-sweep-bin-plan.md](TEMP-shoulder-sweep-bin-plan.md)) confirms the *model* on the
+> known queue; it cannot size the BACKLOG item, and its queue holds exactly **one** boundary gap
+> (31/g7 — pair 50's boundary clips do not exist). Sizing belongs to
+> [TEMP-envelope-adaptive-widen-plan.md](TEMP-envelope-adaptive-widen-plan.md) and a dump census
+> downstream of it.
+
+The known-boundary work queue is exactly two pairs — 31 and 50.
 
 Two notes for whoever picks this up:
 
