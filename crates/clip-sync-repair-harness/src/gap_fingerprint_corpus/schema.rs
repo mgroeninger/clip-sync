@@ -91,6 +91,29 @@ pub enum SpliceDiag {
     /// case is a cross-encoding candidate — both-dead is far more likely no-content, quiet, or a true lag
     /// outside the search radius — so this variant does not by itself identify one. Split it if that
     /// distinction ever needs to be acted on.
+    ///
+    /// **Calibration for that split, preserved here because its source is ephemeral.** The one-dead set
+    /// above was produced by a scratch script over the 2026-08-13 oriented join (`gap-files/` is gitignored
+    /// and deletable, so this comment is the durable copy). Its predicate is genuinely two-sided — one
+    /// shoulder live AND the other dead — over the per-side `lag_decision` anchor stats:
+    ///
+    /// - live  (`unique`):  `peak_r >= 0.8` **and** `peak_z >= 12`
+    /// - dead (`no_peak`):  `prominence < 0.02` **or** `peak_r < 0.3`
+    /// - accept only `unique(pre) && no_peak(post)`, or the mirror.
+    ///
+    /// Two things to reconcile before porting it, neither mechanical:
+    ///
+    /// 1. **It is a *partial* classifier; `splice_diag` is total.** A shoulder at r 0.5 / z 5 / prom 0.1 is
+    ///    neither live nor dead, and the script skips that gap. That is right for assembling a confident
+    ///    listen-set, but every row must land in a variant here, so the undecidable middle needs a home
+    ///    (most likely staying `DeadShoulder`) rather than being dropped.
+    /// 2. **The floors disagree with ours** — 0.8/0.3 against `SPLICE_MIN_PEAK_R` (0.85). Pick one
+    ///    deliberately; don't assume the script's numbers transfer.
+    ///
+    /// Blocked on data, not effort: the predicate needs **per-side** `peak_z`/`prominence`, and `GapRow`
+    /// carries only the worst-of-both collapses (`uniqueness_z`, `uniqueness_prom` — see `analysis.rs`,
+    /// `both`/`worst`). The per-side values do exist at ingest, so exposing them is cheap — but it is step
+    /// one, not an afterthought.
     DeadShoulder,
 }
 
