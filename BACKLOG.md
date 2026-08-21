@@ -2,37 +2,41 @@
 
 Open follow-up work for `clip-sync`. See [PLAN.md](PLAN.md) for architecture, [docs/pipeline.md](docs/pipeline.md) for the repair pipeline (phase by phase), [docs/dev/corpus-validation.md](docs/dev/corpus-validation.md) for the test corpus, and [docs/error-mapping.md](docs/error-mapping.md) for error handling. Shipped work is recorded in `docs/dev/archive/*` and git history. Out of scope: [PLAN.md](PLAN.md) § Out of scope.
 
-Last updated: 2026-08-20.
+Last updated: 2026-08-21.
 
 **How this doc works**
 
 - **Open** — actionable items below (problem / direction kept for open work only).
 - **Plans** — active drafts under `docs/dev/TEMP-*.md`; catalog: [docs/dev/README.md](docs/dev/README.md) § Plans. Archive when shipped.
 
-**Next:** [Fill placement](#fill-placement-two-defects--registration-ignored-26g6-class-and-step-gap-with-empty-donor-bridge-31g7) — **Collapsed-bridge skip verdict** (S1 shipped 2026-08-20). 26/g6 axis-2 start-sweep oracle (parallel, not this chain). [Donor registration leftovers](#donor-registration-leftovers); [Repair R6](#repair-r6-follow-ups); [Residual gate](#residual-gate-follow-ups).
+**Next:** [Fill placement](#fill-placement-two-defects--registration-ignored-26g6-class-and-step-boundary-gap-31g7) — **Adaptive widen + rescue-branch guard**. The step-boundary verdict (ex "collapsed-bridge skip") is **blocked on instrumentation**, not next: its old spec was refuted 2026-08-21 and it cannot be sized from dumps. 26/g6 axis-2 start-sweep oracle (parallel, not this chain). [Donor registration leftovers](#donor-registration-leftovers); [Repair R6](#repair-r6-follow-ups); [Residual gate](#residual-gate-follow-ups).
 
 ---
 
 ## Open work
 
-### Fill placement: two defects — registration ignored (26/g6-class) and step gap with empty donor bridge (31/g7)
+### Fill placement: two defects — registration ignored (26/g6-class) and step-boundary gap (31/g7)
 
 Findings and closed sensor work: [TEMP-31g7-model-vs-findings.md](docs/dev/archive/TEMP-31g7-model-vs-findings.md) §8, [gap-vocabulary.md](docs/dev/gap-vocabulary.md) § *Known holes*, [archive/TEMP-fill-placement-registration-plan.md](docs/dev/archive/TEMP-fill-placement-registration-plan.md), map-coordinates and nominal-first (both archived). Recenter leftovers **closed 2026-08-20** as a no-op: 31/g12 post is a tail (`a_after = 0`); the 12-pair dump's empty shoulders are all start/tail geometry. Saturated-envelope unit test shipped. **S1 shipped 2026-08-20** — [archive/TEMP-registration-residual-plan.md](docs/dev/archive/TEMP-registration-residual-plan.md); real-media reproduction of 31/g7 / 26/g6's findings-§6.2 numbers via `registration_residual_ms` is still open, not blocking. Do not re-open S2b, the source/gate fork, or envelope-first ordering. Durable `lag_decision` behaviour: [gap-fingerprint.md](docs/dev/gap-fingerprint.md) § *`lag_decision`*.
 
+**Re-aimed 2026-08-21.** The census ([TEMP-collapsed-bridge-census-2026-08-20.md](docs/dev/TEMP-collapsed-bridge-census-2026-08-20.md) Results 7–8) refuted this item's spec. `bridge_ms = gap_ms + step` where `step = post_lag − pre_lag`, so `|bridge_ms| ≈ 0` fires only when a pair's map step happens to equal minus that gap's duration (31/g7: 3.1 ms apart) — and **no positive step can ever satisfy it**, so pair 50's +2.789 s step is structurally invisible to it. The invariant is the **step boundary**: pre and post on opposite sides of a pair-level map step, sign-agnostic, no coincidence required. Result 8 then showed that boundary is **unmeasurable from `lag_decision` dumps** — 935 admitted rows, largest trustworthy step in the corpus 63.9 ms, both known steps (31 ≈ −1.15 s, 50 ≈ +2.789 s) censored because a step past the search radius kills the correlation that would measure it. Dump-visible base rate **zero**. Do not implement the old `|bridge_ms| ≈ 0` predicate, and do not re-run a dump census to size the new one.
+
 | Gap | Open |
 |-----|------|
-| 31/g7 | Collapsed-bridge skip verdict. Spec `\|gap + post_lag − pre_lag\| ≈ 0`; do not treat as one-seam fill. Post at −1160 is in `lag_decision`. n=1 census extended to the full corpus, findings + 7 open follow-ups: [TEMP-collapsed-bridge-census-2026-08-20.md](docs/dev/TEMP-collapsed-bridge-census-2026-08-20.md). |
+| 31/g7 | **Step-boundary skip verdict** (was "collapsed-bridge"). Spec is **pre and post disagreeing by ≈ the pair's map step**, *not* `\|gap + post_lag − pre_lag\| ≈ 0` — see the re-aim above. Still: do not treat as one-seam fill; post at −1160 is in `lag_decision`. **Blocked on instrumentation**, not ready to design — the population cannot be sized from dumps, and the only instrument that reaches it is the unbuilt [TEMP-shoulder-sweep-bin-plan.md](docs/dev/TEMP-shoulder-sweep-bin-plan.md) (its §4.3/§4.4 carry the boundary classifier; queue is two pairs, 31 and 50). Census: [TEMP-collapsed-bridge-census-2026-08-20.md](docs/dev/TEMP-collapsed-bridge-census-2026-08-20.md) (2 open follow-ups: Q7 census completeness, Q11 the 31/g10 audible blip); pair-50 spin-off: [TEMP-pair50-anchor-seam-outcomes-2026-08-21.md](docs/dev/TEMP-pair50-anchor-seam-outcomes-2026-08-21.md). |
 | 26/g6 | Oracle the axis-2 start sweep — what did the objective score at ≈−50 ms vs −1450 ms (findings §6.8). Do not retune `fill_fit_early_start_penalty_scale`. |
 
 **Order of work** (do not raise the 0.70 envelope guard; do not raise the 2000 ms default until the adaptive-widen ladder dump says to):
 
-1. **Collapsed-bridge skip verdict** — next Change.
-2. **Adaptive widen + rescue-branch guard** — [TEMP-envelope-adaptive-widen-plan.md](docs/dev/TEMP-envelope-adaptive-widen-plan.md).
-3. **`lag_editorial` confirm** — piggyback on a diagnostics dump.
+1. **Adaptive widen + rescue-branch guard** — [TEMP-envelope-adaptive-widen-plan.md](docs/dev/TEMP-envelope-adaptive-widen-plan.md). **Now next Change** (promoted 2026-08-21). The guard half gained a second confirmed instance: 31/g8's rescue picked an "+800 ms, r 0.82" coarse-envelope peak where the waveform reads r 0.1777, and unlike 26/g6 it is *not* caught by nominal-first ordering — g8's shoulders are genuinely dead at nominal, so the rescue branch is entered legitimately and then picks the wrong peak (census Result 7).
+2. **`shoulder-sweep` bin** — [TEMP-shoulder-sweep-bin-plan.md](docs/dev/TEMP-shoulder-sweep-bin-plan.md). Instrument, not a Change: no production behaviour moves. Gates item 3 and re-runs for item 1's ladder.
+3. **Step-boundary skip verdict** — was item 1; **blocked** until item 2 exists and has confirmed the boundary model on pairs 31 and 50 independently of the Python that produced it.
+4. **`lag_editorial` confirm** — piggyback on a diagnostics dump.
 
 | Item | Direction |
 |------|-----------|
-| **Collapsed-bridge skip verdict** | 31/g7 honest action. Spec `\|gap + post_lag − pre_lag\| ≈ 0` |
+| **Step-boundary skip verdict** | 31/g7 honest action. Spec: pre and post disagree by ≈ the pair's map step (sign-agnostic). The old `\|gap + post_lag − pre_lag\| ≈ 0` spec is **retired** — refuted as an arithmetic coincidence, see the re-aim above. Blocked on the `shoulder-sweep` bin |
+| **`shoulder-sweep` bin** | [TEMP-shoulder-sweep-bin-plan.md](docs/dev/TEMP-shoulder-sweep-bin-plan.md). Promotes the gitignored Python WAV sweep into a `calibration` bin and adds the boundary classifier. Its §2.1 is load-bearing: it verifies the two known pairs without a media run, but **cannot** produce a base rate — only ~38 gaps have listen WAVs against 971 in the corpus |
 | **Adaptive widen** | [TEMP-envelope-adaptive-widen-plan.md](docs/dev/TEMP-envelope-adaptive-widen-plan.md) (ladder 2000→3000→4000 in the rescue branch). Keep default 2000 until its ladder dump locks +2.79 s interior |
 | **`lag_editorial` shares `lag_at_placement`** | Piggyback on a `--fingerprint-diagnostics` dump. Confirm the diagnostic placement follows the same rescue ordering; do not treat disagreement with `lag_decision` as a gate signal |
 | **S4 / `applied = 0` cohort** | Conditional ear labels for whether a residual guard's domain includes gaps that never slid. Do not run until it would change a decision. The archived §5 render list is mixed-orientation and stale |
@@ -110,7 +114,7 @@ check shipped; these remain.
 | Item | Direction |
 |------|-----------|
 | **`equivalence-calibration --replay` reads `GapScanJson`** | Today `--replay` only loads fingerprint `corpus.json` / `GapCorpus`; plain scan JSON already carries the same registration + envelope fields on every gap (`scripts/measure/scan-registration.ps1`). Teach the reader the scan shape so Apply flip/abstain counts come from the production classifier, not a hand reconstruction. Small reader change; no new measurement |
-| **Conditional donor test — investigation only** | Ask “is B non-silent *where A is silent*?” (at the registered lag) instead of independent A-floor + donor-occupancy halves. **Do not change the gate yet.** First: count A-silent∩donor-silent coincidence on existing scan JSON. Fill-level catches *loudness* damage only — see [Fill placement](#fill-placement-two-defects--registration-ignored-26g6-class-and-step-gap-with-empty-donor-bridge-31g7). No TEMP until the count says it is worth designing |
+| **Conditional donor test — investigation only** | Ask “is B non-silent *where A is silent*?” (at the registered lag) instead of independent A-floor + donor-occupancy halves. **Do not change the gate yet.** First: count A-silent∩donor-silent coincidence on existing scan JSON. Fill-level catches *loudness* damage only — see [Fill placement](#fill-placement-two-defects--registration-ignored-26g6-class-and-step-boundary-gap-31g7). No TEMP until the count says it is worth designing |
 | **33/17 placement-path investigation** | Which path placed 33/17’s fill is **unrecorded**. The dump’s `brackets` array is the oracle enumeration, not the candidate production selected. **Next:** instrument the selected candidate / fit path; likely site if anything is tuned is the **acceptance floor**, not the comparator |
 
 ### Dual-fit confidence axis

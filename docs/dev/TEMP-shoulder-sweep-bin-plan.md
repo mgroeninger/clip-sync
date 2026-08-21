@@ -1,6 +1,9 @@
 # TEMP — Promote the listen-WAV shoulder sweep into `clip-sync-repair`
 
-**Status:** draft, not started, 2026-08-21. **One deliverable:** a `calibration`-gated
+**Status:** draft, not started, 2026-08-21. **Revised 2026-08-21** against the census's Results 7–8
+(see §1.1) — the instrument design is unchanged; what changed is the classifier it writes, because
+the phenomenon it is pointed at was renamed by measurement after this plan's first draft.
+**One deliverable:** a `calibration`-gated
 `shoulder-sweep` bin in `clip-sync-repair`, sibling of `listen-registration` and
 `equivalence-calibration`. It replaces the gitignored Python pair
 `gap-files/scratch_shoulder_sweep.py` + `scratch_shoulder_sweep_batch.py` — the independent
@@ -12,7 +15,7 @@ Parent: [archive/TEMP-lag-decision-map-coordinates-plan.md](archive/TEMP-lag-dec
 [TEMP-collapsed-bridge-census-2026-08-20.md](TEMP-collapsed-bridge-census-2026-08-20.md)
 (this instrument’s current consumer). Does **not** implement the Collapsed-bridge skip verdict
 ([BACKLOG.md](../../BACKLOG.md) § Fill placement) — it only makes the measurement that verdict
-will keep needing.
+will keep needing, and per §1.1 that verdict's spec is itself now in question.
 
 > **Verification rule.** A `file:line` reference belongs only in a checklist item that is about
 > to be executed; design sections state the decision and its reason. Re-read
@@ -42,6 +45,35 @@ That instrument has lived as Python in gitignored `gap-files/`. Consequences:
 The Python is two files only because the batch script `importlib`s the single-gap module.
 That is one instrument, two entry points, not two products.
 
+### 1.1 What Results 7–8 changed (revision, 2026-08-21)
+
+This plan's first draft copied the Python's derived buckets verbatim, including
+`collapsed_bridge` (`|bridge_ms| ≤ 50`). The census has since retired that predicate as a
+*class*:
+
+- **Result 7** — `bridge_ms = gap_ms + step`, where `step = post_lag − pre_lag`. So
+  `|bridge_ms| ≈ 0` fires exactly when a pair's map step happens to equal minus that gap's
+  duration (31/g7: step −1121.9 ms vs gap 1118.8 ms, 3.1 ms apart). **No positive step can ever
+  satisfy it** at any gap duration, so pair 50's +2.789 s step is structurally invisible to it.
+  The invariant underneath is the **step boundary**: a gap whose pre and post sit on opposite
+  sides of a pair-level map step. `collapsed_bridge` is a lossy proxy for a subset of it.
+- **Result 8** — the step boundary is **not measurable from `lag_decision` dumps**. Over 935
+  admitted rows the largest trustworthy step in the whole corpus is 63.9 ms; both known steps
+  (pair 31 ≈ −1.15 s, pair 50 ≈ +2.789 s) are censored, because a step past the search radius
+  destroys the correlation that would measure it. That null is what makes this bin's WAV domain
+  the only remaining instrument for the question.
+
+Two consequences for this plan, both applied below:
+
+1. **The classifier must name the step boundary, not the coincidence.** §4 promotes `step_ms` to
+   a first-class column and makes `step_boundary` a bucket; `collapsed_bridge` survives only as
+   a derived annotation on top of it (§4.3), so a boundary gap is never removed from the
+   boundary population by an arithmetic accident. The first draft evaluated `collapsed_bridge`
+   *before* the leftover `real_step` bin, which would have hidden 31/g7 — the corpus's only known
+   boundary — from the bucket that is now the point.
+2. **The known queue is two pairs, and one of them needs a wider sweep than the default.** See
+   §2.1 for what this bin can and cannot answer, and §4's `--max-lag-ms` note.
+
 ---
 
 ## 2. Goal / non-goals
@@ -54,11 +86,13 @@ That is one instrument, two entry points, not two products.
     Pearson vs B at every integer-sample lag in `±max-lag-ms` (default 2000), 250 ms peak
     exclusion, stdout peak table + floor/prominence.
   - **Corpus** — walk a `--gap-listen` tree, run both shoulders, write `census.csv` /
-    `census.json` with the same derived buckets the batch script defined (`collapsed_bridge`,
-    `shared_far_offset`, `shared_near_false_dead`, `real_step`, `one_live`, `none_live`).
+    `census.json` with the derived buckets of §4.3 (`step_boundary`, `shared_far_offset`,
+    `shared_near_false_dead`, `one_live`, `none_live`) plus the pair-level step roll-up of §4.4.
+    These are the batch script's buckets with its `real_step` leftover bin promoted and renamed
+    to `step_boundary`, and its `collapsed_bridge` demoted to an annotation — see §1.1.
 - Independent of production correlation: FFT Pearson lives in the bin (or a bin-local module).
   `rustfft` is already a `clip-sync-repair` dependency.
-- Reconstructs the archived §4.3 / 31/g7 pre-shoulder landmark: peak **r ≈ 0.8287 at ≈ −38.1 ms**,
+- Reconstructs the **archived registration-plan** §4.3 / 31/g7 pre-shoulder landmark: peak **r ≈ 0.8287 at ≈ −38.1 ms**,
   single spike, floor < 0.10. That is the media-side reconstruction check, not a CI assertion.
 - Media hygiene matches `listen-registration`: print pair directory names and gap indices
   only — never media paths or titles. Census files use `entry_stem`s.
@@ -79,8 +113,8 @@ That is one instrument, two entry points, not two products.
   `listen.json` records production disposition, not a second lag sensor. The 31/g7 landmark is
   defined on listen *clips* (lag 0 = nominal map at the throat); the same math on the fingerprint
   haystack is a different instrument. `--max-lag-ms` is a knob you re-run without a decode
-  (pair 50’s ~2.8 s offset; the envelope-widen ladder). A collapsed-bridge skip, when it ships,
-  reads production `lag_decision`, not this census.
+  (pair 50’s ~2.8 s offset; the envelope-widen ladder). A skip verdict, when it ships, reads
+  production `lag_decision`, not this census.
 - Changing production `lag_decision`, envelope rescue, or any skip verdict.
 - Committing Python, listen WAVs, or census artifacts derived from licensed media.
 - Treating census `bucket` as a production tag or a skip-verdict detector. Buckets are derived
@@ -88,6 +122,28 @@ That is one instrument, two entry points, not two products.
   the r/lag columns. The collapsed-bridge census already refused to ship a detector off shape
   alone ([TEMP-collapsed-bridge-census-2026-08-20.md](TEMP-collapsed-bridge-census-2026-08-20.md)
   Non-goals).
+
+### 2.1 What this bin can and cannot answer (scope, revised 2026-08-21)
+
+**Can: verify the step boundary on the known queue.** Result 8's queue is exactly two pairs —
+31 (boundary at g7, interior g8/g10/g11 confirmed) and 50 (interior confirmed, boundary gap not
+yet identified). Listen WAVs for pair 31's and pair 50's `patch`-tier gaps already exist
+(`gap-files/2026-08-20-collapsed-bridge-listen/`, 9 gaps). Run corpus mode over that tree with
+`--max-lag-ms 3000` and read the §4.4 roll-up. **No media run required for this.**
+
+**Cannot: produce a step-boundary base rate.** This bin consumes `--gap-listen` WAVs, and those
+exist for roughly 38 gaps across all surviving listen trees (15 + 13 + 9 + 1) against the
+corpus's **971** gaps with both anchors. `--corpus` is bounded by which listen trees happen to
+exist, not by the corpus. A corpus-wide boundary census therefore needs a corpus-wide
+`--gap-listen` media run first (per
+[corpus-fingerprint-run-protocol], one pair at a time, ~15 GB RSS) — a cost this plan does not
+authorize and the BACKLOG item has not justified. Result 8 already established that the
+dump-side base rate is zero and that sizing the BACKLOG item needs this instrument; it did
+**not** establish that the sizing is worth a full listen run.
+
+Say so plainly when reporting from `--corpus`: the roll-up's denominator is *gaps with listen
+WAVs*, never *gaps in the corpus*. The census note's Result 8 null is a corpus-scale statement;
+nothing this bin prints is.
 
 ---
 
@@ -123,7 +179,8 @@ the two siblings.
 
 ## 4. Instrument contract (locked)
 
-Copied from the reconstructed Python, which itself reconstructed archive registration-plan §4.3.
+Copied from the reconstructed Python, which itself reconstructed archive registration-plan
+§4.3 (that is the *archived* §4.3; unqualified § references in this plan are to this document).
 Lag 0 is the nominal map at the chosen throat, same units and sign as
 `DonorRegistration::lag_ms` / `listen-registration` (`wav_lag`): **negative means B’s matching
 content sits earlier than the nominal map put it.**
@@ -133,23 +190,35 @@ content sits earlier than the nominal map put it.**
 | Template | 1.0 s of A, adjacent to the throat | pre: last 1.0 s before the throat; post: first 1.0 s after it |
 | Throat | recovered, not hardcoded 3.0 s | see §4.1 |
 | Haystack | B surround, mono downmix (mean of all channels) | same reduction as `listen-registration`; do **not** drop LFE (that is the patched-sweep script) |
-| Search | every integer-sample lag in `±max-lag-ms` | default 2000; FFT Pearson + prefix-sum variance, not 1 ms naive steps |
+| Search | every integer-sample lag in `±max-lag-ms` | default 2000; FFT Pearson + prefix-sum variance, not 1 ms naive steps. **Default is too narrow for pair 50** — see below |
 | Peak pick | 250 ms exclusion radius, top N (default 8) | floor = max r outside ±250 ms of the top peak; prominence = top − floor |
 | `live` | `peak_r ≥ 0.5` and `prominence ≥ 0.10` | census derived column; findings §6.7 “confident” bar |
 | `unique_strict` | `peak_r ≥ 0.8` and same prominence | recorded, not used to *define* `live` |
-| `bridge_ms` | `gap_ms + post_lag_ms − pre_lag_ms` | dual-fit B span; `gap_ms` is WAV-derived from the same `ctx` that placed the throats (§4.1), not dump `duration_secs` |
-| `collapsed_bridge` | both `live` and `\|bridge_ms\| ≤ 50` | 31/g7 measured −3..+6 ms; 50 ms sits inside the unpopulated 250 ms agreement band |
-| `shared_far_offset` | both live, `\|pre−post\| ≤ 250 ms`, `max(\|lag\|) > 600 ms` | 31/g10 class |
-| `shared_near_false_dead` | both live, lags agree within 250 ms, in reach | the 12-gap sensor-artifact bucket the map-coordinates fix cleared |
-| `real_step` | both live, lags disagree | leftover both-live class |
-| `one_live` / `none_live` | not both live | |
+| **`step_ms`** | `post_lag_ms − pre_lag_ms` | **first-class column** (revision 2026-08-21). The shoulder disagreement itself — the quantity Result 7 identified as the invariant. Sign-agnostic; needs no coincidence |
+| `bridge_ms` | `gap_ms + step_ms` | retained as a comparison column, *not* a classifier input. Equivalently `gap_ms + post_lag_ms − pre_lag_ms`; `gap_ms` is WAV-derived from the same `ctx` that placed the throats (§4.1), not dump `duration_secs` |
 
-Non-chained: each throat is searched independently. Do not feed pre’s lag into post’s haystack
-origin — that chaining is what the map-coordinates fix had to undo on the production sensor.
+Buckets are in §4.3; they are ordered so `step_ms` decides first. Non-chained: each throat is
+searched independently. Do not feed pre’s lag into post’s haystack origin — that chaining is
+what the map-coordinates fix had to undo on the production sensor.
 
 `edge_pinned` if `|peak_lag| ≥ max-lag-ms − 20`, and `clipped_haystack` / `usable_lag_ms` when B
 is shorter than the requested sweep. Carry these on the JSON row so a corpus read can see a
 window-edge lock without re-running.
+
+**`--max-lag-ms` and the `live` cut interact, and the default loses pair 50.** `live` requires
+`peak_r ≥ 0.5` *and* `prominence ≥ 0.10`. Pair 50's true offset is ≈ +2.789 s, so at the default
+2000 ms neither shoulder's real peak is inside the sweep, both fail `live`, and the gap buckets
+`none_live` — the same null Result 8 got from dumps, reached by a different route and just as
+uninformative. Two guards, both required:
+
+- Corpus mode **warns on stderr and sets `sweep_may_be_narrow` on the row** whenever a gap
+  buckets `one_live`/`none_live` *and* the best peak of a dead shoulder is `edge_pinned`. That is
+  the signature of a true peak outside the window, and it is the only thing distinguishing
+  "measured dead" from "not searched far enough."
+- The pair-50 runs in the known queue (§2.1) use `--max-lag-ms 3000`. Do not raise the *default*
+  past 2000 to accommodate them — the default matches the archived census numbers this
+  instrument reconstructs (§6), and a silent default change would make old and new census files
+  non-comparable. Pass the flag and record it; `_contract` carries the value used.
 
 ### 4.1 Throat / context recovery
 
@@ -217,6 +286,71 @@ production.
 Do not add a `csv` crate. `census.json` is the durable record; `census.csv` is a simple
 fixed-column write of the same rows (stems + numbers, no titles, so quoting is trivial).
 
+### 4.3 Buckets (revised 2026-08-21)
+
+Evaluated in this order; first match wins. The ordering is the substantive change — `step_ms`
+decides before any `bridge_ms` test, so no boundary gap can be diverted out of the boundary
+population by the coincidence of §1.1.
+
+| Bucket | Rule | Notes |
+|---|---|---|
+| `step_boundary` | both `live`, `\|step_ms\| > step_floor` (§4.4) | **the invariant.** Pre and post sit on opposite sides of a pair-level map step. Was the first draft's unnamed `real_step` leftover bin. 31/g7 lands here |
+| `shared_far_offset` | both live, `\|step_ms\| ≤ step_floor`, `max(\|lag\|) > 600 ms` | both shoulders agree, both past production's window. 31/g8, g10, g11 and pair 50's interior |
+| `shared_near_false_dead` | both live, `\|step_ms\| ≤ step_floor`, in reach | the 12-gap sensor-artifact bucket the map-coordinates fix cleared. Should be empty on any current-binary listen tree |
+| `one_live` / `none_live` | not both live | carry `sweep_may_be_narrow` (§4) — a dead shoulder whose best peak is `edge_pinned` is unmeasured, not measured-dead |
+
+**`collapsed_bridge` is an annotation, not a bucket.** It is written as a boolean column
+alongside `step_ms` / `bridge_ms`, true when `bucket == step_boundary` and `|bridge_ms| ≤ 50`.
+It records the arithmetic coincidence `step_ms ≈ −gap_ms` on a gap that is already classified as
+a boundary. It must never gate, reorder, or remove a row. The `_contract` object states this in
+one line so a future reader of an old `census.json` does not resurrect it as a class.
+
+`unique_strict` (§4 table) stays recorded and still does not define `live`.
+
+### 4.4 Pair-level step reference and `step_floor` (new, 2026-08-21)
+
+Result 7's definition is *"pre and post disagree by ≈ **the pair's** map step"* — a per-gap
+number cannot be classified without a per-pair reference. Corpus mode therefore does a second
+pass after all gaps in a pair are swept:
+
+```text
+pair_step_median = median(step_ms) over gaps in this pair where both shoulders are live
+pair_step_mad    = median(|step_ms − pair_step_median|) over the same gaps
+step_floor       = max(6 × pair_step_mad, --step-floor-ms)     # default floor 50 ms
+```
+
+`--step-floor-ms` defaults to **50**, not to the census's 2 ms `CLEAN_STEP_MS`. Result 8's
+floor sweep is the reason: `6 × MAD` collapses to the floor on most pairs (their steps are all
+≈ 0), so a 2 ms floor counts millisecond seam wobble — three orders of magnitude below the
+phenomenon — and there is **no plateau between 2 ms and 50 ms** to pick a defensible threshold
+from. 50 ms is the smallest floor at which Result 8's dump-side yield was a clean zero, which
+makes it the honest starting point for the WAV side. It is a `_contract` field: re-run with a
+different value rather than editing census rows.
+
+Per-pair roll-up columns, written to `census.json` under `pairs[]` and printed in the stdout
+roll-up:
+
+| Column | Meaning |
+|---|---|
+| `pair_step_median` / `pair_step_mad` | the reference above, and its spread |
+| `step_floor_ms` | the floor actually applied (after the `max`) |
+| `boundary_gaps` | gap indices bucketed `step_boundary` |
+| `live_gaps` / `total_gaps` | the denominator, so a roll-up read from a thin listen tree is self-labelling (§2.1) |
+
+**Two known-answer expectations**, for whoever runs this first — not CI assertions:
+
+- **Pair 31** should show a boundary at **g7** (pre ≈ −38 ms, post ≈ −1160 ms, `step_ms` ≈
+  −1122 ms) with g8/g10/g11 as `shared_far_offset` interior at ≈ −1140 to −1158 ms. `g7` should
+  additionally carry `collapsed_bridge: true` (`bridge_ms` ≈ −3 ms) — that annotation appearing
+  on a row already bucketed `step_boundary` is the §4.3 contract working.
+- **Pair 50** at `--max-lag-ms 3000` should show its interior at ≈ **+2.789 s**. Its boundary gap
+  is **not yet identified** and may not have listen WAVs; a run that finds only interior is a
+  successful run with an incomplete tree, not a null.
+
+A single pair whose only live gaps are all interior has `pair_step_mad` ≈ 0 and `step_floor` =
+the flag default. That is correct — it means the pair shows one consistent step and no boundary
+was sampled.
+
 ---
 
 ## 5. CLI sketch
@@ -231,6 +365,10 @@ cargo run -p clip-sync-repair --features calibration --bin shoulder-sweep -- \
 # Corpus (scratch_shoulder_sweep_batch.py). Errors if --shoulder is also set.
 cargo run -p clip-sync-repair --features calibration --bin shoulder-sweep -- \
     --corpus gap-files/<listen-run> [--also gap-files/<extra>] [--out DIR]
+
+# The known queue (§2.1) — pair 50's step is ~+2.789 s, past the 2000 ms default.
+cargo run -p clip-sync-repair --features calibration --bin shoulder-sweep -- \
+    --corpus gap-files/2026-08-20-collapsed-bridge-listen --max-lag-ms 3000
 ```
 
 `--shoulder` is required in single-gap mode and forbidden with `--corpus`. Corpus always
@@ -242,12 +380,16 @@ extra listen dirs (the Python used this for a one-gap overlay of 31/g7).
 Stdout for one shoulder keeps the prototype log shape (shoulder, sr, gap, template time,
 r at lag 0, peak table, floor/prominence) so existing notes stay comparable. Corpus mode prints
 the bucket roll-up plus one summary line per gap (pair, 1-based index, bucket, lags, r,
-`bridge_ms`) and writes:
+**`step_ms`**, `bridge_ms`), then the §4.4 per-pair block, then the `live_gaps / total_gaps`
+denominator with the §2.1 caveat spelled out in words, and writes:
 
-- `census.csv` — the joinable column set the batch script already used
-- `census.json` — same rows + `pre_peaks` / `post_peaks` + a `_contract` object that quotes
-  the instrument, window, `bridge_ms` formula, and every derived cut (`live`,
-  `collapsed_bridge`, …)
+- `census.csv` — the joinable column set the batch script already used, plus `step_ms`,
+  `step_floor_ms`, `collapsed_bridge`, `sweep_may_be_narrow`
+- `census.json` — same rows + `pre_peaks` / `post_peaks` + a `pairs[]` array (§4.4) + a
+  `_contract` object that quotes the instrument, `max_lag_ms` **as actually run**,
+  `step_floor_ms`, the `step_ms` / `bridge_ms` formulas, every derived cut (`live`,
+  `step_boundary`, …), and the one-line statement that `collapsed_bridge` is an annotation
+  rather than a class (§4.3)
 
 Join dump `lag_decision` (pre/post `frac_lag_ms`, `peak_r`, `verdict`) and `listen.json`
 `disposition` when those files exist, as the batch script did — derived comparison columns,
@@ -266,8 +408,14 @@ Colocated `#[cfg(test)]` in the bin, same pattern as `listen_registration.rs`:
 | Known integer-sample shift of a sine recovers at r ≈ 1 | the sweep, not peak-picking |
 | Negative lag means B is early | sign convention |
 | Peak picker keeps two peaks 300 ms apart and drops one 100 ms apart | 250 ms exclusion |
-| `classify`: both live, `bridge_ms` ≈ 0 → `collapsed_bridge` | derived column |
+| `classify`: both live, `\|step_ms\|` over floor → `step_boundary` | **the invariant** (§4.3) |
 | `classify`: both live, lags agree, `\|lag\| > 600` → `shared_far_offset` | derived column |
+| `classify`: a `step_boundary` row with `bridge_ms` ≈ 0 stays `step_boundary` **and** sets `collapsed_bridge` | §4.3 ordering — the regression this revision exists to prevent |
+| `classify`: `\|bridge_ms\|` ≈ 0 never changes a row's bucket | annotation, not a class |
+| `step_floor`: all-zero steps → floor is the flag default, not `6 × 0` | §4.4 `max()` |
+| `step_floor`: `6 × MAD` above the flag wins | §4.4 |
+| Roll-up denominator counts gaps with WAVs, not dump gaps | §2.1 self-labelling |
+| `sweep_may_be_narrow` set when a dead shoulder's best peak is `edge_pinned` | §4 narrow-sweep guard |
 | Context recovery: clip length = span + 2·ctx places the pre throat at `ctx` | §4.1 |
 | Unequal A/B lengths: post throats are each `ctx` from that clip’s end | §4.1, not same index |
 | `--corpus` + `--shoulder` is a clap error | CLI mutex |
@@ -292,10 +440,18 @@ new `[[test]]`. Feature-off `cargo build` still must not emit the bin.
 must still show a unique peak near **−38.1 ms, r ≈ 0.8287, floor < 0.10**. If the listen
 directory is gone, regenerate with `--gap-listen` / `measure-gap-fingerprints.ps1` rather than
 relaxing the landmark. Corpus mode against a saved 14-gap listen tree should reproduce the
-three-bucket split (12 `shared_near_false_dead`, 1 `collapsed_bridge`, 1 `shared_far_offset`)
-**only** if those WAVs were produced by a pre-map-coordinates binary — on a current dump those
-12 are no longer dead. Do not treat a current-binary re-run of that tree as a regression of
-this tool.
+three-bucket split — 12 `shared_near_false_dead`, 1 `shared_far_offset` (31/g10), and 31/g7 as
+**`step_boundary` carrying `collapsed_bridge: true`** (the first draft's contract would have
+bucketed g7 `collapsed_bridge`; that rename is the §4.3 revision, not a measurement change, and
+the r/lag numbers must be identical) — **only** if those WAVs were produced by a
+pre-map-coordinates binary; on a current dump those 12 are no longer dead. Do not treat a
+current-binary re-run of that tree as a regression of this tool.
+
+**Second media checklist item (the point of the revision):** run the known queue of §2.1 and
+check the two expectations of §4.4 — pair 31's boundary at g7 with far-offset interior, pair 50's
+interior at ≈ +2.789 s under `--max-lag-ms 3000`. Record pair + gap index and the `step_ms`
+column in the PR description. This is the first independent confirmation of Result 7's
+step-boundary model on anything other than the Python that produced it.
 
 `cargo build` (feature off) has no `shoulder-sweep`. `cargo build --features calibration`
 builds it alongside the two siblings.
@@ -330,16 +486,18 @@ parenthetical “now `shoulder-sweep`” on the next edit of those TEMP files is
    shift / sign / peak-picker tests.
 3. **Context recovery.** Dump geometry when present; `--context-secs` fallback. Skip stems
    with no B surround.
-4. **Corpus mode.** Discover pairs, both shoulders, classify, write `census.csv` /
-   `census.json` `_contract`, join dump lags + `listen.json` disposition when present.
-   Classify unit tests.
+4. **Corpus mode.** Discover pairs, both shoulders, classify (§4.3 ordering), second pass for
+   the per-pair step reference and `step_floor` (§4.4), `sweep_may_be_narrow` guard, write
+   `census.csv` / `census.json` `pairs[]` + `_contract`, join dump lags + `listen.json`
+   disposition when present. Classify and `step_floor` unit tests.
 5. **Docs + feature-off build + PR wiring.** `development.md` / Cargo.toml comment /
    fingerprint pointer. Confirm default `cargo build` does not emit `shoulder-sweep`. Add
    `--bin shoulder-sweep` to the `pr-repair` calibration `cargo test` invocation
    (`scripts/test-tier.ps1`).
-6. **Media reconstruction.** 31/g7 pre landmark (§6). Record the numbers in the PR
-   description (pair + gap index only). If the listen tree is gone, regenerate rather than
-   skipping.
+6. **Media reconstruction.** 31/g7 pre landmark, then the §2.1 known-queue run against
+   `2026-08-20-collapsed-bridge-listen` at `--max-lag-ms 3000` and the §4.4 expectations (§6).
+   Record the numbers in the PR description (pair + gap index only). If the listen tree is gone,
+   regenerate rather than skipping.
 
 ---
 
@@ -351,4 +509,6 @@ parenthetical “now `shoulder-sweep`” on the next edit of those TEMP files is
 | PowerShell wrapper under `scripts/measure/` | Operators already `cargo run --bin listen-registration`; do not invent a third invocation style. |
 | Calling production `anchor_eligible` / JSON-only censuses | Different scripts; `scripts/measure/census-residual-measured.ps1` is the pattern. |
 | Baking the sweep into `--gap-fingerprints` / `--gap-listen` | Post-hoc on listen WAVs so the window is a knob and the estimator stays off the dump schema. See §2. |
-| Widening `--lag-envelope-max-lag-ms` or shipping a `collapsed_bridge` skip | BACKLOG’s next Change; this bin is the instrument that Change will re-run, not the Change. |
+| Widening `--lag-envelope-max-lag-ms` | [TEMP-envelope-adaptive-widen-plan.md](TEMP-envelope-adaptive-widen-plan.md) owns it; this bin is an instrument that plan will re-run, not the Change. |
+| Shipping a skip verdict of any shape | BACKLOG’s § Fill placement. Note its spec is currently `\|gap + post_lag − pre_lag\| ≈ 0`, which §1.1 shows is a coincidence-dependent proxy blind to every positive step. **Re-aiming that item at the step boundary is a BACKLOG edit, not this plan's work** — but do not implement the item as written on the strength of this bin's output. |
+| A corpus-wide `--gap-listen` run to get a boundary base rate | §2.1. Real work, real cost, not authorized here and not yet justified by the BACKLOG item. |
