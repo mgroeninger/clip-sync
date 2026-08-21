@@ -21,7 +21,7 @@ Findings and closed sensor work: [TEMP-31g7-model-vs-findings.md](docs/dev/archi
 
 | Gap | Open |
 |-----|------|
-| 31/g7 | Collapsed-bridge skip verdict. Spec `\|gap + post_lag − pre_lag\| ≈ 0`; do not treat as one-seam fill. Post at −1160 is in `lag_decision`. |
+| 31/g7 | Collapsed-bridge skip verdict. Spec `\|gap + post_lag − pre_lag\| ≈ 0`; do not treat as one-seam fill. Post at −1160 is in `lag_decision`. n=1 census extended to the full corpus, findings + 7 open follow-ups: [TEMP-collapsed-bridge-census-2026-08-20.md](docs/dev/TEMP-collapsed-bridge-census-2026-08-20.md). |
 | 26/g6 | Oracle the axis-2 start sweep — what did the objective score at ≈−50 ms vs −1450 ms (findings §6.8). Do not retune `fill_fit_early_start_penalty_scale`. |
 
 **Order of work** (do not raise the 0.70 envelope guard; do not raise the 2000 ms default until the adaptive-widen ladder dump says to):
