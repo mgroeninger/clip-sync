@@ -411,7 +411,7 @@ Orthogonal gap classification tags. `plan_skip_reason`, `fit_path`, and `signatu
 
 Externally tagged (serde default): exactly one of the following keys.
 
-- `{"patched": {"pre_correlation": number, "post_correlation": number, "align_adjustment_secs": number, "structure_trusted": bool, "confidence": "high"|"marginal", "gap_start_adjust_frames": number, "gap_end_adjust_frames": number, "residual_db": number, "floor_db": number, "headroom_db": number, "anchor_seam_used": bool, "anchor_bracket_move_frames": number, "dual_fit_used": bool, "normalize_gain": number, "fit_terms": {"total": number, "structure_combined": number, "waveform_min": number, "late_start_penalty": number, "anchor_penalty": number, "repeat_penalty": number, "repeat_pre": number, "repeat_post": number}}}`
+- `{"patched": {"pre_correlation": number, "post_correlation": number, "align_adjustment_secs": number, "structure_trusted": bool, "confidence": "high"|"marginal", "gap_start_adjust_frames": number, "gap_end_adjust_frames": number, "residual_db": number, "floor_db": number, "headroom_db": number, "anchor_seam_used": bool, "anchor_bracket_move_frames": number, "dual_fit_used": bool, "normalize_gain": number, "fit_terms": {"total": number, "structure_combined": number, "waveform_min": number, "late_start_penalty": number, "anchor_penalty": number, "repeat_penalty": number, "repeat_pre": number, "repeat_post": number}, "registration_residual_ms": number}}`
 
 Optional `residual_db`, `floor_db`, `headroom_db` (worst-side scalars) are present when residual was measured; omitted otherwise. `anchor_seam_used` and `dual_fit_used` are **always serialized, including when `false`** (changed 2026-08-12; both were omitted-when-false before that). `false` on `dual_fit_used` means the A3 dual-fit path (G6) did not carry this gap — it ran and declined, or was never reached — and has never meant the path was disabled; the old absence was read that way at least once. `false` on `anchor_seam_used` means baseline-throat placement. When `dual_fit_used` is `true`, this gap was rescued by dual-fit after the bracket search exhausted — see [gap-fill-modes.md](gap-fill-modes.md) § Dual-fit rescue. `anchor_bracket_move_frames` is still omitted when 0. Full per-side detail is in `GapPatchOutcome.residual`.
 
@@ -466,6 +466,17 @@ rescues (`dual_fit_used: true`) and the legacy structure-only gate path. Absence
 run predates the field.
 
 `align_adjustment_secs` is the signed slide of the chosen fill start off mapped nominal — the placement the unified fit search won, **not** a measured A→B lag. A companion `waveform_adjustment_secs` ("additional slide from waveform search after structure match") was removed 2026-08-12: the unified search assigns the placement once, so the field was identically `0.0` on every patched gap and read as evidence that placement had been decided in the structure domain.
+
+`registration_residual_ms` (S1, added 2026-08-20) is `applied_ms − shoulder_lag_ms`: the applied placement
+(`align_adjustment_secs * 1000`, or `0.0` for dual-fit — see below) minus an independent seam-local
+correlation-peak read of the same shoulder, taking whichever of pre/post has the smaller `|residual|` among
+shoulders whose peak `r` clears the same `min_fill_correlation`/`fill_absolute_floor` bar the gate itself uses.
+It is **record-only** — no gate reads it, and it does not affect the verdict, same as `fill_level` never
+affecting the verdict. Omitted when neither shoulder's independent read is confident, or when the run predates
+the field. On the dual-fit path (`dual_fit_used: true`) it is computed from the same `pre_lag`/`post_lag`/
+`pre_seam_r`/`post_seam_r` `try_dual_fit` already produced — no new sweep — against `applied_ms = 0.0`, matching
+`align_adjustment_secs`'s own hardcoded `0.0` for that path (dual-fit places each shoulder independently, so
+there is no single rigid "applied lag" to compare against).
 
 `structure_trusted` is `true` only when `fill_mode` was `gate` and structure scores skipped the waveform gate. Under default `fill_mode = fit`, it is always `false`. `confidence` is `marginal` when the patch passed the warn tier (`min_fill_correlation - fill_marginal_margin` ≤ `min(pre, post)` < `min_fill_correlation`). `gap_*_adjust_frames` record how far the winning A gap edges moved from the pre-search refined bracket (fit mode).
 - `{"skipped": {"reason": <GapPatchSkipReason>}}`

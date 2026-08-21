@@ -100,6 +100,9 @@ pub(super) enum RegionPatchOutcome {
         /// The unified fit objective's terms at the applied placement; `None` on paths that never ran
         /// it (dual-fit, splice). Carried through to `GapPatchStatus::Patched::fit_terms`.
         fit_terms: Option<UnifiedFitBreakdown>,
+        /// S1: independent shoulder-seam read of the placement vs. the applied placement. Record-only —
+        /// no gate reads this. Carried through to `GapPatchStatus::Patched::registration_residual_ms`.
+        registration_residual_ms: Option<f64>,
     },
     Skipped {
         reason: GapPatchSkipReason,
@@ -239,6 +242,7 @@ pub(super) fn outcomes_in_report_order(
                 dual_fit_used,
                 normalize_gain,
                 fit_terms,
+                registration_residual_ms,
                 ..
             } => {
                 if let Some(verdict) = residual {
@@ -262,6 +266,7 @@ pub(super) fn outcomes_in_report_order(
                     anchor_bracket_move_frames: *anchor_bracket_move_frames,
                     dual_fit_used: *dual_fit_used,
                     fit_terms: *fit_terms,
+                    registration_residual_ms: *registration_residual_ms,
                 }
             }
             RegionPatchOutcome::Skipped { reason, residual } => {
@@ -528,10 +533,7 @@ fn build_dual_fit_input<'a>(spec: DualFitInputSpec<'a>) -> Option<DualFitRepairI
     };
     let a_pre_mono = mono(refined.start_frame - w, refined.start_frame);
     let a_post_mono = mono(refined.end_frame, refined.end_frame + w);
-    let b_mono: Vec<f64> = b_samples
-        .chunks(ch)
-        .map(|fr| fr.iter().map(|&x| x as f64).sum::<f64>() / ch as f64)
-        .collect();
+    let b_mono: Vec<f64> = crate::domain::pcm::interleaved_to_mono(b_samples, ch);
     let b_mapped_start =
         b_mapped_start_frame(refined_b_start_secs, b_extract_start_secs, sample_rate);
     let a_gap_floor_db =
@@ -642,6 +644,35 @@ fn measure_dual_fit_residual_verdict(
         placement_slide,
         max_lag_frames,
     ))
+}
+
+/// S1 (`docs/dev/TEMP-registration-residual-plan.md`): a shoulder's independent seam-local read is
+/// usable only when its peak `r` clears the same confidence floor the fit gate/`try_dual_fit` use.
+/// Returns `applied_ms − shoulder_lag_ms` (signed) when confident, `None` otherwise.
+fn registration_shoulder_residual_ms(
+    peak_r: f64,
+    lag_frames: i64,
+    applied_ms: f64,
+    sample_rate: u32,
+    confident_floor: f64,
+) -> Option<f64> {
+    if peak_r < confident_floor {
+        return None;
+    }
+    let shoulder_lag_ms = lag_frames as f64 * 1000.0 / f64::from(sample_rate);
+    Some(applied_ms - shoulder_lag_ms)
+}
+
+/// Among shoulders whose seam-local peak is confident, take the one whose independent read agrees
+/// most closely with the applied placement (smallest `|residual|`). `None` when neither is confident
+/// — record-only, never a fallback to an unconfident reading.
+fn select_registration_residual_ms(pre: Option<f64>, post: Option<f64>) -> Option<f64> {
+    match (pre, post) {
+        (Some(p), Some(q)) => Some(if p.abs() <= q.abs() { p } else { q }),
+        (Some(p), None) => Some(p),
+        (None, Some(q)) => Some(q),
+        (None, None) => None,
+    }
 }
 
 fn skip_or_dual_fit(
@@ -788,6 +819,32 @@ fn skip_or_dual_fit(
                         // `GapRepairSpec` with real `b_extract` / `gap_offset` — this call site lacks them, and
                         // returning inert placeholders here was the note-(f) trap. `refined` / `crossfade` come
                         // from `df` (the pre-gate base geometry dual-fit worked on).
+                        // S1: dual-fit has no single rigid "applied lag" (each shoulder is placed by its
+                        // own independent seam-local match) — `align_adjustment_secs` is recorded as 0.0
+                        // for this path (see the `outcome_from_spec`/`execute_region_spec` SilenceSplice
+                        // arms below), so `applied_ms = 0.0` keeps this field's convention consistent with
+                        // that recorded value rather than inventing a different baseline.
+                        let confident_floor = f64::from(
+                            request
+                                .min_fill_correlation
+                                .max(request.fill_absolute_floor),
+                        );
+                        let registration_residual_ms = select_registration_residual_ms(
+                            registration_shoulder_residual_ms(
+                                r.pre_seam_r,
+                                r.pre_lag,
+                                0.0,
+                                df.params.sample_rate,
+                                confident_floor,
+                            ),
+                            registration_shoulder_residual_ms(
+                                r.post_seam_r,
+                                r.post_lag,
+                                0.0,
+                                df.params.sample_rate,
+                                confident_floor,
+                            ),
+                        );
                         return (
                             DualFitDecision::Rescued(Box::new(DualFitRescue {
                                 strategy: GapRepairStrategy::SilenceSplice {
@@ -799,6 +856,7 @@ fn skip_or_dual_fit(
                                     trim_frames: r.trim_frames,
                                     residual,
                                     confidence,
+                                    registration_residual_ms,
                                 },
                                 tags_ctx,
                                 refined: RefinedGapFrames {
@@ -1074,6 +1132,8 @@ struct ExecuteBracketOutputCtx {
     /// Read straight off the spec — the terms are decided at characterize time with the placement and
     /// are never recomputed here, for the same single-authority reason as the seam correlations.
     fit_terms: Option<UnifiedFitBreakdown>,
+    /// S1: read straight off the spec — decided at characterize time, never recomputed here.
+    registration_residual_ms: Option<f64>,
 }
 
 /// The executor's bracket `(RegionPatch, RegionPatchOutcome)` assembly. Recomputes the geometry slides
@@ -1107,6 +1167,7 @@ fn execute_bracket_output(ctx: ExecuteBracketOutputCtx) -> (RegionPatch, RegionP
         dual_fit_used: false,
         fit_terms: ctx.fit_terms,
         normalize_gain: ctx.gain,
+        registration_residual_ms: ctx.registration_residual_ms,
     };
     (patch, outcome)
 }
@@ -1239,6 +1300,7 @@ pub(super) fn outcome_from_spec(spec: &GapRepairSpec, sample_rate: u32) -> Regio
             residual,
             normalize_gain,
             fit_terms,
+            registration_residual_ms,
             ..
         }) => {
             let offset_nominal_start = spec.b_extract.b_mapped_start_frame;
@@ -1259,6 +1321,7 @@ pub(super) fn outcome_from_spec(spec: &GapRepairSpec, sample_rate: u32) -> Regio
                 dual_fit_used: false,
                 fit_terms: *fit_terms,
                 normalize_gain: *normalize_gain,
+                registration_residual_ms: *registration_residual_ms,
             }
         }
         GapRepairVerdict::Patch(GapRepairStrategy::SilenceSplice {
@@ -1266,6 +1329,7 @@ pub(super) fn outcome_from_spec(spec: &GapRepairSpec, sample_rate: u32) -> Regio
             post_seam_r,
             residual,
             confidence,
+            registration_residual_ms,
             ..
         }) => RegionPatchOutcome::Patched {
             pre_correlation: *pre_seam_r,
@@ -1286,6 +1350,7 @@ pub(super) fn outcome_from_spec(spec: &GapRepairSpec, sample_rate: u32) -> Regio
             // Dual-fit never normalizes — the SilenceSplice strategy carries no gain and the
             // executor splices its fill unity (`region.rs` SilenceSplice arm, `gain: 1.0`).
             normalize_gain: 1.0,
+            registration_residual_ms: *registration_residual_ms,
         },
         GapRepairVerdict::Skip { reason, .. } => {
             skip_outcome_from_fields(reason, spec.tags_ctx.gate.residual)
@@ -1350,6 +1415,7 @@ pub(super) fn execute_region_spec(
             residual,
             normalize_gain,
             fit_terms,
+            registration_residual_ms,
             ..
         }) => {
             // F1: re-derive the fill from the spec alone. The window trio comes from the *pre*-gate
@@ -1404,6 +1470,7 @@ pub(super) fn execute_region_spec(
                 alignment_start_frame: alignment.start_frame,
                 offset_nominal_start: b_extract.b_mapped_start_frame,
                 sample_rate,
+                registration_residual_ms,
             });
             (Some(patch), outcome)
         }
@@ -1413,6 +1480,7 @@ pub(super) fn execute_region_spec(
             post_seam_r,
             residual,
             confidence,
+            registration_residual_ms,
             ..
         }) => {
             // Dual-fit rescue: the fill is the synthesized bridge on the spec; seams sit at their own lags, so
@@ -1442,6 +1510,7 @@ pub(super) fn execute_region_spec(
                 fit_terms: None,
                 // Unity by construction — matches the `gain: 1.0` on the patch just above.
                 normalize_gain: 1.0,
+                registration_residual_ms,
             };
             (Some(patch), outcome)
         }
@@ -1924,7 +1993,7 @@ pub(super) fn characterize_region(
     let refined_b_start_secs = refined.start_frame as f64 / sample_rate as f64 + gap_offset_secs;
 
     let offset_nominal_start =
-        ((refined_b_start_secs - b_extract_start_secs) * sample_rate as f64).round() as usize;
+        b_mapped_start_frame(refined_b_start_secs, b_extract_start_secs, sample_rate);
 
     // The same slide `execute_bracket_output` recomputes from the placement fields; kept here for the
     // verbose log, which runs before the spec is built.
@@ -1993,6 +2062,40 @@ pub(super) fn characterize_region(
         policies::border_templates_for_gap(&a_pcm.samples, channels, &border_spec);
     let (a_pre_ch, a_post_ch) =
         policies::border_templates_per_channel_for_gap(&a_pcm.samples, channels, &border_spec);
+
+    // S1 (docs/dev/TEMP-registration-residual-plan.md): independent shoulder-seam read of the placement
+    // vs `slide_secs` (the applied placement), record-only — no gate reads this. Mirrors `try_dual_fit`'s
+    // own anchor arithmetic exactly: same `seam_local_peak` primitive, same `offset_nominal_start`
+    // fiducial, templates used as-returned (already trimmed for low-energy edges). Reuses the already-
+    // decoded/bounded borders and B extract — no new decode, no new sweep window.
+    let registration_residual_ms = {
+        let b_mono_for_residual = crate::domain::pcm::interleaved_to_mono(b_samples, channels);
+        let max_lag_for_residual = (border_search_secs * sample_rate as f64).round() as usize;
+        let confident_floor = f64::from(min_fill_correlation.max(request.fill_absolute_floor));
+        let pre_peak = offset_nominal_start
+            .checked_sub(a_pre_border.len())
+            .and_then(|anchor| {
+                crate::domain::seam_local::seam_local_peak(
+                    &a_pre_border,
+                    &b_mono_for_residual,
+                    anchor,
+                    max_lag_for_residual,
+                )
+            });
+        let post_peak = crate::domain::seam_local::seam_local_peak(
+            &a_post_border,
+            &b_mono_for_residual,
+            offset_nominal_start + gap_frames,
+            max_lag_for_residual,
+        );
+        let applied_ms = slide_secs * 1000.0;
+        let shoulder_ms = |peak: Option<(f64, i64, Option<f64>)>| {
+            peak.and_then(|(r, lag, _)| {
+                registration_shoulder_residual_ms(r, lag, applied_ms, sample_rate, confident_floor)
+            })
+        };
+        select_registration_residual_ms(shoulder_ms(pre_peak), shoulder_ms(post_peak))
+    };
     let pre_gate_frames = seam_gate_frames.min(a_pre_border.len().max(1));
     let post_gate_frames = if a_post_border.is_empty() {
         0
@@ -2199,6 +2302,7 @@ pub(super) fn characterize_region(
             residual: residual_verdict,
             normalize_gain: gain,
             fit_terms,
+            registration_residual_ms,
         }),
         tags_ctx: GapRepairTags::default(),
     };
@@ -2434,8 +2538,9 @@ pub(super) fn splice_into_a(
 #[cfg(test)]
 mod tests {
     use super::{
-        dual_fit_eligible, measure_dual_fit_residual_verdict, slice_b_extract, DualFitRepairInput,
-        PatchAudioRequest, SeamGateFailure,
+        dual_fit_eligible, measure_dual_fit_residual_verdict, registration_shoulder_residual_ms,
+        select_registration_residual_ms, slice_b_extract, DualFitRepairInput, PatchAudioRequest,
+        SeamGateFailure,
     };
     use crate::domain::gap::GapReport;
     use crate::domain::gap_fill_fit::{fit_fill_to_gap_frames, FillConfidence};
@@ -2616,6 +2721,149 @@ mod tests {
                 | (RegionPatchOutcome::Skipped { .. }, RegionPatchOutcome::Skipped { .. }) => {}
                 _ => panic!("preview disposition diverged from execute for region"),
             }
+        }
+    }
+
+    /// Exit #1 (`docs/dev/TEMP-registration-residual-plan.md`): bracket-path
+    /// `registration_residual_ms` on a gap where B's content truly is continuous and matches A's
+    /// shoulders at zero lag — the independent shoulder-local read must agree with the applied
+    /// placement, landing a residual near 0. Reuses the exact fixture from
+    /// `characterize_all_regions_yields_one_consistent_spec_per_region` (A silent inside the gap, B
+    /// continuous 330Hz sine everywhere), which is by construction a zero-lag match on both
+    /// shoulders.
+    #[test]
+    fn bracket_registration_residual_is_near_zero_on_a_matched_fixture() {
+        use super::{characterize_all_regions, RegionPatchContext, RegionPatchMedia};
+        use crate::domain::gap::Gap;
+        use crate::domain::gap_fill::FillRegion;
+        use crate::domain::gap_repair_spec::GapRepairStrategy;
+        use crate::domain::policies;
+        use crate::domain::{GapReport, GapSignatureMode, ScanAlignment};
+        use crate::infrastructure::config::RepairConfig;
+        use clip_sync::MultiChannelPcm;
+        use clip_sync_repair_fixtures::NoOpProgressReporter;
+
+        let rate = 48_000u32;
+        let secs = |s: f64| (s * f64::from(rate)) as usize;
+        let total = secs(3.0);
+        let (g0, g1) = (secs(1.0), secs(2.0));
+
+        // Band-limited noise, not a pure tone: a sine's autocorrelation is ambiguous at every
+        // period, which can make the bracket search settle on the wrong lag. Noise gives an
+        // unambiguous zero-lag match so the independent shoulder read and the applied placement
+        // are guaranteed to agree.
+        let mut seed = 0x1234_5678_9ABC_DEF0u64;
+        let mut rng = move || {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (((seed >> 33) as f64 / (1u64 << 30) as f64) - 1.0) as f32 * 0.2
+        };
+        let noise: Vec<f32> = (0..total).map(|_| rng()).collect();
+        let mut a = vec![0f32; total];
+        let b = noise.clone();
+        a[..g0].copy_from_slice(&noise[..g0]);
+        a[g1..total].copy_from_slice(&noise[g1..total]);
+
+        let a_pcm = MultiChannelPcm {
+            sample_rate: rate,
+            channels: 1,
+            samples: a,
+            decode_error_skips: 0,
+            decoded_frame_count: None,
+            compressed_bytes: None,
+            source_bit_depth: None,
+        };
+        let report = GapReport {
+            video_a: Default::default(),
+            video_b: Default::default(),
+            track_compatibility: None,
+            alignment: ScanAlignment {
+                clips: vec![],
+                start_aligned: true,
+                end_aligned: None,
+                recommended_offset_secs: None,
+                offsets_consistent: true,
+                offset_drift_secs: None,
+                start_overlap: None,
+                query_reference_mode: false,
+            },
+            gaps: vec![Gap {
+                video_a_start_secs: g0 as f64 / f64::from(rate),
+                video_a_end_secs: g1 as f64 / f64::from(rate),
+                video_b_start_secs: Some(g0 as f64 / f64::from(rate)),
+                video_b_end_secs: Some(g1 as f64 / f64::from(rate)),
+                b_has_energy: true,
+            }],
+            gap_equivalence: Vec::new(),
+            gap_offset_agreement: None,
+            decode_chunk_secs: 30,
+            recipe: crate::domain::ScanRecipe::with_hold_blocks(1000, 0, 20, 0.05, 0.0),
+            limit_fill_to_mapped_region: false,
+            b_scanned_end_secs: None,
+            b_scan_truncated: false,
+            audio_timeline_skew: None,
+        };
+        let repair = RepairConfig {
+            gap_signature_mode: GapSignatureMode::Bool,
+            gap_signature_context_secs: 0.5,
+            fill_border_search_secs: 0.05,
+            fill_align_margin_secs: 0.02,
+            fill_length_slack_secs: 0.1,
+            fill_extract_tail_slack_secs: 0.1,
+            fill_seam_search_secs: 0.05,
+            border_standoff_secs: 0.0,
+            max_anchor_bracket_secs: 0.2,
+            max_anchors_per_side: 2,
+            min_fill_correlation: 0.0,
+            fill_absolute_floor: 0.0,
+            normalize_window_secs: 0.05,
+            ..RepairConfig::default()
+        };
+        let request: PatchAudioRequest = repair
+            .patch_settings()
+            .into_request(report.clone())
+            .expect("default All gap selection");
+
+        let regions = vec![FillRegion {
+            gap_index: 0,
+            a_start_secs: g0 as f64 / f64::from(rate),
+            a_end_secs: g1 as f64 / f64::from(rate),
+            b_start_secs: g0 as f64 / f64::from(rate),
+            b_end_secs: g1 as f64 / f64::from(rate),
+            gain: 1.0,
+            crossfade_secs: 0.01,
+        }];
+        let ctx = RegionPatchContext {
+            channels: 1,
+            sample_rate: rate,
+            max_refine_frames: (0.05 * f64::from(rate)) as usize,
+            global_a_rms: policies::rms_interleaved(&a_pcm.samples),
+            silence_peak_fraction: 0.05,
+        };
+        let media = RegionPatchMedia {
+            b_samples_full: &b,
+            a_pcm: &a_pcm,
+        };
+        let progress = NoOpProgressReporter;
+
+        let specs = characterize_all_regions(&progress, &media, &regions, &request, &ctx);
+        assert_eq!(specs.len(), 1);
+        match &specs[0].verdict {
+            crate::domain::gap_repair_spec::GapRepairVerdict::Patch(
+                GapRepairStrategy::Bracket {
+                    registration_residual_ms,
+                    ..
+                },
+            ) => {
+                let residual = registration_residual_ms
+                    .expect("both shoulders are exact zero-lag matches, well above the confidence floor");
+                assert!(
+                    residual.abs() < 1.0,
+                    "shoulders match at zero lag; residual should be ~0ms, got {residual}"
+                );
+            }
+            other => panic!("expected a Patch(Bracket) verdict for a matched fixture, got {other:?}"),
         }
     }
 
@@ -2980,6 +3228,118 @@ mod tests {
         assert!(measure_dual_fit_residual_verdict(&off_request, &df, &r).is_none());
     }
 
+    /// S1 (`docs/dev/TEMP-registration-residual-plan.md`) — `registration_shoulder_residual_ms`
+    /// pins the sign convention (`applied_ms − shoulder_lag_ms`) and the confidence-floor cutoff:
+    /// below the floor the shoulder is unusable and must not leak a stale reading.
+    #[test]
+    fn registration_shoulder_residual_ms_applies_sign_and_floor() {
+        let sr = 48_000u32;
+        // 240 frames at 48kHz = 5ms; applied placement is 100ms.
+        let residual = registration_shoulder_residual_ms(0.9, 240, 100.0, sr, 0.3)
+            .expect("peak above floor must yield a residual");
+        assert!(
+            (residual - 95.0).abs() < 1e-9,
+            "applied_ms − shoulder_lag_ms: 100.0 − 5.0 = 95.0, got {residual}"
+        );
+
+        assert_eq!(
+            registration_shoulder_residual_ms(0.29, 240, 100.0, sr, 0.3),
+            None,
+            "peak r just below the confidence floor must not produce a reading"
+        );
+        assert_eq!(
+            registration_shoulder_residual_ms(0.3, 240, 100.0, sr, 0.3),
+            Some(95.0),
+            "peak r exactly at the floor is confident (>= not >)"
+        );
+    }
+
+    /// `select_registration_residual_ms` never falls back to an unconfident reading, and among two
+    /// confident readings prefers the one closer to the applied placement.
+    #[test]
+    fn select_registration_residual_ms_prefers_smaller_magnitude_never_falls_back() {
+        assert_eq!(select_registration_residual_ms(None, None), None);
+        assert_eq!(select_registration_residual_ms(Some(12.0), None), Some(12.0));
+        assert_eq!(select_registration_residual_ms(None, Some(-7.0)), Some(-7.0));
+        assert_eq!(
+            select_registration_residual_ms(Some(-3.0), Some(9.0)),
+            Some(-3.0),
+            "smaller |residual| wins regardless of sign"
+        );
+        assert_eq!(
+            select_registration_residual_ms(Some(5.0), Some(-5.0)),
+            Some(5.0),
+            "tie: pre (first argument) wins"
+        );
+    }
+
+    /// Exit #4 (`docs/dev/TEMP-registration-residual-plan.md`): the dual-fit path's
+    /// `registration_residual_ms` must be derivable purely from `try_dual_fit`'s own returned
+    /// `pre_lag`/`post_lag`/`pre_seam_r`/`post_seam_r` — no new sweep. This reuses the exact
+    /// synthetic fixture from `measure_dual_fit_residual_verdict_attaches_a_real_verdict` (pre
+    /// shoulder matches at lag 0, post shoulder matches at `+step`) and confirms the composed
+    /// helpers reproduce the hand-computed residual with `applied_ms = 0.0` (dual-fit's
+    /// `align_adjustment_secs` convention).
+    #[test]
+    fn dual_fit_registration_residual_derives_from_try_dual_fit_lags_only() {
+        let sr = 48_000u32;
+        let w = 1200usize;
+        let gap = 4000usize;
+        let step = 200i64;
+
+        let mut seed = 0xDEAD_BEEF_1234_5678u64;
+        let mut rng = move || {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((seed >> 33) as f64 / (1u64 << 30) as f64) - 1.0
+        };
+        let bn = 40_000usize;
+        let b_mono: Vec<f64> = (0..bn).map(|_| rng()).collect();
+        let b_samples: Vec<f32> = b_mono.iter().map(|&x| x as f32).collect();
+
+        let b_mapped_start = 10_000usize;
+        let a_pre_mono: Vec<f64> = b_mono[b_mapped_start - w..b_mapped_start].to_vec();
+        let post_src = b_mapped_start + gap + step as usize;
+        let a_post_mono: Vec<f64> = b_mono[post_src..post_src + w].to_vec();
+
+        let params = crate::domain::dual_fit::DualFitParams {
+            channels: 1,
+            sample_rate: sr,
+            gap_frames: gap,
+            seam_window_frames: w,
+            max_lag_frames: (0.6 * sr as f64) as usize,
+            min_fill_correlation: 0.35,
+            fill_absolute_floor: 0.12,
+            step_real_margin: 0.15,
+            a_gap_floor_db: -60.0,
+        };
+        let r = crate::domain::dual_fit::try_dual_fit(
+            &a_pre_mono,
+            &a_post_mono,
+            &b_mono,
+            &b_samples,
+            b_mapped_start,
+            &params,
+        )
+        .expect("dual-fit target");
+
+        let confident_floor = params.min_fill_correlation.max(params.fill_absolute_floor);
+        let registration_residual_ms = select_registration_residual_ms(
+            registration_shoulder_residual_ms(r.pre_seam_r, r.pre_lag, 0.0, sr, confident_floor),
+            registration_shoulder_residual_ms(r.post_seam_r, r.post_lag, 0.0, sr, confident_floor),
+        );
+
+        // Pre matches at lag 0 (residual 0.0), post at +step frames (residual −step ms);
+        // pre has the smaller magnitude and wins.
+        assert_eq!(
+            registration_residual_ms,
+            Some(0.0),
+            "pre shoulder (lag 0, residual 0.0) has the smaller magnitude vs. post's \
+             (−{step} frames), so it is selected: r={r:?}"
+        );
+    }
+
     /// **M-GAPKEY — every gap gets its own outcome, in report order, regardless of plan order.**
     /// `outcomes_in_report_order` joins three differently-ordered sources (plan skips, region
     /// results, the report's gap list) onto one index-parallel output. This pins the join itself:
@@ -3043,6 +3403,7 @@ mod tests {
             dual_fit_used: false,
             normalize_gain: 1.0,
             fit_terms: None,
+            registration_residual_ms: None,
         };
         let tags_for =
             |status: &GapPatchStatus| derive_gap_tags_from_status(status, fill_mode, thresholds);
@@ -3160,6 +3521,7 @@ mod tests {
             dual_fit_used: false,
             normalize_gain: 1.0,
             fit_terms: None,
+            registration_residual_ms: None,
         };
         let tags = derive_gap_tags_from_status(
             &GapPatchStatus::NotPlanned {

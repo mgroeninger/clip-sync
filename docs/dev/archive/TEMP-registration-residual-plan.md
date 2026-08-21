@@ -1,6 +1,6 @@
 # S1: record the registration residual on the patch record
 
-**Status:** draft, not started, 2026-08-20.
+**Status:** shipped, 2026-08-20. Archived on write.
 
 ## Problem
 
@@ -62,17 +62,43 @@ one-dead row is a dump predicate, not a gap class").
    `min_fill_correlation` / `fill_absolute_floor` (already on `DualFitParams`, `dual_fit.rs:39-40`,
    defaults 0.35 / 0.12) — a shoulder's `peak_r` clears the same bar `try_dual_fit` and the bracket
    gate already use to call a placement good. Do not invent a second floor for this diagnostic.
-2. **Bracket path** (`execute_bracket_output`, `region.rs:1083`, and its caller
-   `characterize_region`): after the winning placement is fixed, run
-   `domain::seam_local::seam_local_peak` once per shoulder — `a_pre_border` against the already-decoded
-   B extract anchored at `b_mapped_start`, symmetrically for `a_post_border` — bounded by whatever of
-   `fill_border_search_secs` the B extract actually covers (no widening past what's already decoded, per
-   the no-re-decode non-goal). Each call yields `(peak_r, peak_lag_frames, _z)`; convert
-   `peak_lag_frames` to ms and to a B-absolute position the same way `frac_lag_ms` is defined in the
-   fingerprint path (displacement from `b_mapped_start`, findings §6.2's "sensor's ruler"), so the
-   result is comparable to `align_adjustment_secs`'s own displacement from the same fiducial (findings
-   §6.2's "patcher's ruler" — both terms must share the zero for the subtraction to be legitimate, same
-   requirement the original metric imposed).
+2. **Bracket path.** `a_pre_border`/`a_post_border` and the interleaved B extract (`b_samples`) coexist
+   only inside `execute_bracket_fill` (`region.rs:967-1044`) — `ExecuteBracketOutputCtx` (the struct
+   `execute_bracket_output` actually reads, `region.rs:1050-1077`) is a *resolved* struct with no raw
+   PCM on it. So the sweep has to run inside/alongside `execute_bracket_fill` (both the characterize-side
+   inline assembly and the executor's independent re-derivation — this function is deliberately called
+   twice per gap, "assemble twice" §6b.3a — and its result threaded out as a new field on
+   `ExecuteBracketOutputCtx`, the same way `residual: Option<policies::SeamResidualVerdict>` already is
+   (`region.rs:1063`); only the characterize-side call's result is the one that reaches the report —
+   confirm which of the two call sites that is before wiring the field, do not assume it's whichever is
+   read first).
+   - **Mono B is not built on this path today.** Unlike the dual-fit path (`b_mono` at `region.rs:531`),
+     `execute_bracket_fill` only has interleaved `b_samples`. Build `b_mono` once per call the same way
+     (`interleaved_to_mono`) — a cheap re-interleave of already-decoded PCM, not a new decode.
+   - **Anchor arithmetic — mirror `try_dual_fit` exactly** (`dual_fit.rs:97-119`), using
+     `offset_nominal_start` as the fiducial (the same value `align_adjustment_secs` itself is computed
+     against two lines away, `region.rs:1084-1086` — reuse it, don't recompute it):
+     `pre_anchor = offset_nominal_start.checked_sub(a_pre_border.len())`,
+     `post_anchor = offset_nominal_start + gap_frames`. Call
+     `seam_local_peak(&a_pre_border, &b_mono, pre_anchor, max_lag)` and
+     `seam_local_peak(&a_post_border, &b_mono, post_anchor, max_lag)`, where `max_lag` is clamped to
+     whatever of `fill_border_search_secs` the B extract actually covers (`seam_local_peak` self-clamps
+     to the available context, `seam_local.rs:190-192`, so passing the nominal `fill_border_search_secs`
+     in frames is safe — no widening past what's already decoded).
+   - **Use the templates as returned, not a fixed sub-window.** `a_pre_border`/`a_post_border` come out of
+     `border_templates_for_gap` already trimmed for low-energy edges (`trim_low_energy_suffix`/`_prefix`,
+     `gap_borders.rs:236-237`) — they can be shorter than the configured `border_frames`. Use
+     `a_pre_border.len()`/`a_post_border.len()` as returned for both the anchor subtraction above and the
+     `seam_local_peak` call — do not re-slice to a fixed width, and do not assume the configured width.
+   - Each call yields `(peak_r, peak_lag_frames, _z)`. `peak_lag_frames` is *already* a displacement from
+     the shared `offset_nominal_start` fiducial by construction of the anchor formula above — the same
+     fiducial `align_adjustment_secs` is computed against — so `shoulder_lag_ms = peak_lag_frames * 1000
+     / sample_rate` is directly comparable to `align_adjustment_secs * 1000` with no further zero-offset
+     correction. **Verify this in Exit, don't assume it**: findings §6.3 point 2 documents a real
+     zero-offset defect in the *fingerprint* path's older `lag_pair` convention (fixed 2026-08-19 by
+     map-coordinates) — confirm the bracket-path anchor formula above doesn't reproduce an analogous
+     defect before trusting the byte-identical unit test's "near 0" case as proof (a systematic offset
+     that happens to be tiny on the test fixture would pass it and still be wrong on real media).
 3. **Dual-fit path**: read `pre_lag`/`post_lag`/`pre_seam_r`/`post_seam_r` straight off the
    `DualFitResult` already produced — no new sweep. Apply the same confident/min-abs selection as
    step 4.
@@ -98,7 +124,10 @@ one-dead row is a dump predicate, not a gap class").
   2. A gap where the independent per-shoulder peak disagrees with the applied placement (synthetic
      31/g7-shape: one shoulder's true match sits at a large offset) → residual reflects the disagreement
      in ms, sign correct (matches findings §6.2's convention: negative = independent read sits earlier
-     in B than the applied cut).
+     in B than the applied cut). **This test is also the zero-offset check**: construct it so the applied
+     placement is known exactly (not just "near nominal") and assert `registration_residual_ms` against
+     the exact expected value, not just its sign — a fixture that only checks direction would pass even
+     with the Change §2 zero-offset defect this bullet exists to catch.
   3. Neither shoulder confident → `None`, not a stale/zero value.
   4. Dual-fit path: `registration_residual_ms` derived from `try_dual_fit`'s own returned
      `pre_lag`/`post_lag`, not a re-swept value — same "single authority, no re-derivation" bar

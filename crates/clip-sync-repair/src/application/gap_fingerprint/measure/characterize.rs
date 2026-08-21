@@ -240,6 +240,7 @@ pub fn characterize_gaps_from_decode(
                 trim_frames: 0,
                 residual: None,
                 confidence: crate::domain::gap_fill_fit::FillConfidence::High,
+                registration_residual_ms: None,
             })
         };
         let spec = GapRepairSpec {

@@ -437,6 +437,12 @@ pub enum GapPatchStatus {
         /// run the unified objective, and on runs predating 2026-08-12.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         fit_terms: Option<crate::domain::gap_fill_fit::UnifiedFitBreakdown>,
+        /// S1: independent shoulder-seam read of the placement vs. `align_adjustment_secs`
+        /// (`applied_ms − shoulder_lag_ms`, milliseconds, signed), for whichever shoulder's
+        /// seam-local peak is more confident. `None` when neither shoulder is confident.
+        /// Record-only — no gate reads this field.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        registration_residual_ms: Option<f64>,
     },
     Skipped {
         reason: GapPatchSkipReason,

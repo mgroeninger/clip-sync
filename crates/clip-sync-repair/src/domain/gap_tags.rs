@@ -890,6 +890,7 @@ mod tests {
             dual_fit_used: false,
             normalize_gain: 1.0,
             fit_terms: None,
+            registration_residual_ms: None,
         };
         let tags = derive_gap_tags_from_status(&status, FillMode::Fit, FillTierThresholds::DEFAULT);
         assert!(tags.anchor_seam_used);
@@ -914,6 +915,7 @@ mod tests {
             dual_fit_used: true,
             normalize_gain: 1.0,
             fit_terms: None,
+            registration_residual_ms: None,
         };
         let tags = derive_gap_tags_from_status(&status, FillMode::Fit, FillTierThresholds::DEFAULT);
         assert!(tags.dual_fit_used);

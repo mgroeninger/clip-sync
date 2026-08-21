@@ -56,6 +56,8 @@ fn gap_status_gating_core(status: &GapPatchStatus) -> GapPatchStatus {
             // Normalized away like `residual_db` — the gating comparison is about the decision, and the
             // score terms are a report of how it was reached.
             fit_terms: None,
+            // Same class — a record-only independent measurement, not a gating input (S1).
+            registration_residual_ms: None,
         },
         other => other.clone(),
     }

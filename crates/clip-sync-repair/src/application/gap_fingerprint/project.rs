@@ -576,6 +576,7 @@ pub fn fingerprint_to_spec(fp: &GapFingerprint) -> crate::domain::gap_repair_spe
             trim_frames: 0,
             residual: None,
             confidence: FillConfidence::High,
+            registration_residual_ms: None,
         })
     };
 

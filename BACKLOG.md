@@ -9,7 +9,7 @@ Last updated: 2026-08-20.
 - **Open** — actionable items below (problem / direction kept for open work only).
 - **Plans** — active drafts under `docs/dev/TEMP-*.md`; catalog: [docs/dev/README.md](docs/dev/README.md) § Plans. Archive when shipped.
 
-**Next:** [Fill placement](#fill-placement-two-defects--registration-ignored-26g6-class-and-step-gap-with-empty-donor-bridge-31g7) — **S1** (record `applied − frac_lag_ms` on the patch record). 26/g6 axis-2 start-sweep oracle (parallel, not this chain). [Donor registration leftovers](#donor-registration-leftovers); [Repair R6](#repair-r6-follow-ups); [Residual gate](#residual-gate-follow-ups).
+**Next:** [Fill placement](#fill-placement-two-defects--registration-ignored-26g6-class-and-step-gap-with-empty-donor-bridge-31g7) — **Collapsed-bridge skip verdict** (S1 shipped 2026-08-20). 26/g6 axis-2 start-sweep oracle (parallel, not this chain). [Donor registration leftovers](#donor-registration-leftovers); [Repair R6](#repair-r6-follow-ups); [Residual gate](#residual-gate-follow-ups).
 
 ---
 
@@ -17,28 +17,24 @@ Last updated: 2026-08-20.
 
 ### Fill placement: two defects — registration ignored (26/g6-class) and step gap with empty donor bridge (31/g7)
 
-Findings and closed sensor work: [TEMP-31g7-model-vs-findings.md](docs/dev/archive/TEMP-31g7-model-vs-findings.md) §8, [gap-vocabulary.md](docs/dev/gap-vocabulary.md) § *Known holes*, [archive/TEMP-fill-placement-registration-plan.md](docs/dev/archive/TEMP-fill-placement-registration-plan.md), map-coordinates and nominal-first (both archived). Do not re-open S2b, the source/gate fork, or envelope-first ordering. Durable `lag_decision` behaviour: [gap-fingerprint.md](docs/dev/gap-fingerprint.md) § *`lag_decision`*.
+Findings and closed sensor work: [TEMP-31g7-model-vs-findings.md](docs/dev/archive/TEMP-31g7-model-vs-findings.md) §8, [gap-vocabulary.md](docs/dev/gap-vocabulary.md) § *Known holes*, [archive/TEMP-fill-placement-registration-plan.md](docs/dev/archive/TEMP-fill-placement-registration-plan.md), map-coordinates and nominal-first (both archived). Recenter leftovers **closed 2026-08-20** as a no-op: 31/g12 post is a tail (`a_after = 0`); the 12-pair dump's empty shoulders are all start/tail geometry. Saturated-envelope unit test shipped. **S1 shipped 2026-08-20** — [archive/TEMP-registration-residual-plan.md](docs/dev/archive/TEMP-registration-residual-plan.md); real-media reproduction of 31/g7 / 26/g6's findings-§6.2 numbers via `registration_residual_ms` is still open, not blocking. Do not re-open S2b, the source/gate fork, or envelope-first ordering. Durable `lag_decision` behaviour: [gap-fingerprint.md](docs/dev/gap-fingerprint.md) § *`lag_decision`*.
 
 | Gap | Open |
 |-----|------|
-| 31/g7 | Collapsed-bridge skip verdict (independent of S1). Spec `\|gap + post_lag − pre_lag\| ≈ 0`; do not treat as one-seam fill. Post at −1160 is in `lag_decision`. |
+| 31/g7 | Collapsed-bridge skip verdict. Spec `\|gap + post_lag − pre_lag\| ≈ 0`; do not treat as one-seam fill. Post at −1160 is in `lag_decision`. |
 | 26/g6 | Oracle the axis-2 start sweep — what did the objective score at ≈−50 ms vs −1450 ms (findings §6.8). Do not retune `fill_fit_early_start_penalty_scale`. |
 
 **Order of work** (do not raise the 0.70 envelope guard; do not raise the 2000 ms default until the adaptive-widen ladder dump says to):
 
-1. **Recenter leftovers** — cheap, no TEMP.
-2. **S1** — next Change: new TEMP, plumbing only. Does not wait for (3)–(5).
-3. **Collapsed-bridge skip verdict** — independent of S1.
-4. **Adaptive widen + rescue-branch guard** — [TEMP-envelope-adaptive-widen-plan.md](docs/dev/TEMP-envelope-adaptive-widen-plan.md). Does not hold S1.
-5. **`lag_editorial` confirm** — after S1, or piggyback on a diagnostics dump.
+1. **Collapsed-bridge skip verdict** — next Change.
+2. **Adaptive widen + rescue-branch guard** — [TEMP-envelope-adaptive-widen-plan.md](docs/dev/TEMP-envelope-adaptive-widen-plan.md).
+3. **`lag_editorial` confirm** — piggyback on a diagnostics dump.
 
 | Item | Direction |
 |------|-----------|
-| **Recenter leftovers** | Stamp `envelope_*` when the fine sweep is `None` (31/g12 post) — wire shape still open. Saturated-envelope unit test **done 2026-08-20**. `wide_envelope` is not a confirmer of a far `lag_decision` ([gap-fingerprint.md](docs/dev/gap-fingerprint.md)). Optional stale comment on `DEFAULT_LAG_ENVELOPE_MAX_LAG_MS`. No TEMP |
-| **S1 — record the registration residual on the patch record** | [TEMP-registration-residual-plan.md](docs/dev/TEMP-registration-residual-plan.md) — plumbing only: emit `applied − frac_lag_ms` (min-abs over confident shoulders, abstain when none) on every patched gap; no gate reads it. Patch diagnostic, not a gap class (findings §8). Reuse production's already-decoded shoulder PCM, not re-decode |
-| **Collapsed-bridge skip verdict** | Independent of S1. 31/g7 honest action. Spec `\|gap + post_lag − pre_lag\| ≈ 0` |
+| **Collapsed-bridge skip verdict** | 31/g7 honest action. Spec `\|gap + post_lag − pre_lag\| ≈ 0` |
 | **Adaptive widen** | [TEMP-envelope-adaptive-widen-plan.md](docs/dev/TEMP-envelope-adaptive-widen-plan.md) (ladder 2000→3000→4000 in the rescue branch). Keep default 2000 until its ladder dump locks +2.79 s interior |
-| **`lag_editorial` shares `lag_at_placement`** | After S1, or piggyback on a `--fingerprint-diagnostics` dump. Confirm the diagnostic placement follows the same rescue ordering; do not treat disagreement with `lag_decision` as a gate signal |
+| **`lag_editorial` shares `lag_at_placement`** | Piggyback on a `--fingerprint-diagnostics` dump. Confirm the diagnostic placement follows the same rescue ordering; do not treat disagreement with `lag_decision` as a gate signal |
 | **S4 / `applied = 0` cohort** | Conditional ear labels for whether a residual guard's domain includes gaps that never slid. Do not run until it would change a decision. The archived §5 render list is mixed-orientation and stale |
 | **Ear-pass 17/g34 and 47/g14** | Cheapest n>2. 17/g34 is the same well-posed class as 26/g6. Residual also groups it with 31/g7 — do not read that as a shared fingerprint. 47/g14 is the first failure-to-move. Labels, not a TEMP |
 | **α / `border_standoff_secs`** | Fill sits ~25 ms late vs both shoulders. Hypothesis: production's 0.35 s standoff. Run existing arms through `scripts/measure/diff-patch-adjustments.ps1` or drop. Not a TEMP |

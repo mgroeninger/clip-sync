@@ -1122,6 +1122,7 @@ mod tests {
                         repeat_pre: 0.31,
                         repeat_post: 0.42,
                     }),
+                    registration_residual_ms: None,
                 },
             ),
             gap_patch_outcome(
@@ -1338,6 +1339,7 @@ mod tests {
                 dual_fit_used: false,
                 normalize_gain: 1.0,
                 fit_terms: None,
+                registration_residual_ms: None,
             },
         )]);
         let payload = RepairJsonOutput {
@@ -1380,6 +1382,7 @@ mod tests {
                     dual_fit_used: false,
                     normalize_gain: 1.0,
                     fit_terms: None,
+                    registration_residual_ms: None,
                 },
             ),
             gap_patch_outcome(
@@ -1641,6 +1644,7 @@ mod tests {
                 dual_fit_used: false,
                 normalize_gain: 1.0,
                 fit_terms: None,
+                registration_residual_ms: None,
             },
         )]);
 
@@ -1677,6 +1681,7 @@ mod tests {
             dual_fit_used: false,
             normalize_gain: 1.0,
             fit_terms: None,
+            registration_residual_ms: None,
         };
         let tags = derive_gap_tags_from_patch_outcome(
             &GapPatchTierInput::Patched {
@@ -1757,6 +1762,7 @@ mod tests {
             dual_fit_used: true,
             normalize_gain: 1.0,
             fit_terms: None,
+            registration_residual_ms: None,
         };
         let tags = derive_gap_tags_from_patch_outcome(
             &GapPatchTierInput::Patched {
@@ -1828,6 +1834,7 @@ mod tests {
                 dual_fit_used: false,
                 normalize_gain: 1.0,
                 fit_terms: None,
+                registration_residual_ms: None,
             },
         )]);
 
@@ -1958,6 +1965,7 @@ mod tests {
                     dual_fit_used: false,
                     normalize_gain: 1.0,
                     fit_terms: None,
+                    registration_residual_ms: None,
                 },
             ),
             gap_patch_outcome(
@@ -2038,6 +2046,7 @@ mod tests {
                     dual_fit_used: false,
                     normalize_gain: 1.0,
                     fit_terms: None,
+                    registration_residual_ms: None,
                 },
             ),
             gap_patch_outcome(

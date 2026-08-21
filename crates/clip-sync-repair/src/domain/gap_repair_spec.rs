@@ -199,6 +199,9 @@ pub enum GapRepairStrategy {
         /// alongside the placement itself, because only the search knows them. `None` when the gate
         /// reached its placement without the unified search (structure-only gate mode).
         fit_terms: Option<UnifiedFitBreakdown>,
+        /// S1: independent shoulder-seam read of the placement vs. the applied placement, `applied_ms −
+        /// shoulder_lag_ms` for whichever shoulder is more confident. Record-only — no gate reads this.
+        registration_residual_ms: Option<f64>,
     },
     SilenceSplice {
         /// Filled, length-reconciled interleaved PCM (`gap_frames × channels`).
@@ -215,6 +218,9 @@ pub enum GapRepairStrategy {
         /// Per-shoulder residual (A6 gate).
         residual: Option<SeamResidualVerdict>,
         confidence: FillConfidence,
+        /// S1: independent shoulder-seam read vs. the applied placement, derived from `pre_lag`/`post_lag`/
+        /// `pre_seam_r`/`post_seam_r` above — no new sweep. Record-only — no gate reads this.
+        registration_residual_ms: Option<f64>,
     },
 }
 
@@ -500,6 +506,7 @@ mod tests {
             residual: None,
             normalize_gain: 1.0,
             fit_terms: None,
+            registration_residual_ms: None,
         }
     }
 
@@ -513,6 +520,7 @@ mod tests {
             trim_frames: 480,
             residual: None,
             confidence: FillConfidence::High,
+            registration_residual_ms: None,
         }
     }
 

@@ -244,6 +244,7 @@ mod tests {
             trim_frames: 240,
             residual: None,
             confidence: FillConfidence::High,
+            registration_residual_ms: None,
         }
     }
 
@@ -272,6 +273,7 @@ mod tests {
             residual: None,
             normalize_gain: 1.0,
             fit_terms: None,
+            registration_residual_ms: None,
         }
     }
 
