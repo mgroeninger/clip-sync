@@ -1,13 +1,13 @@
 # TEMP — Fingerprint post-projection overlay (restore X-records + scan alignment)
 
-**Status:** draft, not started, 2026-08-21. **One deliverable:** after `spec_to_fingerprint_summary`,
+**Status:** implemented 2026-08-21. **One deliverable:** after `spec_to_fingerprint_summary`,
 copy back the pass-1 `silence` / `contour` / `anchors` the rebuild currently drops, and stamp a
 licensing-safe scan-alignment projection on `SourceMeta`. Same overlay pattern as
 `equivalence_production`. No extra PCM, no production gate, no dump-shape fork on `--gap-listen`.
 
 Parent: Fingerprint-unification 8g (lossy-by-projection on those three fields was filed as an 8g.5
 fidelity item and never restored;
-[archive/TEMP-pipeline-perf-redesign-plan.md](archive/TEMP-pipeline-perf-redesign-plan.md)).
+[TEMP-pipeline-perf-redesign-plan.md](TEMP-pipeline-perf-redesign-plan.md)).
 Prompted by comparing the production patch pipeline to what a fingerprint dump can actually answer
 (map-step is pair-level; editorial anchors are a live production mechanism whose dump record is
 stripped). Does **not** copy `GapPatchStatus` / `align_adjustment_secs` / `anchor_seam_used` — those
@@ -192,14 +192,14 @@ No new `[[test]]`. No licensed media. No golden refresh.
 
 ## 6. Docs (at implement)
 
-- [gap-fingerprint.md](gap-fingerprint.md) § Shape: the three groups are present on the
+- [gap-fingerprint.md](../gap-fingerprint.md) § Shape: the three groups are present on the
   from-decode dump again; absence is pre-overlay / never pass-1. New `source.alignment` row.
   § *Not measured* loses them from the “omitted on the production path” list (they are overlaid,
   not projected). Levels envelope and `seam_shape` stay on that list.
 - Schema comments on `GapFingerprint::{silence,contour,anchors}` that currently say “None on
   the production projection path” — rewrite to “omitted by the spec projector; restored by the
   from-decode overlay.”
-- This plan’s line in [README.md](README.md) § Plans while active; drop when archived.
+- This plan’s line in [README.md](../README.md) § Plans while active; drop when archived.
 
 Do not rewrite the collapsed-bridge / pair-50 notes to pretend dumps always had these fields.
 
