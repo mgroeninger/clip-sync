@@ -40,7 +40,8 @@ pub struct FingerprintXSet {
 ///
 /// Fabricated `lag_decision` shoulders (when this is `None`) are what
 /// [`crate::application::gap_fingerprint::PROJECTED_LAG_DECISION_FIELDS`] declares. Envelope /
-/// silence / contour / anchors / seam_shape are omitted outright (`None`) rather than declared.
+/// `seam_shape` are omitted outright (`None`) rather than declared. `silence` / `contour` / `anchors`
+/// are also omitted here; the from-decode caller restores pass-1 values after projection.
 #[derive(Debug, Clone, Default)]
 pub struct MeasuredDetail {
     /// Real per-bracket rows (8g.4b), else [`synth_brackets`]' reconstruction from the stored counts.
@@ -57,7 +58,8 @@ pub struct MeasuredDetail {
 ///
 /// Lossy **by design** on non-decision fields: `silence`/`contour`/`anchors`/`seam_shape` and the
 /// levels envelope are omitted (`None` / skip-empty) when the spec cannot carry them — absence, not
-/// zeros. `outcome.tier` is `patch`/`skip` (matching the scan path, `gap_fingerprint.rs` tier logic);
+/// zeros. The from-decode dump restores `silence`/`contour`/`anchors` after this projection; the
+/// projector itself stays lossy so spec-only callers still see `None`. `outcome.tier` is `patch`/`skip` (matching the scan path, `gap_fingerprint.rs` tier logic);
 /// uniqueness validators (`*_seam_prom`/`*_seam_z`, `peak_z`) are `None` on the production path
 /// (Tier-3, tolerated by the golden diff). `brackets` and `lag_decision` are the **real** measurements
 /// when [`MeasuredDetail`] supplies them (the from-decode dump, 8g.4b), else reconstructed from the
@@ -767,6 +769,11 @@ mod tests {
         };
 
         let fp = spec_to_fingerprint_summary(&spec, 48_000, 2, None, MeasuredDetail::default());
+
+        assert!(
+            fp.silence.is_none() && fp.contour.is_none() && fp.anchors.is_none(),
+            "the spec projector stays lossy; overlay is the caller's job"
+        );
 
         // outcome: skip tier; skip_reason is the closest FailureStage (here from gate tags → synth).
         let o = fp.outcome.as_ref().unwrap();

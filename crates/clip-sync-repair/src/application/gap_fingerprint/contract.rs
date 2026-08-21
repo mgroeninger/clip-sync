@@ -4,8 +4,8 @@
 //! what window, and what is this *not*?". Readers (agents especially) treat names as the schema and
 //! invent the rest, and this corpus's real failure mode is wrong placement / wrong window, not wrong
 //! field. A corpus-root notes map is too easy to skip and too far from the number it explains, so the
-//! contract travels **inside the same JSON object as the values**. Current shape and the eight
-//! contracted groups: `docs/dev/gap-fingerprint.md` § `_contract`. Design rationale (why the
+//! contract travels **inside the same JSON object as the values**. Current shape and the contracted
+//! groups: `docs/dev/gap-fingerprint.md` § `_contract`. Design rationale (why the
 //! `Contracted<T>` wrapper was mandatory rather than stylistic, and why some quoted numbers are
 //! config rather than consts): `docs/dev/archive/TEMP-fingerprint-field-clarity-plan.md` § 2.
 //!
@@ -222,6 +222,14 @@ contracts! {
         window: "10ms envelope bins; recovery +/-25ms pre and +/-max_lag_ms post, sequentially centered",
         not: "residual (the gate's same-source confirm at the throat); no gate reads seam_probe",
     }
+
+    /// Contract for `source.alignment` — pair-level chromaprint scan map, not a gap shoulder.
+    ALIGNMENT_CONTRACT for "alignment" {
+        measures: "pair-level chromaprint scan alignment that mapped A onto B",
+        placement: "scan-time, whole pair - not a gap shoulder",
+        window: "the clip windows in `clips[]`",
+        not: "lag_decision (per-gap shoulder lag at b_mapped); this is the map that produced fill_offset_secs",
+    }
 }
 
 #[cfg(test)]
@@ -325,8 +333,8 @@ mod tests {
     /// than asserting a number that an override would falsify. Do not "simplify" that wording away.
     #[test]
     fn quoted_c2_constants_still_match_the_code() {
-        use crate::domain::donor::DONOR_CONTINUITY_MS;
         use super::super::measure::probes::{SEAM_PROBE_ENV_BIN_MS, SEAM_PROBE_FINE_LAG_MS};
+        use crate::domain::donor::DONOR_CONTINUITY_MS;
 
         assert_eq!(
             DONOR_CONTINUITY_MS, 150.0,
@@ -341,13 +349,11 @@ mod tests {
         }
 
         assert_eq!(
-            SEAM_PROBE_ENV_BIN_MS,
-            10.0,
+            SEAM_PROBE_ENV_BIN_MS, 10.0,
             "SEAM_PROBE_ENV_BIN_MS moved; the seam_probe contract quotes `10ms`"
         );
         assert_eq!(
-            SEAM_PROBE_FINE_LAG_MS,
-            25.0,
+            SEAM_PROBE_FINE_LAG_MS, 25.0,
             "SEAM_PROBE_FINE_LAG_MS moved; the seam_probe contract quotes `+/-25ms`"
         );
         let probe = shipped("seam_probe");
@@ -452,6 +458,32 @@ mod tests {
             assert!(
                 donor.get(key).is_some(),
                 "`{key}` is quoted by donor_interior_aligned's contract but DonorInterior dropped it"
+            );
+        }
+
+        let align = serde_json::to_value(super::super::CorpusScanAlignment {
+            recommended_offset_secs: Some(-1.15),
+            offset_drift_secs: Some(0.05),
+            offsets_consistent: false,
+            start_aligned: true,
+            end_aligned: Some(true),
+            query_reference_mode: false,
+            start_overlap: None,
+            clips: vec![super::super::CorpusAlignedClip {
+                role: super::super::CorpusClipRole::Start,
+                window_start_secs: 0.0,
+                window_end_secs: 900.0,
+                aligned: true,
+                offset_secs: Some(-1.15),
+                confidence: 0.95,
+            }],
+            silence_cross_check: None,
+        })
+        .expect("alignment");
+        for key in ["clips", "recommended_offset_secs"] {
+            assert!(
+                align.get(key).is_some(),
+                "`{key}` is quoted by the alignment contract but CorpusScanAlignment no longer emits it"
             );
         }
     }

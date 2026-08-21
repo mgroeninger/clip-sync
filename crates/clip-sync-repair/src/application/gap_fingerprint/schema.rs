@@ -217,20 +217,161 @@ pub struct SourceMeta {
     /// Dotted paths of per-gap fields the emitting path left as **present structural defaults** rather
     /// than measurements — see [`NOT_MEASURED_BY_PROJECTION`] and [`PROJECTED_LAG_DECISION_FIELDS`].
     ///
-    /// Only fields that still serialize a non-`Option` stand-in need an entry here. Envelope /
-    /// silence / contour / anchors / `seam_shape` are `Option` (or skip-empty) and simply **omit**
-    /// when unmeasured — absence already says it, so they are no longer listed. Empty on a corpus
+    /// Only fields that still serialize a non-`Option` stand-in need an entry here. The `levels`
+    /// envelope and `outcome.seam_shape` are `Option` (or skip-empty) and simply **omit** when
+    /// unmeasured — absence already says it, so they are no longer listed. `silence` / `contour` /
+    /// `anchors` are restored by the from-decode overlay and are not declared. Empty on a corpus
     /// whose emitting path measured everything it still emits as required scalars; absent on any
     /// corpus written before this field existed.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub not_measured: Vec<String>,
+    /// Pair-level chromaprint scan alignment that mapped A onto B. Present on every corpus built
+    /// from a [`crate::domain::GapReport`]; omitted on pre-overlay dumps and on hand-built / spec-only
+    /// corpora that never saw a scan. Inner `None`s are unanswerable fields on that scan, not a missing
+    /// group.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub alignment: Option<Contracted<CorpusScanAlignment>>,
+}
+
+/// Licensing-safe projection of [`crate::domain::ScanAlignment`] plus the optional silence-structure
+/// cross-check. No paths, no decode-skip counts, no B-window timestamps (those duplicate
+/// [`Self::start_overlap`]).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CorpusScanAlignment {
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub recommended_offset_secs: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub offset_drift_secs: Option<f64>,
+    pub offsets_consistent: bool,
+    pub start_aligned: bool,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub end_aligned: Option<bool>,
+    /// Scan ran query-reference localization. This is **not** the mapped-region fill gate
+    /// ([`crate::domain::GapReport::limit_fill_to_mapped_region`]), which the CLI can turn off
+    /// independently.
+    pub query_reference_mode: bool,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub start_overlap: Option<CorpusTimelineOverlap>,
+    pub clips: Vec<CorpusAlignedClip>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub silence_cross_check: Option<CorpusSilenceCrossCheck>,
+}
+
+impl CorpusScanAlignment {
+    /// Project the report's scan alignment. Never copies `video_a` / `video_b`.
+    pub(crate) fn from_report(report: &crate::domain::GapReport) -> Self {
+        let a = &report.alignment;
+        Self {
+            recommended_offset_secs: a.recommended_offset_secs,
+            offset_drift_secs: a.offset_drift_secs,
+            offsets_consistent: a.offsets_consistent,
+            start_aligned: a.start_aligned,
+            end_aligned: a.end_aligned,
+            query_reference_mode: a.query_reference_mode,
+            start_overlap: a.start_overlap.map(CorpusTimelineOverlap::from),
+            clips: a.clips.iter().map(CorpusAlignedClip::from).collect(),
+            silence_cross_check: report
+                .gap_offset_agreement
+                .as_ref()
+                .map(CorpusSilenceCrossCheck::from),
+        }
+    }
+}
+
+/// Shared-timeline overlap times only — B windows on [`CorpusAlignedClip`] are omitted as duplicates.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct CorpusTimelineOverlap {
+    pub video_a_start_secs: f64,
+    pub video_a_end_secs: f64,
+    pub video_b_start_secs: f64,
+    pub video_b_end_secs: f64,
+    pub shared_length_secs: f64,
+}
+
+impl From<crate::domain::TimelineOverlap> for CorpusTimelineOverlap {
+    fn from(o: crate::domain::TimelineOverlap) -> Self {
+        Self {
+            video_a_start_secs: o.video_a_start_secs,
+            video_a_end_secs: o.video_a_end_secs,
+            video_b_start_secs: o.video_b_start_secs,
+            video_b_end_secs: o.video_b_end_secs,
+            shared_length_secs: o.shared_length_secs,
+        }
+    }
+}
+
+/// One A-side clip window on the scan map. `window_*` is A's interval; B times live on
+/// [`CorpusScanAlignment::start_overlap`]. Serde lives here so domain [`crate::domain::ClipRole`]
+/// does not grow a dump contract.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CorpusAlignedClip {
+    pub role: CorpusClipRole,
+    pub window_start_secs: f64,
+    pub window_end_secs: f64,
+    pub aligned: bool,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub offset_secs: Option<f64>,
+    pub confidence: f32,
+}
+
+impl From<&crate::domain::AlignedClip> for CorpusAlignedClip {
+    fn from(c: &crate::domain::AlignedClip) -> Self {
+        Self {
+            role: CorpusClipRole::from(c.role),
+            window_start_secs: c.window_start_secs,
+            window_end_secs: c.window_end_secs,
+            aligned: c.aligned,
+            offset_secs: c.offset_secs,
+            confidence: c.confidence,
+        }
+    }
+}
+
+/// Wire form of [`crate::domain::ClipRole`]. Snake_case so the dump does not emit `Start`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CorpusClipRole {
+    Start,
+    Interior,
+    End,
+}
+
+impl From<crate::domain::ClipRole> for CorpusClipRole {
+    fn from(role: crate::domain::ClipRole) -> Self {
+        match role {
+            crate::domain::ClipRole::Start => Self::Start,
+            crate::domain::ClipRole::Interior => Self::Interior,
+            crate::domain::ClipRole::End => Self::End,
+        }
+    }
+}
+
+/// Silence-structure vs chromaprint offset comparison from [`crate::domain::GapOffsetAgreement`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CorpusSilenceCrossCheck {
+    pub silence_based_offset_secs: f64,
+    pub alignment_offset_secs: f64,
+    pub delta_secs: f64,
+    pub agrees: bool,
+}
+
+impl From<&crate::domain::GapOffsetAgreement> for CorpusSilenceCrossCheck {
+    fn from(a: &crate::domain::GapOffsetAgreement) -> Self {
+        Self {
+            silence_based_offset_secs: a.silence_based_offset_secs,
+            alignment_offset_secs: a.alignment_offset_secs,
+            delta_secs: a.delta_secs,
+            agrees: a.agrees,
+        }
+    }
 }
 
 /// Unconditional unmeasured-field paths for the production projection rebuild.
 ///
-/// Empty since 2026-08-03: `levels` envelope / `silence` / `contour` / `anchors` / `outcome.seam_shape`
-/// are omitted (`Option` / skip-empty) rather than written as zeros / `−120` / `""`. The only remaining
-/// fabricated stand-ins are the conditional [`PROJECTED_LAG_DECISION_FIELDS`].
+/// Empty since 2026-08-03: the `levels` envelope and `outcome.seam_shape` are omitted (`Option` /
+/// skip-empty) rather than written as zeros / `−120` / `""`. `silence` / `contour` / `anchors` are
+/// restored by the from-decode overlay (still `Option`; absence means pre-overlay / never pass 1).
+/// The only remaining fabricated stand-ins are the conditional [`PROJECTED_LAG_DECISION_FIELDS`].
 ///
 /// Kept as a named constant so emitters and `--check` still share one list, and so older tests that
 /// assert "production declares exactly this" keep compiling against the empty claim.
@@ -389,14 +530,15 @@ pub struct GapFingerprint {
     pub channels: u16,
     pub geometry: GapGeometry,
     pub levels: LevelProfile,
-    /// Collar / relative-silence test. `None` on the production projection path (never measured there).
+    /// Collar / relative-silence test. Omitted by the spec projector; restored by the from-decode
+    /// overlay. `None` means unmeasured (pre-overlay dump, or never reached pass 1).
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub silence: Option<SilenceProfile>,
-    /// Anchor-seam contour flags. `None` on the production projection path.
+    /// Anchor-seam contour flags. Omitted by the spec projector; restored by the from-decode overlay.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub contour: Option<ContourInfo>,
-    /// Editorial anchors. `None` on the production projection path (empty was indistinguishable from
-    /// "measured none").
+    /// Editorial anchors. Omitted by the spec projector; restored by the from-decode overlay.
+    /// `Some` including `{ pre: [], post: [] }` means measured, none found; `None` means unmeasured.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub anchors: Option<AnchorSet>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
@@ -1395,6 +1537,7 @@ mod tests {
             gate_recipe: None,
             probe_recipe: None,
             not_measured: Vec::new(),
+            alignment: None,
         };
         assert!(
             !serde_json::to_string(&meta)
@@ -1412,6 +1555,11 @@ mod tests {
         assert!(
             !json.contains("not_measured"),
             "empty not_measured must omit key: {json}"
+        );
+        let value = serde_json::to_value(&meta).expect("source json");
+        assert!(
+            value.get("alignment").is_none(),
+            "absent alignment must omit key"
         );
 
         let refused = SourceMeta {

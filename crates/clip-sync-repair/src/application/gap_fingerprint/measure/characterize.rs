@@ -4,19 +4,14 @@ use crate::application::gap_fingerprint::contract::*;
 use crate::application::gap_fingerprint::project::*;
 use crate::application::gap_fingerprint::schema::*;
 
-
-use crate::domain::gap_equivalence::{
-    ChannelReduction, EquivalenceMeasurement, SpanKind,
-};
+use crate::domain::gap_equivalence::{ChannelReduction, EquivalenceMeasurement, SpanKind};
 
 use crate::domain::patch_result::GapPatchSkipReason;
-use crate::domain::policies::{
-    refine_gap_frames, RefinedGapFrames,
-};
+use crate::domain::policies::{refine_gap_frames, RefinedGapFrames};
 
 use super::build::*;
-use super::overlay::*;
 use super::config::*;
+use super::overlay::*;
 use super::pcm::*;
 
 /// Corpus envelope when A/B `native_channels` disagree: provenance filled, pairwise gaps refused.
@@ -56,11 +51,18 @@ pub(in crate::application::gap_fingerprint::measure) fn refused_channel_mismatch
             probe_recipe: None,
             // Refusal ⇒ `gaps` is empty, so there is nothing to qualify.
             not_measured: Vec::new(),
+            // Scan still ran; refuse is the pairwise characterize gate, not a missing map.
+            alignment: stamp(
+                Some(CorpusScanAlignment::from_report(report)),
+                ALIGNMENT_CONTRACT,
+            ),
         },
         gaps: vec![],
     }
 }
-pub(in crate::application::gap_fingerprint::measure) fn channel_layout_mismatch(sources: &crate::application::patch_audio::AbSources) -> bool {
+pub(in crate::application::gap_fingerprint::measure) fn channel_layout_mismatch(
+    sources: &crate::application::patch_audio::AbSources,
+) -> bool {
     sources.a.native_channels != sources.b.native_channels
 }
 /// Full-timeline A/B PCM for corpus characterization, plus optional source provenance.
@@ -87,9 +89,8 @@ pub struct CharacterizeAbPcm<'a> {
 /// When `pcm.sources` reports disagreeing `native_channels`, returns an empty-gap corpus with
 /// [`IncomparableReason::ChannelLayoutMismatch`] and does not index B at A's channel count.
 ///
-/// **SHADOW at 8g.4a** — validated by the old-vs-new decode differential (`decode_path_projection`), lean +
-/// diagnostics; the dump flips to it at 8g.4b. Lossy-by-projection on `silence`/`contour`/`anchors` (X, not
-/// read by `golden_baseline`) — a fidelity item for the diagnostics path (8g.5), not a decision change.
+/// Pass-1 `silence` / `contour` / `anchors` are restored after the spec projection (the projector
+/// still emits `None` for those groups). Pair-level scan alignment is stamped on `source.alignment`.
 pub fn characterize_gaps_from_decode(
     report: &crate::domain::GapReport,
     pcm: &CharacterizeAbPcm<'_>,
@@ -282,7 +283,13 @@ pub fn characterize_gaps_from_decode(
             lag_decision: m.lag_decision,
         };
         let lag_supplied = measured.lag_decision.is_some();
+        let silence = fp.silence.take();
+        let contour = fp.contour.take();
+        let anchors = fp.anchors.take();
         *fp = spec_to_fingerprint_summary(&spec, sample_rate, channels as u16, Some(x), measured);
+        fp.silence = silence;
+        fp.contour = contour;
+        fp.anchors = anchors;
         // Count only gaps that ended up with a *fabricated* block. A gap with no sweep and no scalars
         // has no `lag_decision` at all, and absence needs no disowning.
         if !lag_supplied && fp.lag_decision.is_some() {
@@ -533,9 +540,10 @@ pub fn characterize_gaps_from_decode(
 
     // Declare fabricated stand-ins this path still writes — stamped **here**, not in
     // `characterize_gaps`, because it is this function that rebuilds via
-    // `spec_to_fingerprint_summary`. Envelope / silence / contour / anchors / seam_shape are now
-    // omitted (`None`) rather than zeroed, so [`NOT_MEASURED_BY_PROJECTION`] is empty; only
-    // `lag_decision.*` may still need a declaration when the sweep was projected rather than measured.
+    // `spec_to_fingerprint_summary`. The `levels` envelope / `seam_shape` stay omitted (`None`)
+    // rather than zeroed. Pass-1 `silence` / `contour` / `anchors` are restored after the rebuild,
+    // so they are not declared. Only `lag_decision.*` may still need a declaration when the sweep
+    // was projected rather than measured.
     //
     // Scoped to `DetailTier::Full` — gaps that never reached the rebuild keep `characterize_gaps`'s
     // real values and stay `Summary`. Only claim anything if the rebuild actually ran.
@@ -682,27 +690,31 @@ pub fn characterize_gaps(
             // `DetailTier::Full` rebuild, when those measurements exist.
             probe_recipe: Some(CorpusProbeRecipe::for_corpus(cfg, sample_rate, &gaps)),
             // **No `not_measured` here.** This path measures every one of those fields —
-            // `build_gap_fingerprint` below fills levels/silence/contour/anchors for real. The
-            // declaration belongs to `characterize_gaps_from_decode`, which *replaces* these gaps with
-            // `spec_to_fingerprint_summary` output and strips them. Stamping it here (as this function
-            // did briefly on 2026-08-01) makes a standalone `characterize_gaps` corpus disown data it
-            // actually holds — the same unreadable-field defect the declaration exists to fix, pointed
-            // the other way, and worse: an absent declaration invites a misread, a false one licenses
-            // discarding real measurements.
+            // `build_gap_fingerprint` fills levels/silence/contour/anchors for real. The from-decode
+            // rebuild restores the three groups after projection; the remaining fabricated
+            // stand-ins (`lag_decision.*` on the oracle path) are declared there, not here.
             not_measured: Vec::new(),
+            alignment: stamp(
+                Some(CorpusScanAlignment::from_report(report)),
+                ALIGNMENT_CONTRACT,
+            ),
         },
         gaps,
     }
 }
 #[cfg(any(feature = "calibration", test))]
-pub(in crate::application::gap_fingerprint::measure) fn detail_tier_str(t: DetailTier) -> &'static str {
+pub(in crate::application::gap_fingerprint::measure) fn detail_tier_str(
+    t: DetailTier,
+) -> &'static str {
     match t {
         DetailTier::Summary => "summary",
         DetailTier::Full => "full",
     }
 }
 #[cfg(any(feature = "calibration", test))]
-pub(in crate::application::gap_fingerprint::measure) fn lag_verdict_str(v: LagVerdict) -> &'static str {
+pub(in crate::application::gap_fingerprint::measure) fn lag_verdict_str(
+    v: LagVerdict,
+) -> &'static str {
     match v {
         LagVerdict::TimingOffset => "timing_offset",
         LagVerdict::Decorrelated => "decorrelated",
@@ -1135,9 +1147,18 @@ mod tests {
             assert!(g.levels.profile_db.is_empty());
             assert!(g.levels.floor_db.is_none());
             assert!(g.levels.speech_peak_db.is_none());
-            assert!(g.silence.is_none());
-            assert!(g.contour.is_none());
-            assert!(g.anchors.is_none());
+            assert!(
+                g.silence.is_some(),
+                "from-decode overlay restores pass-1 silence"
+            );
+            assert!(
+                g.contour.is_some(),
+                "from-decode overlay restores pass-1 contour"
+            );
+            assert!(
+                g.anchors.is_some(),
+                "from-decode overlay restores pass-1 anchors (empty lists stay Some)"
+            );
             assert!(
                 g.outcome.as_ref().is_some_and(|o| o.seam_shape.is_none()),
                 "seam_shape must be omitted, not hardcoded empty"
@@ -1159,6 +1180,180 @@ mod tests {
         assert!(
             corpus.gaps.iter().any(|g| g.lag_decision.is_some()),
             "fixture must produce a lag_decision to make the assertions above non-vacuous"
+        );
+    }
+
+    fn fixture_patch_request(
+        report: crate::domain::GapReport,
+    ) -> crate::application::PatchAudioRequest {
+        use crate::infrastructure::config::RepairConfig;
+        RepairConfig {
+            fill_border_search_secs: 0.05,
+            fill_align_margin_secs: 0.02,
+            fill_extract_tail_slack_secs: 0.1,
+            fill_seam_search_secs: 0.05,
+            max_anchor_bracket_secs: 0.2,
+            max_anchors_per_side: 2,
+            ..RepairConfig::default()
+        }
+        .patch_settings()
+        .into_request(report)
+        .expect("default All gap selection")
+    }
+
+    /// Overlay copies pass-1 values; it does not re-detect.
+    #[test]
+    fn from_decode_restores_pass1_silence_contour_anchors() {
+        use clip_sync_repair_fixtures::NoOpProgressReporter;
+
+        let (report, a_pcm, b) = equivalence_overlay_fixture();
+        let request = fixture_patch_request(report.clone());
+        let cfg = FingerprintConfig::from_request(
+            &request,
+            report.recipe.silence_peak_fraction(),
+            DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
+        );
+        let pcm = CharacterizeAbPcm {
+            a_pcm: &a_pcm,
+            b_samples: &b,
+            sources: None,
+        };
+        let pass1 = characterize_gaps(&report, &pcm, &cfg, &[]);
+        let corpus = characterize_gaps_from_decode(
+            &report,
+            &pcm,
+            &request,
+            &[],
+            false,
+            DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
+            &NoOpProgressReporter,
+        );
+        let full: Vec<_> = corpus
+            .gaps
+            .iter()
+            .filter(|g| g.tier == DetailTier::Full)
+            .collect();
+        assert!(!full.is_empty(), "fixture must produce a measured gap");
+        for g in full {
+            let p1 = pass1
+                .gaps
+                .iter()
+                .find(|p| p.index == g.index)
+                .expect("pass-1 row");
+            assert_eq!(g.silence, p1.silence, "restore, not a second detector");
+            assert_eq!(g.contour, p1.contour, "restore, not a second detector");
+            assert_eq!(g.anchors, p1.anchors, "restore, not a second detector");
+            assert!(g.silence.is_some());
+            assert!(g.contour.is_some());
+            assert!(g.anchors.is_some());
+        }
+    }
+
+    /// `Some({pre:[], post:[]})` is measured-none, not omitted.
+    #[test]
+    fn empty_anchor_set_stays_some_on_the_wire() {
+        let fp = mk_fp(0, false);
+        assert_eq!(
+            fp.anchors,
+            Some(AnchorSet {
+                pre: vec![],
+                post: vec![]
+            })
+        );
+        let json = serde_json::to_value(&fp).expect("json");
+        assert!(
+            json.get("anchors").is_some(),
+            "empty lists must not drop the key"
+        );
+        assert_eq!(json["anchors"]["pre"], serde_json::json!([]));
+        assert_eq!(json["anchors"]["post"], serde_json::json!([]));
+    }
+
+    /// Overlay assignment after a lossy projection must not turn `Some({pre:[], post:[]})` into
+    /// `None`. From-decode never produces empty lists (`list_anchor_candidates_a` always inserts a
+    /// scan-refined fallback); this is the caller-side restore, not a second detector.
+    #[test]
+    fn empty_anchor_set_stays_some_after_projection_overlay() {
+        let pass1 = mk_fp(0, true);
+        let spec = fingerprint_to_spec(&pass1);
+        let mut fp = spec_to_fingerprint_summary(
+            &spec,
+            pass1.sample_rate,
+            pass1.channels,
+            None,
+            MeasuredDetail::default(),
+        );
+        assert!(
+            fp.anchors.is_none(),
+            "projector stays lossy; overlay is the caller's job"
+        );
+        fp.anchors = pass1.anchors.clone();
+        assert_eq!(
+            fp.anchors,
+            Some(AnchorSet {
+                pre: vec![],
+                post: vec![]
+            })
+        );
+    }
+
+    #[test]
+    fn source_alignment_stamped_from_the_fixture_report() {
+        use crate::domain::GapOffsetAgreement;
+        use clip_sync_repair_fixtures::NoOpProgressReporter;
+
+        let (mut report, a_pcm, b) = equivalence_overlay_fixture();
+        report.alignment = crate::domain::align::test_two_clip_alignment(-1.15, -1.10);
+        report.gap_offset_agreement = Some(GapOffsetAgreement {
+            silence_based_offset_secs: -1.20,
+            alignment_offset_secs: -1.125,
+            delta_secs: 0.075,
+            agrees: true,
+        });
+        let request = fixture_patch_request(report.clone());
+        let corpus = characterize_gaps_from_decode(
+            &report,
+            &CharacterizeAbPcm {
+                a_pcm: &a_pcm,
+                b_samples: &b,
+                sources: None,
+            },
+            &request,
+            &[],
+            false,
+            DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
+            &NoOpProgressReporter,
+        );
+        let align = corpus
+            .source
+            .alignment
+            .as_ref()
+            .expect("from-decode stamps scan alignment");
+        assert_eq!(
+            align.recommended_offset_secs,
+            report.alignment.recommended_offset_secs
+        );
+        assert_eq!(align.offset_drift_secs, report.alignment.offset_drift_secs);
+        assert_eq!(align.clips.len(), 2);
+        assert_eq!(align.clips[0].role, CorpusClipRole::Start);
+        let json = serde_json::to_value(align).expect("alignment json");
+        assert_eq!(json["clips"][0]["role"], "start");
+        assert!(json.get("clips").unwrap()[0]
+            .get("video_a_decode_skips")
+            .is_none());
+        assert!(json.get("clips").unwrap()[0]
+            .get("video_b_window_start_secs")
+            .is_none());
+        let xcheck = align
+            .silence_cross_check
+            .as_ref()
+            .expect("cross-check copied");
+        assert!((xcheck.delta_secs - 0.075).abs() < 1e-12);
+        assert!(
+            json["_contract"]["not"]
+                .as_str()
+                .is_some_and(|n| n.starts_with("lag_decision")),
+            "alignment contract must name lag_decision first"
         );
     }
 
@@ -1899,6 +2094,33 @@ mod tests {
             Some(IncomparableReason::ChannelLayoutMismatch)
         );
         assert!(summary.gaps.is_empty());
+        assert!(
+            corpus.source.alignment.is_some(),
+            "scan ran; channel-layout refuse is later"
+        );
+        assert_eq!(
+            corpus
+                .source
+                .alignment
+                .as_ref()
+                .map(|a| a.recommended_offset_secs),
+            Some(report.alignment.recommended_offset_secs)
+        );
+        assert!(
+            summary.source.alignment.is_some(),
+            "summary refuse path stamps the same scan alignment"
+        );
+        let not = corpus
+            .source
+            .alignment
+            .as_ref()
+            .and_then(|a| a.contract.as_ref())
+            .and_then(|c| c.not.as_deref())
+            .expect("refuse stamps the alignment contract");
+        assert!(
+            not.starts_with("lag_decision"),
+            "alignment contract must name lag_decision first, got {not:?}"
+        );
     }
 
     fn mk_fp(index: usize, full: bool) -> GapFingerprint {
@@ -2019,6 +2241,7 @@ mod tests {
                 gate_recipe: None,
                 probe_recipe: None,
                 not_measured: Vec::new(),
+                alignment: None,
             },
             gaps: vec![mk_fp(0, false), mk_fp(3, true)],
         };
@@ -2027,6 +2250,15 @@ mod tests {
         assert_eq!(n, 2);
         assert!(dir.path().join("manifest.json").exists());
         assert!(dir.path().join("corpus.json").exists());
+        assert!(
+            corpus.source.alignment.is_none(),
+            "hand-built corpus never saw a GapReport"
+        );
+        let src_json = serde_json::to_value(&corpus.source).expect("source json");
+        assert!(
+            src_json.get("alignment").is_none(),
+            "unanswerable alignment must omit the key, not emit zeros"
+        );
 
         let names: Vec<String> = std::fs::read_dir(dir.path())
             .unwrap()
@@ -2055,5 +2287,4 @@ mod tests {
         assert_eq!(parsed.gaps[0].index, 3);
         assert_eq!(parsed.source.a_source.id, "aaaaaaaaaaaaaaaa");
     }
-
 }

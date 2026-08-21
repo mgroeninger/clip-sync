@@ -233,9 +233,9 @@ approaches were refuted by measurement. Full analysis + cost hierarchy: that pla
 |-------|------|---------|
 | `geometry` | always | A reported/refined edges, duration; B mapped edges + fill offset (B present) |
 | `levels` | floors always; envelope **omitted on the production path** | `noise_floor_db` / `gap_floor_db` required. `bin_ms` / `profile_db` / `floor_db` / `speech_peak_db` are `Option` / skip-empty — present on the summary measure path, omitted after projection |
-| `silence` | **omitted on the production path** | collar RMS/peak ratio + relative silence test (border walk-off). `Option` whole block |
-| `contour` | **omitted on the production path** | `has_anchor_seam_contour`, pre/post envelope flatness. `Option` whole block |
-| `anchors` | **omitted on the production path** | pre/post candidates `{ time, source, prominence, rms_db }`. `Option` whole block |
+| `silence` | from-decode (pass-1 overlay) | collar RMS/peak ratio + relative silence test (border walk-off). `Option` whole block. Spec projector emits `None`; from-decode restores pass-1. Absence means pre-overlay dump or never pass 1 — not "this gap has no collar" |
+| `contour` | from-decode (pass-1 overlay) | `has_anchor_seam_contour`, pre/post envelope flatness. `Option` whole block. Same overlay / absence rule as `silence` |
+| `anchors` | from-decode (pass-1 overlay) | pre/post candidates `{ time, source, prominence, rms_db }`. `Some` including `{ pre: [], post: [] }` means measured, none found. `None` means unmeasured |
 | `brackets` | full | feasible brackets `{ span, move, seam_*, structure_*, failure_stage, residual_margin_db? }`; `start_frame`/`fill_frames` only on brackets that pass the gate. On `structure_floor`, scores live in `structure_*` (not overloaded onto `seam_*`); on `residual`, `residual_margin_db` carries the applied headroom margin. Gap-level `structure`/`seams` blocks remain omitted under `skip_baseline_placement` (F1) |
 | `structure` / `seams` | **omitted on the production path** | intended: baseline scores; seams carry per-channel + selected channels. Suppressed by `skip_baseline_placement`; deferred as Finding F1 (`archive/TEMP-pipeline-perf-redesign-plan.md` §8g.4a) |
 | `lag_decision` | full, B present | **decision** per-shoulder lag fingerprint registered at **`b_mapped`** (see *Registration & dual-fit*). Wire key was `baseline_lag` before 2026-08-07 (serde alias reads old corpora) |
@@ -281,12 +281,13 @@ too easy to skip, and too far from the value it explains.
 | **Wire shape** | Unchanged — `#[serde(flatten)]` keeps the group's own keys where they were, with `_contract` beside them |
 | **Absence** | Always valid. Old corpora, and any path that stamps nothing, deserialize to `None` |
 | **Goldens** | Not a Tier-1/2 axis. Curated fixtures stay contract-free until an intentional harvest |
-| **Repetition** | Repeated per gap, deliberately: these are diagnostic dumps, and a definition beside the value beats a smaller file |
+| **Repetition** | Repeated per gap for the eight per-gap groups, deliberately. `source.alignment` is once per corpus |
 
-Carried today by eight groups: `equivalence_diagnostic` and `equivalence_production` (C1,
+Carried today by nine groups: `equivalence_diagnostic` and `equivalence_production` (C1,
 2026-08-07), then `lag_decision`, `lag_editorial`, `donor_interior_aligned`,
 `donor_interior_nominal`, `residual` and `seam_probe` (C2, 2026-08-08) — the four confusable pairs
-this corpus is actually misread on. Source of truth for the strings is
+this corpus is actually misread on — plus `source.alignment` (2026-08-21), the pair-level scan map
+that is not `lag_decision` and not per-gap `fill_offset_secs`. Source of truth for the strings is
 `application/gap_fingerprint/contract.rs`; do not retype them elsewhere.
 
 Two things the contract strings deliberately do **not** do:
@@ -310,10 +311,15 @@ Several fields above are questions the production path does not ask. Since 2026�
 
 - `levels.bin_ms` / `profile_db` / `floor_db` / `speech_peak_db` — `Option` / skip-empty; only the
   decision floors (`noise_floor_db` / `gap_floor_db`) stay required.
-- `silence` / `contour` / `anchors` — whole blocks are `Option`, `None` after projection.
 - `outcome.seam_shape` — `Option<String>`, omitted when unmeasured.
 - `residual.*_db` sides — `Option`; non-finite and the `SILENCE_FLOOR_DB` (−120) sentinel serialize
   as absent (legacy dumps that wrote bare `−120` deserialize as `None`).
+
+`silence` / `contour` / `anchors` are **not** on this list for a current from-decode dump: pass 1
+measures them and the overlay copies them back after the spec projection. Absence on a dump still
+means pre-overlay (or never pass 1), never "measured none" — empty candidate lists serialize as
+`Some({ pre: [], post: [] })`. The spec projector (`spec_to_fingerprint_summary` alone) still emits
+`None` for all three.
 
 `NOT_MEASURED_BY_PROJECTION` is therefore empty. The only remaining fabricated stand-ins are the
 conditional `lag_decision.*` fields:
@@ -344,12 +350,16 @@ conditional `lag_decision.*` fields:
 Note the inversion this creates on **pre-omission** corpora: a gap that the pipeline **measured
 successfully** was stripped to zeros, while a gap that failed early enough to skip projection kept
 its real values. On the 2026‑07‑31 corpus that was 802 stripped and 27 intact — so "some gaps have
-anchors" was not evidence the rest lack them. Fresh dumps omit the stripped fields entirely.
+anchors" was not evidence the rest lack them. Dumps from the 2026-08-03 honesty pass through
+2026-08-21 omit the three groups entirely (projection `None`). Fresh from-decode dumps restore
+pass-1 `silence` / `contour` / `anchors` after projection; the levels envelope and `seam_shape`
+stay omitted.
 
 Consumers should treat an omitted field as absent. Two guards keep honesty:
 
-- a unit test (`production_dump_omits_unmeasured_option_fields`) asserts the production builder omits
-  the Option placeholders and leaves `not_measured` empty when lag was measured;
+- a unit test (`production_dump_omits_unmeasured_option_fields`) asserts the production builder
+  omits the levels envelope and `seam_shape`, restores the three pass-1 groups, and leaves
+  `not_measured` empty when lag was measured;
 - `--check` (harness) warns a corpus whose gaps still show the legacy tell-tale constants without a
   declaration, and fails one that declares a field it actually measured.
 
@@ -919,6 +929,14 @@ different result). So identity is **per file**, not per logical source:
   about provenance rather than as evidence.
 - `source.scan_recipe` echoes the scan params (`min_gap_ms`, `silence_*`, `scan_block_ms`) so two
   entries are known-comparable.
+- `source.alignment` is the pair-level chromaprint scan map (`recommended_offset_secs`, drift,
+  A-clip windows + confidence, query-reference scan flag, overlap, optional silence-vs-chromaprint
+  cross-check). `query_reference_mode` is the scan localization mode, not the mapped-region fill
+  gate (`limit_fill_to_mapped_region` on the production report, which the CLI can turn off).
+  Present on every corpus built from a `GapReport` (including a channel-layout refuse — scan ran;
+  pairwise characterize is later). Omitted on pre-overlay dumps and on hand-built / spec-only
+  corpora that never saw a scan. This is **not** per-gap `lag_decision` and **not**
+  `geometry.fill_offset_secs`. No paths.
 - **No paths or titles** appear anywhere in the committed output.
 
 **Library file names** (from `--gap-fingerprints`):
