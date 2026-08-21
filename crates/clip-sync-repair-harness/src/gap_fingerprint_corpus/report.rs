@@ -747,8 +747,8 @@ impl CorpusReport {
     /// underlying `seam_probe_text` mislabels any step > 25 ms as "cross-codec"). Classifies every matched
     /// gap: `splice` (both shoulders clean & unique at their own lag, separated by a step — addressable by
     /// independent fit + length reconciliation), `alias-suspect` (a thin uniqueness margin), or
-    /// `one-sided-dead` (a shoulder aligns at no lag — the only genuine cross-encoding candidate). Lists
-    /// the skipped gaps with both per-side peaks + the step.
+    /// `dead-shoulder` (at least one shoulder aligns at no lag — `min`-based, so both-dead lands here too).
+    /// Lists the skipped gaps with both per-side peaks + the step.
     pub fn splice_text(&self) -> String {
         use std::fmt::Write;
         let mut s = String::new();
@@ -843,14 +843,15 @@ impl CorpusReport {
             }
         }
 
-        // One-sided-dead anywhere is the signal that would revive a cross-encoding validator — call it out.
+        // A dead shoulder anywhere means the step is untrustworthy — call it out. (Only the *one*-dead
+        // subset is a cross-encoding candidate; this count is `min`-based and includes both-dead.)
         let dead: Vec<&&GapRow> = matched
             .iter()
-            .filter(|r| r.splice_diag() == Some(SpliceDiag::OneSidedDead))
+            .filter(|r| r.splice_diag() == Some(SpliceDiag::DeadShoulder))
             .collect();
         let _ = writeln!(
             s,
-            "  one-sided-dead (a shoulder aligns at NO lag — would revive cross-encoding): {}",
+            "  dead-shoulder (at least one shoulder aligns at NO lag — step untrustworthy): {}",
             dead.len()
         );
         for r in &dead {

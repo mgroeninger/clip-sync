@@ -84,10 +84,14 @@ pub enum SpliceDiag {
     /// Both shoulders align, but a uniqueness margin is thin ⇒ the per-side lag (and so the `step`) may be
     /// a periodic alias — confirm before trusting.
     AliasSuspect,
-    /// A shoulder fails to reach the peak floor at **any** lag in ±600 ms of its sequentially-centered
-    /// search ⇒ not a splice. This is the only signature that would revive a genuine cross-encoding /
-    /// different-content case.
-    OneSidedDead,
+    /// **At least one** shoulder fails to reach `SPLICE_MIN_PEAK_R` at any lag in ±600 ms of its
+    /// sequentially-centered search ⇒ not a splice. The test is `min(pre, post) < floor`, so this covers
+    /// both-dead as well as one-dead, and on the current corpus both-dead is the majority (14 gaps:
+    /// 31/g8–g11, 50/g8–g17, at r 0.03–0.24) against 3 one-dead (31/g7, 25/g11, 50/g18). Only the *one*-dead
+    /// case is a cross-encoding candidate — both-dead is far more likely no-content, quiet, or a true lag
+    /// outside the search radius — so this variant does not by itself identify one. Split it if that
+    /// distinction ever needs to be acted on.
+    DeadShoulder,
 }
 
 impl SpliceDiag {
@@ -95,7 +99,7 @@ impl SpliceDiag {
         match self {
             SpliceDiag::Splice => "splice",
             SpliceDiag::AliasSuspect => "alias-suspect",
-            SpliceDiag::OneSidedDead => "one-sided-dead",
+            SpliceDiag::DeadShoulder => "dead-shoulder",
         }
     }
 }
@@ -326,12 +330,12 @@ impl GapRow {
     /// **Silence-splice classification** from the ±600 ms per-side `lag_decision` peaks — the
     /// authoritative read (the ±25 ms `seam_probe.recovered_r` mislabels any step > 25 ms). `Splice` =
     /// both shoulders clean & unique ⇒ addressable by independent fit + length reconciliation;
-    /// `OneSidedDead` = a shoulder aligns at no lag ⇒ the only genuine cross-encoding candidate. `None`
-    /// when a side has no lag peak (can't judge).
+    /// `DeadShoulder` = at least one shoulder aligns at no lag (`min`-based — see the variant docs; it does
+    /// NOT mean exactly one). `None` when a side has no lag peak (can't judge).
     pub fn splice_diag(&self) -> Option<SpliceDiag> {
         let (pre, post) = (self.peak_r_pre?, self.peak_r_post?);
         if pre.min(post) < SPLICE_MIN_PEAK_R {
-            return Some(SpliceDiag::OneSidedDead);
+            return Some(SpliceDiag::DeadShoulder);
         }
         // §3.6a: `peak_z` is the primary (periodicity-robust) uniqueness test; prominence is only a
         // low-floor tiebreaker for genuine near-duplicate rivals (see `SPLICE_MIN_PROMINENCE`). Prefer both

@@ -212,7 +212,7 @@ mod tests {
             .is_some_and(|v| (v - (-12.0)).abs() < 1e-6));
 
         // Silence-splice view: both lag-bearing skips have peak_r 0.95 ≥ 0.85 and margin 0.75 ≥ 0.30 ⇒
-        // `splice` (both-sides-recoverable). None are one-sided-dead.
+        // `splice` (both-sides-recoverable). None have a dead shoulder.
         assert!(
             addr.iter()
                 .all(|r| r.splice_diag() == Some(SpliceDiag::Splice) && r.both_sides_recoverable()),
@@ -220,7 +220,7 @@ mod tests {
         );
         let splice = report.splice_text();
         assert!(splice.contains("both-sides-recoverable"));
-        assert!(splice.contains("one-sided-dead (a shoulder aligns at NO lag"));
+        assert!(splice.contains("dead-shoulder (at least one shoulder aligns at NO lag"));
 
         let summary = report.summary_text();
         assert!(summary.contains("plan_kind: fillable"));

@@ -117,7 +117,7 @@ impl FingerprintConfig {
             // `b_mapped_start`/`b_mapped_end` share a single rigid per-gap offset (gap_offset_secs) —
             // pre/post are NOT independently registered. The full-corpus rescan showed real steps up
             // to 322 ms from that nominal, so ±200 ms clips genuine peaks off the search edge and
-            // manufactures false one-sided-dead/decorrelated verdicts. 600 ms matches the width already
+            // manufactures false dead-shoulder/decorrelated verdicts. 600 ms matches the width already
             // validated offline (SPLICE_EXP_FINE_LAG_MS=600, §1b-i/§3.6).
             lag_max_lag_ms: 600,
             lag_envelope_max_lag_ms,
