@@ -17,6 +17,15 @@ locks pair 50's +2.79 s interior**; do not raise the 0.70 envelope guard here ei
 
 ## Problem
 
+**Stakes note (2026-08-21).** [TEMP-pair50-anchor-seam-outcomes-2026-08-21.md](TEMP-pair50-anchor-seam-outcomes-2026-08-21.md)
+measured what production actually does with pair 50's +2.789 s region: all six `patch`-tier gaps there
+are already placed at the correct offset by the editorial anchor-seam bracket search
+(`max_anchor_bracket_secs`, default 5.0 s), independently of `lag_decision`. So the sizing question
+below is about **diagnostic honesty and the rescue branch**, not about a region production cannot
+otherwise reach — a widen here would not be the cluster's only rescue. That note's own open failures
+(50/g11–g13 skipping between correctly-resolved flanks) are downstream of anything this plan changes.
+
+
 The recenter plan's own Result shows the mechanism works when the coarse window reaches the true
 peak (pair 31, ≤1.16 s, inside the 2000 ms default) and saturates honestly when it doesn't (pair
 50, true offset **+2.789 s**, outside 2000 ms — `50/g009` post pins at exactly `envelope_lag_ms =
