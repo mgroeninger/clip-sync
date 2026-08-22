@@ -139,7 +139,7 @@ set on every legal listen run.
 across the B clip at every integer lag in +/-2 s and reports peaks, a floor and a prominence. It
 shares no correlation code with the `lag_decision` it checks, so it is a second opinion on whether a
 shoulder's match sits outside production's fine +/-600 ms window — not a re-run of it. Measures only;
-it classifies nothing. Spec: [TEMP-shoulder-sweep-bin-plan.md](TEMP-shoulder-sweep-bin-plan.md) §4.
+it classifies nothing. Contract: [shoulder-sweep.md](shoulder-sweep.md).
 
 ```powershell
 cargo run -p clip-sync-repair --features calibration --bin shoulder-sweep -- --corpus gap-files/<listen-run>

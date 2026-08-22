@@ -21,7 +21,7 @@
 //! coincidence (it can only fire when a pair's map step equals minus that gap's duration, so no
 //! positive step can ever satisfy it) and must never become a class again.
 //!
-//! **Specification.** `docs/dev/TEMP-shoulder-sweep-bin-plan.md` §4 is this bin's contract — throat
+//! **Specification.** `docs/dev/shoulder-sweep.md` §2-§3 is this bin's contract — throat
 //! placement, the correlation, the peak picker, the derived columns, and the census schema. Read it
 //! before changing any number here.
 //!
@@ -863,16 +863,25 @@ fn resolve_pair(dir_label: &str, root: &Path, pair_flag: Option<&str>) -> (Strin
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    if !root_name.is_empty() && root_name.chars().all(|c| c.is_ascii_digit()) {
+    if root_name.is_empty() {
+        return (
+            ".".to_string(),
+            Some(format!(
+                "no pair index and no directory name for the flat rows of {}; labelling them `.`",
+                root.display()
+            )),
+        );
+    }
+    if root_name.chars().all(|c| c.is_ascii_digit()) {
         return (root_name, None);
     }
-    (
-        ".".to_string(),
-        Some(format!(
-            "no pair index for the flat rows of {}: its name is not an index and no --pair was given; labelling them `.`",
-            root.display()
-        )),
-    )
+    // Last resort: the root's own name. It is not an index, so the note stays — but a run
+    // directory's name identifies the rows in a merged census where a bare `.` cannot.
+    let note = format!(
+        "no pair index for the flat rows of {}: its name is not an index and no --pair was given; labelling them `{root_name}`",
+        root.display()
+    );
+    (root_name, Some(note))
 }
 
 /// `--pair` labels a flat directory the tree cannot name. Passing it at a run directory of pair
@@ -1040,13 +1049,16 @@ fn run_corpus(args: &Args, corpus: &Path) -> Result<(), String> {
     }
     sort_rows(&mut rows);
 
+    // The pair column widens to the longest label so a run-directory fallback name (section 5)
+    // does not shift every other column on its row.
+    let pw = rows.iter().map(|r| r.pair.len()).max().unwrap_or(4).max(4);
     println!(
-        "{:>6} {:>5} {:>9} {:>7} {:>9} {:>7} {:>9} {:>9} {:>5}",
+        "{:>pw$} {:>5} {:>9} {:>7} {:>9} {:>7} {:>9} {:>9} {:>5}",
         "pair", "gap", "pre_ms", "pre_r", "post_ms", "post_r", "step_ms", "bridge", "live"
     );
     for r in &rows {
         println!(
-            "{:>6} {:>5} {:>9.1} {:>7.3} {:>9.1} {:>7.3} {:>9.1} {:>9.1} {:>5}",
+            "{:>pw$} {:>5} {:>9.1} {:>7.3} {:>9.1} {:>7.3} {:>9.1} {:>9.1} {:>5}",
             r.pair,
             r.gap_index
                 .map(|i| format!("g{i}"))
@@ -1066,7 +1078,7 @@ fn run_corpus(args: &Args, corpus: &Path) -> Result<(), String> {
     let json = out_dir.join("census.json");
     let payload = serde_json::json!({
         "_contract": {
-            "instrument": "shoulder-sweep (docs/dev/TEMP-shoulder-sweep-bin-plan.md §4; archived registration plan §4.3)",
+            "instrument": "shoulder-sweep (docs/dev/shoulder-sweep.md; archived registration plan §4.3)",
             "center": "non-chained; lag 0 = the nominal map at each throat, measured independently per shoulder",
             "window": format!("1 s template, ±{:.0} ms, {PEAK_EXCLUSION_MS:.0} ms peak exclusion", args.max_lag_ms),
             "max_lag_ms": args.max_lag_ms,
@@ -1658,8 +1670,18 @@ mod tests {
             "--pair beats the weaker root-name guess"
         );
         let (label, note) = resolve_pair(".", root, None);
-        assert_eq!(label, ".");
-        assert!(note.expect("a stated fallback").contains("no pair index"));
+        assert_eq!(
+            label, "2026-08-18-post-sweep",
+            "last resort is the root's own name, never a bare `.`"
+        );
+        let note = note.expect("a stated fallback");
+        assert!(note.contains("is not an index"), "{note}");
+        assert!(note.contains("2026-08-18-post-sweep"), "{note}");
+        assert_eq!(
+            resolve_pair(".", Path::new(""), None).0,
+            ".",
+            "a root with no name at all still falls back to `.`"
+        );
     }
 
     #[test]

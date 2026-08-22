@@ -18,7 +18,7 @@
 > The second thing the exercise established: the **Arm B dead-shoulder gate (§4) is load-bearing** —
 > without it pair 50 reports a 1040/985/942 ms staircase assembled from noise peaks.
 >
-> Next instrument is [TEMP-shoulder-sweep-bin-plan.md](../TEMP-shoulder-sweep-bin-plan.md), **cut
+> Next instrument is [shoulder-sweep.md](../shoulder-sweep.md), **cut
 > 2026-08-21 to measurement only** — it records `step_ms` and does not classify, because no listen
 > tree on disk satisfies the sequence test above (pair 31 has 4 live gaps; pair 50 has 6 but no
 > boundary gap). Un-park this plan when either a listen tree or a wider-envelope re-fingerprint
@@ -74,7 +74,7 @@ cutoff — pair 31's 1.15 s and a pair whose seams scatter by 40 ms are not the 
 - No repair-behaviour change, no new production predicate, no `collapsed_bridge` tuning. The
   memory note stands: don't build a `|bridge_ms| ≤ 50 ms` detector.
 - No WAV decoding. This is a dump-only pass over JSON already on disk; the WAV instrument is
-  [TEMP-shoulder-sweep-bin-plan.md](../TEMP-shoulder-sweep-bin-plan.md) and stays separate (§9).
+  [shoulder-sweep.md](../shoulder-sweep.md) and stays separate (its plan record's §9).
 - No golden/CI baseline in the first cut. Add one only if the numbers turn out to be worth
   regressing against.
 

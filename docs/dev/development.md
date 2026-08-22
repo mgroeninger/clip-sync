@@ -163,7 +163,7 @@ cargo run -p clip-sync-repair --features calibration --bin equivalence-calibrati
 # Cross-check listen WAVs vs an Observe/Apply dump (pair dirs matched by stem):
 cargo run -p clip-sync-repair --features calibration --bin listen-registration -- gap-files/<listen-run> --observe-dir gap-files/<observe-run>
 # Wide-window (+/-2 s) independent lag sweep of both shoulders on the listen WAVs. Measures only —
-# no classification. Spec: docs/dev/TEMP-shoulder-sweep-bin-plan.md section 4.
+# no classification. Contract: docs/dev/shoulder-sweep.md sections 2-3.
 cargo run -p clip-sync-repair --features calibration --bin shoulder-sweep -- --corpus gap-files/<listen-run>
 cargo run -p clip-sync-repair --features calibration --bin shoulder-sweep -- --shoulder pre <stem>_a_surround.wav <stem>_b_surround.wav
 cargo run -p clip-sync-repair-harness --features calibration --bin gap-fingerprint-stats -- gap-files
