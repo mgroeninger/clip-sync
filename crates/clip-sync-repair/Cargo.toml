@@ -33,6 +33,14 @@ name = "listen-registration"
 path = "src/bin/listen_registration.rs"
 required-features = ["calibration"]
 
+# Calibration/dev tool: independent wide-window (+/-2 s) waveform lag sweep of both gap shoulders
+# on the --gap-listen WAVs. Measures, never classifies; shares no correlation code with the
+# lag_decision it checks. Spec: docs/dev/TEMP-shoulder-sweep-bin-plan.md section 4.
+[[bin]]
+name = "shoulder-sweep"
+path = "src/bin/shoulder_sweep.rs"
+required-features = ["calibration"]
+
 [features]
 default = []
 ffmpeg-mux = []

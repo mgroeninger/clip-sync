@@ -4,11 +4,26 @@
 > offline to the CSV the shipped bin already exports (`GAP_FP_CSV=1`), and the answer is a null:
 > 935 admitted rows, largest trustworthy step **63.9 ms**, nothing above 100 ms, both known
 > boundaries censored. Recorded in the parent census, **Result 8**. Do not implement `--steps` to
-> re-derive a null on a disposable corpus. What the exercise *did* establish, and what any future
-> reader should take from this file: the **Arm B dead-shoulder gate (§4) is load-bearing** — without
-> it pair 50 reports a 1040/985/942 ms staircase assembled from noise peaks. Next instrument is
-> [TEMP-shoulder-sweep-bin-plan.md](../TEMP-shoulder-sweep-bin-plan.md); its queue is pairs 31 and 50.
-> Un-park only if a `--steps` mode is wanted as the durable, CI-guarded form of that measurement.
+> re-derive a null on a disposable corpus.
+>
+> **This file is the canonical home of the step-boundary rule. Read §4–§5 before proposing any
+> boundary, plateau, or "persistence" classifier anywhere in this repo.** The rule has two halves and
+> both are load-bearing: the per-gap step test (`|step| > max(CLEAN_STEP_MS, 6 × MAD)`) **and** the
+> sequence test (≥2 admitted gaps settled on each side, "settled" = within `max(CLEAN_STEP_MS,
+> 2 × MAD)` of that side's mean; <5 admitted gaps per pair ⇒ no verdict). Applying only the first
+> half manufactures false boundaries out of lone excursions — that was done on 2026-08-21, produced a
+> spurious "the null is one, not zero" correction to Result 8, and was withdrawn; see the parent
+> census's **Question 12**. Take the parameters from §4 verbatim rather than re-deriving them.
+>
+> The second thing the exercise established: the **Arm B dead-shoulder gate (§4) is load-bearing** —
+> without it pair 50 reports a 1040/985/942 ms staircase assembled from noise peaks.
+>
+> Next instrument is [TEMP-shoulder-sweep-bin-plan.md](../TEMP-shoulder-sweep-bin-plan.md), **cut
+> 2026-08-21 to measurement only** — it records `step_ms` and does not classify, because no listen
+> tree on disk satisfies the sequence test above (pair 31 has 4 live gaps; pair 50 has 6 but no
+> boundary gap). Un-park this plan when either a listen tree or a wider-envelope re-fingerprint
+> supplies a pair that can, or if a `--steps` mode is wanted as the durable CI-guarded form of the
+> measurement.
 
 **Status:** ~~draft, not started~~ **parked**, 2026-08-21. **One deliverable:** a new analysis mode on the
 existing `gap-fingerprint-stats` bin that, per pair, orders gaps along the file and reports

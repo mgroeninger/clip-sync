@@ -134,6 +134,17 @@ two-thirds of an explicitly requested multi-hour diagnostic is the failure mode 
 avoid. `dry_run` is *not* rejected: it defaults on and is cleared only by an output flag, so it is
 set on every legal listen run.
 
+**Reading the WAVs back with an independent instrument.** The `shoulder-sweep` calibration bin
+(`crates/clip-sync-repair/src/bin/shoulder_sweep.rs`) sweeps a 1 s template from each side of a gap
+across the B clip at every integer lag in +/-2 s and reports peaks, a floor and a prominence. It
+shares no correlation code with the `lag_decision` it checks, so it is a second opinion on whether a
+shoulder's match sits outside production's fine +/-600 ms window — not a re-run of it. Measures only;
+it classifies nothing. Spec: [TEMP-shoulder-sweep-bin-plan.md](TEMP-shoulder-sweep-bin-plan.md) §4.
+
+```powershell
+cargo run -p clip-sync-repair --features calibration --bin shoulder-sweep -- --corpus gap-files/<listen-run>
+```
+
 **Cost.** Every selected gap costs three WAVs *and* a production characterize — the dominant term in
 a repair run. A bare `--gap-listen` selects the whole pair; above 25 gaps it warns before the decode
 so an accidental multi-hour run can still be aborted. Narrow with `--fingerprint-gap`.

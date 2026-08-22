@@ -73,7 +73,7 @@ CLI integration tests enable `clip-sync` with `test-utils` and `he-aac` via `dev
 | `ffmpeg-tests` | no | Passthrough: `clip-sync/ffmpeg-tests` (AC-3 dual-track scan integration test) |
 | `validation-tests` | no | Compiles `validate_floor_oracle`, `validate_residual_gate`, `validate_patch_audio`, `validate_dual_fit_oracle`, `calibrate_anchor_prominence` integration binaries |
 | `diagnostic-tests` | no | Compiles `diag_energy_matrix`, `diag_seam_residual`, `diag_patch_audio`, `diag_anchor_seam`, `diag_w5_anchor_rescue`, `diag_w5_timing_offset`, `diag_anchor_quiet_gap`, `diag_splice_timescale`, `seam_residual_oracle` integration binaries |
-| `calibration` | no | Gap-fingerprint calibration workflow: the `--gap-fingerprints` / `--fingerprint-gap` / `--fingerprint-diagnostics` / `--lag-envelope-max-lag-ms` producer flags + corpus writer; `equivalence-calibration` and `listen-registration` bins (`clip-sync-repair`); `gap-fingerprint-stats` bin (`clip-sync-repair-harness`). Off by default so the diagnostic surface stays out of the production binary |
+| `calibration` | no | Gap-fingerprint calibration workflow: the `--gap-fingerprints` / `--fingerprint-gap` / `--fingerprint-diagnostics` / `--lag-envelope-max-lag-ms` producer flags + corpus writer; `equivalence-calibration`, `listen-registration` and `shoulder-sweep` bins (`clip-sync-repair`); `gap-fingerprint-stats` bin (`clip-sync-repair-harness`). Off by default so the diagnostic surface stays out of the production binary |
 
 Without `ffmpeg-mux`, `--mux` is rejected at argument parse with a clear error ([error-mapping.md](../error-mapping.md)).
 
@@ -151,7 +151,7 @@ validation changes.
 | *(default)* | lib + integration + `oracle_*` + `integration_gap_corpus` |
 | `validation-tests` | `validate_floor_oracle`, `validate_residual_gate`, `validate_patch_audio`, `validate_dual_fit_oracle`, `calibrate_anchor_prominence` |
 | `diagnostic-tests` | `diag_energy_matrix`, `diag_seam_residual`, `diag_patch_audio`, `diag_anchor_seam`, `diag_w5_anchor_rescue`, `diag_w5_timing_offset`, `diag_anchor_quiet_gap`, `diag_splice_timescale`, `seam_residual_oracle` |
-| `calibration` | `equivalence-calibration` + `listen-registration` + `gap-fingerprint-stats` bins (not tests) |
+| `calibration` | `equivalence-calibration` + `listen-registration` + `shoulder-sweep` + `gap-fingerprint-stats` bins; `shoulder-sweep`'s tests are colocated and run in `pr-repair` via `--bin shoulder-sweep` |
 
 ```powershell
 cargo test -p clip-sync-repair --features validation-tests --test validate_floor_oracle
@@ -162,6 +162,10 @@ cargo run -p clip-sync-repair --features calibration --bin equivalence-calibrati
 cargo run -p clip-sync-repair --features calibration --bin equivalence-calibration -- gap-files/equiv --replay
 # Cross-check listen WAVs vs an Observe/Apply dump (pair dirs matched by stem):
 cargo run -p clip-sync-repair --features calibration --bin listen-registration -- gap-files/<listen-run> --observe-dir gap-files/<observe-run>
+# Wide-window (+/-2 s) independent lag sweep of both shoulders on the listen WAVs. Measures only —
+# no classification. Spec: docs/dev/TEMP-shoulder-sweep-bin-plan.md section 4.
+cargo run -p clip-sync-repair --features calibration --bin shoulder-sweep -- --corpus gap-files/<listen-run>
+cargo run -p clip-sync-repair --features calibration --bin shoulder-sweep -- --shoulder pre <stem>_a_surround.wav <stem>_b_surround.wav
 cargo run -p clip-sync-repair-harness --features calibration --bin gap-fingerprint-stats -- gap-files
 ```
 
