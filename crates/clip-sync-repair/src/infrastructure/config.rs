@@ -181,6 +181,19 @@ pub struct RepairConfig {
     /// [`crate::application::gap_fingerprint::DEFAULT_LAG_ENVELOPE_MAX_LAG_MS`].
     #[serde(default = "default_lag_envelope_max_lag_ms")]
     pub lag_envelope_max_lag_ms: u32,
+    /// Fingerprint-only: which arm sizes the **shared** A border capture behind `lag_decision`.
+    /// Default `Narrow` (shipped). `Wide` restores the pre-2026-08-20 reach as a diagnostic arm and
+    /// re-baselines every shoulder's `border_displacement_ms`, so its dumps are not comparable
+    /// field-by-field with narrow ones. Probe-only — production repair never reads it.
+    #[serde(default)]
+    pub border_capture: crate::application::gap_fingerprint::BorderCapture,
+    /// Fingerprint-only: coarse envelope **window** (seconds) the `lag_decision` recenter
+    /// correlates. Default 2.0. Rescue path only — the Tier-3 `wide_envelope` diagnostic keeps its
+    /// own pinned window, so a raised value makes the two lags in one dump incomparable (recorded
+    /// in `probe_recipe.lag_envelope_window_secs` for exactly that reason). Must match
+    /// [`crate::application::gap_fingerprint::DEFAULT_LAG_ENVELOPE_WINDOW_SECS`].
+    #[serde(default = "default_lag_envelope_window_secs")]
+    pub lag_envelope_window_secs: f64,
     /// Window size (seconds) for computing A's border RMS.
     #[serde(default = "default_normalize_window_secs")]
     pub normalize_window_secs: f64,
@@ -400,6 +413,9 @@ fn default_true() -> bool {
 fn default_lag_envelope_max_lag_ms() -> u32 {
     2000
 }
+fn default_lag_envelope_window_secs() -> f64 {
+    2.0
+}
 fn default_gap_offset_tolerance_secs() -> f64 {
     0.5
 }
@@ -589,6 +605,8 @@ impl Default for RepairConfig {
             dual_fit: true,
             fingerprint_diagnostics: false,
             lag_envelope_max_lag_ms: default_lag_envelope_max_lag_ms(),
+            border_capture: crate::application::gap_fingerprint::BorderCapture::default(),
+            lag_envelope_window_secs: default_lag_envelope_window_secs(),
             normalize_window_secs: default_normalize_window_secs(),
             max_fill_gain_db: default_max_fill_gain_db(),
             output: RepairOutputConfig::default(),

@@ -189,6 +189,8 @@ fn gap_listen(
             wav_dir,
             fingerprint_diagnostics: config.repair.fingerprint_diagnostics,
             lag_envelope_max_lag_ms: config.repair.lag_envelope_max_lag_ms,
+            border_capture: config.repair.border_capture,
+            lag_envelope_window_secs: config.repair.lag_envelope_window_secs,
             crossfade_ms: config.repair.crossfade_ms,
         },
     )
@@ -248,8 +250,12 @@ fn dump_gap_fingerprints(
         },
         &request,
         &select,
-        config.repair.fingerprint_diagnostics,
-        config.repair.lag_envelope_max_lag_ms,
+        crate::application::gap_fingerprint::DumpOptions {
+            diagnostics: config.repair.fingerprint_diagnostics,
+            lag_envelope_max_lag_ms: config.repair.lag_envelope_max_lag_ms,
+            border_capture: config.repair.border_capture,
+            lag_envelope_window_secs: config.repair.lag_envelope_window_secs,
+        },
         progress,
     );
     if let Some(reason) = corpus.source.incomparable {

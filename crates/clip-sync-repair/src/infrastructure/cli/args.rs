@@ -4,6 +4,8 @@ use clap::{Parser, ValueEnum};
 
 use clip_sync::LogLevel;
 
+#[cfg(feature = "calibration")]
+use crate::application::gap_fingerprint::BorderCapture;
 use crate::domain::{FillMode, FillOffsetMode, GapSignatureMode, RepairProfile};
 use crate::infrastructure::config::OutputFormat;
 
@@ -65,6 +67,29 @@ pub struct Args {
     #[cfg(feature = "calibration")]
     #[arg(long, value_name = "MS")]
     pub lag_envelope_max_lag_ms: Option<u32>,
+
+    /// How wide to cut the **shared** A border capture behind `lag_decision` [default: narrow].
+    /// `narrow` sizes it to the nominal fine sweep's own reach (shipped behaviour). `wide` also
+    /// covers the envelope's reach, restoring the pre-2026-08-20 arm — a diagnostic that moves
+    /// `border_displacement_ms` on every shoulder, so its dumps are NOT field-comparable with
+    /// narrow ones. No effect with `--lag-envelope-max-lag-ms 0`. Requires `--gap-fingerprints`.
+    #[cfg(feature = "calibration")]
+    #[arg(long, value_enum, value_name = "MODE")]
+    pub border_capture: Option<BorderCaptureArg>,
+
+    /// Coarse envelope window (seconds) the `lag_decision` recenter correlates. Default 2.0.
+    /// Widens the rescue branch's A-side template — and with it `wide_need`, so it interacts with
+    /// `--border-capture`. The A window is clamped to the shoulder, so widening is not refused for
+    /// lack of A material; what it costs is **B lead-in**. The recenter needs `window +
+    /// --lag-envelope-max-lag-ms` of B before the gap or it declines without correlating. Capture
+    /// pads B by ~14 s at the defaults, so this bites only gaps near the start of B.
+    /// **Rescue path only**: the Tier-3 `wide_envelope` diagnostic keeps its own pinned
+    /// window, so a raised value puts two non-comparable lags in one dump (the value is recorded in
+    /// `probe_recipe.lag_envelope_window_secs`). No effect with `--lag-envelope-max-lag-ms 0`.
+    /// Requires `--gap-fingerprints`.
+    #[cfg(feature = "calibration")]
+    #[arg(long, value_name = "SECS")]
+    pub lag_envelope_window_secs: Option<f64>,
 
     /// Output format.
     #[arg(long, default_value = "human")]
@@ -450,6 +475,25 @@ pub struct Args {
     pub no_limit_fill_region: bool,
 }
 
+/// CLI spelling of [`BorderCapture`]. Kept separate from the application enum so the measure layer
+/// does not take a clap dependency — same split as [`LogLevelArg`] / `LogLevel`.
+#[cfg(feature = "calibration")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum BorderCaptureArg {
+    Narrow,
+    Wide,
+}
+
+#[cfg(feature = "calibration")]
+impl From<BorderCaptureArg> for BorderCapture {
+    fn from(value: BorderCaptureArg) -> Self {
+        match value {
+            BorderCaptureArg::Narrow => BorderCapture::Narrow,
+            BorderCaptureArg::Wide => BorderCapture::Wide,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum LogLevelArg {
     Error,
@@ -611,6 +655,8 @@ mod tests {
             "gap-fingerprints",
             "fingerprint-diagnostics",
             "lag-envelope-max-lag-ms",
+            "border-capture",
+            "lag-envelope-window-secs",
         ] {
             assert!(help.contains(needle), "help missing {needle:?}:\n{help}");
         }

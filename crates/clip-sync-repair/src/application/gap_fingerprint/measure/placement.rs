@@ -72,6 +72,12 @@ impl CorpusProbeRecipe {
             lag_max_lag_ms: measured_lag.then_some(cfg.lag_max_lag_ms),
             // Include `0` so an off-arm dump is distinguishable from a pre-field corpus.
             lag_envelope_max_lag_ms: measured_lag.then_some(cfg.lag_envelope_max_lag_ms),
+            // Same rule as the knob above: recorded only when a sweep actually happened, so a
+            // summary-only corpus never claims an arm it did not run.
+            border_capture: measured_lag.then_some(cfg.border_capture),
+            // Recorded even at the default: the Tier-3 `wide_envelope` diagnostic does not follow
+            // this knob, so a reader comparing the two lags needs to know which window ran.
+            lag_envelope_window_secs: measured_lag.then_some(cfg.lag_envelope_window_secs),
             seam_window_secs: measured_seams.then_some(cfg.fill_seam_search_secs),
             border_standoff_secs: probe_border_standoff_secs(sample_rate),
         }
@@ -305,8 +311,15 @@ mod tests {
             "levels runs on every path, so the collar is always reportable"
         );
         assert_eq!(
-            (recipe.lag_window_secs, recipe.lag_max_lag_ms, recipe.lag_envelope_max_lag_ms, recipe.seam_window_secs),
-            (None, None, None, None),
+            (
+                recipe.lag_window_secs,
+                recipe.lag_max_lag_ms,
+                recipe.lag_envelope_max_lag_ms,
+                recipe.border_capture,
+                recipe.lag_envelope_window_secs,
+                recipe.seam_window_secs,
+            ),
+            (None, None, None, None, None, None),
             "a summary-only corpus has no lag_decision and no seams — reporting their windows would \
              describe sweeps that never ran"
         );

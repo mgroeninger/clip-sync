@@ -1,13 +1,44 @@
 //! `config` slice of the gap_fingerprint measure folder split.
 
-
-
-
-
+use crate::application::gap_fingerprint::schema::BorderCapture;
 
 /// Default coarse envelope half-width (ms) that recenters the ±`lag_max_lag_ms` fine sweep.
 /// `0` disables recenter. Probe-only — not Apply's `max_lag_blocks`.
 pub const DEFAULT_LAG_ENVELOPE_MAX_LAG_MS: u32 = 2000;
+/// Default coarse envelope **window** (seconds) — the A-side template length the recenter
+/// correlates. Deliberately defined as `WIDE_ENV_WINDOW_SECS`, the constant the `wide_envelope`
+/// *diagnostic* (`probes.rs`) stays pinned to: at the default the two paths agree, and raising this
+/// knob is exactly what makes them diverge. That divergence is a tracked open item (BACKLOG
+/// § *Fill placement* — *Envelope width knobs move only the rescue path*), and it is why the value
+/// is recipe-stamped: a dump must always say which window produced its `lag_decision`.
+pub const DEFAULT_LAG_ENVELOPE_WINDOW_SECS: f64 = super::pcm::WIDE_ENV_WINDOW_SECS;
+/// The probe-only knobs a `--gap-fingerprints` dump carries beyond the production patch request.
+///
+/// Bundled rather than threaded as separate parameters so adding the next one does not re-touch
+/// every call site — and so `characterize_gaps_from_decode` stays inside clippy's argument limit
+/// instead of growing a suppression. `Default` is the shipped arm: no Tier-3 extras, the standard
+/// envelope half-width, narrow border capture.
+#[derive(Debug, Clone, Copy)]
+pub struct DumpOptions {
+    /// Tier-3 X-set (`seam_probe` / `wide_envelope` / `lag_editorial` / `b_levels`).
+    pub diagnostics: bool,
+    /// Coarse envelope half-width (ms) for the `lag_decision` recenter; `0` disables it.
+    pub lag_envelope_max_lag_ms: u32,
+    /// Which arm sizes the shared A border capture — see [`BorderCapture`].
+    pub border_capture: BorderCapture,
+    /// Coarse envelope **window** (seconds) for the `lag_decision` recenter. Rescue path only.
+    pub lag_envelope_window_secs: f64,
+}
+impl Default for DumpOptions {
+    fn default() -> Self {
+        Self {
+            diagnostics: false,
+            lag_envelope_max_lag_ms: DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
+            border_capture: BorderCapture::Narrow,
+            lag_envelope_window_secs: DEFAULT_LAG_ENVELOPE_WINDOW_SECS,
+        }
+    }
+}
 /// Thresholds + window sizes the builder needs (a media-free subset of `RepairConfig`).
 #[derive(Debug, Clone, Copy)]
 pub struct FingerprintConfig {
@@ -38,6 +69,20 @@ pub struct FingerprintConfig {
     /// sweep. Default [`DEFAULT_LAG_ENVELOPE_MAX_LAG_MS`]. `0` disables recenter (nominal
     /// `b_mapped`, no `envelope_*` on the wire). Probe-only — not Apply's `max_lag_blocks`.
     pub lag_envelope_max_lag_ms: u32,
+    /// Which arm sizes the **shared** A border capture behind `lag_decision`. Default
+    /// [`BorderCapture::Narrow`] (shipped). [`BorderCapture::Wide`] restores the pre-2026-08-20
+    /// reach and re-baselines every shoulder's `border_displacement_ms` — see the type docs.
+    /// Probe-only; production repair never reads it.
+    pub border_capture: BorderCapture,
+    /// Coarse per-shoulder envelope **window** (seconds) correlated by the `lag_decision` recenter.
+    /// Default [`DEFAULT_LAG_ENVELOPE_WINDOW_SECS`]. Widening it raises the rescue branch's
+    /// `wide_need`, which feeds `shared_covers_wide` in [`lag_at_placement`] — so it interacts with
+    /// [`BorderCapture`]: a wide-enough window makes the shared capture cover the envelope reach and
+    /// the lazy per-shoulder fetches collapse. It also raises the B lead-in the recenter demands
+    /// (`anchor_frame < w + max_lag` in `envelope_shoulder` declines before correlating); the A-side
+    /// template itself is clamped to the shoulder. Probe-only, and **rescue-path only** —
+    /// `wide_envelope_at_placement` (`probes.rs`) is not steered by it.
+    pub lag_envelope_window_secs: f64,
     /// Window (seconds) for the lag-uniqueness measurement. §3.6a froze this at **1 s** — it separates
     /// real registration from periodic ambiguity (250 ms is ambiguous on quiet produced audio, where a
     /// rival local max is nearly as tall; 1 s breaks the tie). Drives `peak_z` / `prominence`.
@@ -67,6 +112,8 @@ impl Default for FingerprintConfig {
             max_refine_secs: 0.75,
             lag_max_lag_ms: 600,
             lag_envelope_max_lag_ms: DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
+            border_capture: BorderCapture::Narrow,
+            lag_envelope_window_secs: DEFAULT_LAG_ENVELOPE_WINDOW_SECS,
             lag_window_secs: 1.0,
         }
     }
@@ -94,7 +141,7 @@ impl FingerprintConfig {
     pub(crate) fn from_request(
         request: &crate::application::PatchAudioRequest,
         silence_peak_fraction: f32,
-        lag_envelope_max_lag_ms: u32,
+        dump: DumpOptions,
     ) -> Self {
         const GAP_EDGE_REFINE_SECS: f64 = 0.75;
         Self {
@@ -120,7 +167,9 @@ impl FingerprintConfig {
             // manufactures false dead-shoulder/decorrelated verdicts. 600 ms matches the width already
             // validated offline (SPLICE_EXP_FINE_LAG_MS=600, §1b-i/§3.6).
             lag_max_lag_ms: 600,
-            lag_envelope_max_lag_ms,
+            lag_envelope_max_lag_ms: dump.lag_envelope_max_lag_ms,
+            border_capture: dump.border_capture,
+            lag_envelope_window_secs: dump.lag_envelope_window_secs,
             lag_window_secs: 1.0,
         }
     }

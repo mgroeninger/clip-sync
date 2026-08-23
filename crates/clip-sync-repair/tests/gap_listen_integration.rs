@@ -211,6 +211,9 @@ fn run_listen_with(
             fingerprint_diagnostics: false,
             lag_envelope_max_lag_ms:
                 clip_sync_repair::application::gap_fingerprint::DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
+            border_capture: clip_sync_repair::application::gap_fingerprint::BorderCapture::Narrow,
+            lag_envelope_window_secs:
+                clip_sync_repair::application::gap_fingerprint::DEFAULT_LAG_ENVELOPE_WINDOW_SECS,
             crossfade_ms: CROSSFADE_MS,
         },
     )
@@ -241,6 +244,9 @@ fn try_run_listen(
             fingerprint_diagnostics: false,
             lag_envelope_max_lag_ms:
                 clip_sync_repair::application::gap_fingerprint::DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
+            border_capture: clip_sync_repair::application::gap_fingerprint::BorderCapture::Narrow,
+            lag_envelope_window_secs:
+                clip_sync_repair::application::gap_fingerprint::DEFAULT_LAG_ENVELOPE_WINDOW_SECS,
             crossfade_ms: CROSSFADE_MS,
         },
     )

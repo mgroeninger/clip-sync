@@ -80,6 +80,14 @@ pub fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     if let Some(ms) = args.lag_envelope_max_lag_ms {
         config.repair.lag_envelope_max_lag_ms = ms;
     }
+    #[cfg(feature = "calibration")]
+    if let Some(mode) = args.border_capture {
+        config.repair.border_capture = mode.into();
+    }
+    #[cfg(feature = "calibration")]
+    if let Some(secs) = args.lag_envelope_window_secs {
+        config.repair.lag_envelope_window_secs = secs;
+    }
     if let Some(wav_path) = &args.wav {
         config.repair.output.wav_path = Some(wav_path.clone());
         config.repair.dry_run = false;
@@ -306,6 +314,12 @@ pub(crate) fn validate_fingerprint_flags(args: &Args) -> Result<(), String> {
         }
         if args.lag_envelope_max_lag_ms.is_some() {
             return Err("--lag-envelope-max-lag-ms requires --gap-fingerprints DIR".into());
+        }
+        if args.border_capture.is_some() {
+            return Err("--border-capture requires --gap-fingerprints DIR".into());
+        }
+        if args.lag_envelope_window_secs.is_some() {
+            return Err("--lag-envelope-window-secs requires --gap-fingerprints DIR".into());
         }
         if args.gap_listen.is_some() {
             return Err("--gap-listen requires --gap-fingerprints DIR".into());
@@ -820,6 +834,117 @@ mod cli_override_tests {
         ]);
         let err = validate_fingerprint_flags(&args).unwrap_err();
         assert!(err.contains("--gap-fingerprints"));
+    }
+
+    #[cfg(feature = "calibration")]
+    #[test]
+    fn border_capture_without_dump_dir_is_rejected() {
+        use clap::Parser;
+
+        let args = Args::parse_from([
+            "clip-sync-repair",
+            "a.wav",
+            "b.wav",
+            "--border-capture",
+            "wide",
+        ]);
+        let err = validate_fingerprint_flags(&args).unwrap_err();
+        assert!(err.contains("--gap-fingerprints"), "got {err}");
+    }
+
+    /// The default must stay `Narrow` all the way through the override, not just in `RepairConfig`:
+    /// a run that does not name the flag has to keep the shipped arm, because `Wide` moves
+    /// `border_displacement_ms` on every shoulder and silently invalidates cross-dump comparison.
+    #[cfg(feature = "calibration")]
+    #[test]
+    fn border_capture_defaults_to_narrow_and_overrides_to_wide() {
+        use crate::application::gap_fingerprint::BorderCapture;
+        use clap::Parser;
+
+        let base = Args::parse_from([
+            "clip-sync-repair",
+            "a.wav",
+            "b.wav",
+            "--gap-fingerprints",
+            "gap-files/out",
+        ]);
+        assert_eq!(base.border_capture, None);
+        let mut config = RepairAppConfig::default();
+        apply_cli_overrides(&mut config, &base);
+        assert_eq!(config.repair.border_capture, BorderCapture::Narrow);
+
+        let wide = Args::parse_from([
+            "clip-sync-repair",
+            "a.wav",
+            "b.wav",
+            "--gap-fingerprints",
+            "gap-files/out",
+            "--border-capture",
+            "wide",
+        ]);
+        validate_fingerprint_flags(&wide).expect("valid fingerprint flag combo");
+        let mut config = RepairAppConfig::default();
+        apply_cli_overrides(&mut config, &wide);
+        assert_eq!(config.repair.border_capture, BorderCapture::Wide);
+    }
+
+    #[cfg(feature = "calibration")]
+    #[test]
+    fn lag_envelope_window_secs_without_dump_dir_is_rejected() {
+        use clap::Parser;
+
+        let args = Args::parse_from([
+            "clip-sync-repair",
+            "a.wav",
+            "b.wav",
+            "--lag-envelope-window-secs",
+            "4.0",
+        ]);
+        let err = validate_fingerprint_flags(&args).unwrap_err();
+        assert!(err.contains("--gap-fingerprints"), "got {err}");
+    }
+
+    /// The default must survive the override path unchanged. It is not a free knob: the Tier-3
+    /// `wide_envelope` diagnostic is pinned to its own window, so any value but the default puts two
+    /// lags measured by different searches in the same dump.
+    #[cfg(feature = "calibration")]
+    #[test]
+    fn lag_envelope_window_secs_defaults_to_two_and_overrides() {
+        use clap::Parser;
+
+        let base = Args::parse_from([
+            "clip-sync-repair",
+            "a.wav",
+            "b.wav",
+            "--gap-fingerprints",
+            "gap-files/out",
+        ]);
+        assert_eq!(base.lag_envelope_window_secs, None);
+        let mut config = RepairAppConfig::default();
+        apply_cli_overrides(&mut config, &base);
+        assert!(
+            (config.repair.lag_envelope_window_secs - 2.0).abs() < f64::EPSILON,
+            "got {}",
+            config.repair.lag_envelope_window_secs
+        );
+
+        let wide = Args::parse_from([
+            "clip-sync-repair",
+            "a.wav",
+            "b.wav",
+            "--gap-fingerprints",
+            "gap-files/out",
+            "--lag-envelope-window-secs",
+            "4.5",
+        ]);
+        validate_fingerprint_flags(&wide).expect("valid fingerprint flag combo");
+        let mut config = RepairAppConfig::default();
+        apply_cli_overrides(&mut config, &wide);
+        assert!(
+            (config.repair.lag_envelope_window_secs - 4.5).abs() < f64::EPSILON,
+            "got {}",
+            config.repair.lag_envelope_window_secs
+        );
     }
 
     #[cfg(feature = "calibration")]

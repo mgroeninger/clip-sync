@@ -39,6 +39,33 @@ clip-sync-repair A.mkv B.m4v --gap-fingerprints gap-files/ [--fingerprint-gap 3]
   shoulders that are dead at nominal (`peak_r` < 0.5; default **2000**). `0` disables rescue
   (nominal `b_mapped` only; no `envelope_*` / `envelope_rescue` on the wire). Probe-only — not
   Apply's `max_lag_blocks`. Same binary, on vs off, is the nominal-first exit.
+- `--border-capture narrow|wide` — which A-border capture `lag_decision` is swept from
+  (`BorderCapture`; recorded on `source.probe_recipe.border_capture`). **`narrow` is the shipped
+  default** (nominal fine reach only; envelope rescue fetches a wider buffer lazily). `wide`
+  restores the pre-2026-08-20 shared capture (`max` of that reach and `2 s + lag_envelope_max_lag_ms`)
+  as a **diagnostic arm**. It re-baselines `border_displacement_ms` on every shoulder, not just
+  rescued ones — a 505-shoulder A/B moved 161 displacements by >1 ms while flipping one verdict
+  — so do not make it the default, and do not compare `frac_lag_ms` across arms. Requires
+  `--gap-fingerprints`. Known miss on `narrow`: 31/g8 pre (envelope +800 / r 0.816, `D` 13 ms;
+  `wide` keeps −1146.1 / 0.974, `D` 1984 ms).
+- `--lag-envelope-window-secs SECS` — the envelope **window** the rescue correlates (default
+  **2.0**; recorded on `source.probe_recipe.lag_envelope_window_secs`). Widening it raises the
+  rescue's `wide_need`, so it interacts with `--border-capture`. Two cautions, both tested:
+  1. **It trades against B lead-in, not against the shoulder.** The A-side template is clamped
+     (`w = window.min(a_border.len())`), so a wide window is never refused for lack of A material.
+     The binding guard is `anchor_frame < w + max_lag` in `envelope_shoulder`: the recenter needs
+     `window + --lag-envelope-max-lag-ms` of B *before* the gap, or it declines without correlating
+     and the shoulder falls back to the fine sweep. Measured on a 2500 ms shoulder whose true lag is
+     −1160 ms: a `4.0` window declines at 4160 ms of lead-in and rescues at 6660 ms. Capture pads B
+     by `gap_signature_context_secs + fill_border_search_secs + fill_align_margin_secs` (14 s at the
+     defaults), so on real dumps this reaches only gaps near the start of B. A window below the
+     100 ms envelope bin measures nothing for a separate reason; both leave `envelope_peak_r` at
+     `None`, so the observable cannot say which guard fired.
+  2. **Rescue path only.** The Tier-3 `wide_envelope` diagnostic is pinned to its own window and
+     does not follow this flag (nor `--lag-envelope-max-lag-ms`), so on an off-default run the two
+     envelope lags in one dump come from different searches and must not be compared. Tracked in
+     BACKLOG § *Fill placement* — *Envelope width knobs move only the rescue path*.
+  Requires `--gap-fingerprints`.
 
 **`--only-gaps` / `--skip-gaps` do not narrow a dump.** They filter the *repair* plan; the dump
 selects with `--fingerprint-gap`. On a **scan-only** run (no `--wav` / `--mux` / `--repair-preview`)
@@ -403,6 +430,8 @@ where the geometry has to be recovered from the binary that wrote them):
 | `noise_collar_secs` | always | pre-gap noise collar behind `levels` (fed from `normalize_window_secs`) |
 | `lag_window_secs` / `lag_max_lag_ms` | when some gap carries `lag_decision` | per-shoulder sweep (§3.6a, 1 s / 600 ms) |
 | `lag_envelope_max_lag_ms` | when some gap carries `lag_decision` | coarse envelope **rescue** half-width (default 2000; `0` = off) |
+| `border_capture` | when some gap carries `lag_decision` | which arm cut the **shared** A border capture: `narrow` (default) or `wide`. Absent on corpora written before 2026-08-22, where the arm has to be recovered from the binary — the ambiguity this key exists to end |
+| `lag_envelope_window_secs` | when some gap carries `lag_decision` | coarse envelope **window** the rescue correlates (default 2.0). Recorded even at the default because the Tier-3 `wide_envelope` diagnostic does **not** follow it — a reader comparing the two envelope lags needs to know which window ran. Absent on corpora written before 2026-08-22, which all ran 2.0 |
 | `seam_window_secs` | when some gap carries `seams` | seam window behind `splice` / `splice_dualfit` |
 | `border_standoff_secs` | always | converted from `PROBE_BORDER_STANDOFF_FRAMES` (currently 0 frames) at the dump's sample rate — the same constant every probe `GapBorderSpec` is built with |
 
@@ -783,11 +812,16 @@ Each shoulder is swept **mono** over ±600 ms, **in map coordinates**, **at nomi
 shoulder's own template-edge walk-off `D` (`border_edge_displacement_frames`), so `frac_lag_ms` reads the
 true A↔B map offset (~0 at true registration) rather than `∓D` (2026-08-19,
 [archive/TEMP-lag-decision-map-coordinates-plan.md](archive/TEMP-lag-decision-map-coordinates-plan.md)).
+**`D` is measured on the *shared* capture**, whose width is `--border-capture` (`narrow` default:
+nominal fine reach; `wide`: also the envelope reach). The 12 %-of-peak trim runs over that buffer, so
+a louder event in a wider window can pull the gap-facing edge out by seconds — 31/g8 pre is
+`D` = 13 ms on `narrow` vs 1984 ms on `wide`, and those arms' `frac_lag_ms` are not comparable.
 A shoulder whose nominal fine result is recoverable (`peak_r ≥ 0.5`) keeps that reading — the coarse
 envelope is never consulted for movement (`envelope_rescue: not_consulted`). A dead shoulder
 (`peak_r < 0.5`) may retry at `b_mapped + envelope_lag` when that shoulder's coarse 100 ms-bin
 envelope peak is interior and ≥ 0.70; the retry is kept only if it is itself recoverable
-(`rescued` vs `declined`). `frac_lag_ms` stays **gross to original `b_mapped`**. The envelope-first
+(`rescued` vs `declined`). On `narrow`, the envelope pass may lazy-fetch a wider A buffer, but
+`anchor_frame` still carries the **narrow** `D`. `frac_lag_ms` stays **gross to original `b_mapped`**. The envelope-first
 ordering ([TEMP-lag-envelope-recenter-plan.md](archive/TEMP-lag-envelope-recenter-plan.md)) is
 superseded: it never took the nominal reading and false-locked 26/g6 onto a +1.88 s comb tooth.
 The post shoulder is then registered **sequentially, but only when the *nominal* pre is a landmark**
@@ -817,6 +851,8 @@ healthy locks sit at `peak_z` ≈ 6). Per shoulder,
 - **`envelope_rescue`** — which branch produced the row: `not_consulted` (alive at nominal),
   `rescued` (dead at nominal; retry kept), `declined` (dead at nominal; honest nominal kept).
   Absent when the knob is 0.
+- **`border_displacement_ms`** — this shoulder's template-edge walk-off + 12 %-of-peak trim, in ms
+  (`D` above). Measured on the shared `--border-capture` buffer, not on the lazy envelope fetch.
 
 ### `splice` — the registration step
 

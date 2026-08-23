@@ -34,8 +34,8 @@ use clip_sync::{MediaReader, ProgressReporter};
 
 use crate::application::error::RepairError;
 use crate::application::gap_fingerprint::{
-    characterize_gaps_from_decode, entry_stem, write_corpus_dir, CharacterizeAbPcm,
-    IncomparableReason,
+    characterize_gaps_from_decode, entry_stem, write_corpus_dir, BorderCapture, CharacterizeAbPcm,
+    DumpOptions, IncomparableReason,
 };
 use crate::application::patch_audio::{
     decode_ab, log_patch_preamble, patch_audio_span, PatchAudio, PatchAudioRequest,
@@ -89,6 +89,10 @@ pub struct GapListenRequest {
     pub fingerprint_diagnostics: bool,
     /// Fingerprint-only: coarse envelope half-width (ms) for `lag_decision` recenter. `0` disables.
     pub lag_envelope_max_lag_ms: u32,
+    /// Fingerprint-only: which arm sizes the shared A border capture behind `lag_decision`.
+    pub border_capture: BorderCapture,
+    /// Fingerprint-only: coarse envelope window (seconds) for the `lag_decision` recenter.
+    pub lag_envelope_window_secs: f64,
     pub crossfade_ms: u64,
 }
 
@@ -233,8 +237,12 @@ pub fn run_gap_listen<MR: MediaReader, PW: PatchedAudioWriter>(
         },
         &patch_request,
         fingerprint_select,
-        listen.fingerprint_diagnostics,
-        listen.lag_envelope_max_lag_ms,
+        DumpOptions {
+            diagnostics: listen.fingerprint_diagnostics,
+            lag_envelope_max_lag_ms: listen.lag_envelope_max_lag_ms,
+            border_capture: listen.border_capture,
+            lag_envelope_window_secs: listen.lag_envelope_window_secs,
+        },
         progress,
     );
 

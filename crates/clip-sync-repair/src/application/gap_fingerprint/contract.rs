@@ -379,6 +379,34 @@ mod tests {
             "RepairConfig and FingerprintConfig envelope defaults drifted"
         );
         assert_eq!(
+            defaults.border_capture,
+            super::super::schema::BorderCapture::Narrow,
+            "border_capture default moved; `Wide` re-baselines border_displacement_ms corpus-wide,              so it must never become the default by accident"
+        );
+        assert_eq!(
+            crate::infrastructure::config::RepairConfig::default().border_capture,
+            defaults.border_capture,
+            "RepairConfig and FingerprintConfig border_capture defaults drifted"
+        );
+        assert_eq!(
+            defaults.lag_envelope_window_secs,
+            super::super::measure::DEFAULT_LAG_ENVELOPE_WINDOW_SECS,
+            "lag_envelope_window_secs default moved"
+        );
+        assert_eq!(
+            crate::infrastructure::config::RepairConfig::default().lag_envelope_window_secs,
+            defaults.lag_envelope_window_secs,
+            "RepairConfig and FingerprintConfig envelope-window defaults drifted"
+        );
+        // The rescue window and the Tier-3 `wide_envelope` diagnostic's own window are separate
+        // knobs (BACKLOG § *Fill placement* — *Envelope width knobs move only the rescue path*).
+        // They must still AGREE at the default, or the shipped arm itself ships two different
+        // searches and every dump on disk already needs the recipe field to be read.
+        assert_eq!(
+            defaults.lag_envelope_window_secs, 2.0,
+            "the rescue default drifted away from the diagnostic's pinned window"
+        );
+        assert_eq!(
             defaults.fill_seam_search_secs, 0.25,
             "fill_seam_search_secs default moved; the residual contract quotes `default 250ms`"
         );

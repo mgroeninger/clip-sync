@@ -184,6 +184,19 @@ pub struct CorpusProbeRecipe {
     /// corpus (key missing).
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub lag_envelope_max_lag_ms: Option<u32>,
+    /// Which border-capture arm swept `lag_decision` — see [`BorderCapture`]. **Absent when no gap
+    /// carries `lag_decision`, and on corpora from before this field** (which are all `Narrow`
+    /// *only if* they postdate the 2026-08-20 module split; older ones are `Wide`, and the file
+    /// cannot tell you which — that ambiguity is exactly what this field exists to end).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub border_capture: Option<BorderCapture>,
+    /// Coarse envelope **window** (seconds) behind the `lag_decision` recenter. **Absent when no
+    /// gap carries `lag_decision`, and on corpora from before this field** (all of which ran the
+    /// 2.0 s default). Recorded because it is *not* the window the Tier-3 `wide_envelope`
+    /// diagnostic uses: that path stays pinned at its own constant, so on a raised-window dump the
+    /// two lags in one file come from different searches and must not be compared.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub lag_envelope_window_secs: Option<f64>,
     /// Seam window behind `splice` / `splice_dualfit` (`fill_seam_search_secs`). **Absent when no gap
     /// carries `seams`** — the summary-only path runs with `skip_baseline_placement`, which skips
     /// `place_on_b` entirely.
@@ -1173,6 +1186,35 @@ pub enum EnvelopeRescue {
     /// 0.70 or edge-pinned) or the retry was still non-recoverable. The honest nominal reading
     /// was kept.
     Declined,
+}
+
+/// How wide the **shared** A border capture behind `lag_decision` was cut.
+///
+/// This is not "how much context the envelope gets" — that is `lag_envelope_max_lag_ms`, which
+/// already sizes the per-shoulder lazy wide capture. This knob sizes the capture that *every*
+/// shoulder's template is trimmed out of, so it also moves `border_displacement_ms` (the silence
+/// walk-off + 12 %-of-peak trim run over the capture, `border_edge_displacement_frames`) and with
+/// it the zero that `frac_lag_ms` is read against. Changing it re-baselines the whole corpus, not
+/// just the shoulders that reach the envelope: a 505-shoulder A/B moved 161 displacements by >1 ms
+/// while flipping exactly one verdict. Treat a cross-arm comparison of `frac_lag_ms` as invalid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BorderCapture {
+    /// Capture sized to the nominal fine sweep's own reach (`lag_window_secs + lag_max_lag_ms`).
+    /// The shipped default since the 2026-08-20 nominal-first split: a shoulder recoverable at
+    /// nominal never pays for reach it does not use, and the wide reach is fetched lazily per
+    /// shoulder inside the rescue branch.
+    #[default]
+    Narrow,
+    /// Capture widened to the envelope's reach as well
+    /// (`max(lag_window_secs + lag_max_lag_ms, 2 s + lag_envelope_max_lag_ms)`), matching the
+    /// pre-split behaviour. `lag_envelope_max_lag_ms = 0` (envelope off) leaves it narrow, exactly
+    /// as the old `if env_on` guard did.
+    ///
+    /// Diagnostic arm. Its one known behavioural edge over `Narrow` is a shoulder that is dead at
+    /// nominal *and* needs a far rescue, where the narrow capture's trim can cost the true lock
+    /// (31/g8 pre: Narrow envelope +800 ms / `D` 13 ms; Wide keeps −1146.1 / `D` 1984 ms).
+    Wide,
 }
 
 /// Peak correlation floor for [`LagSummary::is_landmark`] — findings §8's "unique" bar

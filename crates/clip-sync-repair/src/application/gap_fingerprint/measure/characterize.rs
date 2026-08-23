@@ -96,8 +96,7 @@ pub fn characterize_gaps_from_decode(
     pcm: &CharacterizeAbPcm<'_>,
     request: &crate::application::PatchAudioRequest,
     select: &[usize],
-    include_diagnostics: bool,
-    lag_envelope_max_lag_ms: u32,
+    dump: DumpOptions,
     progress: &dyn clip_sync::ProgressReporter,
 ) -> GapCorpus {
     use crate::domain::gap_repair_spec::{
@@ -126,7 +125,7 @@ pub fn characterize_gaps_from_decode(
     let cfg = FingerprintConfig::from_request(
         request,
         report.recipe.silence_peak_fraction(),
-        lag_envelope_max_lag_ms,
+        dump,
     );
     let mut corpus = characterize_gaps(report, pcm, &cfg, select);
     // Seam-gate floors used for every bracket `failure_stage` on this dump — stamped once at corpus
@@ -206,7 +205,7 @@ pub fn characterize_gaps_from_decode(
             gate_derived,
             cfg: &cfg,
             gap_floor_db: fp.levels.gap_floor_db,
-            include_diagnostics,
+            include_diagnostics: dump.diagnostics,
             context_frames,
             bin_frames,
             search_radius_frames,
@@ -972,8 +971,7 @@ mod tests {
                 .into_request(report.clone())
                 .expect("default All gap selection"),
             &[],
-            false,
-            DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
+            DumpOptions::default(),
             &clip_sync_repair_fixtures::NoOpProgressReporter,
         );
         let eq = corpus.gaps[0]
@@ -1026,8 +1024,7 @@ mod tests {
                 .into_request(report.clone())
                 .expect("default All gap selection"),
             &[],
-            false,
-            DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
+            DumpOptions::default(),
             &clip_sync_repair_fixtures::NoOpProgressReporter,
         );
         let eq = corpus.gaps[0]
@@ -1079,8 +1076,7 @@ mod tests {
             },
             &request,
             &[],
-            false,
-            DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
+            DumpOptions::default(),
             &NoOpProgressReporter,
         );
         assert_eq!(
@@ -1116,7 +1112,7 @@ mod tests {
         let cfg = FingerprintConfig::from_request(
             &request,
             report.recipe.silence_peak_fraction(),
-            DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
+            DumpOptions::default(),
         );
         assert_eq!(
             probe.lag_window_secs,
@@ -1211,7 +1207,7 @@ mod tests {
         let cfg = FingerprintConfig::from_request(
             &request,
             report.recipe.silence_peak_fraction(),
-            DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
+            DumpOptions::default(),
         );
         let pcm = CharacterizeAbPcm {
             a_pcm: &a_pcm,
@@ -1224,8 +1220,7 @@ mod tests {
             &pcm,
             &request,
             &[],
-            false,
-            DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
+            DumpOptions::default(),
             &NoOpProgressReporter,
         );
         let full: Vec<_> = corpus
@@ -1320,8 +1315,7 @@ mod tests {
             },
             &request,
             &[],
-            false,
-            DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
+            DumpOptions::default(),
             &NoOpProgressReporter,
         );
         let align = corpus
@@ -1451,8 +1445,7 @@ mod tests {
             },
             &request,
             &[],
-            false,
-            DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
+            DumpOptions::default(),
             &NoOpProgressReporter,
         );
         let fp = &corpus.gaps[0];
@@ -1486,8 +1479,7 @@ mod tests {
                 .into_request(report.clone())
                 .expect("default All gap selection"),
             &[],
-            false,
-            DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
+            DumpOptions::default(),
             &clip_sync_repair_fixtures::NoOpProgressReporter,
         );
         let fp = &corpus.gaps[0];
@@ -1644,8 +1636,7 @@ mod tests {
                 },
                 &request,
                 &[],
-                false,
-                DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
+                DumpOptions::default(),
                 &NoOpProgressReporter,
             )
             .gaps
@@ -1824,8 +1815,7 @@ mod tests {
             },
             &request,
             &[],
-            false,
-            DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
+            DumpOptions::default(),
             &progress,
         );
         assert_eq!(with_sources.source.a_source.codec.as_deref(), Some("flac"));
@@ -1917,8 +1907,7 @@ mod tests {
             },
             &request,
             &[],
-            false,
-            DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
+            DumpOptions::default(),
             &progress,
         );
         // The descriptor-less call must leave provenance absent, not defaulted.
@@ -1933,8 +1922,10 @@ mod tests {
             },
             &request,
             &[],
-            true,
-            DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
+            DumpOptions {
+                diagnostics: true,
+                ..DumpOptions::default()
+            },
             &progress,
         );
 
@@ -2058,8 +2049,7 @@ mod tests {
             &pcm,
             &request,
             &[],
-            false,
-            DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
+            DumpOptions::default(),
             &NoOpProgressReporter,
         );
         assert_eq!(

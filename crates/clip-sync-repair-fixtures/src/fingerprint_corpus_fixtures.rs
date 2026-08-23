@@ -6,7 +6,7 @@
 
 use clip_sync::MultiChannelPcm;
 use clip_sync_repair::application::gap_fingerprint::{
-    characterize_gaps_from_decode, CharacterizeAbPcm, GapCorpus, DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
+    characterize_gaps_from_decode, CharacterizeAbPcm, DumpOptions, GapCorpus,
 };
 use clip_sync_repair::application::PatchAudioRequest;
 use clip_sync_repair::domain::gap::Gap;
@@ -55,8 +55,10 @@ pub fn synth_ab_from_decode_corpus(diagnostics: bool) -> GapCorpus {
         },
         &request,
         &[],
-        diagnostics,
-        DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
+        DumpOptions {
+            diagnostics,
+            ..DumpOptions::default()
+        },
         &NoOpProgressReporter,
     )
 }

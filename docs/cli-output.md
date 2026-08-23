@@ -382,7 +382,15 @@ Details: [gap-fill-modes.md](gap-fill-modes.md) § Dual-fit rescue.
 patch when write mode), optionally writes a licensing-safe corpus under `DIR`. stderr phase:
 `characterizing gaps for fingerprinting`. Default output is decision/repair (D/R) axes only; add
 `--fingerprint-diagnostics` for Tier-3 analyzer fields. `--lag-envelope-max-lag-ms MS` recenters
-`lag_decision` (default 2000; `0` disables). `--fingerprint-gap N` (repeatable, **1-based**
+`lag_decision` (default 2000; `0` disables). `--border-capture narrow|wide` selects the shared
+A-border capture width (`narrow` default; `wide` is a diagnostic arm that re-baselines
+`border_displacement_ms` corpus-wide, so its dumps are not field-comparable with narrow ones).
+`--lag-envelope-window-secs SECS` sets the envelope **window** the recenter correlates (default 2.0).
+Widening does not risk the A-side template — that is clamped to the shoulder — but it raises the
+**B lead-in** the recenter requires (`window + --lag-envelope-max-lag-ms` of B ahead of the gap, or it
+declines without correlating), which bites only gaps near the start of B. It also steers the *rescue* path only
+— the Tier-3 `wide_envelope` diagnostic keeps its own pinned window, so a raised value puts two
+lags from different searches in one dump; both values are recorded in `probe_recipe`. `--fingerprint-gap N` (repeatable, **1-based**
 — copy `N` from the gap table's `#` column; `0` and out-of-range are rejected) limits full per-bracket
 detail to the named gaps; other gaps get summary rows in `corpus.json`. Corpus filenames stay 0-based
 and are `<a8>_<b4>_t<hh-mm-ss>_g<idx>_<detail-tier>.json` (`--fingerprint-gap 3` → `…_g002_full.json`).
@@ -390,7 +398,8 @@ They carry **no verdict token** — one was dropped 2026-08-12 because it named 
 bracket gate, which production routinely overrides (a `skip` fingerprint is often a patched gap);
 read `outcome.tier` in the JSON or `manifest.json` instead. Ignored when
 `--mux` is set (warning). `--fingerprint-gap` / `--fingerprint-diagnostics` /
-`--lag-envelope-max-lag-ms` without `--gap-fingerprints` are rejected at startup. Schema:
+`--lag-envelope-max-lag-ms` / `--border-capture` / `--lag-envelope-window-secs` without
+`--gap-fingerprints` are rejected at startup. Schema:
 [gap-fingerprint.md](dev/gap-fingerprint.md).
 
 **Listen clips (`--gap-listen`, calibration builds):** alongside the dump, writes `<stem>_a_surround.wav`,

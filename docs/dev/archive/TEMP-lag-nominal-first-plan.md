@@ -4,6 +4,15 @@
 > shipped and Exit-validated. Record only. Durable behaviour:
 > [gap-fingerprint.md](../gap-fingerprint.md) § *`lag_decision`*. S1 production plumbing is
 > next ([BACKLOG.md](../../../BACKLOG.md) § *Fill placement*).
+>
+> **[2026-08-22] Do not cite the Exit bar below as current 31/g8 behaviour.** Status claims
+> `gap-files/2026-08-20-nominal-first-{off,on}-decoupled-unconditioned` met "31/g8–g11 rescued at
+> their recenter-on values." The **decoupled-on** dump declines 31/g8 pre at envelope +800 ms
+> (`D` 13.0 ms) — bit-identical to HEAD `gap-files/2026-08-22-31g8-capture`. The bar *was* true of
+> `2026-08-20-nominal-first-on` (shared wide capture, pre `D` 1983.8 ms, kept −1146.1). Ordering
+> is not the defect; the lazy-narrow split is. See BACKLOG 31/g8 and
+> [TEMP-envelope-adaptive-widen-plan.md](../TEMP-envelope-adaptive-widen-plan.md) deciding
+> measurement 2.
 
 **Status:** implemented + validated, 2026-08-20. Unit tests (all 5 Exit shapes) and the 12-pair
 real-media re-run (`gap-files/2026-08-20-nominal-first-{off,on}-decoupled-unconditioned`) both meet

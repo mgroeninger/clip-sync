@@ -17,7 +17,10 @@ mod build;
 mod overlay;
 mod characterize;
 
-pub use config::{DEFAULT_LAG_ENVELOPE_MAX_LAG_MS, FingerprintConfig, GapInputs};
+pub use config::{
+    DumpOptions, FingerprintConfig, GapInputs, DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
+    DEFAULT_LAG_ENVELOPE_WINDOW_SECS,
+};
 pub use lag::{
     lag_correlation_curve, lag_correlation_curve_auto, seam_local_peak, summarize_lag_curve,
 };

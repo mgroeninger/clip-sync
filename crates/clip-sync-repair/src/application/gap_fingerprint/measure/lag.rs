@@ -544,23 +544,38 @@ pub(in crate::application::gap_fingerprint::measure) fn lag_at_placement(input: 
     let window = ((cfg.lag_window_secs * rate).round() as usize).max(8);
     let max_lag = ((cfg.lag_max_lag_ms as f64 / 1000.0) * rate).round() as i64;
     let env_on = cfg.lag_envelope_max_lag_ms > 0;
-    let env_window = ((WIDE_ENV_WINDOW_SECS * rate).round() as usize).max(8);
+    let env_window = ((cfg.lag_envelope_window_secs * rate).round() as usize).max(8);
     let env_lag = ((cfg.lag_envelope_max_lag_ms as f64 / 1000.0) * rate).round() as usize;
     let env_bin = ((WIDE_ENV_BIN_MS / 1000.0) * rate).round().max(1.0) as usize;
-    // Nominal-first: the border capture stays narrow regardless of `env_on` — only the nominal fine
-    // sweep's own reach (`window + max_lag`), never `env_window + env_lag`. Widening it unconditionally
-    // here paid the wider capture's cost (and let its 12%-of-peak trim shift) on every gap edge, even
-    // when no shoulder is ever dead enough to consult the envelope
-    // (`docs/dev/archive/TEMP-lag-nominal-first-plan.md` § Change). The wide reach is instead fetched lazily,
-    // per shoulder, only inside `rescue_shoulder` — see `pre_wide`/`post_wide` below.
-    let border_need = window + max_lag.max(0) as usize;
-    let border_spec = probe_border_spec(&refined, border_need, cfg);
-    let (a_pre, a_post) = border_templates_for_gap(a_samples, ch, &border_spec);
-    let (a_pre_ch, a_post_ch) = border_templates_per_channel_for_gap(a_samples, ch, &border_spec);
     // Matches the old unconditional formula's reach exactly (`env_window + env_lag`) so a rescued
     // shoulder's envelope search has the same slack it always had — including the walk-off margin
     // `gap_border_frame_range` needs when the near-gap fade runs longer than `env_window` alone.
     let wide_need = env_window + env_lag;
+    // Nominal-first (`BorderCapture::Narrow`, the shipped default): the shared capture is sized to
+    // the nominal fine sweep's own reach (`window + max_lag`), never `env_window + env_lag`. Widening
+    // it unconditionally paid the wider capture's cost — and let its 12%-of-peak trim shift, moving
+    // `border_displacement_ms` — on every gap edge, even when no shoulder is ever dead enough to
+    // consult the envelope (`docs/dev/archive/TEMP-lag-nominal-first-plan.md` § Change). The wide
+    // reach is instead fetched lazily, per shoulder, only inside `rescue_shoulder` — see
+    // `pre_wide`/`post_wide` below.
+    //
+    // `BorderCapture::Wide` restores the pre-split reach as a diagnostic arm. It is gated on `env_on`
+    // because that is exactly what the old `if env_on { ... }` guard did: with the envelope off there
+    // is no wide search to serve, so the two arms must coincide.
+    let narrow_need = window + max_lag.max(0) as usize;
+    let border_need = match cfg.border_capture {
+        BorderCapture::Wide if env_on => narrow_need.max(wide_need),
+        BorderCapture::Wide | BorderCapture::Narrow => narrow_need,
+    };
+    let border_spec = probe_border_spec(&refined, border_need, cfg);
+    let (a_pre, a_post) = border_templates_for_gap(a_samples, ch, &border_spec);
+    let (a_pre_ch, a_post_ch) = border_templates_per_channel_for_gap(a_samples, ch, &border_spec);
+    // When the shared capture already reaches at least as far as the envelope needs, the lazy wide
+    // fetches below are pure duplicated work: re-probing the same spec and re-cutting the same
+    // templates, up to four times per gap (mono pre/post + selected-channel pre/post). Hand
+    // `rescue_shoulder` `None` instead — its documented fallback is `side.a_border`, which on this
+    // arm *is* the wide template. So `Wide` costs one capture, not five.
+    let shared_covers_wide = border_need >= wide_need;
     let pre_wide_mono = || -> Option<Vec<f64>> {
         let spec = probe_border_spec(&refined, wide_need, cfg);
         let (pre, _post) = border_templates_for_gap(a_samples, ch, &spec);
@@ -612,8 +627,9 @@ pub(in crate::application::gap_fingerprint::measure) fn lag_at_placement(input: 
         params: sweep,
         displacement: Some(mono_displacement),
         envelope: envelope_cfg,
-        pre_wide: Some(&pre_wide_mono),
-        post_wide: Some(&post_wide_mono),
+        pre_wide: (!shared_covers_wide).then_some(&pre_wide_mono as &dyn Fn() -> Option<Vec<f64>>),
+        post_wide: (!shared_covers_wide)
+            .then_some(&post_wide_mono as &dyn Fn() -> Option<Vec<f64>>),
     });
     add(pre, post);
 
@@ -653,8 +669,10 @@ pub(in crate::application::gap_fingerprint::measure) fn lag_at_placement(input: 
                 // The 12 %-of-peak trim runs per buffer, so this channel's displacement is its own.
                 displacement: Some(sel_disp),
                 envelope: envelope_cfg,
-                pre_wide: Some(&pre_wide_ch),
-                post_wide: Some(&post_wide_ch),
+                pre_wide: (!shared_covers_wide)
+                    .then_some(&pre_wide_ch as &dyn Fn() -> Option<Vec<f64>>),
+                post_wide: (!shared_covers_wide)
+                    .then_some(&post_wide_ch as &dyn Fn() -> Option<Vec<f64>>),
             });
             add(pre, post);
         }
@@ -1293,6 +1311,232 @@ mod tests {
             "declined candidate keeps the honest nominal reading"
         );
         assert_eq!(out.verdict, LagVerdict::Decorrelated);
+    }
+
+    /// `lag_envelope_window_secs` is read by the rescue branch, and the window competes with the
+    /// **B-side lead-in** — not with the shoulder — for the right to run.
+    ///
+    /// Same fixture as the border-capture test below: a 2500 ms pre shoulder whose true lag is
+    /// −1160 ms, far outside the ±600 ms fine sweep, so only the envelope can find it. The A-side
+    /// template is clamped to what the shoulder holds (`w = cfg.window.min(a_border.len())`), so a
+    /// wide window is never refused for lack of A material. The binding guard is
+    /// `anchor_frame < w + max_lag` in [`envelope_shoulder`]: the recenter needs `window + max_lag`
+    /// of B *before* the gap, or it declines without correlating.
+    ///
+    /// Two off-default windows lose the rescue here, for **different** reasons, and neither is a
+    /// defect:
+    ///
+    /// - `0.05` is below the 100 ms envelope bin, so no envelope can be built at all;
+    /// - `4.0` needs 6000 ms of lead-in and the compact arm supplies 4160 ms.
+    ///
+    /// The lead-in pair is the point: the *same* 4.0 s window declines at 4160 ms of lead-in and
+    /// rescues at 6660 ms. Widening does not disable the search on its own — it raises the lead-in
+    /// the gap must sit behind, which bites only near the start of B. Production capture pads B by
+    /// `gap_signature_context_secs + fill_border_search_secs + fill_align_margin_secs` (14 s at the
+    /// defaults), so this guard has wide headroom on real dumps.
+    ///
+    /// Both refusals leave `envelope_peak_r` at `None`, so the observable cannot say which guard
+    /// fired — the lead-in pair is what pins the cause. See BACKLOG § *Fill placement*,
+    /// `env_frames == 0` conflates two verdicts.
+    #[test]
+    fn envelope_window_secs_is_read_and_trades_against_b_lead_in() {
+        const RATE: u32 = 48_000;
+        let pre_lag = lag_at_ms(RATE, 1160);
+        let pre_len = lag_at_ms(RATE, 2500);
+        let gap = lag_at_ms(RATE, 2000);
+        let post_len = lag_at_ms(RATE, 3000);
+
+        // `lead_in_ms` is the B material before the gap: `front_pad + pre_len`. The guard needs
+        // `window + lag_envelope_max_lag_ms` (2000 ms) of it.
+        let build = |pad_ms: i64| {
+            let front_pad = pre_lag + lag_at_ms(RATE, pad_ms);
+            let gap_start = front_pad + pre_len;
+            let gap_end = gap_start + gap;
+            let total = gap_end + post_len;
+
+            let mut a = vec![0.0f32; total];
+            write_shaped_noise(&mut a, front_pad, gap_start, 11, 0.5, true);
+            write_shaped_noise(&mut a, gap_end, gap_end + post_len, 23, 0.5, false);
+
+            let mut b_mono = vec![0.0f64; total];
+            for i in 0..post_len {
+                b_mono[gap_end + i] = f64::from(a[gap_end + i]);
+            }
+            let b_pre_at = gap_start - pre_lag - pre_len;
+            for i in 0..pre_len {
+                b_mono[b_pre_at + i] = f64::from(a[front_pad + i]);
+            }
+            (a, b_mono, gap_start, gap_end)
+        };
+
+        let run = |pad_ms: i64, secs: f64, capture: BorderCapture| {
+            let (a, b_mono, gap_start, gap_end) = build(pad_ms);
+            let config = FingerprintConfig {
+                lag_envelope_window_secs: secs,
+                border_capture: capture,
+                ..FingerprintConfig::default()
+            };
+            lag_at_placement(&LagAtPlacementInput {
+                a_samples: &a,
+                channels: 1,
+                refined: RefinedGapFrames {
+                    start_frame: gap_start,
+                    end_frame: gap_end,
+                },
+                b_mono: &b_mono,
+                b_ch: &[],
+                selected: None,
+                start_frame: gap_start,
+                cfg: &config,
+                sample_rate: RATE,
+            })
+            .pre_anchor
+            .first()
+            .copied()
+            .expect("pre shoulder")
+        };
+
+        // 500 ms of extra pad ⇒ 4160 ms of lead-in; 3000 ms ⇒ 6660 ms.
+        const TIGHT: i64 = 500;
+        const ROOMY: i64 = 3000;
+
+        for capture in [BorderCapture::Narrow, BorderCapture::Wide] {
+            let default = run(TIGHT, DEFAULT_LAG_ENVELOPE_WINDOW_SECS, capture);
+            assert_eq!(
+                default.envelope_rescue,
+                Some(EnvelopeRescue::Rescued),
+                "{capture:?}: the default window must still rescue"
+            );
+            assert!(
+                (default.frac_lag_ms - (-1160.0)).abs() < 50.0,
+                "{capture:?}: default-window lag drifted: {} ms",
+                default.frac_lag_ms
+            );
+
+            // Below the 100 ms bin: no envelope is measurable, so the knob provably reaches the
+            // rescue branch — this assertion fails if the field is declared but never read.
+            let too_narrow = run(TIGHT, 0.05, capture);
+            assert_eq!(
+                too_narrow.envelope_peak_r, None,
+                "{capture:?}: a sub-bin window cannot produce an envelope peak"
+            );
+            assert_ne!(
+                too_narrow.envelope_rescue,
+                Some(EnvelopeRescue::Rescued),
+                "{capture:?}: a sub-bin window must not rescue"
+            );
+
+            // One window, two lead-ins. This pair is what identifies the guard: if the refusal
+            // below were about shoulder length or A material, the roomy arm would decline too.
+            let starved = run(TIGHT, 4.0, capture);
+            assert_eq!(
+                starved.envelope_peak_r, None,
+                "{capture:?}: 4.0 s needs 6000 ms of lead-in and this arm has 4160 ms"
+            );
+            assert_ne!(
+                starved.envelope_rescue,
+                Some(EnvelopeRescue::Rescued),
+                "{capture:?}: a starved lead-in must not rescue"
+            );
+
+            let fed = run(ROOMY, 4.0, capture);
+            assert_eq!(
+                fed.envelope_rescue,
+                Some(EnvelopeRescue::Rescued),
+                "{capture:?}: the same 4.0 s window rescues once the lead-in reaches 6660 ms"
+            );
+            assert!(
+                (fed.frac_lag_ms - (-1160.0)).abs() < 50.0,
+                "{capture:?}: wide-window lag drifted: {} ms",
+                fed.frac_lag_ms
+            );
+        }
+    }
+
+    /// The two [`BorderCapture`] arms, on the shape that motivated the knob: a shoulder dead at
+    /// nominal that only the envelope can reach.
+    ///
+    /// Two contracts, and the second is the load-bearing one:
+    /// 1. `Wide` is not a regression — it still rescues what `Narrow` rescues.
+    /// 2. With the envelope **off** the arms must be bit-identical. `Wide` only widens to
+    ///    `max(narrow, env_window + env_lag)` when `env_on`, mirroring the pre-2026-08-20
+    ///    `if env_on { .. }` guard. Without that gate `--border-capture wide` would silently re-cut
+    ///    every template on envelope-off dumps too — a corpus-wide re-baseline nobody asked for.
+    #[test]
+    fn border_capture_wide_matches_narrow_when_the_envelope_is_off() {
+        const RATE: u32 = 48_000;
+        let pre_lag = lag_at_ms(RATE, 1160);
+        let pre_len = lag_at_ms(RATE, 2500);
+        let gap = lag_at_ms(RATE, 2000);
+        let post_len = lag_at_ms(RATE, 3000);
+        let front_pad = pre_lag + lag_at_ms(RATE, 500);
+        let gap_start = front_pad + pre_len;
+        let gap_end = gap_start + gap;
+        let total = gap_end + post_len;
+
+        let mut a = vec![0.0f32; total];
+        write_shaped_noise(&mut a, front_pad, gap_start, 11, 0.5, true);
+        write_shaped_noise(&mut a, gap_end, gap_end + post_len, 23, 0.5, false);
+
+        let mut b_mono = vec![0.0f64; total];
+        for i in 0..post_len {
+            b_mono[gap_end + i] = f64::from(a[gap_end + i]);
+        }
+        let b_pre_at = gap_start - pre_lag - pre_len;
+        for i in 0..pre_len {
+            b_mono[b_pre_at + i] = f64::from(a[front_pad + i]);
+        }
+
+        let run = |env_ms: u32, capture: BorderCapture| {
+            let config = FingerprintConfig {
+                lag_envelope_max_lag_ms: env_ms,
+                border_capture: capture,
+                ..FingerprintConfig::default()
+            };
+            lag_at_placement(&LagAtPlacementInput {
+                a_samples: &a,
+                channels: 1,
+                refined: RefinedGapFrames {
+                    start_frame: gap_start,
+                    end_frame: gap_end,
+                },
+                b_mono: &b_mono,
+                b_ch: &[],
+                selected: None,
+                start_frame: gap_start,
+                cfg: &config,
+                sample_rate: RATE,
+            })
+        };
+
+        // 1. Envelope on: `Wide` rescues what `Narrow` rescues.
+        let narrow_on = run(2000, BorderCapture::Narrow);
+        let wide_on = run(2000, BorderCapture::Wide);
+        let pre_narrow = narrow_on.pre_anchor.first().copied().expect("pre narrow");
+        let pre_wide = wide_on.pre_anchor.first().copied().expect("pre wide");
+        assert_eq!(pre_narrow.envelope_rescue, Some(EnvelopeRescue::Rescued));
+        assert_eq!(
+            pre_wide.envelope_rescue,
+            Some(EnvelopeRescue::Rescued),
+            "the wide arm must not lose a rescue the narrow arm makes"
+        );
+        assert!(
+            (pre_wide.frac_lag_ms - (-1160.0)).abs() < 50.0,
+            "wide arm lag drifted: {} ms",
+            pre_wide.frac_lag_ms
+        );
+
+        // 2. Envelope off: the arms coincide, field for field.
+        let narrow_off = run(0, BorderCapture::Narrow);
+        let wide_off = run(0, BorderCapture::Wide);
+        assert_eq!(
+            narrow_off.pre_anchor, wide_off.pre_anchor,
+            "border_capture must be inert when the envelope is off (pre)"
+        );
+        assert_eq!(
+            narrow_off.post_anchor, wide_off.post_anchor,
+            "border_capture must be inert when the envelope is off (post)"
+        );
     }
 
     /// Chain-isolation shape: dead pre + alive post. The post's reported summary must be
