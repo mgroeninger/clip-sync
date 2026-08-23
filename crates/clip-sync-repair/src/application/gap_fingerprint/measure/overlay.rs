@@ -3,8 +3,6 @@
 use crate::application::gap_fingerprint::project::*;
 use crate::application::gap_fingerprint::schema::*;
 
-
-
 use crate::domain::gap_anchor_seam::{
     list_anchor_candidates_a, list_feasible_anchor_brackets, AnchorSeamParams, AnchorSource,
 };
@@ -12,9 +10,9 @@ use crate::domain::gap_structure::StructureMatchParams;
 use crate::domain::pcm::{interleaved_to_channels, interleaved_to_mono};
 use crate::domain::policies::RefinedGapFrames;
 
-use super::pcm::*;
 use super::config::*;
 use super::lag::*;
+use super::pcm::*;
 use super::placement::*;
 use super::probes::*;
 
@@ -56,7 +54,9 @@ pub(in crate::application::gap_fingerprint::measure) struct BracketStageDetail {
 /// Map a gate failure to the fingerprint's `failure_stage` and the scores that belong on each field.
 /// Structure floors land on `structure_*`; waveform/residual on `seam_*`; residual also carries
 /// `residual_margin_db`. Never overload structure correlations onto `seam_*`.
-pub(in crate::application::gap_fingerprint::measure) fn stage_of(failure: &crate::application::patch_region::SeamGateFailure) -> BracketStageDetail {
+pub(in crate::application::gap_fingerprint::measure) fn stage_of(
+    failure: &crate::application::patch_region::SeamGateFailure,
+) -> BracketStageDetail {
     use crate::application::patch_region::SeamGateFailure as F;
     match failure {
         F::StructureAlignmentFailed => BracketStageDetail {
@@ -134,11 +134,14 @@ pub(in crate::application::gap_fingerprint::measure) struct RegionMeasurements {
     pub(in crate::application::gap_fingerprint::measure) lag_decision: Option<LagFingerprint>,
     pub(in crate::application::gap_fingerprint::measure) splice: Option<SpliceSummary>,
     pub(in crate::application::gap_fingerprint::measure) seam_probe: Option<SeamProbeFingerprint>,
-    pub(in crate::application::gap_fingerprint::measure) donor_interior_aligned: Option<DonorInterior>,
-    pub(in crate::application::gap_fingerprint::measure) donor_interior_nominal: Option<DonorInterior>,
+    pub(in crate::application::gap_fingerprint::measure) donor_interior_aligned:
+        Option<DonorInterior>,
+    pub(in crate::application::gap_fingerprint::measure) donor_interior_nominal:
+        Option<DonorInterior>,
     pub(in crate::application::gap_fingerprint::measure) b_levels: Option<LevelProfile>,
     pub(in crate::application::gap_fingerprint::measure) splice_dualfit: Option<SpliceDualfit>,
-    pub(in crate::application::gap_fingerprint::measure) wide_envelope: Option<WideEnvelopeFingerprint>,
+    pub(in crate::application::gap_fingerprint::measure) wide_envelope:
+        Option<WideEnvelopeFingerprint>,
     pub(in crate::application::gap_fingerprint::measure) residual: Option<ResidualInfo>,
     pub(in crate::application::gap_fingerprint::measure) lag_editorial: Option<LagFingerprint>,
 }
@@ -153,8 +156,10 @@ pub(in crate::application::gap_fingerprint::measure) struct RegionMeasureInput<'
     pub(in crate::application::gap_fingerprint::measure) gap_offset: f64,
     pub(in crate::application::gap_fingerprint::measure) refined: RefinedGapFrames,
     pub(in crate::application::gap_fingerprint::measure) gap_frames: usize,
-    pub(in crate::application::gap_fingerprint::measure) gate_settings: &'a crate::application::PatchRequestSettings,
-    pub(in crate::application::gap_fingerprint::measure) gate_derived: crate::application::patch_region::SeamGateDerived,
+    pub(in crate::application::gap_fingerprint::measure) gate_settings:
+        &'a crate::application::PatchRequestSettings,
+    pub(in crate::application::gap_fingerprint::measure) gate_derived:
+        crate::application::patch_region::SeamGateDerived,
     pub(in crate::application::gap_fingerprint::measure) cfg: &'a FingerprintConfig,
     pub(in crate::application::gap_fingerprint::measure) gap_floor_db: f32,
     pub(in crate::application::gap_fingerprint::measure) include_diagnostics: bool,
@@ -163,11 +168,14 @@ pub(in crate::application::gap_fingerprint::measure) struct RegionMeasureInput<'
     pub(in crate::application::gap_fingerprint::measure) search_radius_frames: usize,
     pub(in crate::application::gap_fingerprint::measure) rate: f64,
     pub(in crate::application::gap_fingerprint::measure) sample_rate: u32,
-    pub(in crate::application::gap_fingerprint::measure) progress: &'a dyn clip_sync::ProgressReporter,
+    pub(in crate::application::gap_fingerprint::measure) progress:
+        &'a dyn clip_sync::ProgressReporter,
 }
 /// Compute one gap's gate-overlay measurements from decode — the shared per-gap measurement site the
 /// from-decode dump ([`characterize_gaps_from_decode`]) projects via [`tags_from_measurements`] (8g.3a).
-pub(in crate::application::gap_fingerprint::measure) fn compute_region_measurements(inp: RegionMeasureInput<'_>) -> RegionMeasurements {
+pub(in crate::application::gap_fingerprint::measure) fn compute_region_measurements(
+    inp: RegionMeasureInput<'_>,
+) -> RegionMeasurements {
     use crate::application::patch_region::{
         derive_seam_gate_geometry, oracle_build_fit_cache, oracle_measure_residual,
         oracle_score_fit_candidate, oracle_throat_structure_frame, SeamGateParams,

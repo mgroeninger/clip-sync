@@ -2,20 +2,17 @@
 
 use crate::application::gap_fingerprint::schema::*;
 
-
-
 use crate::domain::gap_fill_fit::{
     match_gap_fill_unified_in_b, UnifiedFillSearchInput, UnifiedFitWeights, WaveformSeamContext,
 };
 use crate::domain::gap_signature::{build_gap_signature, GapSignatureMode};
 use crate::domain::policies::{
-    border_templates_for_gap,
-    border_templates_per_channel_for_gap,
-    seam_channel_diagnostics, RefinedGapFrames, SeamPlacement, SeamTemplates,
+    border_templates_for_gap, border_templates_per_channel_for_gap, seam_channel_diagnostics,
+    RefinedGapFrames, SeamPlacement, SeamTemplates,
 };
 
-use super::pcm::*;
 use super::config::*;
+use super::pcm::*;
 
 /// Owned result of a structure+waveform placement on B at one A bracket.
 pub(in crate::application::gap_fingerprint::measure) struct PlacementScores {
@@ -86,7 +83,9 @@ impl CorpusProbeRecipe {
 /// Structure-best placement of the A bracket `refined` on the B haystack, plus the seam there.
 /// Structure-dominant weights so the placement locks to the energy-best (mirrors the production
 /// "structure aligns, seam read there" story). `None` if the match degenerates.
-pub(in crate::application::gap_fingerprint::measure) fn place_on_b(input: &PlaceOnBInput<'_>) -> Option<PlacementScores> {
+pub(in crate::application::gap_fingerprint::measure) fn place_on_b(
+    input: &PlaceOnBInput<'_>,
+) -> Option<PlacementScores> {
     let PlaceOnBInput {
         a_samples,
         channels,
@@ -217,8 +216,8 @@ pub(in crate::application::gap_fingerprint::measure) fn b_mapped_frame_in_haysta
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::build::*;
+    use super::*;
 
     #[test]
     fn probe_recipe_reports_the_collar_width_that_moved_the_measurement() {
@@ -327,6 +326,4 @@ mod tests {
         // The other direction — a corpus that DID sweep must report the windows — is asserted where a
         // real B side exists to sweep against: `production_dump_omits_unmeasured_option_fields`.
     }
-
-
 }

@@ -4,15 +4,12 @@ use crate::application::gap_fingerprint::schema::*;
 
 use clip_sync::normalized_correlation;
 
-
 use crate::domain::pcm::interleaved_to_mono;
-use crate::domain::policies::{
-    border_templates_for_gap, RefinedGapFrames,
-};
+use crate::domain::policies::{border_templates_for_gap, RefinedGapFrames};
 
+use super::config::*;
 use super::lag::*;
 use super::pcm::*;
-use super::config::*;
 
 /// ± lag sweep (ms) used to gauge each dual-fit seam's peak uniqueness (the periodicity/alias guard).
 pub(in crate::application::gap_fingerprint::measure) const DUALFIT_SEAM_UNIQ_LAG_MS: f64 = 30.0;
@@ -27,7 +24,12 @@ pub(in crate::application::gap_fingerprint::measure) const SEAM_LOCAL_SEARCH_MS:
 /// its own energy, so a loud center isn't diluted by quiet surrounds/LFE the way a straight `1/N` mix is
 /// (which buried these 5.1 seams 13–15 dB and over-flagged them "quiet" — §3.6a froze level on this mix).
 /// Correlation stays on mono; only the level/SNR uses this. `0.0` for an empty/over-range span.
-pub(in crate::application::gap_fingerprint::measure) fn weighted_downmix_rms(samples: &[f32], channels: usize, lo: usize, hi: usize) -> f64 {
+pub(in crate::application::gap_fingerprint::measure) fn weighted_downmix_rms(
+    samples: &[f32],
+    channels: usize,
+    lo: usize,
+    hi: usize,
+) -> f64 {
     let ch = channels.max(1);
     let total_frames = samples.len() / ch;
     let hi = hi.min(total_frames);
@@ -141,7 +143,9 @@ pub(in crate::application::gap_fingerprint::measure) struct SeamProbeAtPlacement
     pub(in crate::application::gap_fingerprint::measure) sample_rate: u32,
     pub(in crate::application::gap_fingerprint::measure) gap_floor_db: f64,
 }
-pub(in crate::application::gap_fingerprint::measure) fn seam_probe_at_placement(input: &SeamProbeAtPlacementInput<'_>) -> SeamProbeFingerprint {
+pub(in crate::application::gap_fingerprint::measure) fn seam_probe_at_placement(
+    input: &SeamProbeAtPlacementInput<'_>,
+) -> SeamProbeFingerprint {
     let SeamProbeAtPlacementInput {
         a_samples,
         channels,
@@ -242,7 +246,9 @@ pub(in crate::application::gap_fingerprint::measure) struct SpliceDualfitInput<'
 /// the step-real term on gaps production rescues.
 ///
 /// `None` when either seam window falls out of range.
-pub(in crate::application::gap_fingerprint::measure) fn splice_dualfit_at(input: &SpliceDualfitInput<'_>) -> Option<SpliceDualfit> {
+pub(in crate::application::gap_fingerprint::measure) fn splice_dualfit_at(
+    input: &SpliceDualfitInput<'_>,
+) -> Option<SpliceDualfit> {
     let SpliceDualfitInput {
         a_samples,
         channels,
@@ -350,7 +356,10 @@ pub(in crate::application::gap_fingerprint::measure) fn splice_dualfit_at(input:
     })
 }
 /// Mono [`LagSummary`] for one side of a [`LagFingerprint`].
-pub(in crate::application::gap_fingerprint::measure) fn mono_lag_side(lag: &LagFingerprint, pre: bool) -> Option<&LagSummary> {
+pub(in crate::application::gap_fingerprint::measure) fn mono_lag_side(
+    lag: &LagFingerprint,
+    pre: bool,
+) -> Option<&LagSummary> {
     let entries = if pre {
         &lag.pre_anchor
     } else {
@@ -431,7 +440,9 @@ pub(in crate::application::gap_fingerprint::measure) struct WideEnvelopeAtPlacem
     pub(in crate::application::gap_fingerprint::measure) cfg: &'a FingerprintConfig,
     pub(in crate::application::gap_fingerprint::measure) sample_rate: u32,
 }
-pub(in crate::application::gap_fingerprint::measure) fn wide_envelope_at_placement(input: &WideEnvelopeAtPlacementInput<'_>) -> WideEnvelopeFingerprint {
+pub(in crate::application::gap_fingerprint::measure) fn wide_envelope_at_placement(
+    input: &WideEnvelopeAtPlacementInput<'_>,
+) -> WideEnvelopeFingerprint {
     let WideEnvelopeAtPlacementInput {
         a_samples,
         channels,
@@ -701,6 +712,4 @@ mod tests {
             "finite: {peak:?}"
         );
     }
-
-
 }

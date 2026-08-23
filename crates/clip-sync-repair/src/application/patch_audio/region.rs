@@ -2856,14 +2856,17 @@ mod tests {
                     ..
                 },
             ) => {
-                let residual = registration_residual_ms
-                    .expect("both shoulders are exact zero-lag matches, well above the confidence floor");
+                let residual = registration_residual_ms.expect(
+                    "both shoulders are exact zero-lag matches, well above the confidence floor",
+                );
                 assert!(
                     residual.abs() < 1.0,
                     "shoulders match at zero lag; residual should be ~0ms, got {residual}"
                 );
             }
-            other => panic!("expected a Patch(Bracket) verdict for a matched fixture, got {other:?}"),
+            other => {
+                panic!("expected a Patch(Bracket) verdict for a matched fixture, got {other:?}")
+            }
         }
     }
 
@@ -3259,8 +3262,14 @@ mod tests {
     #[test]
     fn select_registration_residual_ms_prefers_smaller_magnitude_never_falls_back() {
         assert_eq!(select_registration_residual_ms(None, None), None);
-        assert_eq!(select_registration_residual_ms(Some(12.0), None), Some(12.0));
-        assert_eq!(select_registration_residual_ms(None, Some(-7.0)), Some(-7.0));
+        assert_eq!(
+            select_registration_residual_ms(Some(12.0), None),
+            Some(12.0)
+        );
+        assert_eq!(
+            select_registration_residual_ms(None, Some(-7.0)),
+            Some(-7.0)
+        );
         assert_eq!(
             select_registration_residual_ms(Some(-3.0), Some(9.0)),
             Some(-3.0),

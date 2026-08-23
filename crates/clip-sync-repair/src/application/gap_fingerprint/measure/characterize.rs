@@ -122,11 +122,7 @@ pub fn characterize_gaps_from_decode(
             );
         }
     }
-    let cfg = FingerprintConfig::from_request(
-        request,
-        report.recipe.silence_peak_fraction(),
-        dump,
-    );
+    let cfg = FingerprintConfig::from_request(request, report.recipe.silence_peak_fraction(), dump);
     let mut corpus = characterize_gaps(report, pcm, &cfg, select);
     // Seam-gate floors used for every bracket `failure_stage` on this dump — stamped once at corpus
     // level (same idea as equivalence `thresholds`). Summary-only `characterize_gaps` leaves this None.

@@ -4,14 +4,10 @@ use super::config::*;
 
 use crate::application::gap_fingerprint::schema::*;
 
-
-use crate::domain::gap_equivalence::{
-    ChannelReduction, NoiseFloorProbe,
-};
+use crate::domain::gap_equivalence::{ChannelReduction, NoiseFloorProbe};
 
 use crate::domain::gap_structure::StructureMatchParams;
 use crate::domain::policies::{rms_interleaved, GapBorderSpec, RefinedGapFrames};
-
 
 /// Span args for [`level_profile`]: the gap window and the surrounding context window (in frames).
 pub(in crate::application::gap_fingerprint::measure) struct LevelProfileSpan {
@@ -164,7 +160,11 @@ pub(in crate::application::gap_fingerprint::measure) fn noise_floor_probe_grid(
     out
 }
 /// Mono RMS (linear) over `b_mono[start..end]` — the B-side accessor for [`level_profile`] / nominal donor.
-pub(in crate::application::gap_fingerprint::measure) fn mono_slice_rms(b_mono: &[f64], start: usize, end: usize) -> f32 {
+pub(in crate::application::gap_fingerprint::measure) fn mono_slice_rms(
+    b_mono: &[f64],
+    start: usize,
+    end: usize,
+) -> f32 {
     let end = end.min(b_mono.len());
     if start >= end {
         return 0.0;
@@ -190,7 +190,12 @@ pub(in crate::application::gap_fingerprint::measure) fn finite_corr(x: f64) -> f
     }
 }
 /// Mono-downmix RMS over a frame range.
-pub(in crate::application::gap_fingerprint::measure) fn mono_rms(samples: &[f32], channels: usize, start: usize, end: usize) -> f32 {
+pub(in crate::application::gap_fingerprint::measure) fn mono_rms(
+    samples: &[f32],
+    channels: usize,
+    start: usize,
+    end: usize,
+) -> f32 {
     let ch = channels.max(1);
     let total = samples.len() / ch;
     let start = start.min(total);
@@ -209,7 +214,12 @@ pub(in crate::application::gap_fingerprint::measure) fn mono_rms(samples: &[f32]
     }
     (sum_sq / (end - start) as f64).sqrt() as f32
 }
-pub(in crate::application::gap_fingerprint::measure) fn mono_peak(samples: &[f32], channels: usize, start: usize, end: usize) -> f32 {
+pub(in crate::application::gap_fingerprint::measure) fn mono_peak(
+    samples: &[f32],
+    channels: usize,
+    start: usize,
+    end: usize,
+) -> f32 {
     let ch = channels.max(1);
     let total = samples.len() / ch;
     let (start, end) = (start.min(total), end.min(total));
@@ -249,7 +259,10 @@ pub(in crate::application::gap_fingerprint::measure) const WIDE_ENV_WINDOW_SECS:
 pub(in crate::application::gap_fingerprint::measure) const WIDE_ENV_MAX_LAG_MS: f64 = 400.0;
 
 /// `~10 ms`-bin RMS envelope — the encoding-/small-shift-robust representation for the seam probe.
-pub(in crate::application::gap_fingerprint::measure) fn fine_rms_envelope(x: &[f64], bin: usize) -> Vec<f64> {
+pub(in crate::application::gap_fingerprint::measure) fn fine_rms_envelope(
+    x: &[f64],
+    bin: usize,
+) -> Vec<f64> {
     let bin = bin.max(1);
     x.chunks(bin)
         .map(|c| (c.iter().map(|v| v * v).sum::<f64>() / c.len() as f64).sqrt())
@@ -292,7 +305,9 @@ pub(in crate::application::gap_fingerprint::measure) fn structure_params_for(
 pub(crate) const PROBE_BORDER_STANDOFF_FRAMES: usize = 0;
 /// Seconds form of [`PROBE_BORDER_STANDOFF_FRAMES`] at the rate the probe applied it. Shared by
 /// [`CorpusProbeRecipe::from_config`] so a corpus cannot advertise a standoff the specs did not use.
-pub(in crate::application::gap_fingerprint::measure) fn probe_border_standoff_secs(sample_rate: u32) -> f64 {
+pub(in crate::application::gap_fingerprint::measure) fn probe_border_standoff_secs(
+    sample_rate: u32,
+) -> f64 {
     PROBE_BORDER_STANDOFF_FRAMES as f64 / f64::from(sample_rate).max(1.0)
 }
 /// Every probe `GapBorderSpec` is built here so a fifth site cannot write a standoff the recipe

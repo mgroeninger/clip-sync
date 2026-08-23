@@ -3,21 +3,17 @@
 use crate::application::gap_fingerprint::contract::*;
 use crate::application::gap_fingerprint::schema::*;
 
-
-
 use crate::domain::gap_anchor_seam::{
     list_anchor_candidates_a, list_feasible_anchor_brackets, AnchorSeamParams, AnchorSource,
 };
 use crate::domain::gap_energy::energy_bins;
 use crate::domain::gap_signature::{build_gap_signature, GapSignatureMode};
 use crate::domain::pcm::{interleaved_to_channels, interleaved_to_mono};
-use crate::domain::policies::{
-    refine_gap_frames, RefinedGapFrames,
-};
+use crate::domain::policies::{refine_gap_frames, RefinedGapFrames};
 
-use super::pcm::*;
 use super::config::*;
 use super::lag::*;
+use super::pcm::*;
 use super::placement::*;
 
 pub(in crate::application::gap_fingerprint::measure) fn classify_bracket_stage(

@@ -2,15 +2,13 @@
 
 use crate::application::gap_fingerprint::schema::*;
 
-
-
 use crate::domain::policies::{
     border_edge_displacement_frames, border_templates_for_gap,
     border_templates_per_channel_for_gap, RefinedGapFrames,
 };
 
-use super::pcm::*;
 use super::config::*;
+use super::pcm::*;
 
 /// A lag peak within this many ms of the searched boundary is treated as edge-pinned (search-exhausted):
 /// the parabolic vertex can't be trusted and a larger lag was never scored. See [`LagSummary::edge_pinned`].
@@ -60,7 +58,12 @@ pub(in crate::application::gap_fingerprint::measure) struct LagSideSweep<'a> {
 /// Prominence of a seam's placement peak over its tallest rival within ±`max_lag`. `b_ctx` must be laid
 /// out so lag 0 aligns `a_win` at the placement (`b_ctx[max_lag .. max_lag + a_win.len()]`). Low prominence
 /// ⇒ the seam matches at many lags (periodic) ⇒ the dual-fit placement is not a unique registration.
-pub(in crate::application::gap_fingerprint::measure) fn seam_prominence(a_win: &[f64], b_ctx: &[f64], max_lag: i64, sample_rate: u32) -> Option<f64> {
+pub(in crate::application::gap_fingerprint::measure) fn seam_prominence(
+    a_win: &[f64],
+    b_ctx: &[f64],
+    max_lag: i64,
+    sample_rate: u32,
+) -> Option<f64> {
     let curve = lag_correlation_curve(a_win, b_ctx, max_lag);
     summarize_lag_curve(&curve, sample_rate, 0, 0, LagChannel::Mono).and_then(|s| s.prominence)
 }
@@ -155,7 +158,10 @@ pub fn summarize_lag_curve(
 /// The tallest **competing** local maximum `(lag, r)` that is not the main peak at `peak_index`. Within
 /// the main peak's lobe the curve falls off monotonically (no local maxima), so a separate local maximum
 /// is a genuine rival lag — the periodicity / ambiguity signal. `None` when the peak is unrivalled.
-pub(in crate::application::gap_fingerprint::measure) fn secondary_peak(curve: &[(i64, f64)], peak_index: usize) -> Option<(i64, f64)> {
+pub(in crate::application::gap_fingerprint::measure) fn secondary_peak(
+    curve: &[(i64, f64)],
+    peak_index: usize,
+) -> Option<(i64, f64)> {
     let mut best: Option<(i64, f64)> = None;
     for i in 1..curve.len().saturating_sub(1) {
         if i == peak_index {
@@ -175,7 +181,11 @@ pub(in crate::application::gap_fingerprint::measure) fn secondary_peak(curve: &[
 /// Verdict thresholds (see plan §4). `peak` is the parabolic-interpolated peak correlation.
 /// `lag0_r` is `None` when lag 0 was not on the searched curve; offset-away then rests on
 /// `peak_lag` alone (a far recenter always has `|peak_lag| ≫ 1`).
-pub(in crate::application::gap_fingerprint::measure) fn classify_lag(lag0_r: Option<f64>, peak: f64, peak_lag: i64) -> LagVerdict {
+pub(in crate::application::gap_fingerprint::measure) fn classify_lag(
+    lag0_r: Option<f64>,
+    peak: f64,
+    peak_lag: i64,
+) -> LagVerdict {
     let recoverable = peak >= 0.5;
     let offset_away = peak_lag.abs() > 1 || lag0_r.is_some_and(|l0| (peak - l0) > 0.2);
     if recoverable && offset_away {
@@ -192,7 +202,10 @@ pub(in crate::application::gap_fingerprint::measure) fn classify_lag(lag0_r: Opt
 // (no patch-path coupling). Mirrors `tests/diag_anchor_quiet_gap.rs`.
 // ---------------------------------------------------------------------------------------------
 /// Correlate one A border shoulder against B over ±`params.max_lag` around `side.anchor_frame`.
-pub(in crate::application::gap_fingerprint::measure) fn lag_side_sweep(side: LagSideSweep<'_>, params: LagSweepParams) -> Option<LagSummary> {
+pub(in crate::application::gap_fingerprint::measure) fn lag_side_sweep(
+    side: LagSideSweep<'_>,
+    params: LagSweepParams,
+) -> Option<LagSummary> {
     let ml = params.ml();
     let w = params.window.min(side.a_border.len());
     let in_range = if side.pre_shoulder {
@@ -371,8 +384,10 @@ pub(in crate::application::gap_fingerprint::measure) struct LagPairInput<'a> {
     /// Lazy wide-capture sources for [`rescue_shoulder`]'s envelope search — see its doc comment.
     /// `None` (env off, or a caller that never rescues, e.g. tests) falls back to the narrow
     /// `a_pre`/`a_post` already above.
-    pub(in crate::application::gap_fingerprint::measure) pre_wide: Option<&'a dyn Fn() -> Option<Vec<f64>>>,
-    pub(in crate::application::gap_fingerprint::measure) post_wide: Option<&'a dyn Fn() -> Option<Vec<f64>>>,
+    pub(in crate::application::gap_fingerprint::measure) pre_wide:
+        Option<&'a dyn Fn() -> Option<Vec<f64>>>,
+    pub(in crate::application::gap_fingerprint::measure) post_wide:
+        Option<&'a dyn Fn() -> Option<Vec<f64>>>,
 }
 /// Measure → triage → rescue → accept ordering for one shoulder pair
 /// (`docs/dev/archive/TEMP-lag-nominal-first-plan.md` § Change). Both shoulders are always swept at their
@@ -537,7 +552,10 @@ pub(in crate::application::gap_fingerprint::measure) fn envelope_shoulder(
     }
     envelope_peak_at(a_win, &side.b_signal[lo..hi], sample_rate, cfg.bin, max_lag)
 }
-pub(in crate::application::gap_fingerprint::measure) fn envelope_recenter_frames(peak: Option<EnvelopePeak>, sample_rate: u32) -> i64 {
+pub(in crate::application::gap_fingerprint::measure) fn envelope_recenter_frames(
+    peak: Option<EnvelopePeak>,
+    sample_rate: u32,
+) -> i64 {
     let Some(p) = peak else {
         return 0;
     };
@@ -550,7 +568,9 @@ pub(in crate::application::gap_fingerprint::measure) fn envelope_recenter_frames
 }
 /// Lag fingerprint for a placement: A's kept border vs the B haystack swept over ±`max_lag`, on the
 /// mono downmix **and** the gate-selected channel (where a multichannel failure lives).
-pub(in crate::application::gap_fingerprint::measure) fn lag_at_placement(input: &LagAtPlacementInput<'_>) -> LagFingerprint {
+pub(in crate::application::gap_fingerprint::measure) fn lag_at_placement(
+    input: &LagAtPlacementInput<'_>,
+) -> LagFingerprint {
     let LagAtPlacementInput {
         a_samples,
         channels,
@@ -1972,7 +1992,8 @@ mod tests {
         assert_eq!(post.envelope_edge_pinned, Some(true));
         assert_eq!(post.envelope_rescue, Some(EnvelopeRescue::Declined));
         assert!(
-            post.envelope_lag_ms.is_some_and(|ms| (ms - (-2000.0)).abs() < 150.0),
+            post.envelope_lag_ms
+                .is_some_and(|ms| (ms - (-2000.0)).abs() < 150.0),
             "coarse peak should sit on the −2000 ms bin, got {:?}",
             post.envelope_lag_ms
         );
