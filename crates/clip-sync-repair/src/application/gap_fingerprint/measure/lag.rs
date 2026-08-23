@@ -142,6 +142,9 @@ pub fn summarize_lag_curve(
         // Stamped by the caller that owns the border templates (`lag_side_sweep`); the curve alone
         // cannot know how far the template edge sits from the gap.
         border_displacement_ms: None,
+        // Nominal sweep: the envelope has not run, so there is no template length to report. Set by
+        // `stamp_rescue` on the paths that do consult it.
+        envelope_window_ms: None,
         envelope_lag_ms: None,
         envelope_peak_r: None,
         envelope_edge_pinned: None,
@@ -263,7 +266,9 @@ pub(in crate::application::gap_fingerprint::measure) fn stamp_rescue(
     mut s: LagSummary,
     peak: Option<EnvelopePeak>,
     rescue: EnvelopeRescue,
+    window_ms: f64,
 ) -> LagSummary {
+    s.envelope_window_ms = Some(window_ms);
     if let Some(p) = peak {
         s.envelope_lag_ms = Some(p.lag_ms);
         s.envelope_peak_r = Some(p.peak_r);
@@ -311,10 +316,21 @@ pub(in crate::application::gap_fingerprint::measure) fn rescue_shoulder(
         a_border: wide_border.as_deref().unwrap_or(side.a_border),
         ..side
     };
+    // What the envelope will actually correlate — `envelope_shoulder` clamps the requested window
+    // to the trimmed border, and on the `shared_covers_wide` path that border is the shared capture
+    // rather than one cut to `wide_need`. Recorded on every path below so a reader never has to
+    // infer it from the recipe (which cannot express either adjustment).
+    let env_window_ms = (env_cfg.window.min(envelope_side.a_border.len()) as f64) * 1000.0
+        / f64::from(params.sample_rate).max(1.0);
     let peak = envelope_shoulder(envelope_side, env_cfg, params.sample_rate);
     let env_frames = envelope_recenter_frames(peak, params.sample_rate);
     if env_frames == 0 {
-        return Some(stamp_rescue(nominal, peak, EnvelopeRescue::Declined));
+        return Some(stamp_rescue(
+            nominal,
+            peak,
+            EnvelopeRescue::Declined,
+            env_window_ms,
+        ));
     }
     let rescued = lag_side_sweep(
         LagSideSweep {
@@ -326,8 +342,18 @@ pub(in crate::application::gap_fingerprint::measure) fn rescue_shoulder(
         params,
     );
     match rescued {
-        Some(r) if is_recoverable(&r) => Some(stamp_rescue(r, peak, EnvelopeRescue::Rescued)),
-        _ => Some(stamp_rescue(nominal, peak, EnvelopeRescue::Declined)),
+        Some(r) if is_recoverable(&r) => Some(stamp_rescue(
+            r,
+            peak,
+            EnvelopeRescue::Rescued,
+            env_window_ms,
+        )),
+        _ => Some(stamp_rescue(
+            nominal,
+            peak,
+            EnvelopeRescue::Declined,
+            env_window_ms,
+        )),
     }
 }
 /// Inputs for [`lag_pair`] — one A pre/post template pair vs a B haystack, plus the envelope
@@ -570,11 +596,25 @@ pub(in crate::application::gap_fingerprint::measure) fn lag_at_placement(input: 
     let border_spec = probe_border_spec(&refined, border_need, cfg);
     let (a_pre, a_post) = border_templates_for_gap(a_samples, ch, &border_spec);
     let (a_pre_ch, a_post_ch) = border_templates_per_channel_for_gap(a_samples, ch, &border_spec);
-    // When the shared capture already reaches at least as far as the envelope needs, the lazy wide
-    // fetches below are pure duplicated work: re-probing the same spec and re-cutting the same
-    // templates, up to four times per gap (mono pre/post + selected-channel pre/post). Hand
-    // `rescue_shoulder` `None` instead — its documented fallback is `side.a_border`, which on this
-    // arm *is* the wide template. So `Wide` costs one capture, not five.
+    // When the shared capture is cut to exactly the envelope's reach, the lazy wide fetches below
+    // are pure duplicated work: re-probing the same spec and re-cutting the same templates, up to
+    // four times per gap (mono pre/post + selected-channel pre/post). Hand `rescue_shoulder` `None`
+    // instead — its documented fallback is `side.a_border`, which then *is* the wide template. At
+    // the defaults `Wide` sizes `border_need` to exactly `wide_need`, so it costs one capture, not
+    // five.
+    //
+    // The test is `>=`, not `==`, and a longer capture is deliberately allowed to stand in. It is
+    // not the same slice: `gap_border_frame_range` trims silence inward from the gap bounded by
+    // `pre_start = gap_start - border_frames`, so a larger `border_frames` survives the trim with
+    // more material. That is an advantage, not a hazard — `envelope_shoulder` clamps to
+    // `cfg.window.min(a_border.len())`, so the extra length can only help it reach its full window.
+    // Measured: at `--lag-envelope-window-secs 0.3 --lag-envelope-max-lag-ms 700` behind a 900 ms
+    // silent tail, the shared 1.6 s border rescues at r = 0.996 where the envelope's own 1.0 s reach
+    // has one bin and cannot correlate at all.
+    //
+    // The cost is provenance, not correctness: how much A material the envelope saw then depends on
+    // `--border-capture`, which no recipe field describes. `LagSummary::envelope_window_ms` records
+    // the template length actually correlated so a reader never has to infer it.
     let shared_covers_wide = border_need >= wide_need;
     let pre_wide_mono = || -> Option<Vec<f64>> {
         let spec = probe_border_spec(&refined, wide_need, cfg);
@@ -1152,6 +1192,7 @@ mod tests {
             frac_lag_ms: 0.0,
             edge_pinned: Some(false),
             border_displacement_ms: None,
+            envelope_window_ms: None,
             envelope_lag_ms: None,
             envelope_peak_r: None,
             envelope_edge_pinned: None,
@@ -1210,6 +1251,7 @@ mod tests {
             frac_lag_ms: -0.04,
             edge_pinned: Some(false),
             border_displacement_ms: None,
+            envelope_window_ms: None,
             envelope_lag_ms: None,
             envelope_peak_r: None,
             envelope_edge_pinned: None,
@@ -1271,6 +1313,7 @@ mod tests {
             frac_lag_ms: 0.1,
             edge_pinned: Some(false),
             border_displacement_ms: None,
+            envelope_window_ms: None,
             envelope_lag_ms: None,
             envelope_peak_r: None,
             envelope_edge_pinned: None,
@@ -1451,6 +1494,100 @@ mod tests {
                 fed.frac_lag_ms
             );
         }
+    }
+
+    /// `shared_covers_wide` deliberately accepts a capture *longer* than the envelope's own reach,
+    /// and `envelope_window_ms` is what makes that legible in the dump.
+    ///
+    /// The shared capture is not the same slice as one cut to `wide_need`: `gap_border_frame_range`
+    /// trims silence inward from the gap bounded by `pre_start = gap_start - border_frames`, so a
+    /// longer capture survives the trim with more material. `envelope_shoulder` then clamps to
+    /// `cfg.window.min(a_border.len())`, so the extra length can only help it reach its full window.
+    ///
+    /// This is the arm the border-capture tests never reach: `narrow_need` (1.0 s window + 600 ms
+    /// sweep = 1.6 s) *exceeds* `wide_need` (0.3 s window + 1000 ms envelope lag = 1.3 s), so on
+    /// `Narrow` the shortcut fires and the envelope gets the 1.6 s border. A 1200 ms silent tail
+    /// then decides the outcome, because each capture keeps only `border_need - tail`: the 1.3 s
+    /// reach the envelope declared keeps 100 ms — one bin, not correlatable — while the 1.6 s
+    /// border keeps 400 ms and the shoulder rescues at r ≈ 0.998.
+    ///
+    /// An `==` predicate declines this shoulder instead — measured: `envelope_peak_r` `None` and
+    /// `envelope_window_ms` 100 ms. That was tried and rejected: it trades a correct rescue for a
+    /// reproducibility property the recipe cannot express anyway. The cost is that the envelope's
+    /// input depends on `--border-capture`, which is why `envelope_window_ms` records the template
+    /// length actually correlated — here it is the field that tells the two outcomes apart.
+    #[test]
+    fn shared_capture_longer_than_the_envelope_reach_is_used_and_recorded() {
+        const RATE: u32 = 48_000;
+        // Outside the ±600 ms fine sweep (so the rescue is consulted) and comfortably inside the
+        // 1000 ms envelope lag — a peak on the last searched bin sets `edge_pinned` and declines.
+        let pre_lag = lag_at_ms(RATE, 650);
+        let pre_len = lag_at_ms(RATE, 4000);
+        let gap = lag_at_ms(RATE, 2000);
+        let post_len = lag_at_ms(RATE, 3000);
+        let front_pad = pre_lag + lag_at_ms(RATE, 6000);
+        let gap_start = front_pad + pre_len;
+        let gap_end = gap_start + gap;
+        let total = gap_end + post_len;
+
+        // Each capture survives the trim with `border_need - quiet_tail`. At 1200 ms that leaves
+        // `wide_need` (1.3 s) a single 100 ms bin and `narrow_need` (1.6 s) a full 0.3 s window.
+        let quiet_tail = lag_at_ms(RATE, 1200);
+        let mut a = vec![0.0f32; total];
+        write_shaped_noise(&mut a, front_pad, gap_start - quiet_tail, 11, 0.5, true);
+        write_shaped_noise(&mut a, gap_end, gap_end + post_len, 23, 0.5, false);
+
+        let mut b_mono = vec![0.0f64; total];
+        for i in 0..post_len {
+            b_mono[gap_end + i] = f64::from(a[gap_end + i]);
+        }
+        let b_pre_at = gap_start - pre_lag - pre_len;
+        for i in 0..pre_len {
+            b_mono[b_pre_at + i] = f64::from(a[front_pad + i]);
+        }
+
+        let config = FingerprintConfig {
+            lag_envelope_window_secs: 0.3,
+            lag_envelope_max_lag_ms: 1000,
+            border_capture: BorderCapture::Narrow,
+            ..FingerprintConfig::default()
+        };
+        let out = lag_at_placement(&LagAtPlacementInput {
+            a_samples: &a,
+            channels: 1,
+            refined: RefinedGapFrames {
+                start_frame: gap_start,
+                end_frame: gap_end,
+            },
+            b_mono: &b_mono,
+            b_ch: &[],
+            selected: None,
+            start_frame: gap_start,
+            cfg: &config,
+            sample_rate: RATE,
+        })
+        .pre_anchor
+        .first()
+        .copied()
+        .expect("pre shoulder");
+
+        assert_eq!(
+            out.envelope_rescue,
+            Some(EnvelopeRescue::Rescued),
+            "the shared capture must still rescue this shoulder"
+        );
+        assert!(
+            out.envelope_peak_r.is_some_and(|r| r > 0.9),
+            "expected a strong envelope peak, got {:?}",
+            out.envelope_peak_r
+        );
+        // The full 0.3 s window: the 1.6 s border kept 400 ms after the trim, so nothing clamped
+        // it. Against the envelope's own 1.3 s reach this reads 100 ms — a single bin — and refuses.
+        assert_eq!(
+            out.envelope_window_ms,
+            Some(300.0),
+            "envelope_window_ms must record the template length actually correlated"
+        );
     }
 
     /// The two [`BorderCapture`] arms, on the shape that motivated the knob: a shoulder dead at

@@ -303,6 +303,20 @@ pub(crate) fn validate_fingerprint_flags(args: &Args) -> Result<(), String> {
         if args.gap_listen.is_some() {
             validate_gap_listen_run_mode(args)?;
         }
+        // Value checks run before the "flag needs a dump dir" checks below, because those return
+        // early on a dump run — the exact runs these values reach.
+        if let Some(secs) = args.lag_envelope_window_secs {
+            // `(secs * rate) as usize` saturates to 0 for non-finite and negative values, and the
+            // `.max(8)` behind it lands below the 100 ms envelope bin, so `envelope_shoulder`
+            // refuses on every shoulder of every gap. That is a silently rescue-free corpus whose
+            // recipe stamps the requested value as if it were deliberate — reject it up front.
+            // Unlike `--lag-envelope-max-lag-ms`, `0` is not a documented disable here.
+            if !secs.is_finite() || secs <= 0.0 {
+                return Err(format!(
+                    "--lag-envelope-window-secs must be a positive, finite number of seconds (got {secs})"
+                ));
+            }
+        }
         if args.gap_fingerprints.is_some() {
             return Ok(());
         }
@@ -834,6 +848,46 @@ mod cli_override_tests {
         ]);
         let err = validate_fingerprint_flags(&args).unwrap_err();
         assert!(err.contains("--gap-fingerprints"));
+    }
+
+    /// A window that rounds to fewer frames than the 100 ms envelope bin refuses on every shoulder
+    /// of every gap, and the recipe stamps the requested value as if that were deliberate. `0`,
+    /// negatives and non-finite values are rejected at startup rather than producing a silently
+    /// rescue-free corpus. Unlike `--lag-envelope-max-lag-ms`, `0` is not a documented disable.
+    #[cfg(feature = "calibration")]
+    #[test]
+    fn non_positive_lag_envelope_window_secs_is_rejected() {
+        use clap::Parser;
+
+        // `=` form: clap reads a bare `-1.5` as a flag, not a value.
+        for bad in [
+            "--lag-envelope-window-secs=0",
+            "--lag-envelope-window-secs=-1.5",
+            "--lag-envelope-window-secs=nan",
+        ] {
+            let args = Args::parse_from([
+                "clip-sync-repair",
+                "a.wav",
+                "b.wav",
+                "--gap-fingerprints",
+                "gap-files/out",
+                bad,
+            ]);
+            let err = validate_fingerprint_flags(&args)
+                .expect_err("must be rejected before the dump-dir early return");
+            assert!(err.contains("positive, finite"), "{bad}: got {err}");
+        }
+
+        let ok = Args::parse_from([
+            "clip-sync-repair",
+            "a.wav",
+            "b.wav",
+            "--gap-fingerprints",
+            "gap-files/out",
+            "--lag-envelope-window-secs",
+            "4.0",
+        ]);
+        assert!(validate_fingerprint_flags(&ok).is_ok());
     }
 
     #[cfg(feature = "calibration")]

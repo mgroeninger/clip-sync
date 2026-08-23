@@ -848,6 +848,17 @@ healthy locks sit at `peak_z` ≈ 6). Per shoulder,
   peak at `b_mapped` (±`lag_envelope_max_lag_ms`, default 2000). Recorded on a rescued or declined
   shoulder even when the retry is not kept. Absent when the knob is 0, on `not_consulted` shoulders
   (alive at nominal — no envelope peak was run), and on corpora from before this field.
+- **`envelope_window_ms`** — the A-template length the envelope **actually correlated**, i.e.
+  `min(lag_envelope_window_secs × 1000, trimmed A border)`. The recipe records what was asked for;
+  this records what was used, and the two part company when the silence walk-off / 12 %-of-peak trim
+  left the shoulder short, or when the rescue reused the shared `--border-capture` buffer instead of
+  re-cutting one at `env_window + env_lag` (that buffer can be *longer*, which survives the trim with
+  more material). It is the field that explains a weak or refused envelope: a value below the recipe
+  window means a short template, and ~100 ms means a single bin, which cannot correlate at all.
+  Measured case — a 1.2 s silent tail on a 0.3 s / 1000 ms recipe: the shared 1.6 s buffer keeps
+  400 ms and rescues at r ≈ 0.998, where the envelope's own 1.3 s reach keeps 100 ms and refuses.
+  Same presence rule as `envelope_lag_ms`, except that it is still recorded when the envelope refused
+  before correlating — which is exactly when it is most diagnostic.
 - **`envelope_rescue`** — which branch produced the row: `not_consulted` (alive at nominal),
   `rescued` (dead at nominal; retry kept), `declined` (dead at nominal; honest nominal kept).
   Absent when the knob is 0.

@@ -399,13 +399,13 @@ mod tests {
             "RepairConfig and FingerprintConfig envelope-window defaults drifted"
         );
         // The rescue window and the Tier-3 `wide_envelope` diagnostic's own window are separate
-        // knobs (BACKLOG § *Fill placement* — *Envelope width knobs move only the rescue path*).
-        // They must still AGREE at the default, or the shipped arm itself ships two different
-        // searches and every dump on disk already needs the recipe field to be read.
-        assert_eq!(
-            defaults.lag_envelope_window_secs, 2.0,
-            "the rescue default drifted away from the diagnostic's pinned window"
-        );
+        // knobs (BACKLOG § *Fill placement* — *Envelope width knobs move only the rescue path*),
+        // and they must AGREE at the default or the shipped arm itself ships two different searches.
+        // There is deliberately no assertion for that here: `DEFAULT_LAG_ENVELOPE_WINDOW_SECS` is
+        // *defined as* `pcm::WIDE_ENV_WINDOW_SECS` (see `measure/config.rs`), so the agreement is
+        // structural and nothing runtime can break it. An earlier version asserted the literal
+        // `2.0`, which tested the value rather than the agreement — retuning the diagnostic's
+        // constant would have moved both together, still agreeing, and failed the test anyway.
         assert_eq!(
             defaults.fill_seam_search_secs, 0.25,
             "fill_seam_search_secs default moved; the residual contract quotes `default 250ms`"
@@ -443,6 +443,7 @@ mod tests {
             frac_lag_ms: 0.26,
             edge_pinned: Some(false),
             border_displacement_ms: Some(31.6),
+            envelope_window_ms: None,
             envelope_lag_ms: None,
             envelope_peak_r: None,
             envelope_edge_pinned: None,

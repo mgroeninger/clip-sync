@@ -1148,6 +1148,30 @@ pub struct LagSummary {
     /// fingerprints written before this field, and on paths that do not build border templates.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub border_displacement_ms: Option<f64>,
+    /// **A-template length the envelope actually correlated (ms).** The recipe's
+    /// `lag_envelope_window_secs` records what was *asked for*; this records what was *used*, which
+    /// is `min(requested_window, trimmed_a_border)`. They part company for two reasons, and a reader
+    /// cannot tell which from the recipe alone:
+    ///
+    /// - the silence walk-off and 12 %-of-peak trim left the shoulder shorter than the window
+    ///   (the same mechanism behind [`Self::border_displacement_ms`]);
+    /// - the shared A capture already reached the envelope's need, so the rescue reused it instead
+    ///   of re-cutting one at exactly `env_window + env_lag`. That capture is sized by
+    ///   `--border-capture` and can be *longer*, which survives the trim with more material.
+    ///   Measured case: it hands the envelope 1.6 s where the envelope's own reach would have
+    ///   yielded 100 ms, turning a one-bin refusal into an r = 0.996 rescue.
+    ///
+    /// The field does not say *which* of the two applied — reconstructing that needs the border
+    /// geometry, not the recipe. What it does give a reader is the quantity that explains a weak or
+    /// refused envelope directly: a value below the recipe's window means the template was short,
+    /// and one at ~100 ms means a single bin, which cannot correlate at all.
+    ///
+    /// Same presence rule as [`Self::envelope_lag_ms`]: set whenever the envelope ran (`rescued` /
+    /// `declined`), absent on `not_consulted`, when `lag_envelope_max_lag_ms` is 0, and on corpora
+    /// written before this field. Unlike `envelope_lag_ms` it is still set when the envelope refused
+    /// before correlating, which is exactly when knowing the template length explains the refusal.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub envelope_window_ms: Option<f64>,
     /// Coarse 100 ms-bin envelope peak at `b_mapped` (ms). Present on `rescued` / `declined`
     /// shoulders (the envelope ran). Absent on `not_consulted` (alive at nominal — envelope never
     /// run), when `lag_envelope_max_lag_ms` is 0, and on corpora from before this field.

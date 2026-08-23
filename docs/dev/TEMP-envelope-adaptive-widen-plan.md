@@ -7,8 +7,10 @@ unobtainable or demoted, and that its motivating defect is not addressable by it
 corrections are inline below, marked **[2026-08-22]**; nothing has been deleted, so the refuted
 reasoning stays readable. See § *Correction pass* immediately below for the standing verdict.
 **Deciding measurement 2 is answered (2026-08-22):** 31/g8 is a `BorderCapture::Narrow` trim split,
-not a floor problem, and **leaves this plan**. Measurement 1 (pair-50 edge-pin vs 0.70) is still
-open and is what remains before any rewrite. **Re-scoped 2026-08-19 to the rescue branch:**
+not a floor problem, and **leaves this plan**. **Deciding measurement 1 is answered (2026-08-23):**
+no pair-50 edge-pinned shoulder clears 0.70 — the only pin is 50/g009 post at r 0.47 / +2000 ms —
+so the widen trigger has no members and the ladder is **refuted**, not merely blocked. Nothing
+remains before a rewrite; do not start this Change. **Re-scoped 2026-08-19 to the rescue branch:**
 [TEMP-lag-nominal-first-plan.md](archive/TEMP-lag-nominal-first-plan.md) landed 2026-08-20 (it needed no new
 threshold and no dump) and confines everything in this plan — the widen ladder *and* any guard
 refinement — to shoulders that are already dead at nominal (`peak_r` < 0.5). That collapses the
@@ -60,6 +62,8 @@ what this draft may and may not still claim.
    the thing that must widen and the thing that must not. Note also that the existing guard already
    treats `edge_pinned` as a hard disqualifier, so the widen population is by construction the set
    the current guard rejects: 50/g009 fails *both* halves of the proposed trigger.
+   **[2026-08-23]** Measurement 1 made this empirical: 50/g009 post is pair 50's *only* edge-pin,
+   and it fails the floor. The trigger is empty, not just self-contradictory.
 5. **The adaptive ladder is not justified on cost.** `lag_envelope_max_lag_ms` is already a config
    knob, so a flat wider re-fingerprint costs a flag rather than a Change. The ladder was only ever
    justified by per-gap cost, and step 4's own numbers (2/40 shoulder-sides edge-pinned) say that
@@ -77,17 +81,28 @@ what this draft may and may not still claim.
 
 - The envelope radius still censors pair-50-shaped offsets in `lag_decision` dumps; Result 8's
   dump-visible step-boundary base rate of zero is a search-radius effect, and a wider-envelope
-  re-fingerprint is still the cheap way to size that population.
+  re-fingerprint is still the cheap way to size that population. That dump is **flat**
+  `--lag-envelope-max-lag-ms`, not Change step 3's ladder — measurement 1 (2026-08-23) showed the
+  ladder has no trigger members.
 - `min_envelope_r = 0.70` is still an uncalibrated absolute floor inside the rescue branch.
+  Measurement 1 does not retune it.
 - Both § Non-goals entries on gap duration and on A-content-derived floors stand unchanged.
 
 ### Deciding measurements
 
-1. **Does any pair-50 edge-pinned shoulder actually clear 0.70?** Still open. `envelope_peak_r` and
-   `envelope_edge_pinned` are already serialized, and `Declined` rows still carry them, because
-   `rescue_shoulder` stamps the peak before returning. Answerable from an existing dump on the
-   current binary. **If nothing clears it, the widen trigger has no members and the ladder is
-   refuted before anyone writes it.**
+1. **Does any pair-50 edge-pinned shoulder actually clear 0.70?** **Answered 2026-08-23 — no.
+   The widen trigger has no members; the ladder is refuted, not merely blocked.** Query on
+   `gap-files/2026-08-20-nominal-first-on-decoupled-unconditioned/50/` (current binary:
+   nominal-first, default `BorderCapture::Narrow`). Filter is `envelope_edge_pinned`, **not**
+   `envelope_rescue == declined` — that mix includes "no shift needed" (50/g015 post: r 0.720,
+   not edge-pinned, lag 0.0; BACKLOG *`env_frames == 0` conflates two verdicts*). Pair 50 has
+   **one** edge-pinned shoulder: **g009 post**, r **0.47** at **+2000 ms** (the plan's own
+   exemplar; true offset +2.789 s sits past the window). Nothing edge-pinned clears 0.70.
+   Several declined shoulders *do* clear 0.70 but they are **interior** — not the widen
+   population: g012 pre 0.72 / −1500, g012 post 0.71 / +800, g013 post 0.87 / +100, g015 post
+   0.72 / 0, g018 pre 0.84 / −1300, g019 pre 0.99 / +1900. Do not implement Change step 3.
+   Sizing remains a **flat** `--lag-envelope-max-lag-ms` re-fingerprint. Do not retune 0.70
+   off this row.
 2. **Do the two paths disagree about 31/g8's envelope curve?** **Answered 2026-08-22 — yes, and
    it is a capture split, not a floor problem. 31/g8 leaves this plan.** HEAD dump
    `gap-files/2026-08-22-31g8-capture` (`--fingerprint-gap 9`, default `BorderCapture::Narrow`) is
@@ -233,8 +248,8 @@ nothing else. The reduction the fine pass already does is one function reuse awa
    verdicts 4 and 5).** The trigger below rules out `50/g009` explicitly, yet 50/g009 is the very
    pair-50 shoulder Exit 2 asks the ladder to rescue; and the ladder's cost justification does not
    survive the observation that a flat wider re-fingerprint costs a CLI flag. Do not implement this
-   step. Deciding measurement 1 (Correction pass) may refute it outright by showing the trigger has
-   no members. Text kept below as the record of what was proposed.
+   step. Deciding measurement 1 (2026-08-23) **did** refute it: the trigger has no members. Text
+   kept below as the record of what was proposed.
    Start each dead shoulder's coarse pass at the current default (2000 ms).
    If the result is `envelope_edge_pinned` **and** clears whatever floor step 2 lands on (i.e. it
    looks like a real signal running off the edge, not noise pinned at the boundary — see
@@ -269,7 +284,8 @@ nothing else. The reduction the fine pass already does is one function reuse awa
 > question below cannot be answered by the dump it names. Exit 2 survives **only as a test oracle**
 > — pair 50 is the corpus's one independently-confirmed far-offset ground truth — and no longer as
 > a justification, since production already places those gaps via anchor-seam. Deciding
-> measurement 2 is **done** (31/g8 left this plan). Do not start work; run measurement 1 first.
+> measurements 1 and 2 are **done** (ladder empty on pair 50; 31/g8 left this plan). Do not
+> start work. Whatever survives should be split and archived, not implemented from this draft.
 
 1. Diagnostic dump (Change step 1) on pair 31 + pair 50 + the smoke-join cell (including pair 26),
    no guard change: confirm `envelope_peak_z` / `envelope_prominence` are populated and inspect

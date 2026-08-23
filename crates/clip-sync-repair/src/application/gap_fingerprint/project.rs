@@ -276,6 +276,7 @@ fn projected_lag_entry(
             edge_pinned: None,
             // Projection: the stored summary carries no border geometry to displace against.
             border_displacement_ms: None,
+            envelope_window_ms: None,
             envelope_lag_ms: None,
             envelope_peak_r: None,
             envelope_edge_pinned: None,
@@ -840,6 +841,7 @@ mod tests {
                 frac_lag_ms: -0.26,
                 edge_pinned: Some(false),
                 border_displacement_ms: None,
+                envelope_window_ms: None,
                 envelope_lag_ms: None,
                 envelope_peak_r: None,
                 envelope_edge_pinned: None,
