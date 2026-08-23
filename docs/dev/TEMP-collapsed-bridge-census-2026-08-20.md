@@ -150,7 +150,7 @@ Production's own dead-shoulder rescue (`--lag-envelope-max-lag-ms`, default 2000
 Two consequences:
 - ~~**31/g8 is now the priority ear-check** (Question 2) — the only gap in this batch that plausibly repeats 31/g7's exact defect shape.~~ **Superseded 2026-08-21 (review):** per the row above, 31/g8 is most likely `shared_far_offset`. It was ear-checked anyway (Result 5, clean) — but a clean result on a non-member says nothing about collapsed-bridge either way. **This listen batch probably contained no collapsed-bridge case at all; 31/g7 was not among the nine.**
 - **31/g10 and g11 are resolved out of the collapsed-bridge question** — same-offset, both-shoulders-agree far offset, not a collapsed bridge. They still may be live production risk (both `patch`-tier), but that's a `shared_far_offset` question, not this one.
-- ~~**Pair 50's 6 gaps need a different approach**, not just a wider window — 2000 ms already exceeds what rescued 31's gaps, and it still found nothing durable. Possible next moves: check whether these regions are structurally different content (cuts/edits between A/B versions) rather than a lag problem at all.~~ **Struck 2026-08-21 (Result 6).** A wider window is *exactly* what was needed: the true peak is at +2.8 s and the ±3000 ms sweep found it. The "structurally different content / cuts-and-edits" speculation is refuted — the content matches at r ≈ 1.0 once you search far enough. This is an envelope-sizing question ([TEMP-envelope-adaptive-widen-plan.md](TEMP-envelope-adaptive-widen-plan.md), which already said pair 50 needs ~3 s), not a content question.
+- ~~**Pair 50's 6 gaps need a different approach**, not just a wider window — 2000 ms already exceeds what rescued 31's gaps, and it still found nothing durable. Possible next moves: check whether these regions are structurally different content (cuts/edits between A/B versions) rather than a lag problem at all.~~ **Struck 2026-08-21 (Result 6).** A wider window is *exactly* what was needed: the true peak is at +2.8 s and the ±3000 ms sweep found it. The "structurally different content / cuts-and-edits" speculation is refuted — the content matches at r ≈ 1.0 once you search far enough. This is an envelope-sizing question ([archive/TEMP-envelope-adaptive-widen-plan.md](archive/TEMP-envelope-adaptive-widen-plan.md), which already said pair 50 needs ~3 s), not a content question.
 
 ## Result 5 — ear-check of the 9 `patch`-tier gaps (user listen, 2026-08-20/21)
 
@@ -170,7 +170,7 @@ the right material" — 50/g8's own note says as much ("does not mean it is corr
 talking over each other"). Several "clean" pair-50 patches have A/B off by seconds on the listen clips.
 Those pair-50 "B begins 1–4 s earlier" notes (g8 ~4 s, g14 >1 s, g15 3–4 s, g16 2–3 s) **are** the
 already-known +2.7891 s offset ([archive/TEMP-fill-placement-registration-plan.md](archive/TEMP-fill-placement-registration-plan.md)
-consensus; [TEMP-envelope-adaptive-widen-plan.md](TEMP-envelope-adaptive-widen-plan.md) already said
+consensus; [archive/TEMP-envelope-adaptive-widen-plan.md](archive/TEMP-envelope-adaptive-widen-plan.md) already said
 pair 50 needs ~3 s), not a separate phenomenon. `--gap-listen` cuts `_a_surround` and `_b_surround`
 around the same nominal span, so the two clips are *supposed* to line up; if they don't, the map is
 off by that amount. Sign matches: `frac_lag_ms` positive means the match sits later in B, so B's clip
@@ -266,7 +266,7 @@ waveform r of 0.18 is the known coarse-envelope false-peak mode (`26/g6`,
 Result). **This is a second real instance of it**, and unlike 26/g6 it is not caught by
 nominal-first ordering — g8's shoulders are genuinely dead at nominal (r -0.02), so the rescue
 branch is entered legitimately and then picks the wrong peak. Handed to
-[TEMP-envelope-adaptive-widen-plan.md](TEMP-envelope-adaptive-widen-plan.md), which owns the
+[archive/TEMP-envelope-adaptive-widen-plan.md](archive/TEMP-envelope-adaptive-widen-plan.md), which owns the
 rescue-branch guard.~~
 **Withdrawn 2026-08-22 as a 26/g6-class / floor handoff.** HEAD
 `gap-files/2026-08-22-31g8-capture` (default `BorderCapture::Narrow`) reproduces the +800 / r 0.816

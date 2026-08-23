@@ -11,7 +11,7 @@
 > (`D` 13.0 ms) — bit-identical to HEAD `gap-files/2026-08-22-31g8-capture`. The bar *was* true of
 > `2026-08-20-nominal-first-on` (shared wide capture, pre `D` 1983.8 ms, kept −1146.1). Ordering
 > is not the defect; the lazy-narrow split is. See BACKLOG 31/g8 and
-> [TEMP-envelope-adaptive-widen-plan.md](../TEMP-envelope-adaptive-widen-plan.md) deciding
+> [TEMP-envelope-adaptive-widen-plan.md](TEMP-envelope-adaptive-widen-plan.md) deciding
 > measurement 2.
 
 **Status:** implemented + validated, 2026-08-20. Unit tests (all 5 Exit shapes) and the 12-pair
@@ -22,7 +22,7 @@ every Exit bar: 0 mismatches across 505 shoulders (not_consulted/declined), mani
 Parent: [TEMP-lag-envelope-recenter-plan.md](TEMP-lag-envelope-recenter-plan.md)
 (superseded — its Change shipped the envelope mechanism this plan reorders; its Result sections
 are this plan's validation baselines). Sibling:
-[TEMP-envelope-adaptive-widen-plan.md](../TEMP-envelope-adaptive-widen-plan.md) (window sizing +
+[TEMP-envelope-adaptive-widen-plan.md](TEMP-envelope-adaptive-widen-plan.md) (window sizing +
 rescue-branch guard refinement — re-scoped by this plan; see § Relation to adaptive-widen).
 
 ---
@@ -108,7 +108,7 @@ shoulder off", a different question; pair 26 is direct evidence that healthy gap
   disables rescue entirely.
 - Do not tune any threshold. Both numbers this plan uses (0.5 recoverable, 0.70 envelope guard)
   are existing, recorded values; changing them is
-  [TEMP-envelope-adaptive-widen-plan.md](../TEMP-envelope-adaptive-widen-plan.md)'s business, now
+  [TEMP-envelope-adaptive-widen-plan.md](TEMP-envelope-adaptive-widen-plan.md)'s business, now
   confined to the rescue branch.
 - Do not address the alive-but-wrong-at-nominal case (a repetition alias inside ±600 with
   `r ≥ 0.5` while the true peak is far). Nominal-first cannot see it, envelope-first could not fix
@@ -154,8 +154,14 @@ No ear pass needed: no audio output changes while record-only.
 
 ## Relation to adaptive-widen
 
+> **[2026-08-23]** The sibling
+> [TEMP-envelope-adaptive-widen-plan.md](TEMP-envelope-adaptive-widen-plan.md) is archived
+> (ladder refuted; never coded). Threshold work that this section handed it is now
+> [TEMP-envelope-rescue-stats-plan.md](../TEMP-envelope-rescue-stats-plan.md) (diagnostic
+> fields only; do not retune 0.70 there). Sizing is a flat `--lag-envelope-max-lag-ms` dump.
+
 This plan lands first and does not wait on
-[TEMP-envelope-adaptive-widen-plan.md](../TEMP-envelope-adaptive-widen-plan.md)'s diagnostic dump —
+[TEMP-envelope-adaptive-widen-plan.md](TEMP-envelope-adaptive-widen-plan.md)'s diagnostic dump —
 it introduces no new threshold. Adaptive-widen is re-scoped by it: the widen ladder and any
 `envelope_peak_z` / `envelope_prominence` guard refinement live **inside the rescue branch**,
 where a wrong guard decision costs a wasted fine sweep or an honestly-kept `decorrelated` row,

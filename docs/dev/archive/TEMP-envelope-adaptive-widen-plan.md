@@ -1,6 +1,20 @@
 # TEMP — Envelope adaptive widen + self-referential floor
 
-**Status:** draft, **PREMISE PARTIALLY REFUTED 2026-08-22 — do not start as written.** Not started.
+> **Archived 2026-08-23. REFUTED, never coded as a Change.** The unifying premise ("both questions
+> have the same answer") broke on 2026-08-22; the adaptive ladder was empirically empty on
+> 2026-08-23 (measurement 1: pair 50's only edge-pin is g009 post, r 0.47 at +2000 ms). 31/g8 left
+> as a `BorderCapture::Narrow` miss (measurement 2). Palimpsest kept so the refuted reasoning stays
+> readable. Survivors, split out: **sizing** is a flat `--lag-envelope-max-lag-ms` dump
+> ([BACKLOG.md](../../../BACKLOG.md) § *Fill placement*); **rescue-branch envelope
+> z / prominence / curve length** is
+> [TEMP-envelope-rescue-stats-plan.md](../TEMP-envelope-rescue-stats-plan.md); **31/g8** is
+> BACKLOG's Narrow-capture item. Durable `lag_decision` behaviour:
+> [gap-fingerprint.md](../gap-fingerprint.md) § *`lag_decision`*.
+>
+> Do not implement this draft. Do not raise the 0.70 floor or the 2000 ms default off it.
+
+**Status:** archived 2026-08-23. Premise partially refuted 2026-08-22; ladder refuted 2026-08-23.
+Never started as a Change.
 A review against the post-nominal-first binary found that this plan's unifying premise ("both
 questions have the same answer") no longer holds, that two of its three exit criteria are
 unobtainable or demoted, and that its motivating defect is not addressable by its own Change. The
@@ -11,14 +25,14 @@ not a floor problem, and **leaves this plan**. **Deciding measurement 1 is answe
 no pair-50 edge-pinned shoulder clears 0.70 — the only pin is 50/g009 post at r 0.47 / +2000 ms —
 so the widen trigger has no members and the ladder is **refuted**, not merely blocked. Nothing
 remains before a rewrite; do not start this Change. **Re-scoped 2026-08-19 to the rescue branch:**
-[TEMP-lag-nominal-first-plan.md](archive/TEMP-lag-nominal-first-plan.md) landed 2026-08-20 (it needed no new
+[TEMP-lag-nominal-first-plan.md](TEMP-lag-nominal-first-plan.md) landed 2026-08-20 (it needed no new
 threshold and no dump) and confines everything in this plan — the widen ladder *and* any guard
 refinement — to shoulders that are already dead at nominal (`peak_r` < 0.5). That collapses the
 stakes of Problem §2: a wrong guard decision inside the rescue branch costs a wasted fine sweep
 or an honestly-kept `decorrelated` row, never a corrupted healthy measurement. 26/g6's fixture
 obligation transfers to nominal-first as "must never *enter* the rescue branch" (enforced by
 ordering, tested by its bit-identical exit bar), not to a coarse-pass floor here.
-Parent: [archive/TEMP-lag-envelope-recenter-plan.md](archive/TEMP-lag-envelope-recenter-plan.md)
+Parent: [TEMP-lag-envelope-recenter-plan.md](TEMP-lag-envelope-recenter-plan.md)
 (superseded — Change landed, ordering refuted by 26/g6; Result 2026-08-19 pair 31/50 dump).
 Corresponds to the fill-placement leftover that was "Pair 50 envelope ~3 s" — this
 plan replaces that item's flat "dump at 3000 ms" direction with an adaptive one and adds the
@@ -130,7 +144,7 @@ now handled by nominal-first ordering (it was alive at nominal, so it never ente
 and then picks the wrong peak. So the "confident false peak" problem is **not** fully retired by
 nominal-first; it survives inside the branch, which is exactly where Problem section 2's floor question
 still lives. Evidence:
-[TEMP-collapsed-bridge-census-2026-08-20.md](TEMP-collapsed-bridge-census-2026-08-20.md) Result 7.
+[TEMP-collapsed-bridge-census-2026-08-20.md](../TEMP-collapsed-bridge-census-2026-08-20.md) Result 7.
 
 > **[2026-08-22] This paragraph is withdrawn as motivation for this plan — Correction pass
 > verdict 3, then deciding measurement 2.** The +800 / r 0.82 reading is real on
@@ -139,7 +153,7 @@ still lives. Evidence:
 > trims 1.98 s off the pre template (`D` 1984 vs 13). 31/g8 leaves this plan. The floor still
 > could not have selected −1146 from an argmax at +800; that hypothetical no longer matters.
 
-**Stakes note (2026-08-21).** [TEMP-pair50-anchor-seam-outcomes-2026-08-21.md](TEMP-pair50-anchor-seam-outcomes-2026-08-21.md)
+**Stakes note (2026-08-21).** [TEMP-pair50-anchor-seam-outcomes-2026-08-21.md](../TEMP-pair50-anchor-seam-outcomes-2026-08-21.md)
 measured what production actually does with pair 50's +2.789 s region: all six `patch`-tier gaps there
 are already placed at the correct offset by the editorial anchor-seam bracket search
 (`max_anchor_bracket_secs`, default 5.0 s), independently of `lag_decision`. So the sizing question
@@ -173,7 +187,7 @@ peak (pair 31, ≤1.16 s, inside the 2000 ms default) and saturates honestly whe
    shoulders (`envelope_peak_r` 0.946 / 0.961, neither edge-pinned, shoulders agree within 3.7 ms)
    while locked onto a wrong peak — the diagnostic reports a confident, self-consistent +1.88 s
    lag where the true value is −41.75 / −45.43 ms (see
-   [archive/TEMP-lag-envelope-recenter-plan.md](archive/TEMP-lag-envelope-recenter-plan.md)
+   [TEMP-lag-envelope-recenter-plan.md](TEMP-lag-envelope-recenter-plan.md)
    Result, "smoke join"). This is the coarse-pass mirror of `50/g009`'s failure mode: that gap is
    a true peak that failed the floor and correctly stayed unrecentered; `26/g6` is a false peak
    that passed the floor and got recentered anyway. A single scalar threshold on `peak_r` alone
@@ -285,7 +299,8 @@ nothing else. The reduction the fine pass already does is one function reuse awa
 > — pair 50 is the corpus's one independently-confirmed far-offset ground truth — and no longer as
 > a justification, since production already places those gaps via anchor-seam. Deciding
 > measurements 1 and 2 are **done** (ladder empty on pair 50; 31/g8 left this plan). Do not
-> start work. Whatever survives should be split and archived, not implemented from this draft.
+> start work. **Split and archived 2026-08-23** — survivors live in BACKLOG (flat dump) and
+> [TEMP-envelope-rescue-stats-plan.md](../TEMP-envelope-rescue-stats-plan.md).
 
 1. Diagnostic dump (Change step 1) on pair 31 + pair 50 + the smoke-join cell (including pair 26),
    no guard change: confirm `envelope_peak_z` / `envelope_prominence` are populated and inspect
@@ -295,7 +310,7 @@ nothing else. The reduction the fine pass already does is one function reuse awa
    despite the high r** (its raw `prominence` is 0.0137/0.0127, roughly half its own true-peak
    reading of 0.0254/0.0271 off-run — suggestive but not yet proven as a clean separator)?
    26/g6 stays in this dump as a *calibration point* for the statistics; its must-not-recenter
-   obligation now lives in [TEMP-lag-nominal-first-plan.md](archive/TEMP-lag-nominal-first-plan.md)'s
+   obligation now lives in [TEMP-lag-nominal-first-plan.md](TEMP-lag-nominal-first-plan.md)'s
    exit bar (bit-identical to off-run), which protects it whether or not any revised guard here
    would.
 2. Ladder dump: pair 50 at the 2000→3000→4000 ladder vs the flat 2000 baseline. Confirm the true
@@ -307,6 +322,6 @@ nothing else. The reduction the fine pass already does is one function reuse awa
 3. Only after both dumps land: decide the guard threshold change (if any). Do not raise the
    production default off this plan's draft.
 
-**Ordering:** [TEMP-lag-nominal-first-plan.md](archive/TEMP-lag-nominal-first-plan.md) landed
+**Ordering:** [TEMP-lag-nominal-first-plan.md](TEMP-lag-nominal-first-plan.md) landed
 2026-08-20; this plan's dumps run on that binary so the ladder and guard
 statistics are measured in the rescue branch they will actually live in.

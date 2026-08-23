@@ -249,7 +249,7 @@ This is a second concrete case (after 50/g009's honest edge-pin) of the coarse e
 `envelope_peak_r ≥ 0.70` guard alone being insufficient: 50/g009 was a *true* peak that failed to
 clear 0.70 and correctly stayed unrecentered; 26/g6 is a *false* peak that cleared 0.70
 comfortably and got recentered anyway. Both point the same direction as
-[TEMP-envelope-adaptive-widen-plan.md](../TEMP-envelope-adaptive-widen-plan.md)'s Problem §2: a bare
+[TEMP-envelope-adaptive-widen-plan.md](TEMP-envelope-adaptive-widen-plan.md)'s Problem §2: a bare
 correlation-coefficient floor on the coarse pass can't tell a real peak from a plausible-looking
 wrong one, and 26/g6 is now the concrete "cleared the floor, still wrong" fixture that plan's
 Change step 1 diagnostic dump should include and its Change step 2 guard revision must reject
@@ -292,9 +292,11 @@ What survives, and where it went:
   `-smoke-join-on`/`-off`) are the successor's diff baselines; its exit bars are this plan's,
   tightened (alive shoulders must be bit-identical to the off-run, not merely within
   re-quantization noise).
-- **The window-sizing question** (pair 50 needs ~3 s) and any residual coarse-pass guard
-  refinement live in [../TEMP-envelope-adaptive-widen-plan.md](../TEMP-envelope-adaptive-widen-plan.md),
-  re-scoped to the rescue branch.
+- **The window-sizing question** (pair 50 needs ~3 s) is a flat `--lag-envelope-max-lag-ms` dump
+  ([BACKLOG.md](../../../BACKLOG.md) § *Fill placement*). Residual coarse-pass guard statistics
+  live in [../TEMP-envelope-rescue-stats-plan.md](../TEMP-envelope-rescue-stats-plan.md). The
+  adaptive-widen palimpsest is [TEMP-envelope-adaptive-widen-plan.md](TEMP-envelope-adaptive-widen-plan.md)
+  (archived 2026-08-23, ladder refuted).
 - **The successor landed 2026-08-20.** The default 2000 ms envelope is a rescue for
   dead-at-nominal shoulders only; 26/g6-class `lag_decision` rows stay bit-identical to
   `--lag-envelope-max-lag-ms 0`. See [TEMP-lag-nominal-first-plan.md](TEMP-lag-nominal-first-plan.md).

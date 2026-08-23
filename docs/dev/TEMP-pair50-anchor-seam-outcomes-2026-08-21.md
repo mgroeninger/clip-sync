@@ -23,11 +23,13 @@ pair index + gap index only. Source dumps are gitignored (`gap-files/`) and may 
 numbers below are the durable record — see **Reproduction**.
 
 **Related:**
-[TEMP-envelope-adaptive-widen-plan.md](TEMP-envelope-adaptive-widen-plan.md) owns the *sizing*
-question (how wide `lag_envelope_max_lag_ms` should be; pair 50's +2.789 s interior is its named
-target). Result 2 below slightly lowers that plan's stakes — the cluster is corrected downstream
-regardless — but does not answer it, and the g11–g13 failure is downstream of anything that plan
-would change. Do not merge the two.
+[BACKLOG.md](../../BACKLOG.md) § *Fill placement* owns the *sizing* dump (flat
+`--lag-envelope-max-lag-ms`; pair 50's +2.789 s interior is the named target). The withdrawn
+adaptive-ladder draft is
+[archive/TEMP-envelope-adaptive-widen-plan.md](archive/TEMP-envelope-adaptive-widen-plan.md).
+Result 2 below slightly lowers that dump's stakes — the cluster is corrected downstream
+regardless — but does not answer it, and the g11–g13 failure is downstream of anything a wider
+envelope would change. Do not merge the two.
 
 ---
 
@@ -61,7 +63,7 @@ All 6 show the identical shape: the correlation locks onto a consistent **+2.8 s
 1.000) — beyond production's own `frac_lag_ms`/nominal mapping — for the pre-shoulder and the early
 part of the patch, then collapses to noise (r < 0.5, no consistent lag) partway through. This matches
 the pair-50 map-step offset already documented in
-[TEMP-envelope-adaptive-widen-plan.md](TEMP-envelope-adaptive-widen-plan.md) (+2.789 s, "outside
+[archive/TEMP-envelope-adaptive-widen-plan.md](archive/TEMP-envelope-adaptive-widen-plan.md) (+2.789 s, "outside
 2000 ms" — i.e. outside the default envelope rescue's own search reach).
 
 **Why the sweep's post side reads as "no match": the extraction window runs out of matching content
@@ -270,7 +272,7 @@ durable record of what they showed.
 
 - Not a Change.
 - Not an envelope-sizing plan. That is
-  [TEMP-envelope-adaptive-widen-plan.md](TEMP-envelope-adaptive-widen-plan.md)'s question. Result 2
+  [archive/TEMP-envelope-adaptive-widen-plan.md](archive/TEMP-envelope-adaptive-widen-plan.md)'s question. Result 2
   lowers its stakes (the cluster is corrected downstream anyway) but does not answer it, and neither
   open question above would be resolved by widening `lag_envelope_max_lag_ms`.
 - Do not treat pair 50's cluster as an unreachable region — Result 2 refutes that by direct production
