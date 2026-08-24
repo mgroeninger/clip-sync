@@ -294,7 +294,7 @@ What survives, and where it went:
   re-quantization noise).
 - **The window-sizing question** (pair 50 needs ~3 s) is a flat `--lag-envelope-max-lag-ms` dump
   ([BACKLOG.md](../../../BACKLOG.md) § *Fill placement*). Residual coarse-pass guard statistics
-  live in [../TEMP-envelope-rescue-stats-plan.md](../TEMP-envelope-rescue-stats-plan.md). The
+  live in [TEMP-envelope-rescue-stats-plan.md](TEMP-envelope-rescue-stats-plan.md). The
   adaptive-widen palimpsest is [TEMP-envelope-adaptive-widen-plan.md](TEMP-envelope-adaptive-widen-plan.md)
   (archived 2026-08-23, ladder refuted).
 - **The successor landed 2026-08-20.** The default 2000 ms envelope is a rescue for

@@ -7,7 +7,7 @@
 > readable. Survivors, split out: **sizing** is a flat `--lag-envelope-max-lag-ms` dump
 > ([BACKLOG.md](../../../BACKLOG.md) § *Fill placement*); **rescue-branch envelope
 > z / prominence / curve length** is
-> [TEMP-envelope-rescue-stats-plan.md](../TEMP-envelope-rescue-stats-plan.md); **31/g8** is
+> [TEMP-envelope-rescue-stats-plan.md](TEMP-envelope-rescue-stats-plan.md); **31/g8** is
 > BACKLOG's Narrow-capture item. Durable `lag_decision` behaviour:
 > [gap-fingerprint.md](../gap-fingerprint.md) § *`lag_decision`*.
 >
@@ -317,7 +317,7 @@ nothing else. The reduction the fine pass already does is one function reuse awa
 > a justification, since production already places those gaps via anchor-seam. Deciding
 > measurements 1 and 2 are **done** (ladder empty on pair 50; 31/g8 left this plan). Do not
 > start work. **Split and archived 2026-08-23** — survivors live in BACKLOG (flat dump) and
-> [TEMP-envelope-rescue-stats-plan.md](../TEMP-envelope-rescue-stats-plan.md).
+> [TEMP-envelope-rescue-stats-plan.md](TEMP-envelope-rescue-stats-plan.md).
 
 1. Diagnostic dump (Change step 1) on pair 31 + pair 50 + the smoke-join cell (including pair 26),
    no guard change: confirm `envelope_peak_z` / `envelope_prominence` are populated and inspect

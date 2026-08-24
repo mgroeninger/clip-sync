@@ -157,7 +157,7 @@ No ear pass needed: no audio output changes while record-only.
 > **[2026-08-23]** The sibling
 > [TEMP-envelope-adaptive-widen-plan.md](TEMP-envelope-adaptive-widen-plan.md) is archived
 > (ladder refuted; never coded). Threshold work that this section handed it is now
-> [TEMP-envelope-rescue-stats-plan.md](../TEMP-envelope-rescue-stats-plan.md) (diagnostic
+> [TEMP-envelope-rescue-stats-plan.md](TEMP-envelope-rescue-stats-plan.md) (diagnostic
 > fields only; do not retune 0.70 there). Sizing is a flat `--lag-envelope-max-lag-ms` dump.
 
 This plan lands first and does not wait on

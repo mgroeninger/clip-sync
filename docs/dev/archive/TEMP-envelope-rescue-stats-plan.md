@@ -1,21 +1,29 @@
 # TEMP — Envelope rescue-branch peak statistics
 
+> **Archived 2026-08-24, unstarted — latched, not refuted.**
+> [settled.md](../settled.md) § C. The deliverable is diagnostic fields whose only customer is a later
+> retune of the 0.70 guard, and **the corpus contains no floor instance** to retune against: 26/g6 is
+> `EnvelopeRescue::NotConsulted` (stamps no `envelope_*` fields at all) and 31/g8 is a
+> `BorderCapture::Narrow` miss. Last survivor of the refuted adaptive-widen ladder. Reopen when a
+> shoulder is declined at `envelope_peak_r` just below 0.70 and its correct lag is independently known;
+> the Change below is still the right shape when that happens.
+
 **Status:** draft, not started. **One deliverable:** stamp `envelope_peak_z`,
 `envelope_prominence`, and `envelope_curve_n` on rescue-branch shoulders (`rescued` /
 `declined`). Diagnostic first — do not retune `min_envelope_r` in this Change.
 
-Split out of [archive/TEMP-envelope-adaptive-widen-plan.md](archive/TEMP-envelope-adaptive-widen-plan.md)
+Split out of [TEMP-envelope-adaptive-widen-plan.md](TEMP-envelope-adaptive-widen-plan.md)
 on 2026-08-23. That draft mixed three jobs (sizing, floor, widen-trigger); the ladder is
 **refuted** (measurement 1: pair 50's only edge-pin is g009 post, r 0.47 at +2000 ms). That
 measurement was taken *at* the 2000 ms cap it was judging; the same shoulder locks at +2800 once
 the cap moves, so do not cite it as "nothing lives past 2000" (caveat on the archived plan's
 banner). Sizing is a flat `--lag-envelope-max-lag-ms` dump, not a Change
-([BACKLOG.md](../../BACKLOG.md) § *Fill placement*). What remains is the floor's cheap remaining
+([BACKLOG.md](../../../BACKLOG.md) § *Fill placement*). What remains is the floor's cheap remaining
 job: declining doomed rescue candidates early so they do not pay a wasted fine sweep.
 
-Parent: [archive/TEMP-lag-nominal-first-plan.md](archive/TEMP-lag-nominal-first-plan.md)
+Parent: [TEMP-lag-nominal-first-plan.md](TEMP-lag-nominal-first-plan.md)
 (the rescue branch this field lives in). Durable `lag_decision` behaviour:
-[gap-fingerprint.md](gap-fingerprint.md) § *`lag_decision`*.
+[gap-fingerprint.md](../gap-fingerprint.md) § *`lag_decision`*.
 
 ## Problem
 

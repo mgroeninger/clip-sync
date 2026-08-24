@@ -269,7 +269,7 @@ durable record.
   a population.
 - Not a licence to design the step-boundary skip verdict — Result 3 is why.
 - Not an argument for raising the 2000 ms default, and not an argument about the 0.70 rescue guard
-  (that is [TEMP-envelope-rescue-stats-plan.md](../TEMP-envelope-rescue-stats-plan.md)'s territory; keep
+  (that is [TEMP-envelope-rescue-stats-plan.md](TEMP-envelope-rescue-stats-plan.md)'s territory; keep
   them separate).
 - Do not read `envelope_rescue: declined` as a refusal rate anywhere in this dump — Result 5.
 - Do not infer the patch path from a fingerprint dump — Result 4.
