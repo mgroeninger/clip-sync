@@ -64,7 +64,7 @@ is untracked — that is a bug in the catalog, not a state a doc may sit in.
 
 | Draft | What it is | Tracked as |
 |-------|-----------|-----------|
-| [TEMP-patch-audio-region-module-split-plan.md](TEMP-patch-audio-region-module-split-plan.md) | Folder split of `region.rs` (3262 lines). Byte-preserving; never bundled into a behaviour-change PR | [BACKLOG.md](../../BACKLOG.md) § *Repair R6* |
+| [TEMP-patch-audio-region-module-split-plan.md](TEMP-patch-audio-region-module-split-plan.md) | Folder split of `region.rs` (3633 lines). Byte-preserving; never bundled into a behaviour-change PR | [BACKLOG.md](../../BACKLOG.md) § *Repair R6* |
 | [TEMP-flac-output-plan.md](TEMP-flac-output-plan.md) | In-process `--flac` lossless output, peer of `--wav`. Motivated by the RIFF `u32` data-chunk limit | [BACKLOG.md](../../BACKLOG.md) § *Repair R6* |
 | [TEMP-nway-donor-alignment-plan.md](TEMP-nway-donor-alignment-plan.md) | Repair one damaged copy from **multiple** donors with sparse non-overlapping damage | [settled.md](settled.md) § C — latched, no corpus |
 
