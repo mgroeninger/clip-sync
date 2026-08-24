@@ -13,7 +13,7 @@
 >
 > **[2026-08-23, later same day] Scope limit on measurement 1.** That measurement was taken *at* the
 > 2000 ms cap it was judging. The flat-3000 smoke
-> ([TEMP-envelope-3000-smoke-2026-08-23.md](../TEMP-envelope-3000-smoke-2026-08-23.md)) re-measures
+> ([TEMP-envelope-3000-smoke-2026-08-23.md](TEMP-envelope-3000-smoke-2026-08-23.md)) re-measures
 > the same shoulder: 50/g009 post reads `envelope_peak_r` **0.999** at +2800, `frac_lag_ms` 2805.4,
 > r 0.997, not edge-pinned — and 21 further pair-50 shoulders come alive with it. So "the trigger has
 > no members" is true **of a ladder that can only step within ±2000 ms**, and is *not* evidence that
@@ -22,7 +22,7 @@
 > the stronger claim.
 >
 > **[2026-08-24] Settled corpus-wide.**
-> [TEMP-envelope-3000-corpus-2026-08-24.md](../TEMP-envelope-3000-corpus-2026-08-24.md) ran the flat
+> [TEMP-envelope-3000-corpus-2026-08-24.md](TEMP-envelope-3000-corpus-2026-08-24.md) ran the flat
 > widen over all 51 pairs. Reach beyond 2000 ms is **not** empty (22 shoulders live at 2761–2816 ms,
 > all pair 50) and nothing saturates 3000 ms (`envelope_edge_pinned` goes 1 → 0 corpus-wide). Zero
 > outcome changes across 1073 gaps, so the 2000 ms default stays — measured safe to raise,
@@ -161,7 +161,7 @@ now handled by nominal-first ordering (it was alive at nominal, so it never ente
 and then picks the wrong peak. So the "confident false peak" problem is **not** fully retired by
 nominal-first; it survives inside the branch, which is exactly where Problem section 2's floor question
 still lives. Evidence:
-[TEMP-collapsed-bridge-census-2026-08-20.md](../TEMP-collapsed-bridge-census-2026-08-20.md) Result 7.
+[TEMP-collapsed-bridge-census-2026-08-20.md](TEMP-collapsed-bridge-census-2026-08-20.md) Result 7.
 
 > **[2026-08-22] This paragraph is withdrawn as motivation for this plan — Correction pass
 > verdict 3, then deciding measurement 2.** The +800 / r 0.82 reading is real on
@@ -170,7 +170,7 @@ still lives. Evidence:
 > trims 1.98 s off the pre template (`D` 1984 vs 13). 31/g8 leaves this plan. The floor still
 > could not have selected −1146 from an argmax at +800; that hypothetical no longer matters.
 
-**Stakes note (2026-08-21).** [TEMP-pair50-anchor-seam-outcomes-2026-08-21.md](../TEMP-pair50-anchor-seam-outcomes-2026-08-21.md)
+**Stakes note (2026-08-21).** [TEMP-pair50-anchor-seam-outcomes-2026-08-21.md](TEMP-pair50-anchor-seam-outcomes-2026-08-21.md)
 measured what production actually does with pair 50's +2.789 s region: all six `patch`-tier gaps there
 are already placed at the correct offset by the editorial anchor-seam bracket search
 (`max_anchor_bracket_secs`, default 5.0 s), independently of `lag_decision`. So the sizing question

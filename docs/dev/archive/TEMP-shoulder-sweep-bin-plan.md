@@ -20,7 +20,7 @@ census's Results 7–8, which renamed the phenomenon the instrument points at; (
 that revision, which found the known-queue run could not produce its own stated expectations; (3)
 **cut to a single objective** — see the box below. Revisions (1) and (2) added a census classifier;
 revision (3) removes it, because the correction recorded in
-[TEMP-collapsed-bridge-census-2026-08-20.md](../TEMP-collapsed-bridge-census-2026-08-20.md) established
+[TEMP-collapsed-bridge-census-2026-08-20.md](TEMP-collapsed-bridge-census-2026-08-20.md) established
 that no data on disk can exercise it. (4) **implementability pass against the repo and the
 scripts** — no scope change: it closed six specification gaps that would have been unrecoverable
 once §4.5.5 deletes the Python (the FFT transform details in §4.2, the null floor and the
@@ -49,7 +49,7 @@ which until 2026-08-21 lived only as gitignored Python in `gap-files/`.
 
 Parent: [archive/TEMP-lag-decision-map-coordinates-plan.md](TEMP-lag-decision-map-coordinates-plan.md)
 (prototype named in its Census section; "keep Python out of the repo"),
-[TEMP-collapsed-bridge-census-2026-08-20.md](../TEMP-collapsed-bridge-census-2026-08-20.md)
+[TEMP-collapsed-bridge-census-2026-08-20.md](TEMP-collapsed-bridge-census-2026-08-20.md)
 (this instrument's current consumer). Does **not** implement the Collapsed-bridge skip verdict
 ([BACKLOG.md](../../../BACKLOG.md) § Fill placement) — and per §1.1 that verdict's spec is itself now
 in question.

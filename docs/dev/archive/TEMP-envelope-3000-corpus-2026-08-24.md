@@ -65,7 +65,7 @@ than the evidence.
 Census Result 8's rule applied faithfully — Arm A admission, `seam_step_ms()` for the step,
 `seam_mid_ms()` for the level, `max(CLEAN_STEP_MS, 6 × MAD)` for "large", **and the
 ≥2-settled-per-side sequence test**
-([archive/TEMP-step-boundary-census-plan.md](archive/TEMP-step-boundary-census-plan.md) §4–§5 is
+([archive/TEMP-step-boundary-census-plan.md](TEMP-step-boundary-census-plan.md) §4–§5 is
 canonical; do not re-derive it, and do not drop the sequence half — census Question 12):
 
 | Floor | Pairs | Gaps | vs the 2000 ms arm |

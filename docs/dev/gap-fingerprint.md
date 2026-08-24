@@ -902,7 +902,7 @@ scored at those placements against the **unchanged** gate thresholds:
   uniqueness term). On the oriented 308, `gate_pass: false` is 11 patched; 31/g7's 0.966 / 0.123
   *split* is 1 of 308 and production already declined it ([findings §8](archive/TEMP-31g7-model-vs-findings.md)).
   Uniqueness is a separate fingerprint read (`pre/post_seam_z`, prominence) — open:
-  [BACKLOG.md](../BACKLOG.md) § *Dual-fit confidence axis*.
+  [BACKLOG.md](../../BACKLOG.md) § *Dual-fit confidence axis*.
 - `gap_frames` / `bridge_frames` / `trim_frames` (`bridge − gap`, = the step in frames; the interior
   trim/pad amount).
 - **`post_seam_global_r`** — the post seam scored at the *pre* offset (step forced to 0). If it also passes,

@@ -2,6 +2,28 @@
 
 Build, test, corpus, and design plans. Operator guides and output contracts stay in [../](../) (parent `docs/`).
 
+## Where things go
+
+Four venues, one destination each. Putting a thing in the wrong one is how the backlog turned into
+an index of dead ideas.
+
+| Venue | Holds | Does **not** hold |
+|-------|-------|-------------------|
+| [../../BACKLOG.md](../../BACKLOG.md) | Work someone could start tomorrow: problem, next action, done-when | History, rationale, prohibitions, blocked items |
+| [settled.md](settled.md) | **The verdict ledger** — refuted ideas, deferrals latched behind a trigger, items blocked on a precondition, and standing measurement cautions. One row each | The reasoning that produced the verdict |
+| [archive/](archive/) | Closed plans in full: narrative, palimpsests, why a thing was decided | Current behaviour |
+| [gap-vocabulary.md](gap-vocabulary.md), [gap-fingerprint.md](gap-fingerprint.md), [repair-perf.md](repair-perf.md), [shoulder-sweep.md](shoulder-sweep.md) | Durable facts about the domain and current behaviour | Opinions about ideas |
+
+**Closing a plan is a three-step move**, and the third step is the one that gets skipped:
+
+1. Move the `TEMP-*.md` to [archive/](archive/) and add its row to [archive/README.md](archive/README.md).
+2. Add a row to [settled.md](settled.md) — the verdict plus the guard, one line.
+3. **Delete the corresponding text from [BACKLOG.md](../../BACKLOG.md).** A refuted idea leaves no
+   trace there; a blocked one moves to `settled.md` § D.
+
+Before proposing anything to BACKLOG, read [settled.md](settled.md). Most settled ideas are
+plausible on their face — that is exactly why they keep coming back.
+
 ## Testing & development
 
 | Doc | Covers |
@@ -26,11 +48,35 @@ Build, test, corpus, and design plans. Operator guides and output contracts stay
 | [gap-vocabulary.md](gap-vocabulary.md) | **Gap numbering** (0-based data / 1-based display), gap cells, silence-character pre-gate, fixture mapping |
 | [gap-fingerprint.md](gap-fingerprint.md) | Gap fingerprint dump schema and corpus format; bulk dump via `measure-gap-fingerprints.ps1` |
 | [shoulder-sweep.md](shoulder-sweep.md) | **`shoulder-sweep` bin contract** — the independent wide-window (±2 s) waveform lag sweep of both gap shoulders on the `--gap-listen` WAVs. Shares no correlation code with the `lag_decision` it checks; measures and records, does not classify |
+| [settled.md](settled.md) | **Verdict ledger** — what has been refuted, latched behind a trigger, or blocked, and the evidence that settled it. Read before proposing work |
 
 ## Plans
 
-- **Active drafts:** `TEMP-*.md` in this folder. Currently: [TEMP-envelope-rescue-stats-plan.md](TEMP-envelope-rescue-stats-plan.md) (stamp `envelope_peak_z` / `envelope_prominence` / `envelope_curve_n` on rescue-branch shoulders; diagnostic first, do not retune 0.70 — split out of the refuted adaptive-widen draft on 2026-08-23), [TEMP-patch-audio-region-module-split-plan.md](TEMP-patch-audio-region-module-split-plan.md) (folder split of `region.rs`; draft / not started), [TEMP-nway-donor-alignment-plan.md](TEMP-nway-donor-alignment-plan.md), [TEMP-flac-output-plan.md](TEMP-flac-output-plan.md), [TEMP-collapsed-bridge-census-2026-08-20.md](TEMP-collapsed-bridge-census-2026-08-20.md) (findings note, not a Change — full-corpus `bridge_ms` re-scan; **it refuted the predicate it set out to extend**: `collapsed_bridge` is an arithmetic coincidence over the real invariant, the step boundary, whose dump-visible base rate is **zero** — bounded 2026-08-23 by the 3000 ms smoke and **re-measured corpus-wide 2026-08-24** at 3000 ms with pair 50's radius censor removed, still 0 / 0. Result 8's "censored by search radius" mechanism holds for pair 50 only; see its boxed note for the three separate pair-31 censors it must not be generalised to. Re-aimed BACKLOG's skip-verdict item 2026-08-21. The step-boundary **rule** it applies is not in this note — it lives in [archive/TEMP-step-boundary-census-plan.md](archive/TEMP-step-boundary-census-plan.md) §4–§5, which is canonical; do not re-derive it, and see Question 12 for what happens when its sequence test is dropped), [TEMP-pair50-anchor-seam-outcomes-2026-08-21.md](TEMP-pair50-anchor-seam-outcomes-2026-08-21.md) (findings note, not a Change — split out of the census: pair 50's ~2.8 s map step is corrected in production by the anchor-seam bracket search, but one gap patches audibly wrong and three skip between correctly-resolved flanks), [TEMP-envelope-3000-smoke-2026-08-23.md](TEMP-envelope-3000-smoke-2026-08-23.md) (findings note, not a Change — two-pair smoke of BACKLOG's flat `--lag-envelope-max-lag-ms` sizing recipe at 3000 ms: pair 31's 24 shoulders identical, pair 50's censored +2.8 s cluster becomes 22 interior locks at 2761–2816 ms, outcomes unchanged. **Bounds the census's Result 8 null** — it was measured at ±2000 ms — without unparking the classifier: pair 50's step falls *between* gaps, so the widen yields flanks and no straddling gap *on that pair*. Recipe validation only; the base rate lives in the corpus note next), [TEMP-envelope-3000-corpus-2026-08-24.md](TEMP-envelope-3000-corpus-2026-08-24.md) (findings note, not a Change — the corpus-wide flat-3000 run the smoke cleared: 51 pairs / 1073 gaps against a same-media 2000 ms arm one knob apart. **Pays BACKLOG item 3's sizing dump and closes its "might find other straddlers" branch** — pair 50's radius censor is removed (11 gaps dead → admitted, Arm A 938 → 949) and the admitted sequence test is **still 0 / 0** from the 50 ms floor up, so 31/g7 is the corpus's only within-gap boundary as a measured fact. 31/g7's own censor is the `SPLICE_MIN_PEAK_R = 0.85` admission floor, **not** search radius — do not lump it with 31/g8's Narrow-capture miss. 3000 ms is measured safe and unmotivated to adopt: zero outcome changes across 1073 gaps).
-- **One deliverable per plan.** Each active plan carries a verification rule: a `file:line` reference belongs only in a checklist item that is about to be executed; design sections state the decision and its reason. Adjacent debt: [BACKLOG.md](../../BACKLOG.md) § Gap-selection parked debt.
-- **Archived plans & closed review ledgers:** [archive/](archive/) — historical design records only. Index: [archive/README.md](archive/README.md). Do not treat archive docs as current behavior; links inside them may be stale. Current equivalence-path behaviour is in [gap-fingerprint.md](gap-fingerprint.md) § *`equivalence_diagnostic` vs `equivalence_production`*.
+**One deliverable per plan.** Each active plan carries a verification rule: a `file:line` reference
+belongs only in a checklist item that is about to be executed; design sections state the decision and
+its reason. Closed plans move to [archive/](archive/) — see § *Where things go* for the three-step
+move, and do not treat archive docs as current behaviour.
+
+Every `TEMP-*.md` in this folder appears below. A plan with **no** BACKLOG row and **no** settled row
+is untracked — that is a bug in the catalog, not a state a doc may sit in.
+
+### Active drafts
+
+| Draft | What it is | Tracked as |
+|-------|-----------|-----------|
+| [TEMP-envelope-rescue-stats-plan.md](TEMP-envelope-rescue-stats-plan.md) | Stamp `envelope_peak_z` / `envelope_prominence` / `envelope_curve_n` on rescue-branch shoulders. Diagnostic first — do not retune the 0.70 guard in it | [BACKLOG.md](../../BACKLOG.md) § *Fill placement* |
+| [TEMP-patch-audio-region-module-split-plan.md](TEMP-patch-audio-region-module-split-plan.md) | Folder split of `region.rs` (3262 lines). Byte-preserving; never bundled into a behaviour-change PR | [BACKLOG.md](../../BACKLOG.md) § *Repair R6* |
+| [TEMP-flac-output-plan.md](TEMP-flac-output-plan.md) | In-process `--flac` lossless output, peer of `--wav`. Motivated by the RIFF `u32` data-chunk limit | [BACKLOG.md](../../BACKLOG.md) § *Repair R6* |
+| [TEMP-nway-donor-alignment-plan.md](TEMP-nway-donor-alignment-plan.md) | Repair one damaged copy from **multiple** donors with sparse non-overlapping damage | [settled.md](settled.md) § C — latched, no corpus |
+
+### Findings notes (not Changes)
+
+Measurement records — none are open right now. A findings note lives here only while it has an open
+question; once every question is promoted to [BACKLOG.md](../../BACKLOG.md) or closed, it archives.
+All four notes open on 2026-08-24 (the two flat-3000 runs, the collapsed-bridge census, the pair-50
+outcomes) went to [archive/](archive/) that day under exactly that rule, and their surviving questions
+are [BACKLOG.md](../../BACKLOG.md) § *Post-join defects (pairs 31 and 50)*.
 
 > Architecture: [../../PLAN.md](../../PLAN.md). Open work: [../../BACKLOG.md](../../BACKLOG.md).
+> Settled verdicts: [settled.md](settled.md).
+

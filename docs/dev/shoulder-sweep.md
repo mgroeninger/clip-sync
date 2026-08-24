@@ -36,7 +36,7 @@ older citations: that plan's §1.1 → §1 here, §4 → §2, §4.1–§4.4 → 
 
 Earlier versions of this instrument derived a `collapsed_bridge` bucket from `|bridge_ms| ≤ 50`.
 The collapsed-bridge census
-([TEMP-collapsed-bridge-census-2026-08-20.md](TEMP-collapsed-bridge-census-2026-08-20.md))
+([TEMP-collapsed-bridge-census-2026-08-20.md](archive/TEMP-collapsed-bridge-census-2026-08-20.md))
 retired that predicate as a *class*:
 
 - **Result 7** — `bridge_ms = gap_ms + step`, where `step = post_lag − pre_lag`. So

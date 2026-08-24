@@ -27,12 +27,12 @@ Per [gap-vocabulary-redesign / licensed-media-names-never-recorded], gaps are re
 pair index + gap index only. Source dumps are gitignored (`gap-files/`) and may be deleted; the
 numbers below are the durable record — see **Reproduction**.
 
-**Related:** [BACKLOG.md](../../BACKLOG.md) § *Fill placement* (owns the sizing item);
+**Related:** [BACKLOG.md](../../../BACKLOG.md) § *Fill placement* (owns the sizing item);
 [TEMP-pair50-anchor-seam-outcomes-2026-08-21.md](TEMP-pair50-anchor-seam-outcomes-2026-08-21.md)
 Result 1 (predicted this outcome — see Result 2 below);
 [TEMP-collapsed-bridge-census-2026-08-20.md](TEMP-collapsed-bridge-census-2026-08-20.md) Result 8
 (the zero base rate this note bounds);
-[archive/TEMP-envelope-adaptive-widen-plan.md](archive/TEMP-envelope-adaptive-widen-plan.md)
+[archive/TEMP-envelope-adaptive-widen-plan.md](TEMP-envelope-adaptive-widen-plan.md)
 (the refuted ladder — see Result 5).
 
 ---
@@ -160,7 +160,7 @@ transition happens **in the media between g7 and g8**, not inside any gap:
   g9 −0.02, g10 −43.8, g14 +42.1, g16 +8.4, g18 −6.1. Nothing near 2.8 s.
 
 So the widen supplies the sequence test's **flanks** — ≥2 admitted *gaps* settled on each side of
-the transition (canonical rule: [archive/TEMP-step-boundary-census-plan.md](archive/TEMP-step-boundary-census-plan.md)
+the transition (canonical rule: [archive/TEMP-step-boundary-census-plan.md](TEMP-step-boundary-census-plan.md)
 §4; "settled" is a gap, not a shoulder), which the fingerprint did not show on the far side at
 2000 ms — but not a straddling gap. The classifier stays parked for the reason already recorded:
 no tree exercises the boundary rule. Pair 50 still has none; whether 31/g7 is the only within-gap
@@ -228,7 +228,7 @@ statement that steps are rare.
   now with pair 50 admitted rather than censored. Neither dump needs re-running.
 - **No skip verdict.** Result 3 — no gap straddles a step here, so nothing exercises the classifier's
   sequence test. The rule to apply when a tree exists is
-  [archive/TEMP-step-boundary-census-plan.md](archive/TEMP-step-boundary-census-plan.md) §4–§5; do
+  [archive/TEMP-step-boundary-census-plan.md](TEMP-step-boundary-census-plan.md) §4–§5; do
   not re-derive it, and do not drop the sequence half.
 - **No default flip.** 2000 stays the default. Nothing here argues about the 0.70 rescue guard
   either.
@@ -248,7 +248,7 @@ durable record.
 - **The smoke:** `--gap-fingerprints` with `--features calibration,he-aac`, one pair at a time,
   `--lag-envelope-max-lag-ms 3000`, all other knobs at defaults, over
   `gap-files/envelope-3000-smoke.csv` → `gap-files/2026-08-23-envelope-3000/`. Memory-footprint
-  constraints for corpus-scale runs: [gap-fingerprint.md](gap-fingerprint.md) § *Producing
+  constraints for corpus-scale runs: [gap-fingerprint.md](../gap-fingerprint.md) § *Producing
   fingerprints* (bulk runs via `measure-gap-fingerprints.ps1`).
 - **The diff:** compare `source.probe_recipe` and each gap's `lag_decision.pre_anchor[0]` /
   `post_anchor[0]` against `gap-files/2026-08-23-complete-corpus/{31,50}/corpus.json`. Fields
@@ -269,7 +269,7 @@ durable record.
   a population.
 - Not a licence to design the step-boundary skip verdict — Result 3 is why.
 - Not an argument for raising the 2000 ms default, and not an argument about the 0.70 rescue guard
-  (that is [TEMP-envelope-rescue-stats-plan.md](TEMP-envelope-rescue-stats-plan.md)'s territory; keep
+  (that is [TEMP-envelope-rescue-stats-plan.md](../TEMP-envelope-rescue-stats-plan.md)'s territory; keep
   them separate).
 - Do not read `envelope_rescue: declined` as a refusal rate anywhere in this dump — Result 5.
 - Do not infer the patch path from a fingerprint dump — Result 4.

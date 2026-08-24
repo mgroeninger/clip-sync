@@ -1,13 +1,12 @@
 # TEMP — Collapsed-bridge census: full-corpus `bridge_ms` re-scan (2026-08-20)
 
 **Status:** findings note, not a Change, 2026-08-20. Extends the `collapsed_bridge` predicate
-(`|gap + post_lag − pre_lag| ≈ 0`, [gap-vocabulary.md](gap-vocabulary.md) § *Known holes*, Hole 2)
+(`|gap + post_lag − pre_lag| ≈ 0`, [gap-vocabulary.md](../gap-vocabulary.md) § *Known holes*, Hole 2)
 from its single positive example (31/g7) against a larger population, and re-validates the
 14-gap census's three buckets against the current (post-map-coordinates-fix) binary. Prompted by
 BACKLOG's "Collapsed-bridge skip verdict" item, which was then designed against n=1 (that item was
 re-aimed and renamed **Step-boundary skip verdict** on 2026-08-21 as a result of this note; see Result 7). **This
-note proposes no change.** Each open question below needs more measurement or ear-validation
-before any of it becomes a Change plan.
+note proposes no change.** Q7 and Q11 were promoted to BACKLOG § *Post-join defects*; the rest are settled or moved.
 
 **Headline (2026-08-21, Result 7):** the corpus contains **one** collapsed-bridge gap, and the
 predicate turns out to be an arithmetic coincidence — `bridge_ms = gap + step`, so `~= 0` fires only
@@ -24,8 +23,8 @@ Two refinements it forces on this headline's wording: pair 31's ~−1.15 s step 
 radius-censored on the current media (the censoring quoted here is specific to the 08-19 dump), and
 31/g7's own censor is the `SPLICE_MIN_PEAK_R = 0.85` admission floor, not search radius — see the
 boxed note in Result 8. 31/g7 is now the corpus's only within-gap instance as a measured fact.
-Parent: [archive/TEMP-lag-decision-map-coordinates-plan.md](archive/TEMP-lag-decision-map-coordinates-plan.md)
-(the fix this census re-validates), [archive/TEMP-31g7-gap-shape-vocabulary.md](archive/TEMP-31g7-gap-shape-vocabulary.md)
+Parent: [archive/TEMP-lag-decision-map-coordinates-plan.md](../archive/TEMP-lag-decision-map-coordinates-plan.md)
+(the fix this census re-validates), [archive/TEMP-31g7-gap-shape-vocabulary.md](../archive/TEMP-31g7-gap-shape-vocabulary.md)
 §9 (origin of the predicate and the original 14-gap census).
 
 Per [gap-vocabulary-redesign / licensed-media-names-never-recorded], gaps are referred to by
@@ -131,7 +130,7 @@ population.
 
 ## Result 4 — envelope rescue on the 9 `patch`-tier both-dead gaps (2026-08-20)
 
-Production's own dead-shoulder rescue (`--lag-envelope-max-lag-ms`, default 2000 ms, [gap-fingerprint.md](gap-fingerprint.md) § dump flags) turns out to answer most of Question 1 directly — no separate wide-sweep instrument needed for these. Ran `--gap-listen` against the 9 gaps
+Production's own dead-shoulder rescue (`--lag-envelope-max-lag-ms`, default 2000 ms, [gap-fingerprint.md](../gap-fingerprint.md) § dump flags) turns out to answer most of Question 1 directly — no separate wide-sweep instrument needed for these. Ran `--gap-listen` against the 9 gaps
 (pair 31: gaps 8, 10, 11; pair 50: gaps 8, 9, 10, 14, 15, 16 — ~~1-based~~ **0-based, corrected
 2026-08-21**) and read `envelope_rescue` / `envelope_lag_ms` off both shoulders of each:
 
@@ -155,7 +154,7 @@ Production's own dead-shoulder rescue (`--lag-envelope-max-lag-ms`, default 2000
 Two consequences:
 - ~~**31/g8 is now the priority ear-check** (Question 2) — the only gap in this batch that plausibly repeats 31/g7's exact defect shape.~~ **Superseded 2026-08-21 (review):** per the row above, 31/g8 is most likely `shared_far_offset`. It was ear-checked anyway (Result 5, clean) — but a clean result on a non-member says nothing about collapsed-bridge either way. **This listen batch probably contained no collapsed-bridge case at all; 31/g7 was not among the nine.**
 - **31/g10 and g11 are resolved out of the collapsed-bridge question** — same-offset, both-shoulders-agree far offset, not a collapsed bridge. They still may be live production risk (both `patch`-tier), but that's a `shared_far_offset` question, not this one.
-- ~~**Pair 50's 6 gaps need a different approach**, not just a wider window — 2000 ms already exceeds what rescued 31's gaps, and it still found nothing durable. Possible next moves: check whether these regions are structurally different content (cuts/edits between A/B versions) rather than a lag problem at all.~~ **Struck 2026-08-21 (Result 6).** A wider window is *exactly* what was needed: the true peak is at +2.8 s and the ±3000 ms sweep found it. The "structurally different content / cuts-and-edits" speculation is refuted — the content matches at r ≈ 1.0 once you search far enough. This is an envelope-sizing question ([archive/TEMP-envelope-adaptive-widen-plan.md](archive/TEMP-envelope-adaptive-widen-plan.md), which already said pair 50 needs ~3 s), not a content question.
+- ~~**Pair 50's 6 gaps need a different approach**, not just a wider window — 2000 ms already exceeds what rescued 31's gaps, and it still found nothing durable. Possible next moves: check whether these regions are structurally different content (cuts/edits between A/B versions) rather than a lag problem at all.~~ **Struck 2026-08-21 (Result 6).** A wider window is *exactly* what was needed: the true peak is at +2.8 s and the ±3000 ms sweep found it. The "structurally different content / cuts-and-edits" speculation is refuted — the content matches at r ≈ 1.0 once you search far enough. This is an envelope-sizing question ([archive/TEMP-envelope-adaptive-widen-plan.md](../archive/TEMP-envelope-adaptive-widen-plan.md), which already said pair 50 needs ~3 s), not a content question.
 
 ## Result 5 — ear-check of the 9 `patch`-tier gaps (user listen, 2026-08-20/21)
 
@@ -174,8 +173,8 @@ Also note the ear notes score *audible acceptability*, not correctness. "Sounds 
 the right material" — 50/g8's own note says as much ("does not mean it is correct… mixed voices
 talking over each other"). Several "clean" pair-50 patches have A/B off by seconds on the listen clips.
 Those pair-50 "B begins 1–4 s earlier" notes (g8 ~4 s, g14 >1 s, g15 3–4 s, g16 2–3 s) **are** the
-already-known +2.7891 s offset ([archive/TEMP-fill-placement-registration-plan.md](archive/TEMP-fill-placement-registration-plan.md)
-consensus; [archive/TEMP-envelope-adaptive-widen-plan.md](archive/TEMP-envelope-adaptive-widen-plan.md) already said
+already-known +2.7891 s offset ([archive/TEMP-fill-placement-registration-plan.md](../archive/TEMP-fill-placement-registration-plan.md)
+consensus; [archive/TEMP-envelope-adaptive-widen-plan.md](../archive/TEMP-envelope-adaptive-widen-plan.md) already said
 pair 50 needs ~3 s), not a separate phenomenon. `--gap-listen` cuts `_a_surround` and `_b_surround`
 around the same nominal span, so the two clips are *supposed* to line up; if they don't, the map is
 off by that amount. Sign matches: `frac_lag_ms` positive means the match sits later in B, so B's clip
@@ -267,11 +266,11 @@ at n=1, now by measurement rather than by inference.
 The "+800 ms candidate at r 0.82" is confirmed spurious *as a waveform lock*: at +679.8 ms the
 waveform sweep reads **r 0.1777**, ordinary floor. ~~An envelope-domain r of 0.82 coexisting with a
 waveform r of 0.18 is the known coarse-envelope false-peak mode (`26/g6`,
-[archive/TEMP-lag-envelope-recenter-plan.md](archive/TEMP-lag-envelope-recenter-plan.md)
+[archive/TEMP-lag-envelope-recenter-plan.md](../archive/TEMP-lag-envelope-recenter-plan.md)
 Result). **This is a second real instance of it**, and unlike 26/g6 it is not caught by
 nominal-first ordering — g8's shoulders are genuinely dead at nominal (r -0.02), so the rescue
 branch is entered legitimately and then picks the wrong peak. Handed to
-[archive/TEMP-envelope-adaptive-widen-plan.md](archive/TEMP-envelope-adaptive-widen-plan.md), which owns the
+[archive/TEMP-envelope-adaptive-widen-plan.md](../archive/TEMP-envelope-adaptive-widen-plan.md), which owns the
 rescue-branch guard.~~
 **Withdrawn 2026-08-22 as a 26/g6-class / floor handoff.** HEAD
 `gap-files/2026-08-22-31g8-capture` (default `BorderCapture::Narrow`) reproduces the +800 / r 0.816
@@ -321,7 +320,7 @@ at the wrong invariant. It rests on one boundary gap; see the revised Question 8
 Question 8's replacement question — *how common is the step boundary?* — measured, using the
 **shipped** `gap-fingerprint-stats` with no new code. `GAP_FP_CSV=1` over
 `2026-08-19-decision-map-oriented` writes `target/gap_fingerprint_corpus.csv`; the boundary rule
-from [TEMP-step-boundary-census-plan.md](archive/TEMP-step-boundary-census-plan.md) §4–§5 was then applied
+from [TEMP-step-boundary-census-plan.md](../archive/TEMP-step-boundary-census-plan.md) §4–§5 was then applied
 offline to that CSV.
 
 **Admission (Arm A) is an upper bound.** Rows kept: `kind == matched` and
@@ -363,7 +362,7 @@ g7, the actual boundary, is censored at post r 0.0752, and g8–g11 with it. Pai
 
 > **The censoring is now demonstrated, not inferred (2026-08-23).** A flat 3000 ms envelope
 > re-fingerprint of pairs 31 and 50 —
-> [TEMP-envelope-3000-smoke-2026-08-23.md](TEMP-envelope-3000-smoke-2026-08-23.md) — re-measured
+> [TEMP-envelope-3000-smoke-2026-08-23.md](../archive/TEMP-envelope-3000-smoke-2026-08-23.md) — re-measured
 > pair 50's named g8–g17 cluster **and** g18 (ambiguous/declined at 2000 ms, not in that named
 > set). Those 22 shoulders go `decorrelated`/`declined` → `rescued`/`timing_offset` at
 > **2761–2816 ms**, r 0.93–1.00, none edge-pinned; the pair's one edge pin (g009 post,
@@ -411,7 +410,7 @@ denominator that is an upper bound. The step boundary is real (pairs 31 and 50, 
 sweep in Result 7) but was **invisible to `lag_decision` dumps at that radius**: a step past the
 search radius kills the shoulder correlation that would have measured it. **Bounded 2026-08-23:**
 that zero is an upper bound on *this instrument at ±2000 ms*, not evidence that large steps are
-rare — see the box above and [TEMP-envelope-3000-smoke-2026-08-23.md](TEMP-envelope-3000-smoke-2026-08-23.md).
+rare — see the box above and [TEMP-envelope-3000-smoke-2026-08-23.md](../archive/TEMP-envelope-3000-smoke-2026-08-23.md).
 
 > **A "correction" to this null was proposed and withdrawn on 2026-08-21 — read this before
 > proposing it again.** A re-derivation from the same CSV appeared to show one surviving gap at the
@@ -419,7 +418,7 @@ rare — see the box above and [TEMP-envelope-3000-smoke-2026-08-23.md](TEMP-env
 > after) and concluded the table's 50 ms row of `0` was inconsistent with the "2 rows above 50 ms"
 > line above it. **That was wrong.** The re-derivation applied only the *step* half of the boundary
 > rule (`|step| > max(CLEAN_STEP_MS, 6 × MAD)`) and silently dropped the sequence half that
-> [TEMP-step-boundary-census-plan.md](archive/TEMP-step-boundary-census-plan.md) §4–§5 specifies:
+> [TEMP-step-boundary-census-plan.md](../archive/TEMP-step-boundary-census-plan.md) §4–§5 specifies:
 > **≥2 admitted gaps settled on each side**, "settled" meaning within `max(CLEAN_STEP_MS, 2 × MAD)`
 > of that side's mean. 19/g2 fails it twice — only **one** admitted gap precedes it, and its two
 > following levels are 80.4 and 49.2 ms, a 31 ms spread against a 2.0 ms settle window. It is a
@@ -439,7 +438,7 @@ Two notes for whoever picks this up:
   calibration --bin gap-fingerprint-stats -- gap-files/2026-08-19-decision-map-oriented`, then the
   filter and rule above over the CSV. Re-derivable in minutes if `gap-files/` is cleaned.
 - **The rule to apply over that CSV is the archived one, in full** — see
-  [TEMP-step-boundary-census-plan.md](archive/TEMP-step-boundary-census-plan.md) §4–§5. Admit
+  [TEMP-step-boundary-census-plan.md](../archive/TEMP-step-boundary-census-plan.md) §4–§5. Admit
   `kind == matched` and `min(peak_r_pre, peak_r_post) >= 0.85`; per pair take
   `step = frac_lag_post_ms - frac_lag_pre_ms` and `level = seam_mid_ms`; flag a gap when
   `|step| > max(CLEAN_STEP_MS, 6 * MAD(pair's steps))` **and** at least 2 admitted gaps on each side
@@ -448,22 +447,33 @@ Two notes for whoever picks this up:
   "one, not zero" correction — do not re-derive it in isolation. Ordering here is by gap index, the
   same simplification Arm A made (`a_start_secs` ordering moves the 2 ms floor by one gap).
 
-## Follow-up questions (open, prioritized)
+## Follow-up questions
 
-| # | Question | Why it matters | Priority |
+Original numbering is stable. Q7 and Q11 were **promoted 2026-08-24** to
+[BACKLOG.md](../../../BACKLOG.md) § *Post-join defects (pairs 31 and 50)*; they are not work in this
+note. Everything else is settled or moved.
+
+### Promoted
+
+| # | Question | Why it still matters | Where |
 |---|---|---|---|
-| 1 | ~~Wide-sweep the 9 `patch`-tier both-dead gaps~~ **done 2026-08-20 via production's own `--lag-envelope-max-lag-ms` rescue** (see Result 4); pair 50's "declined" outcome fully explained by Result 6 — the 2.8 s true offset exceeds the 600 ms nominal and 2000 ms envelope search radii. **The production explanation is the search radius alone**, not clip overrun (which is a listen-export artifact) and not the 1000 ms window length. | — | Done |
-| 2 | ~~Ear-check the 9 `patch`-tier gaps~~ **done 2026-08-20/21** (see Result 5) — only 2 of 9 have an audible defect. **Scope narrowed 2026-08-21 (review):** the supported claim is that *both-dead-in-window / envelope-declined* does not predict a defect. The batch contained no confirmed collapsed-bridge gap (31/g8 reclassified as `shared_far_offset`), so it does **not** undercut a collapsed-bridge detector — that predicate was never tested here. | Undercuts a detector built from the `lag_decision`/envelope shape, at n=9. Does **not** speak to `|bridge_ms| ≈ 0`. | Done |
-| 3 | ~~Investigate 50/g10's echo directly~~ **Moved 2026-08-21 to [pair-50 note](TEMP-pair50-anchor-seam-outcomes-2026-08-21.md), Question 1.** It is a patch-quality question about a gap that patches at the *correct* offset, not a `bridge_ms` question — and both models this census raised for it (silent-onset, unreached region) are dead. | — | Moved |
-| 4 | ~~Confirm 31/g8's pre-shoulder is the -1137.7 ms lock~~ **Answered 2026-08-21 by independent sweep - see Result 7.** Pre locks at **-1146.1 ms, r 0.9896** (prominence 0.799), post at -1137.7 ms; shoulders agree within 8.4 ms, `bridge_ms` ~= `gap_ms`. **31/g8 is `shared_far_offset`** and leaves the collapsed-bridge population. ~~The nominal-first path's "+800 ms candidate, r 0.82" is a coarse-envelope false peak (waveform r there is 0.1777) - handed to the envelope plan.~~ **Corrected 2026-08-22:** the +800 is the Narrow-capture envelope argmax (`D` 13 vs Wide 1984); 31/g8 left the widen plan. BACKLOG owns the capture miss. | Settled as `shared_far_offset`. The +800 is not a floor instance. | Done |
-| 5 | ~~Is `envelope_rescue: declined` worth treating as a warning signal for pair 50~~ **answered by Result 6: no** — decline is structurally expected for the whole cluster (true offset exceeds both search radii), so it carries no defect information on its own; 5 of 6 patched cleanly anyway. | — | Done |
-| 6 | Is pair 50's cluster (g8–g10, g14–g16) one map-step rather than six independent gaps? | **Answered — recorded, not "confirmed contiguous."** Same ~2.8 s offset on all 6: yes. *Contiguous*: **no** — `a_start_secs` = 2494, 2627, 2711, 3424, 3544, 3777, spanning ~21 min with `skip`-tier gaps interleaved. It is a persistent pair-level step. The coordinate check dismissed as "adding nothing" would in fact have shown this. | Done |
-| 7 | Wide-sweep the remaining `skip`-tier both-dead gaps (31/g9; 50/g17) and 25/g11's coordinate-fix status. **50/g11–g13 moved 2026-08-21** to [pair-50 note](TEMP-pair50-anchor-seam-outcomes-2026-08-21.md) (Question 2) — they are inside pair 50's map-step region, flanked by correctly-resolved gaps, so their failure is an anchor-seam question, not a census gap. | Lower risk (already declined for unrelated reasons) but needed for a complete census before finalizing any detector. | Low |
-| 8 | ~~Once 2-3 confirmed `collapsed_bridge` cases exist, revisit the 50 ms `bridge_ms` threshold.~~ **Re-aimed 2026-08-21 by Result 7 - the threshold is the wrong question.** `collapsed_bridge` is a **step-boundary gap** whose step size happens to equal its gap duration (31/g7: step -1121.9 ms vs gap 1118.8 ms, differing by 3.1 ms). `bridge_ms = gap + step`, so `~= 0` requires a *negative* step of exactly that magnitude, and **no positive step can ever satisfy it** (pair 50's +2.789 s cannot, at any gap duration). Replacement question: **detect the step boundary directly** - pre and post disagreeing by ~= the pair's map step - which is sign-agnostic and needs no coincidence. Verify on pair 31 (boundary at g7, interior g8-g11 confirmed) and pair 50 (interior confirmed; its boundary gap is not yet identified). **ANSWERED 2026-08-21 — see Result 8: the dump-visible base rate is zero.** 935 admitted rows, largest trustworthy step in the whole corpus **63.9 ms**, nothing above 100 ms; nothing survives the 50 ms floor once the archived run-length/settling test is applied; both known boundaries (31/g7, 50's cluster) are censored because a step past the search radius kills the correlation that would measure it. The step boundary is real but was **not measurable from `lag_decision` dumps at that radius**. **Bounded 2026-08-23:** the zero is an upper bound on ±2000 ms ([TEMP-envelope-3000-smoke-2026-08-23.md](TEMP-envelope-3000-smoke-2026-08-23.md)); size the new invariant with a corpus-wide flat-3000 dump, not by re-running this census. Next instrument is the WAV sweep (the `shoulder-sweep` bin, [shoulder-sweep.md](shoulder-sweep.md)); its queue is two pairs, 31 and 50. The `--steps` plan ([TEMP-step-boundary-census-plan.md](archive/TEMP-step-boundary-census-plan.md)) is **parked** — its contract was validated (the Arm B dead-shoulder gate is what suppressed pair 50's noise staircase) but its deliverable is this null, already obtained without it. | Redirects the BACKLOG item from a coincidence-dependent proxy to the invariant it is a proxy for — and shows the invariant is out of reach of dump-only measurement. | Done |
-| 9 | ~~What does the `ambiguous` verdict mean, and does it belong in the one-dead/both-dead split?~~ **Answered 2026-08-21 — yes it is a distinct verdict, and no it does not change the counts.** `LagVerdict::Ambiguous` (`gap_fingerprint/schema.rs:932`) is a third verdict, "partial; weak shared content" — so the ad hoc script's `== "decorrelated"` branch did under-count dead shoulders. Measured on the same corpus: of 1942 shoulder verdicts, **1908 `timing_offset`, 31 `decorrelated`, 3 `ambiguous`**. Exactly **2 gaps** were bucketed "both live" despite carrying an ambiguous shoulder (32/g1 post r 0.409; 49/g37 post r 0.426) — **both `skip`-tier**, neither `patch`-tier. Result 3's "954 of 971 both-live" is properly 952; no `patch`-tier gap moves, so Result 2's 9-gap risk list is unchanged. | — | Done |
-| 10 | ~~Is `2026-08-19-decision-map-oriented` (53 pairs) the largest available fingerprint corpus?~~ **Answered 2026-08-21 — it is the whole corpus, and it is already deduplicated.** It holds **51** pair dirs, 1049 `*_full.json`, 971 gaps with both anchors. The corpus manifest (`gap-files/extended-pairs.csv`) carries exactly **51 active pair rows**; labels 6 and 16 are commented out as duplicate media (same `a_id` *and* `b_id` as 22 and 28), and this run already omits them — so its 971 gaps are 971 *independent* gaps and no base rate here needs a dedup correction. Note the count in this note's Data sources ("53 pairs") is the label count, not the dir count. Nothing in the manifest is unswept. | — | Done |
-| 11 | **Why is 31/g10 audible when 31/g11 and 31/g8 — same pair, same map step, same far-offset shape — are not?** Opened 2026-08-21; the census's own unexplained defect, previously discussed only in Result 5's prose with no question owning it. All three gaps are `patch`-tier interior of pair 31's ~−1.15 s step. **WAV / production / Wide dumps** have both shoulders of each at the far offset to within ~20 ms; **HEAD `lag_decision` on Narrow does not** — 31/g8 pre is declined at +800 (`D` 13.0 ms) as of 2026-08-22, while g10/g11 still rescue. Result 5 heard a blip **at the end of the patch** (the post join) on g10 alone. `shared_far_offset` therefore does not predict the defect — a model built from that shape gets g11 and g8 wrong. **Production's own records invert the intuition** (`2026-08-13-repeat-terms/31.json`, 0-based): g10 is `confidence: high`, `anchor_seam_used: false`, `gap_start/end_adjust_frames` **both 0**, pre/post correlation 0.496/0.483 — the *cleanest-looking* of the three — while g11, which sounds fine, is `anchor_seam_used: true` with a much weaker post correlation (0.574/**0.376**) and a large `gap_end_adjust_frames` (+64800; confirm the unit, but 48 kHz ⇒ ~1.35 s), and g8, which also sounds fine, is `confidence: marginal`. **Live lead:** the one structural difference at the audible locus is that g11's post join received an end adjustment from the anchor-seam path and g10's did not. That is the same mechanism the [pair-50 note](TEMP-pair50-anchor-seam-outcomes-2026-08-21.md) Q1 is circling from the other side, and **both confirmed defects in the Result 5 batch are at the post join** — worth testing as one axis across both pairs, while remembering the steps have opposite signs (−1.15 s vs +2.789 s) and the pairs share nothing else. Cheapest first steps, no media run: (a) re-listen to `…_g010_full_a_patched.wav` to pin whether the blip is at the post join or at the fill's own end boundary — Result 5's "end of the patch" does not distinguish them; (b) correlate the overlap-only post remnant for g10 **and** g11 with the pair-50 note's technique and compare residual lags; (c) if (b) shows a residual on g10 only, that is the echo/blip mechanism candidate shared with 50/g10. Do not fold g8's current Narrow `lag_decision` miss into this question — that is the capture item. | Only defect this census owns and the only one with no mechanism at all. Also a **confidence-calibration** data point: production ranked the audible gap `high` and both clean gaps lower, so `confidence` is not tracking audibility on this pair. n=1 defect against n=2 clean twins — real but thin; do not build a detector from it. | Medium |
-| 12 | ~~What is 19/g2, and is a 64 ms persistent step the same phenomenon as pair 31's 1.15 s one?~~ **Opened and closed 2026-08-21 — the premise was an artifact.** 19/g2 was believed to be the corpus's only dump-visible persistent step boundary. It is not: it fails the boundary rule in [TEMP-step-boundary-census-plan.md](archive/TEMP-step-boundary-census-plan.md) §4 on both halves of the sequence test — only one admitted gap precedes it (the rule needs 2 settled per side), and the two gaps following it sit at 80.4 and 49.2 ms, a 31 ms spread against a 2.0 ms settle window. It is a lone excursion in a wandering pair, which is the case that test exists to reject. The re-derivation that promoted it had dropped the sequence test and kept only `\|step\| > floor`. **Nothing here needs doing; left in place so the same re-derivation is not attempted a third time.** | Records a withdrawn correction. | Closed |
+| 11 | **Why is 31/g10 audible when 31/g11 and 31/g8 — same pair, same map step, same far-offset shape — are not?** Opened 2026-08-21; the census's own unexplained defect. All three gaps are `patch`-tier interior of pair 31's ~−1.15 s step. Result 5 heard a blip **at the end of the patch** on g10 alone. `shared_far_offset` does not predict it. Production ranked g10 `confidence: high` with both adjust frames 0, and both clean twins lower. **Live lead:** g11's post join got an end adjustment from the anchor-seam path and g10's did not — same axis as the pair-50 note's Q1. Do not fold g8's Narrow `lag_decision` miss into this question. | Only defect this census owned and the only one with no mechanism. n=1 against n=2 clean twins — do not build a detector from it. | BACKLOG *31/g10 — audible blip* |
+| 7 | Wide-sweep the remaining `skip`-tier both-dead gaps (31/g9; 50/g17) and 25/g11's coordinate-fix status. **50/g11–g13** moved 2026-08-21 to the [pair-50 note](TEMP-pair50-anchor-seam-outcomes-2026-08-21.md) Question 2. **Narrowed 2026-08-24:** the flat-3000 dump ([TEMP-envelope-3000-corpus-2026-08-24.md](TEMP-envelope-3000-corpus-2026-08-24.md)) already un-censors 31/g9 (both ~−1145, `timing_offset`) and 50/g17 (both ~+2804, `timing_offset`); they skip for other reasons. What remains is **25/g11**. | Completeness before any claim that the both-dead population is fully characterized. | BACKLOG *Census completeness* |
+
+### Settled or moved
+
+| # | Question | Outcome |
+|---|---|---|
+| 1 | ~~Wide-sweep the 9 `patch`-tier both-dead gaps~~ **done 2026-08-20 via production's own `--lag-envelope-max-lag-ms` rescue** (see Result 4); pair 50's "declined" outcome fully explained by Result 6 — the 2.8 s true offset exceeds the 600 ms nominal and 2000 ms envelope search radii. **The production explanation is the search radius alone**, not clip overrun (which is a listen-export artifact) and not the 1000 ms window length. | Done |
+| 2 | ~~Ear-check the 9 `patch`-tier gaps~~ **done 2026-08-20/21** (see Result 5) — only 2 of 9 have an audible defect. **Scope narrowed 2026-08-21 (review):** the supported claim is that *both-dead-in-window / envelope-declined* does not predict a defect. The batch contained no confirmed collapsed-bridge gap (31/g8 reclassified as `shared_far_offset`), so it does **not** undercut a collapsed-bridge detector — that predicate was never tested here. | Done |
+| 3 | ~~Investigate 50/g10's echo directly~~ **Moved 2026-08-21 to [pair-50 note](TEMP-pair50-anchor-seam-outcomes-2026-08-21.md), Question 1**, then promoted 2026-08-24 with that note to BACKLOG § *Post-join defects*. It is a patch-quality question about a gap that patches at the *correct* offset, not a `bridge_ms` question — and both models this census raised for it (silent-onset, unreached region) are dead. | Moved, then promoted |
+| 4 | ~~Confirm 31/g8's pre-shoulder is the -1137.7 ms lock~~ **Answered 2026-08-21 by independent sweep - see Result 7.** Pre locks at **-1146.1 ms, r 0.9896** (prominence 0.799), post at -1137.7 ms; shoulders agree within 8.4 ms, `bridge_ms` ~= `gap_ms`. **31/g8 is `shared_far_offset`** and leaves the collapsed-bridge population. ~~The nominal-first path's "+800 ms candidate, r 0.82" is a coarse-envelope false peak (waveform r there is 0.1777) - handed to the envelope plan.~~ **Corrected 2026-08-22:** the +800 is the Narrow-capture envelope argmax (`D` 13 vs Wide 1984); 31/g8 left the widen plan. BACKLOG owns the capture miss. | Done. Settled as `shared_far_offset`. The +800 is not a floor instance. |
+| 5 | ~~Is `envelope_rescue: declined` worth treating as a warning signal for pair 50~~ **answered by Result 6: no** — decline is structurally expected for the whole cluster (true offset exceeds both search radii), so it carries no defect information on its own; 5 of 6 patched cleanly anyway. | Done |
+| 6 | Is pair 50's cluster (g8–g10, g14–g16) one map-step rather than six independent gaps? **Answered — recorded, not "confirmed contiguous."** Same ~2.8 s offset on all 6: yes. *Contiguous*: **no** — `a_start_secs` = 2494, 2627, 2711, 3424, 3544, 3777, spanning ~21 min with `skip`-tier gaps interleaved. It is a persistent pair-level step. | Done |
+| 8 | ~~Once 2-3 confirmed `collapsed_bridge` cases exist, revisit the 50 ms `bridge_ms` threshold.~~ **Re-aimed 2026-08-21 by Result 7** — the threshold is the wrong question; the invariant is the step boundary. **ANSWERED 2026-08-21 — see Result 8:** dump-visible base rate zero on the 08-19 dump (935 admitted, largest trustworthy step 63.9 ms). **Re-measured 2026-08-24:** the null survives with pair 50's radius-censor removed ([TEMP-envelope-3000-corpus-2026-08-24.md](TEMP-envelope-3000-corpus-2026-08-24.md)); the admitted sequence test is still 0 / 0 from 50 ms up. The `--steps` plan ([TEMP-step-boundary-census-plan.md](TEMP-step-boundary-census-plan.md)) stays parked — its deliverable is this null. | Done |
+| 9 | ~~What does the `ambiguous` verdict mean, and does it belong in the one-dead/both-dead split?~~ **Answered 2026-08-21 — yes it is a distinct verdict, and no it does not change the counts.** Of 1942 shoulder verdicts, **1908 `timing_offset`, 31 `decorrelated`, 3 `ambiguous`**. Exactly **2 gaps** were bucketed "both live" despite an ambiguous shoulder (32/g1 post r 0.409; 49/g37 post r 0.426) — both `skip`-tier. Result 3's "954 of 971 both-live" is properly 952. | Done |
+| 10 | ~~Is `2026-08-19-decision-map-oriented` (53 pairs) the largest available fingerprint corpus?~~ **Answered 2026-08-21 — it is the whole corpus, already deduplicated.** 51 pair dirs, 1049 `*_full.json`, 971 gaps with both anchors. Manifest labels 6 and 16 are duplicate media. | Done |
+| 12 | ~~What is 19/g2, and is a 64 ms persistent step the same phenomenon as pair 31's 1.15 s one?~~ **Opened and closed 2026-08-21 — the premise was an artifact.** It fails the boundary rule in [TEMP-step-boundary-census-plan.md](TEMP-step-boundary-census-plan.md) §4 on both halves of the sequence test. Left in place so the same re-derivation is not attempted a third time. | Closed |
 
 ---
 

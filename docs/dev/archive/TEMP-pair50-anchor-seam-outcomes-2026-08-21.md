@@ -23,10 +23,10 @@ pair index + gap index only. Source dumps are gitignored (`gap-files/`) and may 
 numbers below are the durable record — see **Reproduction**.
 
 **Related:**
-[BACKLOG.md](../../BACKLOG.md) § *Fill placement* owns the *sizing* dump (flat
+[BACKLOG.md](../../../BACKLOG.md) § *Fill placement* owns the *sizing* dump (flat
 `--lag-envelope-max-lag-ms`; pair 50's +2.789 s interior is the named target). The withdrawn
 adaptive-ladder draft is
-[archive/TEMP-envelope-adaptive-widen-plan.md](archive/TEMP-envelope-adaptive-widen-plan.md).
+[archive/TEMP-envelope-adaptive-widen-plan.md](../archive/TEMP-envelope-adaptive-widen-plan.md).
 Result 2 below slightly lowers that dump's stakes — the cluster is corrected downstream
 regardless — but does not answer it, and the g11–g13 failure is downstream of anything a wider
 envelope would change. Do not merge the two.
@@ -46,8 +46,9 @@ envelope would change. Do not merge the two.
   `lag_decision` dumps do not.
 
 Corrections marked below come from
-[TEMP-collapsed-bridge-census-result5-review-2026-08-21.md](TEMP-collapsed-bridge-census-result5-review-2026-08-21.md),
-a logic review of the census's Results 5–6 against the original ear notes and re-runs of the sweep and
+a 2026-08-21 logic review of Results 5–6 that was never committed as its own doc (its
+conclusions were folded into [TEMP-collapsed-bridge-census-2026-08-20.md](TEMP-collapsed-bridge-census-2026-08-20.md)
+in place) — a review of the census's Results 5–6 against the original ear notes and re-runs of the sweep and
 sliver instruments. Overturned claims are struck in place rather than deleted, with the reason.
 
 ---
@@ -63,7 +64,7 @@ All 6 show the identical shape: the correlation locks onto a consistent **+2.8 s
 1.000) — beyond production's own `frac_lag_ms`/nominal mapping — for the pre-shoulder and the early
 part of the patch, then collapses to noise (r < 0.5, no consistent lag) partway through. This matches
 the pair-50 map-step offset already documented in
-[archive/TEMP-envelope-adaptive-widen-plan.md](archive/TEMP-envelope-adaptive-widen-plan.md) (+2.789 s, "outside
+[archive/TEMP-envelope-adaptive-widen-plan.md](../archive/TEMP-envelope-adaptive-widen-plan.md) (+2.789 s, "outside
 2000 ms" — i.e. outside the default envelope rescue's own search reach).
 
 **Why the sweep's post side reads as "no match": the extraction window runs out of matching content
@@ -144,7 +145,7 @@ different B lengths, and the original conclusion conflated them:
 The A shoulders in the listen clips **are** the segments production scores (pre = last 1 s before the
 hole, post = first 1 s after, both within ±3 s of A). The listen **B** clip is *not* production's B
 haystack — it is a deliberately truncated centre of it
-([archive/TEMP-gap-listen-wav-plan.md](archive/TEMP-gap-listen-wav-plan.md) §10 considered exporting
+([archive/TEMP-gap-listen-wav-plan.md](../archive/TEMP-gap-listen-wav-plan.md) §10 considered exporting
 the fingerprint pad and rejected it, to keep the ear-comparison window from becoming the search
 window). So:
 
@@ -165,7 +166,7 @@ demonstrably there (r ≥ 0.991 across the cluster).
 **Confirmed in production coordinates, 2026-08-23.** This conclusion was reached from listen clips;
 it has since been tested directly by re-running the fingerprint at a flat
 `--lag-envelope-max-lag-ms 3000` —
-[TEMP-envelope-3000-smoke-2026-08-23.md](TEMP-envelope-3000-smoke-2026-08-23.md). On production's own
+[TEMP-envelope-3000-smoke-2026-08-23.md](../archive/TEMP-envelope-3000-smoke-2026-08-23.md). On production's own
 B haystack, all 22 shoulders of g8–g18 go `decorrelated`/`declined` → `rescued`/`timing_offset`,
 landing at **2761–2816 ms** with fine-search r 0.928–0.998, none edge-pinned; g009 post's edge pin at
 +2000 / r 0.473 becomes an interior lock at +2800 / r 0.997. Moving the radius was sufficient, which
@@ -271,7 +272,7 @@ directly, this says B does not bridge the hole *at the correct registration*, wh
 Question 2 without any A-side bracket story. It is a lead, not a finding: the correlation reasons
 tabulated above are measured at the gate's own coordinates, and nobody has yet checked whether the
 donor silence and the sub-threshold correlations are the same fact seen twice. Source and scoping:
-[TEMP-envelope-3000-corpus-2026-08-24.md](TEMP-envelope-3000-corpus-2026-08-24.md) Result 5 — the
+[TEMP-envelope-3000-corpus-2026-08-24.md](../archive/TEMP-envelope-3000-corpus-2026-08-24.md) Result 5 — the
 strict corpus-wide `true → false` count is two (g11, g12), so this is a pair-50 lead and not a
 corpus-wide donor finding. Question 1 is untouched by it.
 
@@ -305,7 +306,7 @@ durable record of what they showed.
 
 - Not a Change.
 - Not an envelope-sizing plan. That is
-  [archive/TEMP-envelope-adaptive-widen-plan.md](archive/TEMP-envelope-adaptive-widen-plan.md)'s question. Result 2
+  [archive/TEMP-envelope-adaptive-widen-plan.md](../archive/TEMP-envelope-adaptive-widen-plan.md)'s question. Result 2
   lowers its stakes (the cluster is corrected downstream anyway) but does not answer it, and neither
   open question above would be resolved by widening `lag_envelope_max_lag_ms`.
 - Do not treat pair 50's cluster as an unreachable region — Result 2 refutes that by direct production
@@ -332,7 +333,7 @@ durable record of what they showed.
   truncated ±3 s centre of that. Never explain a production decline with clip-margin arithmetic —
   check the search radius instead. And do not "fix" the overrun by raising `gap_signature_context_secs`
   on the export: that would merge the ear-comparison window with the search haystack, which
-  [archive/TEMP-gap-listen-wav-plan.md](archive/TEMP-gap-listen-wav-plan.md) §10 deliberately kept apart.
+  [archive/TEMP-gap-listen-wav-plan.md](../archive/TEMP-gap-listen-wav-plan.md) §10 deliberately kept apart.
 - **Do not correlate the padded sliver WAVs and report the result as overlap evidence.**
   `scratch_sliver_check.py` pads by 150 ms per side for listenability; on ~160–190 ms remnants that
   padding is most of the file and drags r down (g16: 0.575 padded vs 0.997 on the remnant). Correlate

@@ -30,9 +30,9 @@ existing `gap-fingerprint-stats` bin that, per pair, orders gaps along the file 
 where the seam registration **changes level** — the map-step boundaries — plus a corpus base
 rate for them. Descriptive first: this is a census, not a detector and not a repair change.
 
-Parent: [TEMP-collapsed-bridge-census-2026-08-20.md](../TEMP-collapsed-bridge-census-2026-08-20.md)
+Parent: [TEMP-collapsed-bridge-census-2026-08-20.md](TEMP-collapsed-bridge-census-2026-08-20.md)
 (Q8, re-aimed to High after Result 7). Sibling evidence:
-[TEMP-pair50-anchor-seam-outcomes-2026-08-21.md](../TEMP-pair50-anchor-seam-outcomes-2026-08-21.md).
+[TEMP-pair50-anchor-seam-outcomes-2026-08-21.md](TEMP-pair50-anchor-seam-outcomes-2026-08-21.md).
 Does **not** implement the Collapsed-bridge skip verdict ([BACKLOG.md](../../../BACKLOG.md) § Fill
 placement) — it establishes whether that item's population is big enough to be worth a verdict.
 

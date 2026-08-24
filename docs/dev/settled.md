@@ -1,0 +1,116 @@
+# Settled — do not re-propose without new evidence
+
+The **verdict ledger**. One row per idea that has been measured, refuted, latched behind a trigger,
+or blocked on a precondition. Rows are terse by design: the reasoning lives in [archive/](archive/),
+the current behaviour lives in the live docs, and the *work* lives in [BACKLOG.md](../../BACKLOG.md).
+
+**Read this before proposing anything to BACKLOG.** Most of these ideas are plausible on their
+face — that is exactly why they keep coming back.
+
+**Routing rule** (see [README.md](README.md) § Plans):
+
+| Venue | Holds |
+|-------|-------|
+| [BACKLOG.md](../../BACKLOG.md) | Only work someone could start tomorrow. Problem, next action, done-when. No history, no rationale, no prohibitions |
+| **this doc** | The verdict and the guard. One line. Links out for the why |
+| [archive/](archive/) | Full narrative, palimpsests, the reasoning that produced the verdict |
+| [gap-vocabulary.md](gap-vocabulary.md) / [gap-fingerprint.md](gap-fingerprint.md) / [repair-perf.md](repair-perf.md) | Durable facts about the domain and current behaviour — not about ideas |
+
+**Closing a plan is a three-step move.** Archiving a `TEMP-*.md` must *also* add a row here **and**
+delete the corresponding BACKLOG text. Skipping step three is how BACKLOG became an index of dead
+ideas; that is the specific failure this doc exists to prevent.
+
+**Reopening a row** requires new *evidence*, not a new argument. Where a row's "Reopen if" cell is
+populated, that is the precondition — meeting it is sufficient. Where it reads `—`, the idea is dead,
+and reopening it needs a measurement that contradicts the one in the Evidence column.
+
+**Performance candidates have their own settled list** — [repair-perf.md](repair-perf.md) § 4
+("Settled — do not re-propose without new measurement"). This doc is its domain-side counterpart and
+does not duplicate it; the two perf rows below are here only because they are cited from outside the
+perf campaign.
+
+> **Provenance.** Harvested 2026-08-24 from `BACKLOG.md`, `archive/README.md`, and the assistant's
+> project memory. Rows sourced only from memory are marked *(memory)* — their underlying findings doc
+> may be deleted or renamed, and the Evidence cell says where to recover it.
+
+---
+
+## A. Refuted — do not re-propose
+
+| Idea | Refuted | Evidence | Why it is dead | Reopen if |
+|------|---------|----------|----------------|-----------|
+| **`bridge_ms ≈ 0` "collapsed bridge" skip predicate** | 2026-08-21 | [TEMP-collapsed-bridge-census-2026-08-20.md](archive/TEMP-collapsed-bridge-census-2026-08-20.md) Results 7–8 | Arithmetic coincidence, not an invariant. `bridge_ms = gap_ms + step`, so it fires only when a pair's map step happens to equal minus that gap's duration — and **no positive step can ever satisfy it**. The real invariant is the step boundary (§ D) | — |
+| **Adaptive envelope widen ladder** | 2026-08-23 | [archive/TEMP-envelope-adaptive-widen-plan.md](archive/TEMP-envelope-adaptive-widen-plan.md) | The ladder *machinery* is unnecessary — a flat widen is cheaper and sufficient. **Caveat:** measurement 1 was taken *at* the 2000 ms cap it was judging, so it cannot speak to reach in either direction; do not cite it as evidence that nothing lives past 2000 ms (22 shoulders do) | — |
+| **S2b — relax the unified objective's `min(pre, post)` seam reduction** | 2026-08-18 | [archive/TEMP-unmatchable-shoulder-plan.md](archive/TEMP-unmatchable-shoulder-plan.md) | Aimed at making 31/g7 patch at ≈ −47 ms. The ±2000 ms sweep then found its "unmatchable" post shoulder at **−1160 ms**, and the donor bridge is ≈ 0: B is continuous across the step, so *any* donor fill duplicates program. "Still patch" was the wrong goal — a reasoned skip is correct | — |
+| **"One-sided closeability" as a gap cell** | 2026-08-18 | [archive/TEMP-31g7-gap-shape-vocabulary.md](archive/TEMP-31g7-gap-shape-vocabulary.md) §9 | The cell has **zero** known members. Its sole candidate, 31/g7, is a degenerate silence-splice whose post shoulder exists — just beyond every ±600 ms instrument | — |
+| **Wire nominal-first's envelope-recenter rescue into production `try_dual_fit`** | 2026-08-20 | [archive/TEMP-lag-nominal-first-s1-plan.md](archive/TEMP-lag-nominal-first-s1-plan.md) | Archived on write — a mechanism without a customer. Its own Exit bar wanted 31/g7 to flip to `Patched`, but that gap's bridge is ≈ 0-length: recentering correctly *detects* the far shoulder and there is nothing to fill. Do **not** resurrect by hunting for a validation gap | A genuine one-sided-**but-fillable** case appears. Bridge *length*, not just seam correlation, must gate acceptance |
+| **Equivalence margin band, and the `<=` tie-break** | 2026-08-03 | *(memory)* `TEMP-equivalence-band-gate-off-findings.md` §2.5 / §3.1a / §3.3 / §6 — **deleted** in `21f03812`; recover with `git show 21f03812^:docs/dev/TEMP-equivalence-band-gate-off-findings.md` | Widening a threshold to compensate for a **misplaced measurement window** rescues the wrong gaps. The band flips ~8 of 10 correct drops; the one-character `<=` flips 6 of 12 — all ear-confirmed as mutual program silence. The 0.500 cluster is the window error, not a fuzzy boundary. Also refused: "measure at the fitted lag" — the gate runs **pre-decode**, so no fit exists | — The validated direction is envelope registration on the shoulders, already prototyped opt-in in `domain/gap_equivalence.rs::register_donor_window` |
+| **A `peak_delta_db` / `fill_level` audibility cutoff** | 2026-08-06, amended 2026-08-12 | *(memory)* five ear labels over `gap-files/2026-08-05-fill-level` | The corpus **maximum is clean** (+24.3 dB), and the one audible clip sits 0.6 dB from a clean twin whose every emitted field matches it. Amendment: that clip's defect was normalize's **boost**, not fill content — and `peak_delta_db` measures gained fill against ungained shoulders, so **every** delta is inflated by its own gap's gain. The conclusion survives; the mechanism story and the numbers do not | A shoulder-continuity axis exists. The discriminator is continuous quiet program vs a quiet pocket, and the shoulder **peak** cannot tell them apart — both land at −52 to −56 dB |
+| **Anchor pre-gate — perf lever #2, "cut k"** | 2026-07-23 | [archive/TEMP-anchor-pregate-plan.md](archive/TEMP-anchor-pregate-plan.md) §7 | Realizable rate **0.0%** (0 of ~4939 brackets over 17 pairs) against a 46.5% ceiling. The ceiling was measured at the *searched* placement; a byte-safe gate skips only below `min_pearson − xcorr_ambiguous_band = −0.03`, and xcorr rescue is always on in production, so decorrelated donors (windowed-max ≈ +0.1–0.3) never qualify. Banked-but-unwired work is listed in the plan | New evidence that changes the −0.03 floor |
+| **Raise `anchor_seam_min_prominence` above the 0.0 default** | 2026-07 | *(memory)*; [archive/TEMP-anchor-seam-plan.md](archive/TEMP-anchor-seam-plan.md) | Real-content calibration: real anchors read ≤ 0.073, so a 0.10 floor would **disable** rescue rather than sharpen it | — |
+| **Lower `REPEAT_CORR_THRESHOLD` (0.55)** | 2026-08-13 | [../gap-fill-modes.md](../gap-fill-modes.md) § Fit unified search | Lowering it would not have fired arm 1 on any of the 9 high-repeat winners; the live arm's conditions are anti-correlated | The constant is **split** first — the same 0.55 is also the short-bracket extension stop, a veto that `fill_repeat_penalty_weight` does not disable |
+| **8g.5 — reclassification + short-circuit, and the FFT seam-probe pre-filter** | 2026-07-11 | [archive/TEMP-pipeline-perf-redesign-plan.md](archive/TEMP-pipeline-perf-redesign-plan.md) § 1.3 | Short-circuiting only helps patch-tier gaps, but exhausted skips must score every bracket and are 62% of bracket cost. The pre-filter never fires: **100%** of skip-gap bracket cost is on timing-offset gaps, where correlation is *high*. A fixed nominal probe is also not a valid upper bound across brackets | New profiling data |
+| **Fill-search bounding / fixture shrinking as the cause of the ~350 s dump cost** | 2026-08-02 | *(memory)* `CLIP_SYNC_SPAN_TIMING` run | Both measured and refuted: bounding gave 344 → 334 s; shrinking the timeline 20 s → 7 s gave 334 → **354** s. The cost is not timeline-bounded. It is the unconditional Full-tier per-bracket oracle — the gate refusal itself is 0.65 s | — |
+| **Downmix hoist (perf § 2.1)** | 2026-07-20 | [repair-perf.md](repair-perf.md) § 4 | 0.006% of wall clock | — |
+| **"FFT the haystack sweep"** | 2026-07-26 | [repair-perf.md](repair-perf.md) § 4 | Not a thing — no full sweep exists to FFT. The live lever is 1b(b), banding the start-search repeat window | — |
+
+## B. Measured, safe, and unmotivated
+
+Adopting these would be harmless. Nothing asks for them. Do not spend a Change on one without a
+decision that depends on it.
+
+| Idea | Measured | Evidence | Reading |
+|------|----------|----------|---------|
+| **Raise `--lag-envelope-max-lag-ms` past 2000 (3000 tested)** | 2026-08-24 | [TEMP-envelope-3000-corpus-2026-08-24.md](archive/TEMP-envelope-3000-corpus-2026-08-24.md) | 51 pairs / 1073 gaps against a same-media 2000 ms arm one knob apart: **zero outcome changes**, zero rescues lost, zero alive→dead, zero `envelope_edge_pinned` rows. Keep the 2000 ms default; raise it when a decision depends on reach, not before. Widening trades against **B lead-in**, not shoulder length (the A template is clamped) |
+| **Make `--border-capture wide` the default** | 2026-08-22 | [archive/TEMP-envelope-adaptive-widen-plan.md](archive/TEMP-envelope-adaptive-widen-plan.md) deciding measurement 2 | Wide keeps 31/g8's pre at −1146.1 / r 0.974 where Narrow declines it, but flipping the default **re-baselines `border_displacement_ms` corpus-wide**. It stays a diagnostic arm; the underlying miss is live work in BACKLOG |
+
+## C. Latched — deferred behind a stated trigger
+
+Not refused, and not defects. Each was deliberately deferred with a condition attached. **They belong
+here, not in BACKLOG**, because nobody can act on them until the trigger fires.
+
+| Item | Trigger that reopens it |
+|------|-------------------------|
+| I1-class bin-divergence warn in `equivalence-calibration` | A **second** bin-width divergence. I1 was found by reading source, which is what made the fields Derived; this only automates a query a human can already run |
+| Row-level "no provenance" flag on `GapRow` | A report that needs to **filter** rows on it. Nothing does today — `check.rs`'s health Warn plus the census `(absent)` bucket already make an unanswerable corpus say so |
+| `bit_depth` string → `BitDepth` parser | A consumer that reads the token. The forward pin (`bit_depth_tokens_are_pinned`) is what protects corpora already on disk; a parser is dead code until then |
+| Share the contract string table with harness `legend_text()` | An **observed** drift, not the possibility of one. Sharing couples a 22-char CLI label to ≤120-char prose |
+| `--fingerprint-contracts=once/always/off` | A corpus where `_contract` repetition is a **measured** size problem |
+| `veto_rescue` as default (G5); F4 pipeline veto (M6) | **Not planned** — G5 is synthetic-only |
+| Informative floor + NaN headroom abstention | A census showing the cell is common **and** harmful. Count first; if tightening, extend `gate_abstains` to require finite headroom |
+| **M4** — MP3 residual calibration | Deferred; the gate is codec-agnostic. Manifest rows are marked M4 |
+| **FD-1** — fractional-delay cancellation | Deferred; needs sub-sample lag + B resample and a full floor recalibration |
+| **L6** — coarse outward walk step | `step_frames = window` in `measure_fit_residual_verdict`. Changes floors → recalibrate if ever touched |
+| **M3** — floor walk vs B haystack OOB | Field media hits bad geometry. `walk_reference_frames` is A-energy only; B OOB → NaN at measure time |
+| Adaptive gap-signature context | Low value — mode-coupled `nominal_bias` already handles drift at the 3 s default |
+| Absolute B occupancy via `BlockLevel.silent` | A multichannel false-unfillable shows up. Fillability still uses aggregate `rms_db` vs abs floor |
+| `limit_fill_to_mapped_region` on the scan report | Wrong home; explicitly out of the recipe plan's scope. A separate cleanup if ever moved |
+| **N-way donor alignment** — repair one damaged copy from **multiple** donors with sparse, non-overlapping damage — [TEMP-nway-donor-alignment-plan.md](TEMP-nway-donor-alignment-plan.md) | A real N-way case exists in the corpus. Every pair on disk is 1 donor : 1 damaged copy, so the plan has no validation media and its cross-donor arbitration rules cannot be exercised. Draft untouched since 2026-07-23; it is a design, not a defect |
+| `--scan-window` | **Refused** on identity grounds — [gap-vocabulary.md](gap-vocabulary.md) § Gap numbering |
+
+## D. Blocked on a precondition
+
+Real problems. Nobody can start them, so they are not BACKLOG rows.
+
+| Item | Blocked on | Notes |
+|------|-----------|-------|
+| **Step-boundary skip verdict (31/g7)** | A listen tree with **≥ 5 live gaps in one pair, ≥ 2 settled on each side** of a candidate. No tree on disk can exercise the rule — pair 31 has 4 live gaps; pair 50 has no straddling gap, its step falling *between* g7 and g8 | Base rate is **measured zero**: [TEMP-envelope-3000-corpus-2026-08-24.md](archive/TEMP-envelope-3000-corpus-2026-08-24.md), sequence test 0 / 0 at the 50 ms floor with pair 50's radius censor removed. 31/g7 is the corpus's only within-gap boundary, and its own censor is the `SPLICE_MIN_PEAK_R = 0.85` **admission floor**, not search radius — no widening can admit it. **The method is already written**: [archive/TEMP-step-boundary-census-plan.md](archive/TEMP-step-boundary-census-plan.md) §4–§5 is canonical — do not re-derive it, and do not drop its sequence test (census Question 12). Do not re-run the widen hoping for more straddlers. The spec is *pre and post disagreeing by ≈ the pair's map step*, sign-agnostic |
+| **Conditional donor test** — ask "is B non-silent *where A is silent*?" rather than independent A-floor + donor-occupancy halves | A count of A-silent ∩ donor-silent coincidence on existing scan JSON | Investigation only. **Do not change the gate.** No TEMP until the count says it is worth designing. Fill-level catches *loudness* damage only |
+| **Winner-only blindness in `fit_terms`** | Per-candidate capture | `fit_terms` reports the winner, so a working penalty that demoted rivals is invisible. **Not proposed** |
+
+## E. Standing cautions
+
+Measurement traps that have already cost time. Not work items — read them before trusting the
+instrument they describe.
+
+| Trap | What to do about it |
+|------|--------------------|
+| **`env_frames == 0` conflates two verdicts** | `rescue_shoulder` routes "the guard refused" and "no shift was needed" to the same `EnvelopeRescue::Declined`, so a `Declined` **count** is a mixture, not a refusal rate. Filter on `envelope_edge_pinned` instead. Splitting the verdict is live work in BACKLOG |
+| **Envelope width knobs move only the rescue path** | `lag.rs`'s rescue branch reads `cfg.lag_envelope_max_lag_ms`, but `wide_envelope_at_placement` (`probes.rs`) is pinned at `WIDE_ENV_MAX_LAG_MS = 400.0`. A dump taken at a raised `--lag-envelope-max-lag-ms` carries a `wide_envelope` produced by a **different search** — the two lags in one corpus are not comparable |
+| **A behaviour change rode inside a labelled refactor** | `33b60e10` ("Refactor gap fingerprint measure module…") silently narrowed the shared border capture that `7e689ec6` had widened two days earlier. Any "unchanged since those dumps" claim inferred from **commit messages** is unsound across 2026-08-19 … 2026-08-22. Facts re-derived in that range want a measurement, not a reading |
+| **`corpus.json` carries no build stamp** | `source` identifies the *media*; nothing identifies the *binary*. The 2026-08-19/20 border-capture arms had to be told apart by reading `border_displacement_ms` (1983.8 vs 13.0) — inference, not provenance, and it only worked because the arms happened to differ visibly. Live work in BACKLOG |
+| **`normalize_gain` contaminates every `peak_delta_db`** | The field measures gained fill against ungained shoulders. Sweep the gain itself with `--patch-only --format json`; never shortlist on `fill_level`. `peak_delta_db` does **not** predict the gain's sign — the corpus's top-delta gap is a +11.8 dB boost |
+| **`gap-fingerprint.md`'s open-differences table is stale on the donor window** | It reads "open, small — median Δ 0.008, max 0.067, every gap within ±1 block", measured on **one pair / ten gaps**. The 39-pair corpus contradicts all three: 100% differ, 42% by more than one block, max Δ **0.333**, and **10 / 802 dangerous** divergences. Root cause is scan windowing on the silent **core** vs the diagnostic path on the **raw** hold-bridged run. Reconciling the doc is live work in BACKLOG |
+| **`gap-files/` is ephemeral; committed goldens are durable** | `gap-files/` is gitignored and deletable (licensed-media-derived). Never cite it as a permanent reference |
+| **Licensed media names are never recorded** | Refer to corpus pairs by **index only** — never filenames, titles, or paths, in the repo or anywhere else. The pair-index → media map lives only in the gitignored `*.sources.local.toml` |
+| **Migration differentials are scaffolding** | An old-vs-new differential proves the new impl recreates the old. Once that is done, delete the old implementation **and** the differential — keeping it forces the old path alive, which is the dual-path drift the refactor set out to remove |
