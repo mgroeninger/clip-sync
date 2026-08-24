@@ -11,6 +11,23 @@
 > BACKLOG's Narrow-capture item. Durable `lag_decision` behaviour:
 > [gap-fingerprint.md](../gap-fingerprint.md) § *`lag_decision`*.
 >
+> **[2026-08-23, later same day] Scope limit on measurement 1.** That measurement was taken *at* the
+> 2000 ms cap it was judging. The flat-3000 smoke
+> ([TEMP-envelope-3000-smoke-2026-08-23.md](../TEMP-envelope-3000-smoke-2026-08-23.md)) re-measures
+> the same shoulder: 50/g009 post reads `envelope_peak_r` **0.999** at +2800, `frac_lag_ms` 2805.4,
+> r 0.997, not edge-pinned — and 21 further pair-50 shoulders come alive with it. So "the trigger has
+> no members" is true **of a ladder that can only step within ±2000 ms**, and is *not* evidence that
+> nothing lives past 2000 ms. The archival verdict is unchanged — the ladder machinery stays
+> unnecessary because a **flat** widen is cheaper and sufficient — but do not cite measurement 1 for
+> the stronger claim.
+>
+> **[2026-08-24] Settled corpus-wide.**
+> [TEMP-envelope-3000-corpus-2026-08-24.md](../TEMP-envelope-3000-corpus-2026-08-24.md) ran the flat
+> widen over all 51 pairs. Reach beyond 2000 ms is **not** empty (22 shoulders live at 2761–2816 ms,
+> all pair 50) and nothing saturates 3000 ms (`envelope_edge_pinned` goes 1 → 0 corpus-wide). Zero
+> outcome changes across 1073 gaps, so the 2000 ms default stays — measured safe to raise,
+> unmotivated to raise. Archival verdict still unchanged.
+>
 > Do not implement this draft. Do not raise the 0.70 floor or the 2000 ms default off it.
 
 **Status:** archived 2026-08-23. Premise partially refuted 2026-08-22; ladder refuted 2026-08-23.

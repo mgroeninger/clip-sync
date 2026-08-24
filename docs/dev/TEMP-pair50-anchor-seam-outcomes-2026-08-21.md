@@ -162,6 +162,18 @@ rescue declined on all of them for a single sufficient reason: **2800 ms exceeds
 radius.** No content-mismatch, silent-onset, or window-length theory is needed — and the content is
 demonstrably there (r ≥ 0.991 across the cluster).
 
+**Confirmed in production coordinates, 2026-08-23.** This conclusion was reached from listen clips;
+it has since been tested directly by re-running the fingerprint at a flat
+`--lag-envelope-max-lag-ms 3000` —
+[TEMP-envelope-3000-smoke-2026-08-23.md](TEMP-envelope-3000-smoke-2026-08-23.md). On production's own
+B haystack, all 22 shoulders of g8–g18 go `decorrelated`/`declined` → `rescued`/`timing_offset`,
+landing at **2761–2816 ms** with fine-search r 0.928–0.998, none edge-pinned; g009 post's edge pin at
++2000 / r 0.473 becomes an interior lock at +2800 / r 0.997. Moving the radius was sufficient, which
+is what "if production searched to +2.8 s the post-onset would lock" predicted. **This changes nothing
+downstream** — patch/skip outcomes are identical gap-for-gap, g11–g13 still skip `waveform_floor`
+(Question 2 is untouched by envelope reach). The 3000 ms smoke remains a sizing smoke, not an
+answer to either open question here. The Non-goals below stand.
+
 Two corrections to how this was first stated:
 
 - **"Contiguous region" is wrong.** They share an offset, not adjacency: `geometry.a_start_secs` runs
@@ -241,6 +253,27 @@ Question 2's data in hand (`2026-08-13-repeat-terms/50.json`):
 g13 shows the anchor-seam search ran and still missed its gate; g11/g12 record no `best_attempt` at
 all, meaning either no A-side anchor candidate was found or none beat baseline. Distinguishing those
 two cases is the first concrete step.
+
+**A candidate answer to Question 2, from the corpus-3000 dump (2026-08-24).** Once the envelope
+search can reach the true +2.8 s registration, `donor_interior_aligned.continuous` flips on exactly
+these gaps — and only these:
+
+| Gap | aligned @ 2000 ms | aligned @ 3000 ms | nominal |
+|---|---|---|---|
+| g11 | `true`, silence 0.00, −45.4 dB | `false`, silence 0.917, −83.8 dB | `true` |
+| g12 | `true`, silence 0.00, −45.6 dB | `false`, silence 1.000, −83.8 dB | `true` |
+| g13 | *(no aligned donor)* | `false`, silence 0.944, −83.2 dB | `true` |
+| g17 | *(no aligned donor)* | `false`, silence 0.909, −80.3 dB | `true` |
+
+The flanks that patch — g10 and g14 — stay `continuous` in both arms, and `nominal` stays `true`
+throughout, which is the point: the nominal reading was never looking at the right place. Read
+directly, this says B does not bridge the hole *at the correct registration*, which would answer
+Question 2 without any A-side bracket story. It is a lead, not a finding: the correlation reasons
+tabulated above are measured at the gate's own coordinates, and nobody has yet checked whether the
+donor silence and the sub-threshold correlations are the same fact seen twice. Source and scoping:
+[TEMP-envelope-3000-corpus-2026-08-24.md](TEMP-envelope-3000-corpus-2026-08-24.md) Result 5 — the
+strict corpus-wide `true → false` count is two (g11, g12), so this is a pair-50 lead and not a
+corpus-wide donor finding. Question 1 is untouched by it.
 
 A hypothesis worth testing on both questions together: the anchor-seam search is A-side and per-gap, so
 its success depends on A carrying a usable editorial cut within 5.0 s of the gap. That would predict

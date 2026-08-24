@@ -6,8 +6,10 @@
 
 Split out of [archive/TEMP-envelope-adaptive-widen-plan.md](archive/TEMP-envelope-adaptive-widen-plan.md)
 on 2026-08-23. That draft mixed three jobs (sizing, floor, widen-trigger); the ladder is
-**refuted** (measurement 1: pair 50's only edge-pin is g009 post, r 0.47 at +2000 ms) and sizing
-is a flat `--lag-envelope-max-lag-ms` dump, not a Change
+**refuted** (measurement 1: pair 50's only edge-pin is g009 post, r 0.47 at +2000 ms). That
+measurement was taken *at* the 2000 ms cap it was judging; the same shoulder locks at +2800 once
+the cap moves, so do not cite it as "nothing lives past 2000" (caveat on the archived plan's
+banner). Sizing is a flat `--lag-envelope-max-lag-ms` dump, not a Change
 ([BACKLOG.md](../../BACKLOG.md) § *Fill placement*). What remains is the floor's cheap remaining
 job: declining doomed rescue candidates early so they do not pay a wasted fine sweep.
 
