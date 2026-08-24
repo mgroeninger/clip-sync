@@ -13,7 +13,8 @@
 # accepted without checking the local shoulder registration, producing a fill that duplicated the
 # shoulder, accepted at `confidence: high`. `pre_correlation` /
 # `post_correlation`, the tier and confidence, and the `tags` block are all here too. The rolled-up
-# CSV covers `fill_level` only; for anything else, read the JSON.
+# CSV covers `fill_level` plus `normalize_gain` (the one non-`fill_level` column, and only because
+# the level fields are measured after that gain); for anything else, read the JSON.
 #
 # Usage:
 #   ./scripts/measure/measure-patch-outcomes.ps1 -Manifest pairs.csv
@@ -146,6 +147,19 @@ function Get-DualFitUsed {
     return $null
 }
 
+# The loudness gain the splice applied to this fill (`status.patched.normalize_gain`), NOT a
+# `fill_level` field — the level fields are measured *after* this gain, so a loud fill and a boosted
+# quiet one are indistinguishable without it. $null means the report predates 2026-08-12 and carries
+# no gain at all; it does NOT mean unity, and such rows must be held out of any gain-backed ranking
+# rather than defaulted to 1.0. Since the boost-only policy it is never below 1.0.
+function Get-NormalizeGain {
+    param($Outcome)
+    $status = $Outcome.status
+    if ($null -eq $status -or $null -eq $status.patched) { return $null }
+    if ($null -eq $status.patched.PSObject.Properties['normalize_gain']) { return $null }
+    return [double]$status.patched.normalize_gain
+}
+
 # One row per spliced gap that carries fill_level. Empty list if the report has no patch block.
 function Get-FillLevelRows {
     param(
@@ -188,6 +202,7 @@ function Get-FillLevelRows {
                     # absolute level plus 120 dB and says nothing about substitution magnitude, so
                     # these rows are excluded from the listen candidates below (kept in the CSV).
                     RefAtFloor     = [bool]$fl.reference_at_floor
+                    NormalizeGain  = Get-NormalizeGain -Outcome $g
                     DualFitUsed    = Get-DualFitUsed -Outcome $g
                     Report         = $JsonPath
                 })
@@ -257,7 +272,7 @@ function Write-FillLevelRollup {
     $sorted | Select-Object Label, Gap1Based, Gap0Based, AStartSecs, AEndSecs, EdgeDeltaDb,
     HeadBinDb, TailBinDb, ReferenceDb, RefAtFloor, PreShoulderDb, PostShoulderDb,
     PeakDeltaDb, PeakBinDb, PeakBinIndex, Bins, BinMs,
-    DualFitUsed, Report |
+    NormalizeGain, DualFitUsed, Report |
         Export-Csv -LiteralPath $csv -NoTypeInformation -Encoding utf8
     # Ranking keeps every row in the CSV but drops floored references from the listen candidates:
     # sorted by delta they would otherwise occupy the whole top of the table with an artifact.

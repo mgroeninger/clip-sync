@@ -353,8 +353,9 @@ The 2026-08-06 / 2026-08-08 ear labels also include **mixed A/B orientation**.
 its 5 labels are of the reverse pairing and do not transfer ([archive/TEMP-fill-placement-registration-plan.md](dev/archive/TEMP-fill-placement-registration-plan.md)
 §0.0). Do not quote "the lowest clip ever labelled clean" as a bound until those are re-labelled.
 The oriented fill-level roll-up is `gap-files/2026-08-13-repeat-terms/fill-level-rollup.csv` (317
-rows); the CSV has no `normalize_gain` column — join it from the run's per-pair JSON
-(`status.patched.normalize_gain` on 317/317).
+rows). Roll-ups written before 2026-08-24 have no `normalize_gain` column — join it from the run's
+per-pair JSON (`status.patched.normalize_gain` on 317/317); the script emits it as `NormalizeGain`
+since then, `null` on reports predating the field.
 
 `edge_delta_db` takes the **quieter** seam, so it takes both seams sitting high to read as hot — the
 same conservatism as `reference_db` taking the louder shoulder. On a one-bin fill the head, tail and
