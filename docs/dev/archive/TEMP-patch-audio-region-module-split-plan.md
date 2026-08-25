@@ -1,6 +1,6 @@
 # `patch_audio/region.rs` folder split — plan
 
-Status: **IMPLEMENTED 2026-08-25 (uncommitted)**. All phases P0-P6 done; the §5 gates are green (build, clippy, `-Tier pr-repair` exit 0, `cargo doc` warning set byte-identical to the 50-warning pre-P0 baseline). A normalized line-level diff of the seven new files against `HEAD:region.rs` shows **0 lines lost** and 5 added (4 extra `mod tests` closing braces + 1 new doc line) — byte-preserving confirmed. Maintainability-only peel of the remaining
+Status: **IMPLEMENTED 2026-08-25 — archived with the change.** All phases P0-P6 done; the §5 gates are green (build, clippy, `-Tier pr-repair` exit 0, `cargo doc` warning set byte-identical to the 50-warning pre-P0 baseline). A normalized line-level diff of the seven new files against `HEAD:region.rs` shows **0 lines lost** and 5 added (4 extra `mod tests` closing braces + 1 new doc line) — byte-preserving confirmed. Maintainability-only peel of the remaining
 `region.rs` monolith into `patch_audio/region/` (folder + submodules). Byte-preserving
 moves; never bundled into a behavior-change PR.
 
@@ -17,14 +17,14 @@ as written; `characterize_all_regions` is genuinely `#[cfg(test)]` (~L2324);
 those were the gaps, not the layout.
 
 This is the **deferred dual-fit / bracket peel** the 2026-07-24
-[`TEMP-patch-audio-module-split-plan.md`](archive/TEMP-patch-audio-module-split-plan.md)
+[`TEMP-patch-audio-module-split-plan.md`](TEMP-patch-audio-module-split-plan.md)
 explicitly left out of its success gate (`region.rs` was allowed to land near ~2 kloc).
 The file is now **3633 lines** (~2510 production + ~1120 colocated tests).
 
-Companions: [archive/TEMP-patch-audio-module-split-plan.md](archive/TEMP-patch-audio-module-split-plan.md)
+Companions: [archive/TEMP-patch-audio-module-split-plan.md](TEMP-patch-audio-module-split-plan.md)
 (ground rules + DAG that this nest sits under),
-[archive/TEMP-policies-module-split-plan.md](archive/TEMP-policies-module-split-plan.md)
-(template), [archive/TEMP-region-characterization-collapse-plan.md](archive/TEMP-region-characterization-collapse-plan.md)
+[archive/TEMP-policies-module-split-plan.md](TEMP-policies-module-split-plan.md)
+(template), [archive/TEMP-region-characterization-collapse-plan.md](TEMP-region-characterization-collapse-plan.md)
 (characterize→execute boundary — do not reopen).
 
 ---
@@ -109,7 +109,7 @@ application/patch_audio/region/
 | `skip_region_spec` | **`types`** | Spec constructor from (reason, residual, region geometry); no PCM. `finalize_dual_fit` *and* `characterize_region` call it. Putting it in characterize would be `dual_fit → characterize` (cycle). Take it in P1 with the other spec/outcome helpers that already sit in this cluster |
 | `skip_outcome_from_fields` / `outcome_from_spec` | **`types`** | Spec/fields → `RegionPatchOutcome`; no PCM. Used by `patch_audio/mod.rs` preview + execute loop |
 | `seam_failure_outcome` | **`types`** | Maps `SeamGateFailure` → skip outcome. Dual-fit calls it; it must not live in `dual_fit` (types must stay a leaf) |
-| `registration_shoulder_residual_ms` / `select_registration_residual_ms` | **`dual_fit`** | Pure residual math added with [archive/TEMP-registration-residual-plan.md](archive/TEMP-registration-residual-plan.md). Sit in the dual-fit cluster; `skip_or_dual_fit` is a caller. Characterize's bracket path also calls them (DAG-legal: characterize already depends on dual_fit). Helper unit tests go with dual_fit; the fixture that drives `characterize_all_regions` stays with characterize |
+| `registration_shoulder_residual_ms` / `select_registration_residual_ms` | **`dual_fit`** | Pure residual math added with [archive/TEMP-registration-residual-plan.md](TEMP-registration-residual-plan.md). Sit in the dual-fit cluster; `skip_or_dual_fit` is a caller. Characterize's bracket path also calls them (DAG-legal: characterize already depends on dual_fit). Helper unit tests go with dual_fit; the fixture that drives `characterize_all_regions` stays with characterize |
 | `anchor_search_prior_for_gap` | **`characterize`** | Only `characterize_region` calls it. Physically sits in the types block today (~L153) |
 | `prepare_region_patch` | **`characterize`** | Shim over characterize + execute. Anchored retry is the only production caller (`anchor_retry.rs`) |
 | `b_extract_frames` | **`pcm`** | Must stay next to `slice_b_extract` (S1: secs→frames rounding cannot drift from the slice clamp) |
@@ -368,9 +368,9 @@ exercise `PatchAudio::execute` and the anchored-retry `prepare_region_patch` shi
 
 ## Related
 
-- [archive/TEMP-patch-audio-module-split-plan.md](archive/TEMP-patch-audio-module-split-plan.md) — parent split (done); this is the deferred peel
-- [archive/TEMP-region-characterization-collapse-plan.md](archive/TEMP-region-characterization-collapse-plan.md) — characterize→execute boundary (done; do not reopen)
-- [archive/TEMP-patch-audio-bracket-fill-elimination-plan.md](archive/TEMP-patch-audio-bracket-fill-elimination-plan.md) — why `execute_bracket_fill` is a reconstruction primitive
-- [archive/TEMP-registration-residual-plan.md](archive/TEMP-registration-residual-plan.md) — source of `registration_shoulder_residual_ms` / `select_registration_residual_ms` (done; do not reopen)
+- [archive/TEMP-patch-audio-module-split-plan.md](TEMP-patch-audio-module-split-plan.md) — parent split (done); this is the deferred peel
+- [archive/TEMP-region-characterization-collapse-plan.md](TEMP-region-characterization-collapse-plan.md) — characterize→execute boundary (done; do not reopen)
+- [archive/TEMP-patch-audio-bracket-fill-elimination-plan.md](TEMP-patch-audio-bracket-fill-elimination-plan.md) — why `execute_bracket_fill` is a reconstruction primitive
+- [archive/TEMP-registration-residual-plan.md](TEMP-registration-residual-plan.md) — source of `registration_shoulder_residual_ms` / `select_registration_residual_ms` (done; do not reopen)
 - `crates/clip-sync-repair/src/application/patch_audio/region.rs` — current monolith (3633 lines, 2026-08-24)
-- Sibling [TEMP-gap-fingerprint-measure-module-split-plan.md](archive/TEMP-gap-fingerprint-measure-module-split-plan.md) (done / archived)
+- Sibling [TEMP-gap-fingerprint-measure-module-split-plan.md](TEMP-gap-fingerprint-measure-module-split-plan.md) (done / archived)

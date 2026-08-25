@@ -74,6 +74,7 @@ Shipped thin selection v1 + v1.5 ranges first; recipe stayed parked until a same
 | [TEMP-gap-fingerprint-corpus-module-split-plan.md](TEMP-gap-fingerprint-corpus-module-split-plan.md) | Fingerprint corpus module split |
 | [TEMP-patch-audio-module-split-plan.md](TEMP-patch-audio-module-split-plan.md) | `patch_audio` module split |
 | [TEMP-patch-audio-bracket-fill-elimination-plan.md](TEMP-patch-audio-bracket-fill-elimination-plan.md) | `bracket_fill` elimination |
+| [TEMP-patch-audio-region-module-split-plan.md](TEMP-patch-audio-region-module-split-plan.md) | `patch_audio/region.rs` folder split (2026-08-25) — the peel [TEMP-patch-audio-module-split-plan.md](TEMP-patch-audio-module-split-plan.md) deferred. Byte-preserving; **read its post-implementation review** for the two gates a split like this needs: `cargo doc --document-private-items` (plain `cargo doc` cannot see links broken on private items) and a minimum-visibility pass (`pub(in …::region)` only where a sibling actually reads it) |
 | [TEMP-region-characterization-collapse-plan.md](TEMP-region-characterization-collapse-plan.md) | `RegionCharacterization` collapse |
 | [TEMP-repeat-band-plan.md](TEMP-repeat-band-plan.md) | FFT repeat-band (lever 1b(b); numbers in [../repair-perf.md](../repair-perf.md) §1c / §3) |
 
