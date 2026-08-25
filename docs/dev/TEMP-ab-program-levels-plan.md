@@ -293,6 +293,33 @@ have. Tier 1 needs a sibling that holds everything constant except the gain.
 Lossless container throughout: a lossy codec puts quantisation noise into `spread_db` and
 there is no way to tell it from estimator error.
 
+**Done (2026-08-25).** `clip-sync-repair-fixtures::gain_pair::write_gain_pair` (rate, depth,
+channels and signal held equal; refuses a clipping gain) plus
+`crates/clip-sync-repair/tests/cli_program_levels.rs`, driving the binary at
+`--patch-only --format json`.
+
+Measured, at −6.00 dB written onto B:
+
+| Case | `offset_db` | `spread_db` | Note |
+|---|---|---|---|
+| Gain only, offset 0 | −5.99999936 | 4.4e-6 | mapping is the identity |
+| Gain + 30 ms head pad | −6.0000235 | 5.3e-4 | alignment found the pad at 5.030016 s |
+
+The two cases are not redundant: the fractional pad moves `b.n_active` by one block and lifts
+spread by two orders of magnitude — the sub-block misregistration signal — while `offset_db`
+holds. A pad of a *whole* number of blocks does not do this, which is why the fixture takes
+**samples** rather than seconds.
+
+Three incidental confirmations from the run, now asserted:
+
+- `n_active` on the offset equals `a.n_active` over a *decoded* timeline (900), not just over
+  fixture literals — the § 6 cross-check where it actually matters.
+- `n_pairs` (897) sits one below `n_steady` (898): the final A block maps past B's scanned end
+  and `b_range_fully_scanned` rejects it. Fail-closed working, visible.
+- `floor_db` is **absent** on both sides, and correctly so — the only quiet blocks are the
+  digitally silent core, and `program_level_context` excludes the −120 sentinel from both
+  populations. Absence here is the assertion; a reading would mean the sentinel had leaked in.
+
 ### Tier 2 — real media, gained copy (known answer on real content)
 
 What Tier 1 cannot prove: synthetic chirps and noise do not produce the heavy-tailed dB
@@ -390,7 +417,7 @@ hole-local normalize. That plan is now drafted:
 
 Validation ladder (§ 7a), not yet done:
 
-- [ ] Tier 1: gain-only fixture writer + end-to-end scan test (gain at offset 0, and gain + head pad)
+- [x] Tier 1: gain-only fixture writer + end-to-end scan test (gain at offset 0, and gain + fractional head pad)
 - [ ] Tier 2: one corpus pair, gained copies, known-answer check — including the `n_pairs`-falls-with-attenuation prediction
 - [ ] Tier 3: corpus sweep, the per-pair table, and the `normalize_gain` cross-reference
 

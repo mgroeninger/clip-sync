@@ -18,6 +18,7 @@ pub mod anchor_seam_diagnostic;
 pub mod energy_signature_fixtures;
 pub mod energy_signature_production;
 pub mod fingerprint_corpus_fixtures;
+pub mod gain_pair;
 pub mod gap_cell_fixtures;
 pub mod gap_corpus_fixtures;
 pub mod lossless_silence_pair;

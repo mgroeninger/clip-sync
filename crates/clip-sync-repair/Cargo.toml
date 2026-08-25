@@ -71,6 +71,10 @@ clip-sync-repair-fixtures = { path = "../clip-sync-repair-fixtures" }
 clip-sync-repair-harness = { path = "../clip-sync-repair-harness" }
 
 [[test]]
+name = "cli_program_levels"
+path = "tests/cli_program_levels.rs"
+
+[[test]]
 name = "anchor_seam_oracle"
 path = "tests/anchor_seam_oracle.rs"
 
