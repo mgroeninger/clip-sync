@@ -153,8 +153,14 @@ The offset is measured pairwise, not by subtracting two per-side summaries. For 
 *active* (RMS above the recipe's absolute silence floor — deliberately not the scanner's `silent`
 flag, whose peak-fraction branch admits −48 dB transient blocks) and *steady* (both neighbours within
 3 dB, which absorbs the sub-block map error and slow drift), the mapped B block is looked up by
-largest time overlap and `rms_db_B − rms_db_A` recorded. Reported as a median `offset_db` (B minus A),
-a MAD `spread_db`, deciles, counts, and per-600 s `chunks`.
+largest time overlap and `rms_db_B − rms_db_A` recorded. Reported as a median `offset_db` (B minus
+A), a MAD `spread_db`, deciles, counts, and per-600 s `chunks`.
+
+Pairing needs only *overlap*, so an A block whose mapped window straddles B's start still pairs on
+the part of B that exists — the fail-closed `b_scanned_end_secs` bound applies to the **tail** only,
+where a window can genuinely run past what B measured. That is deliberately looser than the
+occupancy rule used to decide fillability: time before B's start is not unscanned B, it does not
+exist, and the overlapping part was measured like any other.
 
 Read `spread_db` before `offset_db`: it says whether a *single scalar* describes the pair at all.
 Wide spread means dynamics or compression differ, or the alignment is wrong. `chunks` says whether

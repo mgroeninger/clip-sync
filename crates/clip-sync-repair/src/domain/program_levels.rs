@@ -26,7 +26,6 @@
 
 use serde::Serialize;
 
-use crate::domain::cross_check::b_range_fully_scanned;
 use crate::domain::level_stats::{median_db, median_of_sorted, percentile_of_sorted, sort_db};
 use crate::domain::policies::{absolute_silence_floor_db, BlockLevel, BLOCK_LEVEL_FLOOR_DB};
 
@@ -223,9 +222,12 @@ pub fn program_level_context(
 /// `b_scanned_end_secs` bounds the reviewed B prefix.
 ///
 /// `None` means no bound was recorded — in the scan path that only happens when B fed no buckets,
-/// which also leaves `b_levels` empty, so nothing pairs regardless. Unlike
-/// [`b_range_fully_scanned`], `None` is therefore *not* treated as a rejection here; a mapped window
-/// starting before B's timeline still is.
+/// which also leaves `b_levels` empty, so nothing pairs regardless. It is therefore vacuous here
+/// rather than a rejection, unlike `b_range_fully_scanned`, whose occupancy caller must fail closed.
+///
+/// The bound is a *tail* bound only. Nothing rejects a window mapped before B's start: time before
+/// zero is not unscanned B, it does not exist, and the part of such a window that overlaps B was
+/// measured like any other. See step 4.
 ///
 /// Returns `None` when fewer than `params.min_pairs` blocks paired.
 pub fn paired_level_offset(
@@ -260,16 +262,14 @@ pub fn paired_level_offset(
         // interpolating the two straddled blocks: the steadiness filter has already guaranteed the
         // A neighbourhood is flat, so the candidates differ by little.
         let (b_lo, b_hi) = (a.start_secs + offset_secs, a.end_secs + offset_secs);
-        // 4: fail closed outside the reviewed B prefix, through the same helper the
-        // donor-occupancy read uses — which also rejects a window mapped before B's start.
-        let reviewed = match b_scanned_end_secs {
-            Some(_) => b_range_fully_scanned(b_lo, b_hi, b_scanned_end_secs),
-            // No bound recorded. `b_range_fully_scanned` would reject outright; here that would
-            // make the whole estimator unusable without a bound, so only the prefix half is
-            // vacuous and the start-of-timeline half still applies.
-            None => b_lo >= 0.0,
-        };
-        if !reviewed {
+        // 4: fail closed past the reviewed B prefix. Deliberately *not* `b_range_fully_scanned`,
+        // which is occupancy's rule: it also demands `b_lo >= 0.0`, and that is the wrong question
+        // here. Occupancy asks "may I fill from this window", where time before B's start must fail
+        // closed. Pairing asks "is there a B block to difference against" — and for a window
+        // straddling zero the overlapping part *was* scanned, so it is no different from the
+        // interior half-block straddle that step 3 already accepts. A window mapped wholly before
+        // zero needs no rule: `max_overlap_block` finds nothing and returns `None`.
+        if !b_scanned_end_secs.is_none_or(|end| b_hi <= end) {
             continue;
         }
         let Some(b) = max_overlap_block(b_levels, b_lo, b_hi) else {
@@ -737,7 +737,7 @@ mod tests {
         assert_eq!(got.n_active, 20, "every A block is still active");
         assert_eq!(
             got.n_pairs, 17,
-            "three map before B's start and are dropped whole, not partially paired"
+            "three map wholly before B's start, so `max_overlap_block` finds no candidate"
         );
         assert!(
             (got.first_pair_secs - 3.0 * BLOCK_SECS).abs() < 1e-9,
@@ -746,20 +746,20 @@ mod tests {
     }
 
     #[test]
-    fn a_window_straddling_b_start_is_dropped_not_partially_paired() {
-        // Half a block of negative offset: A block 0 maps to [-0.05, 0.05) — `max_overlap_block`
-        // would happily pair it against B block 0 on the overlapping half. The bound rejects it.
+    fn a_window_straddling_b_start_is_paired_on_its_overlap() {
+        // Half a block of negative offset: A block 0 maps to [-0.05, 0.05), overlapping B block 0
+        // by half. This is the one case where occupancy's rule and the pairing rule disagree, and
+        // the pairing rule is the right one — the overlapping half of B was scanned, and the
+        // registration error is no worse than the interior straddle that is accepted everywhere
+        // else. Integer-block offsets cannot exercise this: there the window is wholly outside.
         let a = timeline(0.0, &flat(20, -30.0));
         let b = timeline(0.0, &flat(20, -24.0));
 
         let got =
             paired_level_offset(&a, &b, -0.5 * BLOCK_SECS, None, true, &params()).expect("offset");
 
-        assert_eq!(
-            got.n_pairs, 19,
-            "block 0 straddles B's start and is dropped"
-        );
-        assert!((got.first_pair_secs - BLOCK_SECS).abs() < 1e-9, "{got:?}");
+        assert_eq!(got.n_pairs, 20, "every block finds an overlapping B block");
+        assert!(got.first_pair_secs.abs() < 1e-9, "{got:?}");
     }
 
     #[test]

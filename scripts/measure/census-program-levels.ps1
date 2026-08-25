@@ -93,10 +93,21 @@ $gainRows = [System.Collections.Generic.List[object]]::new()
 foreach ($file in $files) {
     $label = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
 
+    # A zero-length file is the pair currently being written by the sweep. Caught before the parse
+    # because `ConvertFrom-Json` returns $null on empty input *without throwing*, which would fall
+    # through to the `stale` branch below — the loudest false alarm this script can raise.
+    if ($file.Length -eq 0) {
+        Write-Warning "$label`: empty file — in-flight or failed run, not a stale binary. Skipped."
+        continue
+    }
     try {
         $report = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json
     } catch {
         Write-Warning "$label`: unreadable JSON — skipped ($($_.Exception.Message))"
+        continue
+    }
+    if ($null -eq $report) {
+        Write-Warning "$label`: parsed to nothing — truncated or still being written. Skipped."
         continue
     }
 
