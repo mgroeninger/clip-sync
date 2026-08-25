@@ -252,10 +252,118 @@ JSON back into a `GapReport` — the fields are purely additive.
 
 ---
 
+## 7a. Validation ladder (what each tier can actually prove)
+
+§ 7 feeds `Vec<BlockLevel>` in directly. That pins the *reduce* and nothing else — the
+decoder, the scanner, the dB conversion and the recipe threshold are all downstream of the
+struct literals. Three tiers, in order, each answering a question the one below it cannot.
+
+**Media hygiene: pair index only; no filenames / titles / paths in the repo.**
+
+### Tier 1 — synthetic end-to-end (committable, free)
+
+The gap: nothing exercises *decode → `SilenceRunScanner::retain_block_levels` →
+`finish_with_levels` → `paired_level_offset`*. A wiring bug — a flipped sign, a threshold
+compared in the wrong domain, block mapping off by a bucket — passes every § 7 test. This
+is the cheapest test here and it invalidates the other two tiers if it fails, so it goes
+first.
+
+Shape: write A, write B as A scaled by a known factor, scan, assert on
+`scan.program_levels.offset`.
+
+| Assert | Why |
+|---|---|
+| `offset_db` within 0.1 dB of the applied gain | the sign convention (B minus A) and the dB conversion, end to end |
+| `spread_db` ≈ 0 | a constant gain is a constant difference; anything else means the pairing is drifting |
+| `n_active == a.n_active` | the cross-check § 6 documents, now over a *decoded* timeline |
+| `n_pairs` close to `n_steady` | full B coverage; a low yield here means the mapping or the prefix bound is wrong |
+| `channels_comparable == true` | same source, so a `false` is a wiring fault |
+
+Two cases, not one: **gain only** at `offset_secs == 0`, and **gain plus a head pad** so B
+is time-shifted. The first is the known-answer; the second is the only one that exercises
+`max_overlap_block` off the identity mapping and gives `b_range_fully_scanned` something to
+reject. A gain-only test at zero offset proves less than it looks like it does.
+
+Home: `crates/clip-sync-repair-fixtures` for the writer, a new integration test beside
+`cli_gap_fingerprint_provenance.rs` (the existing `write_lossless_silence_pair` consumer).
+Note that `write_lossless_silence_pair` is **not** reusable as is — it deliberately differs
+in sample rate *and* bit depth between the sides, which is the confound this tier must not
+have. Tier 1 needs a sibling that holds everything constant except the gain.
+
+Lossless container throughout: a lossy codec puts quantisation noise into `spread_db` and
+there is no way to tell it from estimator error.
+
+### Tier 2 — real media, gained copy (known answer on real content)
+
+What Tier 1 cannot prove: synthetic chirps and noise do not produce the heavy-tailed dB
+distribution that motivated median/MAD over mean/σ in § 3. Tier 2 puts a *known* answer on
+*real* dynamics.
+
+Recipe — one corpus pair, A side only:
+
+1. Pick one pair. Read its peak headroom before choosing any positive gain.
+2. From the **same source**, encode A and A′ in the **same codec**, A′ through a volume
+   filter. Do not re-encode an already-lossy A: generation loss lands in `spread_db` and
+   reads as estimator error.
+3. Gains: a few attenuations (say −3, −6, −12 dB) plus at most one boost, sized under the
+   measured headroom. Produce one additional copy that is **gained and head-padded**, for
+   the same reason as Tier 1's second case.
+4. Scan A against each copy. `--patch-only --format json`.
+
+Expected, per copy: `offset_db` recovers the applied gain, `spread_db` small and flat,
+`chunks` constant across the program.
+
+Four traps, in the order they bite:
+
+- **Clipping.** A boost clips wherever peaks approach full scale. Clipping *lowers*
+  measured RMS gain and *raises* spread — it reads exactly like estimator bias, but the
+  fixture is what is wrong. This is why the attenuations are the primary evidence and the
+  boost is optional.
+- **The active floor is asymmetric — and this is a prediction, not just a caveat.**
+  Attenuating B pushes its quiet blocks below the ≈ −60 dBFS threshold while A's still
+  pass, so those pairs drop out and the survivors skew loud. `n_pairs` **should** fall
+  monotonically as attenuation grows. If it does not move, the threshold is not doing what
+  § 4 claims. The median stays unbiased under a flat gain regardless, so `offset_db`
+  recovering correctly is *not* evidence the threshold works — `n_pairs` is.
+- **Codec confound.** See step 2.
+- **Zero offset tests nothing.** See step 3.
+
+One pair is enough. This is a calibration: an estimator unbiased on one real program at
+several gains is unbiased. Effort beyond that belongs in Tier 3.
+
+**What Tier 2 still cannot prove:** whether a single scalar describes a genuinely different
+encode. `spread_db` ≈ 0 here is true *by construction* — the two files are the same program.
+That question is Tier 3's, and it is the one worth money.
+
+### Tier 3 — the corpus read (the BACKLOG item)
+
+Real A/B pairs, and cheaper than the fingerprint protocol suggests: `program_levels` is
+produced in the **scan** half, so it rides along on `--patch-only --format json` — the same
+run shape already used for the normalize sweep, no per-bracket oracle cost, none of the
+~15 GB fingerprint-run weight.
+
+That shape pays a second time: the same JSON carries `normalize_gain`, so one sweep yields
+both columns of the correlation the BACKLOG asks for — does `offset_db` track the audible
+over-boost cohort.
+
+Tabulate per pair, by index: `offset_db`, `spread_db`, chunk drift (max − min across
+`chunks`), `n_pairs`, and the two yield ratios `n_pairs / n_steady` (B coverage) and
+`n_steady / n_active` (what the steadiness filter cost — the only way to tell from the
+emitted fields whether `STEADY_TOLERANCE_DB` is sane for this material).
+
+The question being answered is **not** "what is the offset". It is *does a single scalar
+exist at all* — the precondition § 8 puts on any later gain use. A corpus where `spread_db`
+is routinely wide, or where `chunks` drift within a pair, settles that question negatively
+and that is a real result, not a failed run.
+
+---
+
 ## 8. Explicitly out of scope for gain (so it is not smuggled in)
 
 A later plan may use `offset_db` as a coarse master offset (`gain₀`), separate from
-hole-local normalize. That plan must:
+hole-local normalize. That plan is now drafted:
+[TEMP-program-gain-plan.md](TEMP-program-gain-plan.md) (latched on this TEMP's
+§ 7a Tier 3). It must:
 
 - require `spread_db` below a threshold **and** `chunks` consistent — *a single scalar
   must be shown to exist* before one is applied;
@@ -280,6 +388,12 @@ hole-local normalize. That plan must:
 - [x] Do **not** touch `compute_fill_gain` / normalize path
 - [x] `cargo test` (lib + touched CLI/scan tests); clippy clean
 
+Validation ladder (§ 7a), not yet done:
+
+- [ ] Tier 1: gain-only fixture writer + end-to-end scan test (gain at offset 0, and gain + head pad)
+- [ ] Tier 2: one corpus pair, gained copies, known-answer check — including the `n_pairs`-falls-with-attenuation prediction
+- [ ] Tier 3: corpus sweep, the per-pair table, and the `normalize_gain` cross-reference
+
 ---
 
 ## 10. Done when
@@ -289,6 +403,10 @@ and `chunks`; a synthetic pair with a known constant gain recovers it to within 
 at near-zero spread; a synthetic pair with a deliberately damaged A recovers the *same*
 offset as its undamaged twin (the duty-cycle-immunity claim of § 2); and no patch/gain
 behaviour changes (byte-identical fills vs before).
+
+**Capture is done** to that bar. The plan is not closed until the § 7a ladder has run: Tier 1
+committed, Tier 2 recovering a known gain on real dynamics, and Tier 3 answering whether a
+single scalar exists across the corpus.
 
 ---
 
@@ -309,3 +427,4 @@ context only, never subtracted.
 - [json-output.md](../json-output.md) — scan JSON schema (new fields go in the scan object table)
 - [pipeline.md](../pipeline.md) — fill normalization (unchanged by this plan)
 - [settled.md](settled.md) § A — B-relative / donor-shoulder gain refuted (distinct from this)
+- [TEMP-program-gain-plan.md](TEMP-program-gain-plan.md) — first gain consumer (latched on § 7a)
