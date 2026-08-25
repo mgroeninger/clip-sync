@@ -138,7 +138,6 @@ The dual-fit oracle's pre-shoulder unpin moved to [settled.md](docs/dev/settled.
 | Item | Next action | Done when |
 |------|-------------|-----------|
 | **Run-mode selector** | Four modes (scan-only / `--repair-preview` / `--patch-only` / write) are selected today by three flags plus a TOML boolean, with mutual exclusions enforced pairwise in `RepairConfig::validate`. If picked up, do it as **one coherent mode selector** — not `--dry-run` / `--write` bolted on the side. Note `--patch-only` deliberately keeps `dry_run = true`, which an explicit `--write` would make incoherent | One selector, exclusions enforced centrally |
-| **`region.rs` folder split** | [TEMP-patch-audio-region-module-split-plan.md](docs/dev/TEMP-patch-audio-region-module-split-plan.md) — draft, not started | Split lands |
 | **`--flac` lossless output** | [TEMP-flac-output-plan.md](docs/dev/TEMP-flac-output-plan.md) — draft, not started. In-process FLAC encode as a peer of `--wav`; motivated by the RIFF `u32` data-chunk limit (a long repaired timeline overruns WAV) | `--flac` writes a lossless output alongside `--wav` |
 | Scratch-buffer regression test | Dedicated unit test for the patch PCM path | Test exists |
 | Streaming / chunked WAV encode | Large multi-gap fills without holding full PCM | Implemented |

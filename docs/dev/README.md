@@ -66,7 +66,7 @@ is untracked — that is a bug in the catalog, not a state a doc may sit in.
 |-------|-----------|-----------|
 | [TEMP-ab-program-levels-plan.md](TEMP-ab-program-levels-plan.md) | **Implemented** — paired per-block A↔B level difference from the scan's `BlockLevel` timelines (median offset + MAD spread + per-chunk medians), on `GapReport` / scan JSON as `program_levels`. Report-only; no gain. Awaiting a corpus read | [BACKLOG.md](../../BACKLOG.md) § *Fill normalize* |
 | [TEMP-program-gain-plan.md](TEMP-program-gain-plan.md) | Apply trusted `offset_db` as a whole-program fill scalar; default `normalize_fill` off; local residual additive after the scalar. **Not startable** until capture Tier 3 | [settled.md](settled.md) § C — latched on validation |
-| [TEMP-patch-audio-region-module-split-plan.md](TEMP-patch-audio-region-module-split-plan.md) | Folder split of `region.rs` (3633 lines). Byte-preserving; never bundled into a behaviour-change PR | [BACKLOG.md](../../BACKLOG.md) § *Repair R6* |
+| [TEMP-patch-audio-region-module-split-plan.md](TEMP-patch-audio-region-module-split-plan.md) | Folder split of `region.rs` — **implemented 2026-08-25**: `patch_audio/region/` = thin `mod.rs` + `types` / `pcm` / `dual_fit` / `bracket` / `execute` / `characterize`. Token-level byte-preserving | — |
 | [TEMP-flac-output-plan.md](TEMP-flac-output-plan.md) | In-process `--flac` lossless output, peer of `--wav`. Motivated by the RIFF `u32` data-chunk limit | [BACKLOG.md](../../BACKLOG.md) § *Repair R6* |
 | [TEMP-nway-donor-alignment-plan.md](TEMP-nway-donor-alignment-plan.md) | Repair one damaged copy from **multiple** donors with sparse non-overlapping damage | [settled.md](settled.md) § C — latched, no corpus |
 

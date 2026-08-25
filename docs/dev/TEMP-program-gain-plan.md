@@ -191,7 +191,7 @@ unity. The operator can pass `--normalize` when they want the residual.
 
 | Path | `g_program` | `g_local` |
 |---|---|---|
-| Bracket fill (today's `compute_fill_gain` site, `region.rs`) | yes | if `normalize_fill` |
+| Bracket fill (today's `compute_fill_gain` site, `region/characterize.rs`) | yes | if `normalize_fill` |
 | Dual-fit / SilenceSplice (today hard-coded `gain: 1.0`) | **yes** | **no** (unchanged: never local-normalized) |
 | Skip / not-applied | n/a | n/a |
 

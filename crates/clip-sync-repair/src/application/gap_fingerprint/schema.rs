@@ -910,7 +910,7 @@ impl FailureStage {
     }
 }
 
-/// **F14 — the fingerprint analogue of production's `dual_fit_eligible`** (`patch_audio/region.rs`).
+/// **F14 — the fingerprint analogue of production's `dual_fit_eligible`** (`patch_audio/region/dual_fit.rs`).
 ///
 /// Production carries one `SeamGateFailure` per region and excludes only `StructureAlignmentFailed`,
 /// which `select_joint_fit_winner_with_residual` emits exactly when no candidate recorded a failure —

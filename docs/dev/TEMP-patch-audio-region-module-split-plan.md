@@ -1,6 +1,6 @@
 # `patch_audio/region.rs` folder split — plan
 
-Status: **ready to implement / not started**. Maintainability-only peel of the remaining
+Status: **IMPLEMENTED 2026-08-25 (uncommitted)**. All phases P0-P6 done; the §5 gates are green (build, clippy, `-Tier pr-repair` exit 0, `cargo doc` warning set byte-identical to the 50-warning pre-P0 baseline). A normalized line-level diff of the seven new files against `HEAD:region.rs` shows **0 lines lost** and 5 added (4 extra `mod tests` closing braces + 1 new doc line) — byte-preserving confirmed. Maintainability-only peel of the remaining
 `region.rs` monolith into `patch_audio/region/` (folder + submodules). Byte-preserving
 moves; never bundled into a behavior-change PR.
 
@@ -274,6 +274,44 @@ and does **not** import `characterize`.
 `fill_geometry_echo_*` is still homeless — prefer relocating that test to
 `geometry.rs` or `patch_audio/mod.rs` tests in this phase (it asserts
 `fill_geometry_for` in `mod.rs` plus `super::super::geometry::FillWindowFrames`).
+
+---
+
+### Implementation deviations (2026-08-25)
+
+Two things the plan did not cover, both decided during implementation:
+
+1. **Intra-folder struct fields also need widening.** §3's field rule covers only the four
+   exported structs, but the folder-private context structs (`DualFitRepairInput`,
+   `BracketFillAssembly`, `BracketFill`, `ExecuteBracketFillCtx`, `ExecuteBracketOutputCtx`, ...)
+   hit E0616 the moment their producer and consumer land in different submodules. Their bare
+   fields were widened to `pub(in crate::application::patch_audio::region)` — folder scope, not
+   the `patch_audio` ceiling.
+2. **`fill_geometry_echo_carries_the_values_this_run_patched_with` went to `dual_fit.rs`**, not to
+   `geometry.rs` / `patch_audio/mod.rs` as P6's note preferred. It builds its request through
+   `dual_fit_test_request`, and `patch_audio/mod.rs` tests have no equivalent builder — relocating
+   it there would have duplicated ~55 lines of `ScanAlignment` scaffolding, the same reasoning the
+   plan already applies to the M-CFG pair. Its four `super::super::...` paths were requalified to
+   absolute `crate::application::patch_audio::...` for the extra nesting level.
+
+Resulting sizes: `mod.rs` 24, `types.rs` 718, `pcm.rs` 330, `dual_fit.rs` 1018, `bracket.rs` 326,
+`execute.rs` 166, `characterize.rs` 1246. `mod.rs` carries no `#[cfg(test)]` block.
+
+**Post-implementation review (same day)** found and fixed two things the §5 gates could not see:
+
+- **Three rustdoc links broke on private items.** `[`FillAlignment`]` (bracket), `[`BExtractWindow`]`
+  (pcm) and `[`GapReport::gaps`]` (types) resolved pre-split only because `region.rs` imported those
+  names for *code* elsewhere in the file; after the split `cargo fix` correctly dropped the imports
+  from the submodules that only mention them in prose. Plain `cargo doc` does not document private
+  items, so §5's gate stayed at the baseline — **`cargo doc --no-deps --document-private-items` is the
+  gate that catches this class** and should be what a future split of this kind runs. Fixed by giving
+  the three links explicit `crate::…` paths.
+- **Six dual-fit items were widened past what they need.** Anything formerly private that a sibling now
+  reads has to reach folder scope, but `dual_fit_eligible`, `measure_dual_fit_residual_verdict` and
+  `dual_fit_skipped` are read only inside `dual_fit.rs`, so they are back to file-private. `DualFitDecision`,
+  `DualFitRescue` and `DualFitRepairInput` stay folder-scoped: they appear in the signatures of
+  `skip_or_dual_fit` / `finalize_dual_fit` / `build_dual_fit_input`, and narrowing them trips
+  `private_interfaces` (and E0616 on `DualFitRepairInput::b_mapped_start`, which characterize reads).
 
 ---
 

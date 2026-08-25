@@ -483,7 +483,7 @@ pre-1b(b); do not size a candidate against them.)
    **Two jobs, now two knobs.** `fill_length_slack_secs` used to size both (1) the
    end sweep (`gap ± slack` in `gap_fill_fit`) and (2) the B haystack tail; the
    split has since landed, so (2) is `fill_extract_tail_slack_secs.max(margin)` →
-   `b_extract_end_secs` (`patch_audio/region.rs:1496`) and fingerprint `pad_tail`
+   `b_extract_end_secs` (`patch_audio/region/characterize.rs:211`) and fingerprint `pad_tail`
    (`gap_fingerprint/measure.rs:1951`, `:2101`). The two carry different risk:
    (1) only drops far end candidates; (2) shortens `total_frames` and can
    invalidate late *start* candidates / move gate outcomes. Full-track decode is
