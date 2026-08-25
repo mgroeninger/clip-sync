@@ -398,10 +398,10 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         // both block-level timelines and the global offset are live at once and are dropped
         // immediately after — the alternative (a patch-time decode) pays another multi-GB walk and
         // has no B timeline at all. Capture only: nothing reads it back in this Change.
-        let level_params =
-            crate::domain::program_levels::ProgramLevelParams::for_absolute_silence_rms(
-                request.recipe.absolute_silence_rms(),
-            );
+        let level_params = crate::domain::program_levels::ProgramLevelParams::for_recipe(
+            request.recipe.absolute_silence_rms(),
+            request.recipe.scan_block_secs(),
+        );
         let program_levels = (!a_levels.is_empty()).then(|| {
             // Fail closed: unknown compatibility is not evidence that the channel counts match,
             // and this flag exists to warn that the offset is not a pure gain. (`Some` whenever a
@@ -1853,8 +1853,12 @@ mod tests {
         assert!(offset.offset_db.abs() < 1e-6, "{offset:?}");
         assert!(offset.spread_db.abs() < 1e-6, "{offset:?}");
         assert!(offset.n_pairs >= crate::domain::program_levels::MIN_PAIRS);
-        assert!(offset.n_pairs <= offset.n_a_steady);
-        assert!(offset.n_a_steady <= offset.n_a_active);
+        assert!(offset.n_pairs <= offset.n_steady);
+        assert!(offset.n_steady <= offset.n_active);
+        assert_eq!(
+            offset.n_active, levels.a.n_active,
+            "the offset's active count is the same predicate over the same timeline as A's context"
+        );
         assert!(offset.channels_comparable);
     }
 

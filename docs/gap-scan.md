@@ -143,6 +143,12 @@ timelines are dropped, they are reduced once into `program_levels`: per-side con
 `floor_db`, `n_active`) and — when an alignment offset exists — a **paired level offset** between the
 two programs.
 
+Blocks shorter than half the nominal `scan_block_ms` are excluded on both sides and from both
+readings: the scanner closes each decode bucket with whatever frames remain, so the final block can
+be a sliver whose RMS estimates nothing. Such a block is also treated as an *absent* neighbour by the
+steadiness test below — were it allowed to vote, every bucket-tail runt would disqualify the full
+block before it.
+
 The offset is measured pairwise, not by subtracting two per-side summaries. For each A block that is
 *active* (RMS above the recipe's absolute silence floor — deliberately not the scanner's `silent`
 flag, whose peak-fraction branch admits −48 dB transient blocks) and *steady* (both neighbours within

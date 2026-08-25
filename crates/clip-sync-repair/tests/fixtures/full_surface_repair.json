@@ -114,7 +114,7 @@
       "a": {
         "mid_db": -23.4,
         "floor_db": -71.2,
-        "n_active": 18204
+        "n_active": 19940
       },
       "b": {
         "mid_db": -21.1,
@@ -127,8 +127,8 @@
         "p10_db": 1.62,
         "p90_db": 3.04,
         "n_pairs": 16902,
-        "n_a_active": 19940,
-        "n_a_steady": 18204,
+        "n_active": 19940,
+        "n_steady": 18204,
         "first_pair_secs": 0.4,
         "last_pair_secs": 1799.4,
         "channels_comparable": true,

@@ -208,8 +208,8 @@ differences drop out of the pairing instead of biasing it.
 | `spread_db` | number | always | MAD of the differences about `offset_db`. **Does one scalar exist?** Tight ⇒ a real master offset; wide ⇒ dynamics/compression differ or the alignment is wrong. This, not `n_pairs`, is the trust gate |
 | `p10_db` / `p90_db` | number | always | Nearest-rank deciles — asymmetry and bimodality a single MAD hides |
 | `n_pairs` | integer | always | Accepted pairs (fewer than 50 ⇒ the whole object is absent) |
-| `n_a_active` | integer | always | A blocks above the active threshold, **before** the steadiness filter |
-| `n_a_steady` | integer | always | Active *and* steady A blocks — the pairing denominator. `n_pairs / n_a_steady` is B-coverage yield (low ⇒ B covered little of A); `n_a_steady / n_a_active` is what the steadiness filter cost, the only way to see whether the 3 dB tolerance suits this material |
+| `n_active` | integer | always | A blocks above the active threshold, **before** the steadiness filter. Same predicate over the same timeline as `a.n_active`, so the two always agree — a cross-check, not a second quantity |
+| `n_steady` | integer | always | Active *and* steady A blocks — the pairing denominator. `n_pairs / n_steady` is B-coverage yield (low ⇒ B covered little of A); `n_steady / n_active` is what the steadiness filter cost, the only way to see whether the 3 dB tolerance suits this material |
 | `first_pair_secs` / `last_pair_secs` | number | always | A-timeline span the offset was measured over |
 | `channels_comparable` | bool | always | **False when A/B channel counts differ** — block RMS is taken over interleaved samples, so the offset then carries a correlation-dependent constant and is not a pure gain |
 | `chunks` | array of [AbLevelOffsetChunk](#ableveloffsetchunk) | when ≥ 2 chunks qualified | Per-bucket medians: *is the offset constant?* |
@@ -233,7 +233,7 @@ Per-side context. **Never subtract two of these** — that is the design the pai
 |-------|------|----------|---------|
 | `mid_db` | number | when any block was active | Median dB of active blocks |
 | `floor_db` | number | when any block was quiet-but-not-digital-zero | Median dB between digital zero and the active threshold |
-| `n_active` | integer | always | Active block count |
+| `n_active` | integer | always | Active block count (blocks shorter than half the nominal scan block are excluded from every population here) |
 
 ### AudioTimelineSkew
 

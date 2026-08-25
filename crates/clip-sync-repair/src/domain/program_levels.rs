@@ -27,7 +27,7 @@
 use serde::Serialize;
 
 use crate::domain::cross_check::b_range_fully_scanned;
-use crate::domain::level_stats::{mad_db, median_db, percentile_db};
+use crate::domain::level_stats::{median_db, median_of_sorted, percentile_of_sorted, sort_db};
 use crate::domain::policies::{absolute_silence_floor_db, BlockLevel, BLOCK_LEVEL_FLOOR_DB};
 
 /// Tolerance for the steadiness filter — a block is paired only when both its A-side neighbours sit
@@ -45,6 +45,21 @@ pub const MIN_CHUNK_PAIRS: usize = 20;
 /// Width of the per-chunk buckets on A's timeline (seconds).
 pub const CHUNK_SECS: f64 = 600.0;
 
+/// Fraction of the nominal block a level must span to be measured at all.
+///
+/// `SilenceRunScanner::feed` closes each decode bucket with whatever frames remain, so the last
+/// block of a bucket can be a sliver — one frame, in the limit — whose RMS is not an estimate of
+/// anything. Under the default recipe (10 s buckets defined by frame count, 100 ms blocks) that is
+/// one runt at end of file; the window-fallback scan path, whose buckets are cut by time rather
+/// than frame count, can produce one per bucket. Half a block keeps a 99 ms remainder, which is a
+/// real measurement, and drops the slivers.
+pub const MIN_BLOCK_FRACTION: f64 = 0.5;
+
+/// Slack when deciding whether two blocks abut in time. Block edges are computed from frame counts
+/// (`start + frames / rate`) while bucket edges come from the requested duration, so consecutive
+/// blocks can miss abutting by a fraction of a sample. Well under a block, far above that error.
+const NEIGHBOUR_SLACK_SECS: f64 = 0.001;
+
 /// Active-level threshold used when the recipe's absolute silence floor is disabled (`0.0`).
 const FALLBACK_ACTIVE_DB: f64 = -60.0;
 
@@ -58,6 +73,8 @@ pub struct ProgramLevelParams {
     pub min_pairs: usize,
     pub min_chunk_pairs: usize,
     pub chunk_secs: f64,
+    /// Shortest block that may be measured — see [`MIN_BLOCK_FRACTION`]. `0.0` disables the filter.
+    pub min_block_secs: f64,
 }
 
 impl Default for ProgramLevelParams {
@@ -68,15 +85,18 @@ impl Default for ProgramLevelParams {
             min_pairs: MIN_PAIRS,
             min_chunk_pairs: MIN_CHUNK_PAIRS,
             chunk_secs: CHUNK_SECS,
+            min_block_secs: 0.0,
         }
     }
 }
 
 impl ProgramLevelParams {
-    /// Params for a scan recipe's absolute silence amplitude (`absolute_silence_rms`).
-    pub fn for_absolute_silence_rms(absolute_silence_rms: f32) -> Self {
+    /// Params for a scan recipe: its absolute silence amplitude sets the active threshold, its
+    /// nominal block size sets the runt filter.
+    pub fn for_recipe(absolute_silence_rms: f32, scan_block_secs: f64) -> Self {
         Self {
             active_db: active_threshold_db(absolute_silence_rms),
+            min_block_secs: scan_block_secs.max(0.0) * MIN_BLOCK_FRACTION,
             ..Self::default()
         }
     }
@@ -124,13 +144,15 @@ pub struct AbLevelOffset {
     pub p10_db: f64,
     pub p90_db: f64,
     pub n_pairs: usize,
-    /// A blocks above the active threshold, **before** the steadiness filter.
-    pub n_a_active: usize,
+    /// A blocks above the active threshold, **before** the steadiness filter. Same predicate over
+    /// the same timeline as [`ProgramLevelContext::n_active`] on the A side, so on a scan report the
+    /// two are equal — a cross-check, not a second quantity.
+    pub n_active: usize,
     /// A blocks that were active *and* steady — the pairing denominator. Two ratios fall out:
-    /// `n_pairs / n_a_steady` is B-coverage yield (low ⇒ B covered little of A), and
-    /// `n_a_steady / n_a_active` is what the steadiness filter cost — the only way to tell from the
+    /// `n_pairs / n_steady` is B-coverage yield (low ⇒ B covered little of A), and
+    /// `n_steady / n_active` is what the steadiness filter cost — the only way to tell from the
     /// emitted fields whether [`STEADY_TOLERANCE_DB`] is set sanely for this material.
-    pub n_a_steady: usize,
+    pub n_steady: usize,
     pub first_pair_secs: f64,
     pub last_pair_secs: f64,
     /// False when A and B channel counts differ — the offset is then not a pure gain (see module
@@ -181,6 +203,9 @@ pub fn program_level_context(
     let mut active = Vec::new();
     let mut quiet = Vec::new();
     for level in levels {
+        if !is_measurable(level, params.min_block_secs) {
+            continue;
+        }
         if level.rms_db > params.active_db {
             active.push(level.rms_db);
         } else if level.rms_db > BLOCK_LEVEL_FLOOR_DB {
@@ -211,25 +236,25 @@ pub fn paired_level_offset(
     channels_comparable: bool,
     params: &ProgramLevelParams,
 ) -> Option<AbLevelOffset> {
-    let mut n_a_active = 0usize;
-    let mut n_a_steady = 0usize;
+    let mut n_active = 0usize;
+    let mut n_steady = 0usize;
     // (A block start, difference) so chunking can bucket by A's timeline without a second pass.
     let mut pairs: Vec<(f64, f64)> = Vec::new();
 
     for (i, a) in a_levels.iter().enumerate() {
-        // 1: active on A. Counted before step 2 so `n_a_steady / n_a_active` exposes what the
+        // 0: a full-length block — a bucket-tail sliver is not a measurement.
+        // 1: active on A. Counted before step 2 so `n_steady / n_active` exposes what the
         // steadiness filter cost.
-        if a.rms_db <= params.active_db {
+        if !is_measurable(a, params.min_block_secs) || a.rms_db <= params.active_db {
             continue;
         }
-        n_a_active += 1;
-        // 2: steady — both present neighbours within tolerance. A missing neighbour is permissive:
-        // absence of a neighbour is not evidence of a transient, and it can only apply to the two
-        // file-boundary blocks.
-        if !is_steady(a_levels, i, params.steady_tolerance_db) {
+        n_active += 1;
+        // 2: steady — both time-adjacent neighbours within tolerance. A neighbour that does not
+        // abut (a file edge, or the far side of a timeline hole) is permissive.
+        if !is_steady(a_levels, i, params) {
             continue;
         }
-        n_a_steady += 1;
+        n_steady += 1;
 
         // 3: map onto B and take the block with the largest time overlap. Max-overlap rather than
         // interpolating the two straddled blocks: the steadiness filter has already guaranteed the
@@ -250,8 +275,8 @@ pub fn paired_level_offset(
         let Some(b) = max_overlap_block(b_levels, b_lo, b_hi) else {
             continue;
         };
-        // 5: active on B, same absolute threshold.
-        if b.rms_db <= params.active_db {
+        // 5: full-length and active on B, same rules as A.
+        if !is_measurable(b, params.min_block_secs) || b.rms_db <= params.active_db {
             continue;
         }
         // 6.
@@ -262,16 +287,22 @@ pub fn paired_level_offset(
         return None;
     }
 
-    let diffs: Vec<f64> = pairs.iter().map(|&(_, d)| d).collect();
-    let offset_db = median_db(diffs.clone())?;
+    // The guard above proves the population is non-empty, so the sorted-slice estimators apply
+    // directly — no `Option` to unwrap, and one sort instead of four.
+    debug_assert!(!pairs.is_empty());
+    let mut diffs: Vec<f64> = pairs.iter().map(|&(_, d)| d).collect();
+    sort_db(&mut diffs);
+    let offset_db = median_of_sorted(&diffs);
+    let mut deviations: Vec<f64> = diffs.iter().map(|d| (d - offset_db).abs()).collect();
+    sort_db(&mut deviations);
     Some(AbLevelOffset {
         offset_db,
-        spread_db: mad_db(&diffs, offset_db)?,
-        p10_db: percentile_db(diffs.clone(), 0.1)?,
-        p90_db: percentile_db(diffs, 0.9)?,
+        spread_db: median_of_sorted(&deviations),
+        p10_db: percentile_of_sorted(&diffs, 0.1),
+        p90_db: percentile_of_sorted(&diffs, 0.9),
         n_pairs: pairs.len(),
-        n_a_active,
-        n_a_steady,
+        n_active,
+        n_steady,
         first_pair_secs: pairs[0].0,
         last_pair_secs: pairs[pairs.len() - 1].0,
         channels_comparable,
@@ -279,12 +310,45 @@ pub fn paired_level_offset(
     })
 }
 
-/// Both present neighbours of `i` within `tolerance_db`.
-fn is_steady(levels: &[BlockLevel], i: usize, tolerance_db: f64) -> bool {
-    let here = levels[i].rms_db;
-    let within = |other: &BlockLevel| (other.rms_db - here).abs() <= tolerance_db;
-    i.checked_sub(1).is_none_or(|prev| within(&levels[prev]))
-        && levels.get(i + 1).is_none_or(within)
+/// A block long enough for its RMS to mean something — see [`MIN_BLOCK_FRACTION`].
+fn is_measurable(level: &BlockLevel, min_block_secs: f64) -> bool {
+    level.end_secs - level.start_secs >= min_block_secs
+}
+
+/// Both **time-adjacent, measurable** neighbours of `i` within `steady_tolerance_db`.
+///
+/// Adjacency is checked in time, not in index: the timeline can carry holes (a decode
+/// discontinuity, the same reason [`max_overlap_block`] binary-searches rather than dividing), and
+/// across a hole the neighbouring *index* is not the neighbouring *audio*.
+///
+/// A neighbour that does not abut, or is too short to measure ([`is_measurable`]), counts as
+/// **absent**, which is permissive: absence of a neighbour is not evidence of a transient, and a
+/// sliver's RMS is not evidence of anything. Were slivers allowed to vote, every bucket-tail runt
+/// would take its preceding full block down with it. Absent neighbours also cover the two
+/// file-boundary blocks.
+fn is_steady(levels: &[BlockLevel], i: usize, params: &ProgramLevelParams) -> bool {
+    let here = &levels[i];
+    let counts = |other: &BlockLevel, abuts: bool| {
+        abuts
+            && is_measurable(other, params.min_block_secs)
+            && (other.rms_db - here.rms_db).abs() > params.steady_tolerance_db
+    };
+    let prev_breaks = i
+        .checked_sub(1)
+        .map(|prev| &levels[prev])
+        .is_some_and(|prev| {
+            counts(
+                prev,
+                (here.start_secs - prev.end_secs).abs() <= NEIGHBOUR_SLACK_SECS,
+            )
+        });
+    let next_breaks = levels.get(i + 1).is_some_and(|next| {
+        counts(
+            next,
+            (next.start_secs - here.end_secs).abs() <= NEIGHBOUR_SLACK_SECS,
+        )
+    });
+    !prev_breaks && !next_breaks
 }
 
 /// The block sharing the most time with `[lo, hi)`. Blocks are ascending and non-overlapping, so a
@@ -371,6 +435,7 @@ mod tests {
         ProgramLevelParams {
             min_pairs: 4,
             min_chunk_pairs: 2,
+            min_block_secs: BLOCK_SECS * MIN_BLOCK_FRACTION,
             ..ProgramLevelParams::default()
         }
     }
@@ -408,9 +473,9 @@ mod tests {
         assert!((got.offset_db - 6.0).abs() < 1e-9, "{got:?}");
         assert!(got.spread_db.abs() < 1e-9, "{got:?}");
         assert_eq!(got.n_pairs, 20);
-        assert_eq!(got.n_a_active, 20);
+        assert_eq!(got.n_active, 20);
         assert_eq!(
-            got.n_a_steady, 20,
+            got.n_steady, 20,
             "a flat timeline loses nothing to steadiness"
         );
         assert!(got.channels_comparable);
@@ -545,7 +610,7 @@ mod tests {
         let got = paired_level_offset(&a, &b, 0.0, None, true, &relaxed).expect("offset");
         assert_eq!(got.n_pairs, 40);
         assert_eq!(
-            got.n_a_steady, 40,
+            got.n_steady, 40,
             "nothing is transient-adjacent at 30 dB tolerance"
         );
     }
@@ -562,10 +627,10 @@ mod tests {
         let got = offset_of(&a, &b, 0.0);
 
         assert_eq!(
-            got.n_a_active, 40,
+            got.n_active, 40,
             "the spike is active — it is not a quiet block"
         );
-        assert_eq!(got.n_a_steady, 37, "spike + both neighbours rejected");
+        assert_eq!(got.n_steady, 37, "spike + both neighbours rejected");
         assert_eq!(got.n_pairs, 37, "B rejected none of them");
         assert!((got.offset_db - 6.0).abs() < 1e-9, "{got:?}");
     }
@@ -580,15 +645,121 @@ mod tests {
             .expect("offset");
 
         assert_eq!(got.n_pairs, 10);
-        assert_eq!(got.n_a_active, 20, "denominator counts all active A blocks");
+        assert_eq!(got.n_active, 20, "denominator counts all active A blocks");
         assert_eq!(
-            got.n_a_steady, 20,
+            got.n_steady, 20,
             "the bound is a B-side rejection, not an A-side one"
         );
         assert!(
             (got.last_pair_secs - 9.0 * BLOCK_SECS).abs() < 1e-9,
             "{got:?}"
         );
+    }
+
+    #[test]
+    fn a_bucket_tail_sliver_is_not_measured() {
+        // A full timeline plus the kind of runt `feed` leaves at the end of a bucket: one frame's
+        // worth of audio, at a level nothing else in the file is near.
+        let mut a = timeline(0.0, &flat(20, -30.0));
+        let last_end = a[19].end_secs;
+        a.push(BlockLevel {
+            start_secs: last_end,
+            end_secs: last_end + 1.0 / 48_000.0,
+            rms_db: 0.0,
+            silent: false,
+        });
+        let mut b = timeline(0.0, &flat(20, -24.0));
+        let b_last_end = b[19].end_secs;
+        b.push(BlockLevel {
+            start_secs: b_last_end,
+            end_secs: b_last_end + 1.0 / 48_000.0,
+            rms_db: 0.0,
+            silent: false,
+        });
+
+        let got = offset_of(&a, &b, 0.0);
+
+        assert_eq!(got.n_active, 20, "the sliver never reaches the active test");
+        assert_eq!(got.n_pairs, 20);
+        assert!((got.offset_db - 6.0).abs() < 1e-9, "{got:?}");
+        // The same sliver is excluded from the per-side context.
+        let context = program_level_context(&a, &params());
+        assert_eq!(context.n_active, 20);
+
+        // Disable the filter and the sliver costs twice: it enters the context as if it were a
+        // measurement, and — being 30 dB from its only neighbour — it takes the last real block out
+        // of the pairing with it.
+        let unfiltered = ProgramLevelParams {
+            min_block_secs: 0.0,
+            ..params()
+        };
+        assert_eq!(program_level_context(&a, &unfiltered).n_active, 21);
+        let got = paired_level_offset(&a, &b, 0.0, None, true, &unfiltered).expect("offset");
+        assert_eq!(got.n_active, 21);
+        assert_eq!(got.n_steady, 19, "the sliver and its neighbour both fail");
+    }
+
+    #[test]
+    fn steadiness_does_not_compare_across_a_timeline_hole() {
+        // Two flat runs at very different levels with a multi-second hole between them: index
+        // neighbours across the hole differ by 20 dB, time neighbours do not exist.
+        let mut a = timeline(0.0, &flat(10, -40.0));
+        a.extend(timeline(30.0, &flat(10, -20.0)));
+        let b: Vec<BlockLevel> = a
+            .iter()
+            .map(|level| BlockLevel {
+                rms_db: level.rms_db + 6.0,
+                ..*level
+            })
+            .collect();
+
+        let got = offset_of(&a, &b, 0.0);
+
+        assert_eq!(
+            got.n_steady, 20,
+            "the blocks either side of the hole are hole-edges, not transient-adjacent"
+        );
+        assert_eq!(got.n_pairs, 20);
+        assert!((got.offset_db - 6.0).abs() < 1e-9, "{got:?}");
+    }
+
+    #[test]
+    fn a_negative_offset_drops_the_blocks_that_map_before_b_starts() {
+        // `b = a + offset`: a negative offset means A's head has no counterpart in B (A started
+        // first). The first three A blocks map to negative B time.
+        let a = timeline(0.0, &flat(20, -30.0));
+        let b = timeline(0.0, &flat(20, -24.0));
+
+        let got = paired_level_offset(&a, &b, -3.0 * BLOCK_SECS, None, true, &params())
+            .expect("the mapped remainder still pairs");
+
+        assert!((got.offset_db - 6.0).abs() < 1e-9, "{got:?}");
+        assert_eq!(got.n_active, 20, "every A block is still active");
+        assert_eq!(
+            got.n_pairs, 17,
+            "three map before B's start and are dropped whole, not partially paired"
+        );
+        assert!(
+            (got.first_pair_secs - 3.0 * BLOCK_SECS).abs() < 1e-9,
+            "{got:?}"
+        );
+    }
+
+    #[test]
+    fn a_window_straddling_b_start_is_dropped_not_partially_paired() {
+        // Half a block of negative offset: A block 0 maps to [-0.05, 0.05) — `max_overlap_block`
+        // would happily pair it against B block 0 on the overlapping half. The bound rejects it.
+        let a = timeline(0.0, &flat(20, -30.0));
+        let b = timeline(0.0, &flat(20, -24.0));
+
+        let got =
+            paired_level_offset(&a, &b, -0.5 * BLOCK_SECS, None, true, &params()).expect("offset");
+
+        assert_eq!(
+            got.n_pairs, 19,
+            "block 0 straddles B's start and is dropped"
+        );
+        assert!((got.first_pair_secs - BLOCK_SECS).abs() < 1e-9, "{got:?}");
     }
 
     #[test]

@@ -128,6 +128,16 @@ fn format_human(
         out.push_str("Tracks:    video B unavailable — compatibility not assessed\n");
     }
 
+    if let Some(line) = report
+        .program_levels
+        .as_ref()
+        .and_then(|levels| levels.offset.as_ref())
+        .map(format_program_level_line)
+    {
+        out.push_str(&line);
+        out.push('\n');
+    }
+
     if let Some(line) = crate::domain::gap_fill::format_b_scan_truncation_note(
         report.b_scan_truncated,
         report.b_scanned_end_secs,
@@ -931,6 +941,20 @@ fn format_fill_skip_reason(reason: &GapFillSkipReason) -> &'static str {
     }
 }
 
+/// One-line whole-program level reading for the human report. Emitted only when the paired offset
+/// exists — a per-side `mid_db` is not a comparison, so there is nothing to say without it.
+fn format_program_level_line(offset: &crate::domain::program_levels::AbLevelOffset) -> String {
+    let caveat = if offset.channels_comparable {
+        ""
+    } else {
+        "   not comparable (channel mismatch)"
+    };
+    format!(
+        "Levels:    B\u{2212}A {:+.2} dB (spread {:.2} dB, n={}){caveat}",
+        offset.offset_db, offset.spread_db, offset.n_pairs,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -1096,7 +1120,7 @@ mod tests {
                 a: crate::domain::program_levels::ProgramLevelContext {
                     mid_db: Some(-23.4),
                     floor_db: Some(-71.2),
-                    n_active: 18204,
+                    n_active: 19940,
                 },
                 b: Some(crate::domain::program_levels::ProgramLevelContext {
                     mid_db: Some(-21.1),
@@ -1109,8 +1133,8 @@ mod tests {
                     p10_db: 1.62,
                     p90_db: 3.04,
                     n_pairs: 16902,
-                    n_a_active: 19940,
-                    n_a_steady: 18204,
+                    n_active: 19940,
+                    n_steady: 18204,
                     first_pair_secs: 0.4,
                     last_pair_secs: 1799.4,
                     channels_comparable: true,
@@ -1566,6 +1590,76 @@ mod tests {
     #[test]
     fn human_report_renders_without_error() {
         super::print_human(&minimal_report()).expect("human render");
+    }
+
+    #[test]
+    fn human_report_shows_the_paired_level_offset() {
+        let mut report = minimal_report();
+        report.program_levels = full_surface_gap_report().program_levels;
+
+        let text = super::format_human(
+            &report,
+            &minimal_alignment_detail(),
+            None,
+            None,
+            false,
+            None,
+        );
+
+        assert!(
+            text.contains("Levels:    B\u{2212}A +2.31 dB (spread 0.42 dB, n=16902)"),
+            "{text}"
+        );
+        assert!(!text.contains("not comparable"), "{text}");
+    }
+
+    #[test]
+    fn human_report_flags_a_level_offset_across_a_channel_mismatch() {
+        let mut report = minimal_report();
+        let mut levels = full_surface_gap_report()
+            .program_levels
+            .expect("full-surface report carries levels");
+        levels
+            .offset
+            .as_mut()
+            .expect("full-surface report carries an offset")
+            .channels_comparable = false;
+        report.program_levels = Some(levels);
+
+        let text = super::format_human(
+            &report,
+            &minimal_alignment_detail(),
+            None,
+            None,
+            false,
+            None,
+        );
+
+        assert!(text.contains("not comparable (channel mismatch)"), "{text}");
+    }
+
+    #[test]
+    fn human_report_omits_the_level_line_without_a_pairing() {
+        let mut report = minimal_report();
+        let mut levels = full_surface_gap_report()
+            .program_levels
+            .expect("full-surface report carries levels");
+        levels.offset = None;
+        report.program_levels = Some(levels);
+
+        let text = super::format_human(
+            &report,
+            &minimal_alignment_detail(),
+            None,
+            None,
+            false,
+            None,
+        );
+
+        assert!(
+            !text.contains("Levels:"),
+            "a per-side median is not a comparison: {text}"
+        );
     }
 
     #[test]

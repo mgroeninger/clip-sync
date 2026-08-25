@@ -108,7 +108,7 @@ Reject the pair (silently — it is not an error) if any step fails.
 | `spread_db` | **MAD** of `d` (median absolute deviation about `offset_db`) | *Does one scalar exist?* Tight ⇒ a real master offset. Wide or multimodal ⇒ dynamics/compression differ, or the alignment is wrong |
 | `p10_db` / `p90_db` | nearest-rank deciles of `d` | Shape check a single MAD hides (asymmetry, bimodality) |
 | `n_pairs` | accepted pairs | Trust floor |
-| `n_a_active` / `n_a_steady` | A blocks that passed step 1, and step 1 + 2 | Two denominators: `n_pairs / n_a_steady` is B-coverage yield; `n_a_steady / n_a_active` is what the steadiness filter cost (the only emitted evidence about the tolerance) |
+| `n_active` / `n_steady` | A blocks that passed step 1, and step 1 + 2 | Two denominators: `n_pairs / n_steady` is B-coverage yield; `n_steady / n_active` is what the steadiness filter cost (the only emitted evidence about the tolerance) |
 | `first_pair_secs` / `last_pair_secs` | A-timeline span of accepted pairs | Provenance — which part of the program the number is about |
 | `chunks` | per-chunk `{ start_secs, end_secs, offset_db, n_pairs }` over fixed ~10-minute A-timeline buckets (emitted only when a chunk clears `MIN_CHUNK_PAIRS`) | **Is the offset constant?** Catches a differently-normalized reel, per-segment loudness normalization, decoder DRC that varies. Two whole-file numbers average exactly this away |
 
@@ -167,8 +167,8 @@ pub struct AbLevelOffset {
     pub p10_db: f64,
     pub p90_db: f64,
     pub n_pairs: usize,
-    pub n_a_active: usize,
-    pub n_a_steady: usize,
+    pub n_active: usize,
+    pub n_steady: usize,
     pub first_pair_secs: f64,
     pub last_pair_secs: f64,
     /// False when A/B channel counts differ — the offset is not a pure gain. See § 5.
