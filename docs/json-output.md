@@ -180,6 +180,60 @@ Top-level object: **RepairJsonOutput**.
 | `absolute_silence_rms` | number | always | Absolute RMS floor as **normalized** amplitude in `[0, 1)` (default ≈ `0.001007`, not the CLI 0–32767 display scale) |
 | `limit_fill_to_mapped_region` | bool | always | When true (default in query-reference mode), gaps outside mapped clip coverage are reported but not fillable |
 | `audio_timeline_skew` | [AudioTimelineSkew](#audiotimelineskew) \| null | always | Present when gap scan measured PTS vs decoded-sample clock; `null` when not measurable (e.g. seek-based scan fallback). Human report emits a warning when `delta_secs > 1.0` |
+| `program_levels` | [ProgramLevels](#programlevels) | when the scan populated it | Whole-program A/B level readings. **Report-only** — no gain is derived from it |
+
+### ProgramLevels
+
+Whole-program level readings derived from the scan's per-block RMS timelines. Capture only: nothing
+in the patch path reads them and no fill gain is derived from them.
+
+| Field | Type | Presence | Meaning |
+|-------|------|----------|---------|
+| `a` | [ProgramLevelContext](#programlevelcontext) | always | A-side context |
+| `b` | [ProgramLevelContext](#programlevelcontext) | when B produced a level timeline | Absent when B was not scanned — which includes a readable B with **no alignment offset**, since the B scan only runs when both exist |
+| `offset` | [AbLevelOffset](#ableveloffset) | when enough blocks paired | The A↔B level relationship |
+
+#### AbLevelOffset
+
+The paired estimator: for each A block that is **active** (RMS above the recipe's absolute silence
+floor) and **steady** (both neighbours within 3 dB), the mapped B block at `offset_secs` is looked up
+and `rms_db_B − rms_db_A` recorded. Deliberately *not* two per-side summaries subtracted: A is the
+damaged file, so its dropouts depress any independent rank statistic and the subtraction would report
+A's damage as a level offset. Pairing measures the same audio twice, so dropouts, pads and edit
+differences drop out of the pairing instead of biasing it.
+
+| Field | Type | Presence | Meaning |
+|-------|------|----------|---------|
+| `offset_db` | number | always | Median paired difference. **B minus A** — positive means B is louder |
+| `spread_db` | number | always | MAD of the differences about `offset_db`. **Does one scalar exist?** Tight ⇒ a real master offset; wide ⇒ dynamics/compression differ or the alignment is wrong. This, not `n_pairs`, is the trust gate |
+| `p10_db` / `p90_db` | number | always | Nearest-rank deciles — asymmetry and bimodality a single MAD hides |
+| `n_pairs` | integer | always | Accepted pairs (fewer than 50 ⇒ the whole object is absent) |
+| `n_a_active` | integer | always | A blocks above the active threshold, **before** the steadiness filter |
+| `n_a_steady` | integer | always | Active *and* steady A blocks — the pairing denominator. `n_pairs / n_a_steady` is B-coverage yield (low ⇒ B covered little of A); `n_a_steady / n_a_active` is what the steadiness filter cost, the only way to see whether the 3 dB tolerance suits this material |
+| `first_pair_secs` / `last_pair_secs` | number | always | A-timeline span the offset was measured over |
+| `channels_comparable` | bool | always | **False when A/B channel counts differ** — block RMS is taken over interleaved samples, so the offset then carries a correlation-dependent constant and is not a pure gain |
+| `chunks` | array of [AbLevelOffsetChunk](#ableveloffsetchunk) | when ≥ 2 chunks qualified | Per-bucket medians: *is the offset constant?* |
+
+Decoder gain (AC-3 dialnorm, DRC, decode-path scaling) is included **deliberately** — a fill inherits
+it.
+
+#### AbLevelOffsetChunk
+
+| Field | Type | Presence | Meaning |
+|-------|------|----------|---------|
+| `start_secs` / `end_secs` | number | always | Bucket bounds on A's timeline (600 s buckets) |
+| `offset_db` | number | always | Median paired difference inside the bucket |
+| `n_pairs` | integer | always | Pairs in the bucket (≥ 20; smaller buckets are not emitted) |
+
+#### ProgramLevelContext
+
+Per-side context. **Never subtract two of these** — that is the design the paired offset replaced.
+
+| Field | Type | Presence | Meaning |
+|-------|------|----------|---------|
+| `mid_db` | number | when any block was active | Median dB of active blocks |
+| `floor_db` | number | when any block was quiet-but-not-digital-zero | Median dB between digital zero and the active threshold |
+| `n_active` | integer | always | Active block count |
 
 ### AudioTimelineSkew
 
@@ -347,6 +401,20 @@ gain-contaminated** — every delta here is measured on `gained_fill` against un
 each row is inflated by its own gap's boost (0–12 dB, and not recorded at all before 2026-08-12).
 Backing this one out gives ≈4.15 dB. Do not compare these deltas across gaps without dividing out
 `normalize_gain` first.
+
+**Extended 2026-08-25 — this is a cohort, not a one-off, and the division separates the two kinds of
+loud fill.** Over the 51-pair corpus (308 spliced gaps) 199 (65%) are left at unity by the boost-only
+policy. Of the 8 boosted gaps reading hotter than +3 dB at the seams, **6 fall to at-or-below their
+own shoulders once the gain is divided out** — 45/g4 (−0.89), 5/g6 (−1.39), 19/g13 (−2.66), 45/g5
+(−0.72), 15/g3 (−6.68), 31/g7 (−3.00) — while every donor-driven row above +3 dB is at or near unity
+gain. The control is decisive: the correctly-restored gunshot (24/g46, +9.83 dB, the case that
+refuted cutting on `edge_delta_db`) carries `normalize_gain` **0.00 dB**. Three of the six are
+ear-confirmed audible and a fourth is audible but confounded; the lowest confirmed is 45/g5 at only
++5.61 dB of gain, so the audible threshold sits well below `max_fill_gain_db`. Full sizing, ear
+labels and the mechanism reconstruction:
+[dev/TEMP-fill-normalize-local-reference-2026-08-25.md](dev/TEMP-fill-normalize-local-reference-2026-08-25.md).
+Gap indices there and here are **0-based** (dump-filename convention); the roll-up CSV's
+`Gap1Based` column collides with real, differently-numbered gaps if quoted directly.
 
 The 2026-08-06 / 2026-08-08 ear labels also include **mixed A/B orientation**.
 `2026-08-08-edge-listen` covers pairs 24, 8, 12, 7, 31 — pairs **7, 8 and 12 are swapped**, so 3 of

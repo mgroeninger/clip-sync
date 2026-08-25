@@ -394,6 +394,41 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             None
         };
 
+        // Step 6b: whole-program A/B level capture (`domain::program_levels`). Sited here because
+        // both block-level timelines and the global offset are live at once and are dropped
+        // immediately after — the alternative (a patch-time decode) pays another multi-GB walk and
+        // has no B timeline at all. Capture only: nothing reads it back in this Change.
+        let level_params =
+            crate::domain::program_levels::ProgramLevelParams::for_absolute_silence_rms(
+                request.recipe.absolute_silence_rms(),
+            );
+        let program_levels = (!a_levels.is_empty()).then(|| {
+            // Fail closed: unknown compatibility is not evidence that the channel counts match,
+            // and this flag exists to warn that the offset is not a pure gain. (`Some` whenever a
+            // B session opened, which is a precondition for the offset below existing at all.)
+            let channels_comparable = track_compatibility
+                .as_ref()
+                .is_some_and(|tc| tc.channels_match);
+            crate::domain::program_levels::ProgramLevels {
+                a: crate::domain::program_levels::program_level_context(&a_levels, &level_params),
+                b: b_levels_for_eq.map(|levels| {
+                    crate::domain::program_levels::program_level_context(levels, &level_params)
+                }),
+                offset: offset_secs
+                    .zip(b_levels_for_eq)
+                    .and_then(|(delta, b_levels)| {
+                        crate::domain::program_levels::paired_level_offset(
+                            &a_levels,
+                            b_levels,
+                            delta,
+                            b_scan.scanned_end_secs,
+                            channels_comparable,
+                            &level_params,
+                        )
+                    }),
+            }
+        });
+
         let gap_count = gaps.len();
         progress.phase(&format_scan_summary(&request, gap_count));
         if let Some(line) = format_b_scan_truncation_note(b_scan.truncated, b_scan.scanned_end_secs)
@@ -415,6 +450,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             b_scanned_end_secs: b_scan.scanned_end_secs,
             b_scan_truncated: b_scan.truncated,
             audio_timeline_skew: audio_timeline_skew.map(audio_timeline_skew_from_clip_sync),
+            program_levels,
         };
         if let Some(line) = format_scan_fillable_followup(&report) {
             progress.phase(&line);
@@ -1202,6 +1238,7 @@ mod tests {
             b_scanned_end_secs: None,
             b_scan_truncated: false,
             audio_timeline_skew: None,
+            program_levels: None,
         };
 
         assert_eq!(report.gaps.len(), 2);
@@ -1782,5 +1819,65 @@ mod tests {
             !v.drop,
             "an abstention costs a patch attempt, never a hole: {v:?}"
         );
+    }
+
+    #[test]
+    fn scan_stamps_the_paired_program_level_offset() {
+        let dur = Duration::from_secs(60);
+        let reader = FixedReader::new()
+            .with("a.wav", SessionKind::Loud, dur)
+            .with("b.wav", SessionKind::Loud, dur);
+        let progress = FakeProgressReporter;
+        let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
+
+        let report = scan
+            .scan_after_alignment(
+                scan_request("a.wav", "b.wav", 60),
+                aligned_result(Some(0.0)),
+            )
+            .expect("scan should succeed");
+
+        let levels = report
+            .program_levels
+            .as_ref()
+            .expect("program levels are stamped whenever A produced a timeline");
+        assert!(levels.a.n_active > 0);
+        assert!(levels.a.mid_db.is_some());
+        assert!(levels.b.is_some(), "B was scanned, so it has context too");
+
+        let offset = levels
+            .offset
+            .as_ref()
+            .expect("an aligned pair with two active timelines pairs");
+        // Same synthetic tone on both sides at zero offset: no level relationship to find.
+        assert!(offset.offset_db.abs() < 1e-6, "{offset:?}");
+        assert!(offset.spread_db.abs() < 1e-6, "{offset:?}");
+        assert!(offset.n_pairs >= crate::domain::program_levels::MIN_PAIRS);
+        assert!(offset.n_pairs <= offset.n_a_steady);
+        assert!(offset.n_a_steady <= offset.n_a_active);
+        assert!(offset.channels_comparable);
+    }
+
+    #[test]
+    fn program_level_offset_absent_when_alignment_failed() {
+        let dur = Duration::from_secs(60);
+        let reader = FixedReader::new()
+            .with("a.wav", SessionKind::Loud, dur)
+            .with("b.wav", SessionKind::Loud, dur);
+        let progress = FakeProgressReporter;
+        let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
+
+        let report = scan
+            .scan_after_alignment(scan_request("a.wav", "b.wav", 60), aligned_result(None))
+            .expect("scan should succeed");
+
+        let levels = report
+            .program_levels
+            .as_ref()
+            .expect("A context ships even with no offset");
+        assert!(levels.a.n_active > 0);
+        // No offset ⇒ B is never scanned, so neither its context nor the pairing exists.
+        assert!(levels.b.is_none());
+        assert!(levels.offset.is_none());
     }
 }

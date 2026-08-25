@@ -71,6 +71,7 @@ pub fn gap_report_from_energy_fixture(temp: &Path, fixture: &EnergySignatureFixt
         b_scanned_end_secs: None,
         b_scan_truncated: false,
         audio_timeline_skew: None,
+        program_levels: None,
     }
 }
 
@@ -132,6 +133,7 @@ pub fn gap_report_from_floor_oracle(
         b_scanned_end_secs: None,
         b_scan_truncated: false,
         audio_timeline_skew: None,
+        program_levels: None,
     }
 }
 

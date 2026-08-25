@@ -203,6 +203,11 @@ pub struct GapReport {
     pub b_scan_truncated: bool,
     /// Maximum |PTS − sample-clock| observed during gap scan on video A, when measurable.
     pub audio_timeline_skew: Option<AudioTimelineSkew>,
+    /// Whole-program A/B level readings derived from the scan's block-level timelines
+    /// (`domain::program_levels`; plan `docs/dev/TEMP-ab-program-levels-plan.md`). Capture only —
+    /// **nothing in the patch path reads this**, and no gain is derived from it. `None` on
+    /// legacy/test constructors and when A produced no level timeline.
+    pub program_levels: Option<crate::domain::program_levels::ProgramLevels>,
 }
 
 impl GapReport {

@@ -134,6 +134,30 @@ With `scan_both` (default on), B is also scanned for silence so the two timeline
 | `gap_equivalence` | Per-gap silence-character verdict, index-parallel to `gaps` (always populated; empty only on pre-gate / test-constructed reports) |
 | `alignment` | The `AlignmentResult` used for mapping |
 | `gap_offset_agreement` | Mutual-silence agreement (when `scan_both`) |
+| `program_levels` | Whole-program A/B level readings — see below (report-only) |
+
+### Program levels (report-only)
+
+The scan already walks A and B in block-level RMS timelines for the equivalence gate. Before those
+timelines are dropped, they are reduced once into `program_levels`: per-side context (`mid_db`,
+`floor_db`, `n_active`) and — when an alignment offset exists — a **paired level offset** between the
+two programs.
+
+The offset is measured pairwise, not by subtracting two per-side summaries. For each A block that is
+*active* (RMS above the recipe's absolute silence floor — deliberately not the scanner's `silent`
+flag, whose peak-fraction branch admits −48 dB transient blocks) and *steady* (both neighbours within
+3 dB, which absorbs the sub-block map error and slow drift), the mapped B block is looked up by
+largest time overlap and `rms_db_B − rms_db_A` recorded. Reported as a median `offset_db` (B minus A),
+a MAD `spread_db`, deciles, counts, and per-600 s `chunks`.
+
+Read `spread_db` before `offset_db`: it says whether a *single scalar* describes the pair at all.
+Wide spread means dynamics or compression differ, or the alignment is wrong. `chunks` says whether
+that scalar is constant across the program. `channels_comparable` is false when A and B channel
+counts differ, in which case the offset carries a channel-geometry constant and is not a pure gain.
+
+Nothing reads this back: no fill gain is derived from it, and the patch path is untouched. Field
+schema in [json-output.md](json-output.md) § ProgramLevels; rationale in
+[dev/TEMP-ab-program-levels-plan.md](dev/TEMP-ab-program-levels-plan.md).
 
 > **Clock caveat:** gap times are on the **decoded-sample clock**, not container PTS — see the "shared overlap starts at N.Ns" warning and [cli-output.md](cli-output.md) § Timeline warnings. Prefer a clean source / MKV for exact timestamps.
 
@@ -163,6 +187,7 @@ With `scan_both` (default on), B is also scanned for silence so the two timeline
 | Silence-character classes + donor registration | `domain/gap_equivalence.rs` (`GapEquivalenceClass`, `NotEvaluatedReason`, `DonorRegistrationMode`) |
 | Plan-time disposition (precedence, skip reasons) | `domain/gap_fill.rs` (`build_gap_fill_plan`) |
 | Gap type | `domain/gap.rs` (`Gap`, `is_fillable`) |
+| Program-level capture (paired offset, per-side context) | `domain/program_levels.rs`, stats in `domain/level_stats.rs` |
 
 ## Related reading
 

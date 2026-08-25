@@ -111,6 +111,7 @@ fn build_fixture_with_b(gap_spans: &[(f64, f64)], write_b: impl Fn(&Path)) -> Fi
         b_scanned_end_secs: None,
         b_scan_truncated: false,
         audio_timeline_skew: None,
+        program_levels: None,
     };
 
     Fixture {

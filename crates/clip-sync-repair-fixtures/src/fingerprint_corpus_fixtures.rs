@@ -127,6 +127,7 @@ fn synth_ab_inputs() -> (MultiChannelPcm, Vec<f32>, GapReport, PatchAudioRequest
         b_scanned_end_secs: None,
         b_scan_truncated: false,
         audio_timeline_skew: None,
+        program_levels: None,
     };
     let repair = RepairConfig {
         gap_signature_mode: GapSignatureMode::Energy,

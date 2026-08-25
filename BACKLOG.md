@@ -4,7 +4,7 @@ Open follow-up work for `clip-sync`. Architecture: [PLAN.md](PLAN.md). Repair pi
 [docs/pipeline.md](docs/pipeline.md). Test corpus: [docs/dev/corpus-validation.md](docs/dev/corpus-validation.md).
 Error handling: [docs/error-mapping.md](docs/error-mapping.md).
 
-Last updated: 2026-08-24.
+Last updated: 2026-08-25.
 
 **How this doc works**
 
@@ -20,8 +20,9 @@ Last updated: 2026-08-24.
 - Shipped work is recorded in `docs/dev/archive/*` and git history.
 - Out of scope: [PLAN.md](PLAN.md) § Out of scope.
 
-**Next:** [Size the normalize exposure](#fill-normalize-boosts-against-a-non-local-reference) — one
-column added to an existing script, against an ear-confirmed defect. Then
+**Next:** [Ear-label 5/g6 and 15/g3](#fill-normalize-boosts-against-a-non-local-reference) — two
+`--gap-listen` dumps that pick which normalize fix to build; the exposure behind them is sized and
+the defect is ear-confirmed on three gaps. Then
 [26/g6 start-sweep oracle](#fill-placement) and
 [reconcile the donor-window numbers](#donor-registration). The highest-priority *defect* on the
 board is [50/g10's audible post join](#post-join-defects-pairs-31-and-50) — confirmed by ear, no
@@ -64,7 +65,10 @@ so treat "both defects are at the post join" as one axis to **test**, not as an 
 
 ## Fill normalize boosts against a non-local reference
 
-Ear-confirmed defect. Durable reading: [json-output.md](docs/json-output.md) § FillLevelCheck and
+Ear-confirmed defect, **n = 3** (45/g4, 45/g5, 19/g13; 31/g7 audible but confounded by its map-step
+straddle). Sizing, attribution and ear labels:
+[TEMP-fill-normalize-local-reference-2026-08-25.md](docs/dev/TEMP-fill-normalize-local-reference-2026-08-25.md).
+Durable reading: [json-output.md](docs/json-output.md) § FillLevelCheck and
 [pipeline.md](docs/pipeline.md) § Fill normalization (pair 19/g013, `normalize_gain = 3.88`,
 energy-pooled 5 s + 5 s vs −52 dB local shoulders). Boost-only PR archived:
 [archive/TEMP-fill-normalize-boost-only-plan.md](docs/dev/archive/TEMP-fill-normalize-boost-only-plan.md).
@@ -73,10 +77,10 @@ half is latched (§ C).
 
 | Item | Next action | Done when |
 |------|-------------|-----------|
-| **Size the exposure** (do this first) | Add **one column** — `normalize_gain` — to `scripts/measure/measure-patch-outcomes.ps1`, which today emits `PeakDeltaDb` (`:170`) and `EdgeDeltaDb` (`:183`) but not the gain. Then run `--patch-only` → `fill-level-rollup.csv`. Do **not** design from n=1 | The exposed set is known: large gain **and** quiet immediate shoulders |
-| **Make the boost reference local** | Once the sweep lands, pick one: narrow the border window; take the quieter of wide-vs-local; or cap the gain by the local shoulder ratio. `normalize_window_secs` (default 5.0) is already a knob | A gain change ships |
-| **Consider defaulting `normalize_fill` to false** | Named because the evidence points at it: **one** ear case where the boost causes an audible defect, **zero** where it demonstrably helps. The honest short-term answer if the sweep shows large boosts are common | Decided either way, from the sweep |
-| **Re-run the fill-level roll-up after any gain change** | Already owed once — the boost-only PR changed the gain on every previously-attenuated gap | The roll-up is re-run |
+| **Validate the A/B program level offset on real media** | The measurement **shipped** capture-only ([TEMP-ab-program-levels-plan.md](docs/dev/TEMP-ab-program-levels-plan.md)): scan JSON now carries `program_levels` (`a` / `b` context + paired `offset` = median `offset_db`, MAD `spread_db`, deciles, per-600 s chunks), unit-tested but never run against the corpus. Remaining work is a media read: scan a handful of pairs, check `spread_db` is small enough for one scalar to exist at all, and see whether `offset_db` correlates with the audible over-boost cohort. Still report-only — no gain derives from it (§ 8; B-relative gain is refuted, [settled.md](docs/dev/settled.md) § A) | A corpus read reports, per pair, `offset_db` / `spread_db` / chunk drift — and says whether a single scalar exists |
+| **Make the boost reference local** (do this first for the hole-local defect) | Pick one: narrow the border window; take the quieter of wide-vs-local; or cap the gain by the local shoulder ratio (`normalize_window_secs`, default 5.0, is already a knob). The sweep constrains it: the cap must apply to **every** boost — 45/g5 is audible at +5.61 dB, so scoping to the 12 dB ceiling misses half the cohort — and must separate "+1.14 dB legitimate" from "+5.61 dB audible". Acceptance test is fixed in the note § Q4: the six back out to ≈ unity, **15/g6 and 2/g6 keep their boosts**, 24/g46 stays at 0.00 dB | A gain change ships and passes that test |
+| **Consider defaulting `normalize_fill` to false** | **Weakened by the sweep, not settled.** The "zero cases where it helps" half no longer holds: 15/g6 (+1.14 dB) and 2/g6 (+0.25 dB) are genuine quiet-donor boosts a default-off would give up, and 65% of gaps are already at unity so the blast radius is the 109 boosted, not all 308. A local reference fixes the six without touching those two | Decided either way, against the note § Q3 |
+| **Ear-label 5/g6 and 15/g3** | The two unlabelled cohort members; neither pair has ever had a listen directory, so both need a `--gap-listen` dump. **15/g3 is the discriminating one** — +10.74 dB of gain but only +4.05 dB of measured edge, so it probes whether the audible axis is the gain or the resulting edge delta. That answer picks the fix above | Both are labelled |
 | **Re-label `2026-08-08-edge-listen`** | Pairs 7/8/12 are swapped. Required before quoting "lowest labelled clean" as a bound | Relabelled |
 | Residual seam `g` (`a ≈ g·b`) as the production gain | Candidate replacement — estimates level from the **seam** rather than whole-fill RMS. Needs verdict plumbing plus corpus rules for when the estimate is trustworthy | Evaluated against the sweep |
 

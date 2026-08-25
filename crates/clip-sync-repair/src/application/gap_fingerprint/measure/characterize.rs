@@ -907,6 +907,7 @@ mod tests {
             b_scanned_end_secs: None,
             b_scan_truncated: false,
             audio_timeline_skew: None,
+            program_levels: None,
         };
         (report, a_pcm, b)
     }
@@ -1426,6 +1427,7 @@ mod tests {
             b_scanned_end_secs: None,
             b_scan_truncated: false,
             audio_timeline_skew: None,
+            program_levels: None,
         };
         let repair = RepairConfig::default();
         let request: PatchAudioRequest = repair
@@ -1604,6 +1606,7 @@ mod tests {
             b_scanned_end_secs: None,
             b_scan_truncated: false,
             audio_timeline_skew: None,
+            program_levels: None,
         };
         // Same search-radius trimming as the C3 test, and for the same reason: the 5 s fixture is far
         // smaller than the production defaults assume.
@@ -1754,6 +1757,7 @@ mod tests {
             b_scanned_end_secs: None,
             b_scan_truncated: false,
             audio_timeline_skew: None,
+            program_levels: None,
         };
 
         let repair = RepairConfig {
@@ -2009,6 +2013,7 @@ mod tests {
             b_scanned_end_secs: None,
             b_scan_truncated: false,
             audio_timeline_skew: None,
+            program_levels: None,
         };
         let request: PatchAudioRequest = RepairConfig {
             gap_signature_mode: GapSignatureMode::Energy,

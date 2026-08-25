@@ -750,6 +750,10 @@ struct GapScanJson {
     b_scan_truncated: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     audio_timeline_skew: Option<clip_sync::AudioTimelineSkew>,
+    /// Whole-program A/B level readings (`docs/dev/TEMP-ab-program-levels-plan.md`). Report-only:
+    /// no gain is derived from it. Omitted when the scan did not populate it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    program_levels: Option<crate::domain::program_levels::ProgramLevels>,
 }
 
 impl GapScanJson {
@@ -779,6 +783,7 @@ impl GapScanJson {
                     delta_secs: skew.delta_secs,
                 }
             }),
+            program_levels: report.program_levels.clone(),
         }
     }
 }
@@ -1085,6 +1090,52 @@ mod tests {
             b_scanned_end_secs: None,
             b_scan_truncated: false,
             audio_timeline_skew: None,
+            // Populated (chunks included) so the whole `program_levels` object is pinned by the
+            // contract golden, not just its absence.
+            program_levels: Some(crate::domain::program_levels::ProgramLevels {
+                a: crate::domain::program_levels::ProgramLevelContext {
+                    mid_db: Some(-23.4),
+                    floor_db: Some(-71.2),
+                    n_active: 18204,
+                },
+                b: Some(crate::domain::program_levels::ProgramLevelContext {
+                    mid_db: Some(-21.1),
+                    floor_db: Some(-69.8),
+                    n_active: 18431,
+                }),
+                offset: Some(crate::domain::program_levels::AbLevelOffset {
+                    offset_db: 2.31,
+                    spread_db: 0.42,
+                    p10_db: 1.62,
+                    p90_db: 3.04,
+                    n_pairs: 16902,
+                    n_a_active: 19940,
+                    n_a_steady: 18204,
+                    first_pair_secs: 0.4,
+                    last_pair_secs: 1799.4,
+                    channels_comparable: true,
+                    chunks: vec![
+                        crate::domain::program_levels::AbLevelOffsetChunk {
+                            start_secs: 0.0,
+                            end_secs: 600.0,
+                            offset_db: 2.28,
+                            n_pairs: 5614,
+                        },
+                        crate::domain::program_levels::AbLevelOffsetChunk {
+                            start_secs: 600.0,
+                            end_secs: 1200.0,
+                            offset_db: 2.35,
+                            n_pairs: 5702,
+                        },
+                        crate::domain::program_levels::AbLevelOffsetChunk {
+                            start_secs: 1200.0,
+                            end_secs: 1800.0,
+                            offset_db: 2.30,
+                            n_pairs: 5586,
+                        },
+                    ],
+                }),
+            }),
         }
     }
 
@@ -1224,6 +1275,7 @@ mod tests {
             b_scanned_end_secs: None,
             b_scan_truncated: false,
             audio_timeline_skew: None,
+            program_levels: None,
         }
     }
 
@@ -1461,6 +1513,7 @@ mod tests {
             b_scanned_end_secs: None,
             b_scan_truncated: false,
             audio_timeline_skew: None,
+            program_levels: None,
         };
         (report, alignment_detail)
     }

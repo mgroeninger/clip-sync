@@ -109,7 +109,51 @@
     "scan_block_ms": 250,
     "silence_peak_fraction": 0.01,
     "absolute_silence_rms": 0.0010071108,
-    "limit_fill_to_mapped_region": true
+    "limit_fill_to_mapped_region": true,
+    "program_levels": {
+      "a": {
+        "mid_db": -23.4,
+        "floor_db": -71.2,
+        "n_active": 18204
+      },
+      "b": {
+        "mid_db": -21.1,
+        "floor_db": -69.8,
+        "n_active": 18431
+      },
+      "offset": {
+        "offset_db": 2.31,
+        "spread_db": 0.42,
+        "p10_db": 1.62,
+        "p90_db": 3.04,
+        "n_pairs": 16902,
+        "n_a_active": 19940,
+        "n_a_steady": 18204,
+        "first_pair_secs": 0.4,
+        "last_pair_secs": 1799.4,
+        "channels_comparable": true,
+        "chunks": [
+          {
+            "start_secs": 0.0,
+            "end_secs": 600.0,
+            "offset_db": 2.28,
+            "n_pairs": 5614
+          },
+          {
+            "start_secs": 600.0,
+            "end_secs": 1200.0,
+            "offset_db": 2.35,
+            "n_pairs": 5702
+          },
+          {
+            "start_secs": 1200.0,
+            "end_secs": 1800.0,
+            "offset_db": 2.3,
+            "n_pairs": 5586
+          }
+        ]
+      }
+    }
   },
   "patch": {
     "patched_count": 1,

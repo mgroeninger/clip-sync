@@ -20,7 +20,11 @@ pub struct SilentRun {
 /// One analysis block's RMS level (dBFS) on a media timeline — the lightweight per-block timeline the
 /// gap-equivalence gate reads (`docs/gap-scan.md`). Retained only when the scanner is
 /// built [`SilenceRunScanner::retain_block_levels`]; the scan already computes the RMS, so this just keeps
-/// it instead of discarding it. `rms_db` is floored at [`BLOCK_LEVEL_FLOOR_DB`] (never `-inf`).
+/// it instead of discarding it.
+///
+/// `rms_db` is never `-inf`: `block_rms_db` returns [`BLOCK_LEVEL_FLOOR_DB`] (−120) for an RMS at or
+/// below `1e-9`. It is **not** clamped to that value, though — an RMS just above `1e-9` reads well
+/// *below* −120 dBFS. Compare against the constant with `>` / `<=`, never `==`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BlockLevel {
     pub start_secs: f64,
@@ -344,8 +348,9 @@ pub fn rms_interleaved(samples: &[f32]) -> f32 {
     rms_f32(samples)
 }
 
-/// One analysis block's overall RMS in dBFS, floored at [`BLOCK_LEVEL_FLOOR_DB`] (a silent block reads the
-/// floor, not `-inf`). Downmix-agnostic: the RMS is taken over all interleaved samples, matching the
+/// One analysis block's overall RMS in dBFS. An RMS at or below `1e-9` reads
+/// [`BLOCK_LEVEL_FLOOR_DB`] rather than `-inf`; larger-but-tiny values are returned as computed and can
+/// therefore land *below* that constant, so it is a sentinel, not a clamp. Downmix-agnostic: the RMS is taken over all interleaved samples, matching the
 /// scan's own `is_silent` energy.
 fn block_rms_db(block: &[f32]) -> f64 {
     let rms = f64::from(rms_f32(block));

@@ -2643,6 +2643,7 @@ mod tests {
             b_scanned_end_secs: None,
             b_scan_truncated: false,
             audio_timeline_skew: None,
+            program_levels: None,
         };
         let repair = RepairConfig {
             gap_signature_mode: GapSignatureMode::Energy,
@@ -2803,6 +2804,7 @@ mod tests {
             b_scanned_end_secs: None,
             b_scan_truncated: false,
             audio_timeline_skew: None,
+            program_levels: None,
         };
         let repair = RepairConfig {
             gap_signature_mode: GapSignatureMode::Bool,
@@ -3027,6 +3029,7 @@ mod tests {
             b_scanned_end_secs: None,
             b_scan_truncated: false,
             audio_timeline_skew: None,
+            program_levels: None,
         };
         let repair = crate::infrastructure::config::RepairConfig {
             residual_gate,

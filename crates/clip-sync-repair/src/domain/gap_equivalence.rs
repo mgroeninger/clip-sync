@@ -18,6 +18,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::domain::level_stats::median_db;
 use crate::domain::policies::{BlockLevel, BLOCK_LEVEL_FLOOR_DB};
 
 /// Context window (seconds) each side of a gap used to estimate A's local noise floor from the scan's
@@ -963,15 +964,6 @@ fn core_bins(
         ),
         None => (0, 0),
     }
-}
-
-/// Median of a set of dB values (used for A's local noise floor). `None` when empty.
-fn median_db(mut vals: Vec<f64>) -> Option<f64> {
-    if vals.is_empty() {
-        return None;
-    }
-    vals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    Some(vals[vals.len() / 2])
 }
 
 /// Derive the per-gap silence-character signals from the scan's per-block level timelines and classify

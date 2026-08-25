@@ -772,6 +772,7 @@ mod tests {
             b_scanned_end_secs: None,
             b_scan_truncated: false,
             audio_timeline_skew: None,
+            program_levels: None,
         }
     }
 
