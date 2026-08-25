@@ -282,6 +282,35 @@ pub fn delay_wav(input: &Path, output: &Path, delay_ms: u32) -> bool {
         .unwrap_or(false)
 }
 
+/// Re-encode `input` with a constant `gain_db` applied — the level counterpart to [`delay_wav`].
+///
+/// Used to build a known-answer pair for the whole-program level offset: A is the master, B is the
+/// same master at a known gain, so the estimator has exactly one thing it can be reporting.
+///
+/// **Attenuate rather than boost.** ffmpeg's `volume` filter does not limit, so a boost clips
+/// wherever the master approaches full scale — and clipping *lowers* measured RMS gain while
+/// *raising* spread, which reads exactly like estimator bias when the fixture is what is wrong.
+pub fn gain_wav(input: &Path, output: &Path, gain_db: f64) -> bool {
+    if !ffmpeg_available() {
+        return false;
+    }
+
+    Command::new("ffmpeg")
+        .arg("-y")
+        .arg("-loglevel")
+        .arg("error")
+        .arg("-i")
+        .arg(input)
+        .arg("-af")
+        .arg(format!("volume={gain_db}dB"))
+        .arg(output)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
 /// Short sine fixture for container probe tests (MKV/MP4/etc.).
 #[cfg(feature = "ffmpeg-tests")]
 pub fn write_lavfi_sine_container(

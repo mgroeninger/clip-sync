@@ -320,47 +320,95 @@ Three incidental confirmations from the run, now asserted:
   digitally silent core, and `program_level_context` excludes the −120 sentinel from both
   populations. Absence here is the assertion; a reading would mean the sentinel had leaked in.
 
-### Tier 2 — real media, gained copy (known answer on real content)
+### Tier 2 — public-domain masters, gained copy (known answer on real content)
 
-What Tier 1 cannot prove: synthetic chirps and noise do not produce the heavy-tailed dB
-distribution that motivated median/MAD over mean/σ in § 3. Tier 2 puts a *known* answer on
-*real* dynamics.
+What Tier 1 cannot prove: synthetic chirps do not produce the heavy-tailed dB distribution that
+motivated median/MAD over mean/sigma in § 3, they are maximally steady so the steadiness filter
+never rejects anything, and at 120 s they sit inside a single chunk so chunking never engages.
 
-Recipe — one corpus pair, A side only:
+This runs on the repo's **already-pinned public-domain / CC masters** in
+[`tests/corpus/sources.toml`](../../tests/corpus/sources.toml), not on licensed corpus media — so
+it is a committed, reproducible, opt-in test rather than an operator's manual run, and the media
+may be named. Attribution: [`tests/corpus/THIRD_PARTY_AUDIO.md`](../../tests/corpus/THIRD_PARTY_AUDIO.md).
+Fetch with `scripts/fetch_corpus_sources.ps1` (or `.sh`).
 
-1. Pick one pair. Read its peak headroom before choosing any positive gain.
-2. From the **same source**, encode A and A′ in the **same codec**, A′ through a volume
-   filter. Do not re-encode an already-lossy A: generation loss lands in `spread_db` and
-   reads as estimator error.
-3. Gains: a few attenuations (say −3, −6, −12 dB) plus at most one boost, sized under the
-   measured headroom. Produce one additional copy that is **gained and head-padded**, for
-   the same reason as Tier 1's second case.
-4. Scan A against each copy. `--patch-only --format json`.
+| Source | Length | Format | Why this one |
+|---|---|---|---|
+| `musopen_grieg_mountain_king` | 154 s | FLAC 48k, **lossless** | Real orchestral dynamics with a wide crescendo — the heavy-tailed population, and no codec noise in `spread_db` |
+| `wikimedia_martin_amis_interview_1990` | 666 s | MP3 44.1k, lossy | The **only** fixture in the repo longer than `CHUNK_SECS` (600 s), so the only one that can exercise chunking |
+| `wikimedia_schiphol_restaurant_ambience` | 252 s | Vorbis 96k, lossy | Steady ambient bed at an unusual rate |
 
-Expected, per copy: `offset_db` recovers the applied gain, `spread_db` small and flat,
-`chunks` constant across the program.
+**Sharing, not a new module.** The helpers already exist and are already shared across the crate
+boundary: `clip_sync::testing::corpus_sources` owns the manifest reader, the SHA-pinned cache path,
+the `source_ready` skip guard and `prepare_source_master_wav`; `clip_sync::testing::ffmpeg_util`
+carries `delay_wav` and (added for this tier) `gain_wav`. `application/testing/mod.rs` re-exports
+`ffmpeg_util` with a comment naming repair's integration tests as the intended consumer, and
+repair's dev-dependency on `clip-sync` already enables `test-utils`. A dedicated fixtures module
+would fork the manifest reader — two readers of one `sources.toml` and its hashes, drifting
+silently. Rejected on that ground.
 
-Four traps, in the order they bite:
+Construction, per case: decode the master to mono WAV at a fixed rate
+(`prepare_source_master_wav`), copy it as A, and write B as the same master through `gain_wav`.
 
-- **Clipping.** A boost clips wherever peaks approach full scale. Clipping *lowers*
-  measured RMS gain and *raises* spread — it reads exactly like estimator bias, but the
-  fixture is what is wrong. This is why the attenuations are the primary evidence and the
-  boost is optional.
-- **The active floor is asymmetric — and this is a prediction, not just a caveat.**
-  Attenuating B pushes its quiet blocks below the ≈ −60 dBFS threshold while A's still
-  pass, so those pairs drop out and the survivors skew loud. `n_pairs` **should** fall
-  monotonically as attenuation grows. If it does not move, the threshold is not doing what
-  § 4 claims. The median stays unbiased under a flat gain regardless, so `offset_db`
-  recovering correctly is *not* evidence the threshold works — `n_pairs` is.
-- **Codec confound.** See step 2.
-- **Zero offset tests nothing.** See step 3.
+What the tier asserts:
 
-One pair is enough. This is a calibration: an estimator unbiased on one real program at
-several gains is unbiased. Effort beyond that belongs in Tier 3.
+| Case | Assertion | What it covers |
+|---|---|---|
+| Grieg, −6 dB | `offset_db` recovers the gain; `spread_db` small | The known answer on real dynamics, codec-free |
+| Grieg, attenuation ladder | `n_pairs` **falls monotonically** with attenuation | § 4's active threshold. See below — this is the only assertion that tests it |
+| Amis, −6 dB | `chunks` has **≥ 2** entries and each recovers the gain | Chunking, end to end, for the first time |
 
-**What Tier 2 still cannot prove:** whether a single scalar describes a genuinely different
-encode. `spread_db` ≈ 0 here is true *by construction* — the two files are the same program.
-That question is Tier 3's, and it is the one worth money.
+Traps, in the order they bite:
+
+- **Clipping.** `gain_wav` does not limit, so a boost clips wherever the master nears full scale;
+  clipping lowers measured RMS gain and raises spread, reading exactly like estimator bias.
+  Attenuations are the evidence; `gain_wav`'s own doc says why.
+- **The active floor is asymmetric — a prediction, not a caveat.** Attenuating B pushes its quiet
+  blocks below the ~ −60 dBFS threshold while A's still pass, so those pairs drop and the survivors
+  skew loud. `n_pairs` **must** fall as attenuation grows. Because the median stays unbiased under a
+  flat gain regardless, `offset_db` coming back correct is *not* evidence the threshold works —
+  `n_pairs` is the only thing that tests it.
+- **Codec confound: structurally absent here, and that was a mistaken worry.** Both sides descend
+  from a *single* `prepare_source_master_wav` decode, and `gain_wav` writes PCM, so no lossy
+  generation happens after the split — a lossy source's loss is common-mode and cancels in the
+  difference. The measured spread on the lossy 666 s source is identical to the lossless one
+  (both 0.000 dB), which is the evidence. Measuring codec robustness would need B re-encoded
+  through a lossy codec and back; that is a different question from this tier's known answer.
+- **Skip, don't fail.** The masters are gitignored and ffmpeg is optional, so every case guards on
+  `source_ready` + `ffmpeg_available` and skips loudly. `#[ignore]` by default.
+
+**What this tier still cannot prove.** Every pair here is A against a gained copy of the *same*
+master, so `spread_db` near zero is true **by construction**. Whether a single scalar describes a
+genuinely *different* encode is Tier 3's question, and it is the one worth money.
+
+**Why Tier 1 stays.** These cases are `#[ignore]`d and need a fetch plus ffmpeg, so they do not run
+in CI. If the only test of the gain wiring lived here, a sign flip would ship unnoticed. Tier 1 is
+the always-on guard; Tier 2 is the one that exercises behaviour.
+
+**Done (2026-08-25).** `crates/clip-sync-repair/tests/corpus_program_levels.rs`, plus `gain_wav`
+added beside `delay_wav` in `clip_sync::testing::ffmpeg_util`. Measured:
+
+| Case | `offset_db` | `spread_db` | `n_pairs` | `n_steady/n_active` |
+|---|---|---|---|---|
+| Grieg lossless, −6 dB | −6.000 | 0.000 | 526 | 0.350 |
+| Amis lossy 666 s, −6 dB | −6.000 | 0.000 | 1787 | 0.268 |
+| Grieg −3 / −12 / −30 dB | −3.000 / −12.000 / −30.000 | 0.000 | 528 / 515 / 345 | 0.350 |
+
+Three readings, one of which is a problem:
+
+1. **The gain is recovered exactly** on real material at every gain tried, to three decimals, at
+   zero spread. The estimator is sound.
+2. **§ 4's active-threshold prediction is confirmed.** `n_pairs` falls 528 → 515 → 345 as
+   attenuation deepens, and `n_pairs / n_steady` falls 0.998 → 0.974 → 0.652 — B's quiet blocks
+   dropping below the absolute floor while A's still pass, exactly as predicted. This is the only
+   assertion in the ladder that tests the threshold, since the median is unbiased regardless.
+3. **`STEADY_TOLERANCE_DB = 3.0` discards most of the population on real material** — 65 % of
+   active blocks on orchestral music, 73 % on speech. The estimator still lands exactly, so this is
+   not a defect in *this* measurement, but the constant was an admitted guess (§ 3) and this is the
+   first data on it. Tier 1's chirp could never have shown it: at constant amplitude the ratio is
+   ~1.0. Whether a 3 dB window is right, and what it does to `n_pairs` on sparse material, is now a
+   real open question for Tier 3 to carry — the two yield ratios are emitted precisely so a corpus
+   run can answer it.
 
 ### Tier 3 — the corpus read (the BACKLOG item)
 
@@ -382,6 +430,28 @@ The question being answered is **not** "what is the offset". It is *does a singl
 exist at all* — the precondition § 8 puts on any later gain use. A corpus where `spread_db`
 is routinely wide, or where `chunks` drift within a pair, settles that question negatively
 and that is a real result, not a failed run.
+
+**The consumer exists (2026-08-25):** `scripts/measure/census-program-levels.ps1`. Dump-only —
+point it at repair JSON already on disk, it opens no media and runs no repair. It emits the per-pair
+table above (`-CsvOut`) and a per-patched-gap join of `normalize_gain` against the pair's offset
+(`-GainCsvOut`), which is the BACKLOG's correlation question in one file.
+
+It keeps **four** states apart, because collapsing them would produce a confident wrong answer:
+
+| State | Detected by | Meaning |
+|---|---|---|
+| `stale` | `scan.program_levels` absent | binary predates the feature — **not** a corpus finding, and warned about loudly |
+| `unaligned` | `program_levels.b` absent | B was never scanned, because no alignment offset existed |
+| `abstained` | `b` present, `offset` absent | B *was* scanned and fewer than `MIN_PAIRS` survived — a real result about the pair |
+| `measured` | `offset` present | a reading |
+
+`chunks` absent is **not** a fifth state: it is omitted below two qualifying chunks, so chunk drift
+there is *undefined*, not zero. The script reports `-` rather than counting a short program as
+evidence of a constant offset. Tested against the committed `full_surface_repair.json` fixture plus
+synthetic instances of all four states and a malformed file (skipped with a warning, not a crash).
+
+What is left is the sweep itself: a `--patch-only --format json` run over the corpus with a freshly
+built binary, then the census. The verdict routes to `docs/dev/settled.md`, not BACKLOG.
 
 ---
 
@@ -418,8 +488,9 @@ hole-local normalize. That plan is now drafted:
 Validation ladder (§ 7a), not yet done:
 
 - [x] Tier 1: gain-only fixture writer + end-to-end scan test (gain at offset 0, and gain + fractional head pad)
-- [ ] Tier 2: one corpus pair, gained copies, known-answer check — including the `n_pairs`-falls-with-attenuation prediction
-- [ ] Tier 3: corpus sweep, the per-pair table, and the `normalize_gain` cross-reference
+- [x] Tier 2: public-domain masters (`sources.toml`), gained copies — known answer, chunking, and the `n_pairs`-falls-with-attenuation prediction
+- [x] Tier 3 consumer: `scripts/measure/census-program-levels.ps1` (dump-only; four states kept apart; tested on fixtures)
+- [ ] Tier 3 sweep: `--patch-only --format json` over the corpus with a fresh binary, then the census; verdict to `settled.md`
 
 ---
 
