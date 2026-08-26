@@ -74,7 +74,12 @@ function Get-Node([object]$Parent, [string]$Name) {
 
 function Format-Db([object]$Value, [int]$Places = 2) {
     if ($null -eq $Value) { return '-' }
-    return ([double]$Value).ToString("+0.$('0' * $Places);-0.$('0' * $Places)")
+    # Round BEFORE choosing the sign section. .NET picks the section from the unrounded value, so a
+    # value like -0.004 takes the negative section, renders through the positive one, and comes out
+    # "-+0.00". Rounding first also collapses negative zero.
+    $rounded = [Math]::Round([double]$Value, $Places)
+    if ($rounded -eq 0) { $rounded = [double]0 }
+    return $rounded.ToString("+0.$('0' * $Places);-0.$('0' * $Places)")
 }
 
 function Format-Ratio([object]$Value) {
@@ -121,6 +126,9 @@ foreach ($file in $files) {
         p10_db              = $null
         p90_db              = $null
         chunk_drift_db      = $null
+        robust_drift_db     = $null
+        min_chunk_pairs     = $null
+        thin_chunks         = $null
         n_chunks            = $null
         n_pairs             = $null
         n_steady            = $null
@@ -168,6 +176,22 @@ foreach ($file in $files) {
             $row.n_chunks = $chunks.Count
             $chunkDbs = @($chunks | ForEach-Object { [double]$_.offset_db })
             $row.chunk_drift_db = ($chunkDbs | Measure-Object -Maximum).Maximum - ($chunkDbs | Measure-Object -Minimum).Minimum
+
+            # Drift is max-minus-min, so it is set by whichever chunk is *least* reliable — and
+            # `MIN_CHUNK_PAIRS` (20) is nowhere near strict enough to protect a range statistic. A
+            # single thin end-of-program chunk reads as a drifting offset. Report the weakest
+            # population alongside the drift, and a second drift computed over the chunks that carry
+            # at least half the pair's median chunk population.
+            $counts = @($chunks | ForEach-Object { [int]$_.n_pairs } | Sort-Object)
+            $row.min_chunk_pairs = $counts[0]
+            $medianCount = $counts[[int][Math]::Floor(($counts.Count - 1) / 2)]
+            $bar = $medianCount / 2.0
+            $solid = @($chunks | Where-Object { [int]$_.n_pairs -ge $bar })
+            $row.thin_chunks = $chunks.Count - $solid.Count
+            if ($solid.Count -ge 2) {
+                $solidDbs = @($solid | ForEach-Object { [double]$_.offset_db })
+                $row.robust_drift_db = ($solidDbs | Measure-Object -Maximum).Maximum - ($solidDbs | Measure-Object -Minimum).Minimum
+            }
         }
     }
 
@@ -209,15 +233,19 @@ if ($stale.Count -gt 0) {
 
 if ($measured.Count -gt 0) {
     Write-Host ''
-    Write-Host ('{0,-14} {1,9} {2,9} {3,9} {4,7} {5,8} {6,8} {7,7} {8}' -f `
-            'pair', 'offset', 'spread', 'drift', 'chunks', 'n_pairs', 'pr/std', 'std/act', 'ch')
+    $tableFormat = '{0,-12} {1,8} {2,8} {3,8} {4,8} {5,6} {6,5} {7,8} {8,7} {9,7} {10}'
+    Write-Host ($tableFormat -f `
+            'pair', 'offset', 'spread', 'drift', 'drift*', 'chunks', 'thin', 'n_pairs', 'pr/std', 'std/act', 'ch')
+    Write-Host '  drift = max-min across chunks; drift* = same over chunks holding >= half the median chunk population; thin = chunks below that bar'
     foreach ($row in $measured) {
-        Write-Host ('{0,-14} {1,9} {2,9} {3,9} {4,7} {5,8} {6,8} {7,7} {8}' -f `
+        Write-Host ($tableFormat -f `
                 $row.pair,
             (Format-Db $row.offset_db),
             (Format-Ratio $row.spread_db),
             $(if ($null -eq $row.chunk_drift_db) { '-' } else { Format-Ratio $row.chunk_drift_db }),
+            $(if ($null -eq $row.robust_drift_db) { '-' } else { Format-Ratio $row.robust_drift_db }),
             $(if ($null -eq $row.n_chunks) { '-' } else { $row.n_chunks }),
+            $(if ($null -eq $row.thin_chunks) { '-' } else { $row.thin_chunks }),
             $row.n_pairs,
             (Format-Ratio $row.pairs_per_steady),
             (Format-Ratio $row.steady_per_active),
@@ -237,6 +265,19 @@ if ($measured.Count -gt 0) {
     if ($withDrift.Count -gt 0) {
         $steadyDrift = @($withDrift | Where-Object { $_.chunk_drift_db -le $DriftDb }).Count
         Write-Host ("  chunk drift <= {0,-5} dB   {1} of {2} multi-chunk pair(s)" -f $DriftDb, $steadyDrift, $withDrift.Count)
+        $withRobust = @($withDrift | Where-Object { $null -ne $_.robust_drift_db })
+        if ($withRobust.Count -gt 0) {
+            $robustOk = @($withRobust | Where-Object { $_.robust_drift_db -le $DriftDb }).Count
+            Write-Host ("    ... dropping thin chunks   {0} of {1}" -f $robustOk, $withRobust.Count)
+        }
+        # A pair that only clears the bar once the thin chunks go is an artifact of the range
+        # statistic, not a steady offset — name it rather than let it hide inside the improved count.
+        $rescued = @($withDrift | Where-Object {
+                $_.chunk_drift_db -gt $DriftDb -and $null -ne $_.robust_drift_db -and $_.robust_drift_db -le $DriftDb
+            })
+        if ($rescued.Count -gt 0) {
+            Write-Host ("    drift was a thin chunk in: {0}" -f (($rescued.pair) -join ', '))
+        }
     } else {
         Write-Host '  chunk drift               no pair spans two chunks — drift is untested, not zero'
     }
