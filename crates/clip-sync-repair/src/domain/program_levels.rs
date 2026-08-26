@@ -1,6 +1,6 @@
 //! Whole-program A↔B level relationship, measured as a **paired per-block difference**.
 //!
-//! Plan: `docs/dev/TEMP-ab-program-levels-plan.md`. Capture only — nothing here feeds a gain.
+//! Plan: `docs/dev/archive/TEMP-ab-program-levels-plan.md`. Capture only — nothing here feeds a gain.
 //!
 //! # Why paired
 //!

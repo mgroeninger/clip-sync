@@ -169,7 +169,14 @@ counts differ, in which case the offset carries a channel-geometry constant and 
 
 Nothing reads this back: no fill gain is derived from it, and the patch path is untouched. Field
 schema in [json-output.md](json-output.md) § ProgramLevels; rationale in
-[dev/TEMP-ab-program-levels-plan.md](dev/TEMP-ab-program-levels-plan.md).
+[dev/archive/TEMP-ab-program-levels-plan.md](dev/archive/TEMP-ab-program-levels-plan.md).
+
+**What the corpus reads (51 pairs, 2026-08-26).** Every pair measured, and every `offset_db` fell
+inside ±0.26 dB (median +0.005) with 50 of 51 constant across the program. On this media A and B are
+the same program loudness, so a whole-program scalar would be unity everywhere — which is a fact
+about these masters, not a general one. Two cautions that outlive the run are in
+[dev/settled.md](dev/settled.md) § E: chunk drift read as raw max-minus-min is set by the
+least-populated chunk, and `normalize_gain` is censored at its clamp.
 
 > **Clock caveat:** gap times are on the **decoded-sample clock**, not container PTS — see the "shared overlap starts at N.Ns" warning and [cli-output.md](cli-output.md) § Timeline warnings. Prefer a clean source / MKV for exact timestamps.
 

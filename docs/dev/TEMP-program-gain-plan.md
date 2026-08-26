@@ -1,15 +1,15 @@
 # TEMP — Program-offset fill gain (replace default local normalize)
 
-**Status:** draft, 2026-08-25. **Not startable.** Gated on the capture validation
-ladder in [TEMP-ab-program-levels-plan.md](TEMP-ab-program-levels-plan.md) § 7a
-Tier 3 answering *does a single scalar exist?* Capture itself is already on
-`GapReport` / scan JSON as `program_levels`; this plan is the first consumer.
+**Status:** draft, 2026-08-25. **Startable** as of 2026-08-26 — the capture plan § 7a Tier 3 trigger
+fired (51 pairs, a single scalar exists; see § 4a). One blocker remains inside the plan:
+three of the four § 4 thresholds are **not** calibratable from that corpus and need the
+Tier 2 sweep named in § 4a before any code lands.
 
-**Tracked as:** [settled.md](settled.md) § C until that trigger fires, then
-[BACKLOG.md](../../BACKLOG.md) § *Fill normalize*.
+**Tracked as:** [BACKLOG.md](../../BACKLOG.md) § *Fill normalize boosts against a
+non-local reference* → *Default `normalize_fill` off, gain fills from the program scalar*.
 
 **Companions:** capture
-[TEMP-ab-program-levels-plan.md](TEMP-ab-program-levels-plan.md) § 8 (the
+[TEMP-ab-program-levels-plan.md](archive/TEMP-ab-program-levels-plan.md) § 8 (the
 requirements this plan discharges); local-reference defect
 [TEMP-fill-normalize-local-reference-2026-08-25.md](TEMP-fill-normalize-local-reference-2026-08-25.md);
 [settled.md](settled.md) § A **B-relative / donor-shoulder fill gain** (refuted —
@@ -29,6 +29,13 @@ to every B-derived fill so donor material sits at A's program level. Default
 **off** the hole-local `normalize_fill` boost. If the operator turns local
 normalize back on, it is a **residual** on the already-matched fill — additive
 in dB, not a second copy of the master offset.
+
+**The corpus argues for the default-off half directly.** Seven patched gaps sit
+pinned at the 12.000 dB local `max_fill_gain_db` ceiling on a corpus whose masters
+match to within 0.26 dB. A 12 dB demand there cannot be a master mismatch — there is
+none to find — so it is the local 5 s + 5 s reference failing on its own. Whole-program
+gain would not have prevented one of them; defaulting local off would have prevented all
+seven. (Those pins also censor the distribution — [settled.md](settled.md) § E.)
 
 **Non-goals (v1)**
 
@@ -86,10 +93,9 @@ whole-program scalar does not — it is constant across the fill, so a loud even
 that is loud on both masters stays loud relative to its neighbours.
 
 **Clamp.** Bound `|g_program_db|` to `max_program_gain_db`. Default is **not
-invented here** — take it from the Tier 3 `|offset_db|` distribution (a starting
-candidate is the existing 12 dB local cap, but only if the corpus offsets
-actually live under it). Boosting a hot fill can clip; that is accepted in v1
-(no limiter). Zero RMS / missing offset → `g_program = 1.0`.
+invented here** — see § 4a, which reports the Tier 3 `|offset_db|`
+distribution and explains why that corpus **cannot** set this
+knob. Boosting a hot fill can clip; that is accepted in v1 (no limiter). Zero RMS / missing offset → `g_program = 1.0`.
 
 ---
 
@@ -120,6 +126,47 @@ max_program_gain_db
 
 `n_pairs` is already a capture abstention (`MIN_PAIRS = 50`); do not add a
 second floor unless Tier 3 shows 50 is too low for a gain consumer.
+
+---
+
+## 4a. What Tier 3 calibrated, and what it could not
+
+Tier 3 ran 2026-08-26 over 51 pairs (`--patch-only --format json`, then
+`scripts/measure/census-program-levels.ps1`). All 51 measured; zero abstentions,
+zero channel mismatches, B coverage 0.951-1.000.
+
+| | Corpus reading |
+|---|---|
+| `offset_db` | median +0.005, range -0.221 … +0.260, sd 0.109, **no pair past 0.3** |
+| `spread_db` | median 0.668, max 2.412; 34/51 at or under 1.0 |
+| robust chunk drift | median 0.162, max 1.291; **50/51** within 1.0 dB |
+
+**The trigger is answered: a single scalar exists.** It is also, on this corpus,
+approximately zero everywhere.
+
+That last fact is what limits the calibration. Only one threshold can be set from a
+corpus whose true answer is uniformly zero:
+
+| Knob | Calibrated? | Basis |
+|---|---|---|
+| `program_gain_deadband_db` | **Yes — 0.5** | The largest corpus offset is 0.260, so a 0.5 dB deadband puts **all 51 pairs at unity**. The corpus is a direct proof of the *inaction* case, which is the one a default-on gate has to get right |
+| `max_spread_db` | **No** | Every pair is inside the deadband, so spread never gates anything here. Nothing in this run says where a spread stops meaning "one scalar exists" |
+| `max_chunk_drift_db` | **No** | Same reason. What the corpus *does* fix is the **statistic**: this check must read `robust_drift_db`, not raw max-minus-min — raw would have failed pair 24 on a single 359-block chunk ([settled.md](settled.md) § E) |
+| `max_program_gain_db` | **No** | No corpus offset comes within 45x of the existing 12 dB local cap. Do not inherit that number by default |
+
+**Next action for the three open knobs — a Tier 2 sweep, not a guess.** The three
+only bind when masters genuinely differ, and no such pair exists on disk. Tier 2
+already manufactures them: `gained_pair()` in
+`crates/clip-sync-repair/tests/corpus_program_levels.rs` writes a known-gain B over real public-domain material,
+and `attenuation_shrinks_the_paired_population` already sweeps -3 / -12 / -30 dB.
+Extend that sweep to report `spread_db` and per-chunk drift at each gain, on both
+the lossless and the lossy source, and read the thresholds off the point where the
+scalar stops being recoverable. Real dynamics, real codec noise, known answer —
+strictly better calibration material than the chirp, and it needs no licensed media.
+
+Until that table exists this plan still does not ship. The deadband alone is not
+enough: it decides when to *act*, and the other three decide whether acting is safe.
+
 
 ---
 
@@ -254,12 +301,12 @@ normalize_window_secs = 5.0         # local path only
 
 From capture § 7a / § 8. This plan does not invent a second measurement.
 
-| Gate | If it fails |
-|---|---|
-| Tier 1 + 2: known-gain recoveries, correct sign (`offset_db` = B−A) | do not implement — the scalar is the wrong number |
-| Tier 3: `spread_db` routinely tight **and** `chunks` stable on the pairs we would patch | **stop** — one scalar does not exist; local-reference fix remains the live normalize work |
-| Tier 3: `|offset_db|` distribution | sets `max_program_gain_db` and the deadband |
-| Tier 3 × `normalize_gain` cross-ref | tells whether the over-boost cohort is local-only (expected) or correlated with `offset_db` (would change the stacking story) |
+| Gate | Status | If it fails |
+|---|---|---|
+| Tier 1 + 2: known-gain recoveries, correct sign (`offset_db` = B−A) | **passed** — −6.0 dB recovered on synthetic and on both real masters | do not implement — the scalar is the wrong number |
+| Tier 3: `spread_db` routinely tight **and** `chunks` stable on the pairs we would patch | **passed** — 51/51 measured, 50/51 stable within 1 dB (§ 4a) | **stop** — one scalar does not exist; local-reference fix remains the live normalize work |
+| Tier 3: `|offset_db|` distribution | **partial** — sets the deadband at 0.5 dB; **cannot** set `max_program_gain_db`, `max_spread_db` or `max_chunk_drift_db` on a corpus that is uniformly ≈ 0. Open, redirected to a Tier 2 sweep (§ 4a) | sets `max_program_gain_db` and the deadband |
+| Tier 3 × `normalize_gain` cross-ref | **local-only, as expected** — offsets inside 0.26 dB while seven gaps demand ≥ 12 dB of local boost. The stacking story in § 5 stands unchanged | tells whether the over-boost cohort is local-only (expected) or correlated with `offset_db` (would change the stacking story) |
 
 A wide-spread corpus is a real negative result, not a reason to apply a bad
 median anyway.
@@ -320,7 +367,7 @@ boost under default flags.
 
 ## Related
 
-- [TEMP-ab-program-levels-plan.md](TEMP-ab-program-levels-plan.md) — measurement, trust inputs, § 8
+- [TEMP-ab-program-levels-plan.md](archive/TEMP-ab-program-levels-plan.md) — measurement, trust inputs, § 8
 - [TEMP-fill-normalize-local-reference-2026-08-25.md](TEMP-fill-normalize-local-reference-2026-08-25.md) — why local defaults off
 - [settled.md](settled.md) § A B-relative gain; § C local-attenuation latch; § E `normalize_gain` contaminates `peak_delta_db`
 - [pipeline.md](../pipeline.md) — current boost-only local normalize

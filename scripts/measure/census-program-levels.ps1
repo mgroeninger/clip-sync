@@ -1,7 +1,7 @@
 #!/usr/bin/env pwsh
 # Dump-only census of the whole-program A/B level offset (`scan.program_levels`).
 #
-# Tier 3 of the validation ladder in docs/dev/TEMP-ab-program-levels-plan.md §7a, and the read the
+# Tier 3 of the validation ladder in docs/dev/archive/TEMP-ab-program-levels-plan.md §7a, and the read the
 # BACKLOG entry asks for. Consumer only — opens no media, runs no repair. Point it at repair JSON
 # that `measure-patch-outcomes.ps1` (or any `--patch-only --format json` run) already wrote.
 #

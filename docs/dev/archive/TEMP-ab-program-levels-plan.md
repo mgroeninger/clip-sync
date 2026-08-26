@@ -1,15 +1,17 @@
 # TEMP — Capture the A/B program level offset (paired block difference)
 
-**Status:** implemented, 2026-08-25 (rewritten from the floor/mid/roof two-summary draft —
+**Status:** **CLOSED / ARCHIVED 2026-08-26.** Implemented 2026-08-25 (rewritten from the floor/mid/roof two-summary draft —
 see § 10). **Capture only** — stamp a whole-program A↔B level relationship on the scan
 report. No gain policy, no change to `compute_fill_gain` / `normalize_fill`.
 
-**Tracked as:** [BACKLOG.md](../../BACKLOG.md) § *Fill normalize boosts against a
-non-local reference* → *Capture A/B program levels*.
+**Tracked as:** nothing — closed. Verdicts: [settled.md](../settled.md) § B (steadiness window) and
+§ E (two measurement cautions). The consumer is [TEMP-program-gain-plan.md](../TEMP-program-gain-plan.md),
+now startable in [BACKLOG.md](../../../BACKLOG.md) § *Fill normalize*. Live summary of the § 7a ladder:
+[test-tiers.md](../test-tiers.md) § Validation ladders.
 
-**Companions:** [settled.md](settled.md) § A **B-relative / donor-shoulder fill gain**
+**Companions:** [settled.md](../settled.md) § A **B-relative / donor-shoulder fill gain**
 (refuted — this plan is **not** that idea, see § 1); local-reference defect sizing
-[TEMP-fill-normalize-local-reference-2026-08-25.md](TEMP-fill-normalize-local-reference-2026-08-25.md).
+[TEMP-fill-normalize-local-reference-2026-08-25.md](../TEMP-fill-normalize-local-reference-2026-08-25.md).
 
 **Media hygiene:** pair index only; no filenames / titles / paths in the repo.
 
@@ -38,7 +40,7 @@ resulting distribution.
 
 - Applying `gain₀ = 10^(offset/20)` (or any scalar) to fills. See § 8.
 - Changing per-gap `normalize_fill` / `compute_a_border_rms` / `global_a_rms`.
-- Matching fills to B's shoulders at the hole (refuted — [settled.md](settled.md) § A).
+- Matching fills to B's shoulders at the hole (refuted — [settled.md](../settled.md) § A).
   This plan never reads B's gap shoulders; it is a **whole-program master
   relationship**, measured over material that is undamaged on both sides.
 - Keeping full `BlockLevel` arrays on the report.
@@ -327,9 +329,9 @@ motivated median/MAD over mean/sigma in § 3, they are maximally steady so the s
 never rejects anything, and at 120 s they sit inside a single chunk so chunking never engages.
 
 This runs on the repo's **already-pinned public-domain / CC masters** in
-[`tests/corpus/sources.toml`](../../tests/corpus/sources.toml), not on licensed corpus media — so
+[`tests/corpus/sources.toml`](../../../tests/corpus/sources.toml), not on licensed corpus media — so
 it is a committed, reproducible, opt-in test rather than an operator's manual run, and the media
-may be named. Attribution: [`tests/corpus/THIRD_PARTY_AUDIO.md`](../../tests/corpus/THIRD_PARTY_AUDIO.md).
+may be named. Attribution: [`tests/corpus/THIRD_PARTY_AUDIO.md`](../../../tests/corpus/THIRD_PARTY_AUDIO.md).
 Fetch with `scripts/fetch_corpus_sources.ps1` (or `.sh`).
 
 | Source | Length | Format | Why this one |
@@ -450,8 +452,34 @@ there is *undefined*, not zero. The script reports `-` rather than counting a sh
 evidence of a constant offset. Tested against the committed `full_surface_repair.json` fixture plus
 synthetic instances of all four states and a malformed file (skipped with a warning, not a crash).
 
-What is left is the sweep itself: a `--patch-only --format json` run over the corpus with a freshly
-built binary, then the census. The verdict routes to `docs/dev/settled.md`, not BACKLOG.
+**The sweep ran 2026-08-26** — 51 pairs, `--patch-only --format json` on a freshly built binary,
+then the census. **All 51 `measured`**: zero `stale`, zero `abstained`, zero `unaligned`, zero
+channel mismatches, B coverage 0.951-1.000.
+
+| | Reading |
+|---|---|
+| `offset_db` | median +0.005, range -0.221 … +0.260, sd 0.109, no pair past 0.3 |
+| `spread_db` | median 0.668, max 2.412; 34/51 at or under 1.0 |
+| chunk drift (robust) | median 0.162, max 1.291; **50/51** within 1.0 dB |
+| `n_steady / n_active` | median 0.515, range 0.303-0.723 (Tier 2 saw 0.350 / 0.268 — the corpus is the gentler case) |
+| smallest chunk population | min 135, median 1579, against a `MIN_CHUNK_PAIRS` gate of 20 |
+
+**The question is answered affirmatively: a single scalar exists**, and on this corpus it is
+approximately zero everywhere. That fires the [settled.md](../settled.md) § C trigger on
+[TEMP-program-gain-plan.md](../TEMP-program-gain-plan.md), whose § 4a carries the calibration.
+A corpus this well matched calibrates the **deadband** and nothing else — read § 4a before
+treating any other threshold as settled.
+
+Two by-products, both routed to [settled.md](../settled.md) § E rather than here: raw max-minus-min
+chunk drift is a range statistic set by the least-populated chunk (pair 24 read 1.878 dB off one
+359-block chunk; 0.453 robust), and `normalize_gain` is **censored at its clamp** — seven patched
+gaps sit at exactly 12.000 dB, meaning *at least* 12 dB. Those seven are a BACKLOG listening cohort.
+
+The BACKLOG's other clause — does `offset_db` track the **audible** over-boost cohort — is **not**
+answered. The join tests offset against boost *magnitude* (`r = -0.155`, n = 50), and this repo has
+already established that level does not order audibility ([settled.md](../settled.md) § A,
+`peak_delta_db` cutoff). What the run does support is narrower and comes from the predictor side:
+0.48 dB of total variation cannot order any high-variance per-gap outcome.
 
 ---
 
@@ -459,8 +487,8 @@ built binary, then the census. The verdict routes to `docs/dev/settled.md`, not 
 
 A later plan may use `offset_db` as a coarse master offset (`gain₀`), separate from
 hole-local normalize. That plan is now drafted:
-[TEMP-program-gain-plan.md](TEMP-program-gain-plan.md) (latched on this TEMP's
-§ 7a Tier 3). It must:
+[TEMP-program-gain-plan.md](../TEMP-program-gain-plan.md) — it was latched on this TEMP's
+§ 7a Tier 3, which fired 2026-08-26, and is now startable. It must:
 
 - require `spread_db` below a threshold **and** `chunks` consistent — *a single scalar
   must be shown to exist* before one is applied;
@@ -481,7 +509,7 @@ hole-local normalize. That plan is now drafted:
 - [x] Emit on `GapScanJson` / repair JSON `scan` object (omit when `None`)
 - [x] Unit tests in § 7
 - [x] Fix the inaccurate "floored at −120" doc comment on `BlockLevel`
-- [x] Doc: scan-output paragraph in [gap-scan.md](../gap-scan.md) **and** the scan-object field table in [json-output.md](../json-output.md)
+- [x] Doc: scan-output paragraph in [gap-scan.md](../../gap-scan.md) **and** the scan-object field table in [json-output.md](../../json-output.md)
 - [x] Do **not** touch `compute_fill_gain` / normalize path
 - [x] `cargo test` (lib + touched CLI/scan tests); clippy clean
 
@@ -490,7 +518,7 @@ Validation ladder (§ 7a), not yet done:
 - [x] Tier 1: gain-only fixture writer + end-to-end scan test (gain at offset 0, and gain + fractional head pad)
 - [x] Tier 2: public-domain masters (`sources.toml`), gained copies — known answer, chunking, and the `n_pairs`-falls-with-attenuation prediction
 - [x] Tier 3 consumer: `scripts/measure/census-program-levels.ps1` (dump-only; four states kept apart; tested on fixtures)
-- [ ] Tier 3 sweep: `--patch-only --format json` over the corpus with a fresh binary, then the census; verdict to `settled.md`
+- [x] Tier 3 sweep: `--patch-only --format json` over the corpus with a fresh binary, then the census; verdict to `settled.md`
 
 ---
 
@@ -502,9 +530,11 @@ at near-zero spread; a synthetic pair with a deliberately damaged A recovers the
 offset as its undamaged twin (the duty-cycle-immunity claim of § 2); and no patch/gain
 behaviour changes (byte-identical fills vs before).
 
-**Capture is done** to that bar. The plan is not closed until the § 7a ladder has run: Tier 1
-committed, Tier 2 recovering a known gain on real dynamics, and Tier 3 answering whether a
-single scalar exists across the corpus.
+**Capture is done** to that bar, and **the § 7a ladder has now run in full** — Tier 1 committed,
+Tier 2 recovering -6.0 dB on real dynamics, Tier 3 answering *yes, a single scalar exists* across
+51 pairs (§ 7a). The verdicts are in [settled.md](../settled.md) (§ B steadiness window, § E the two
+measurement cautions) and the consumer is unlatched into
+[TEMP-program-gain-plan.md](../TEMP-program-gain-plan.md). **This plan is closed and archived.**
 
 ---
 
@@ -521,8 +551,8 @@ context only, never subtracted.
 
 ## Related
 
-- [gap-scan.md](../gap-scan.md) — scan recipe, block-level timelines
-- [json-output.md](../json-output.md) — scan JSON schema (new fields go in the scan object table)
-- [pipeline.md](../pipeline.md) — fill normalization (unchanged by this plan)
-- [settled.md](settled.md) § A — B-relative / donor-shoulder gain refuted (distinct from this)
-- [TEMP-program-gain-plan.md](TEMP-program-gain-plan.md) — first gain consumer (latched on § 7a)
+- [gap-scan.md](../../gap-scan.md) — scan recipe, block-level timelines
+- [json-output.md](../../json-output.md) — scan JSON schema (new fields go in the scan object table)
+- [pipeline.md](../../pipeline.md) — fill normalization (unchanged by this plan)
+- [settled.md](../settled.md) § A — B-relative / donor-shoulder gain refuted (distinct from this)
+- [TEMP-program-gain-plan.md](../TEMP-program-gain-plan.md) — first gain consumer (latched on § 7a)

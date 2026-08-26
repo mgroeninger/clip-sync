@@ -760,7 +760,7 @@ struct GapScanJson {
     b_scan_truncated: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     audio_timeline_skew: Option<clip_sync::AudioTimelineSkew>,
-    /// Whole-program A/B level readings (`docs/dev/TEMP-ab-program-levels-plan.md`). Report-only:
+    /// Whole-program A/B level readings (`docs/dev/archive/TEMP-ab-program-levels-plan.md`). Report-only:
     /// no gain is derived from it. Omitted when the scan did not populate it.
     #[serde(skip_serializing_if = "Option::is_none")]
     program_levels: Option<crate::domain::program_levels::ProgramLevels>,

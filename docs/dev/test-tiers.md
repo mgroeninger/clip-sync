@@ -268,6 +268,34 @@ Full filter table: [development.md § Ignore scheduling](development.md#ignore-s
 
 ---
 
+## Validation ladders
+
+A *ladder* is a set of tests for one measurement, ordered by what each rung can actually
+prove. The point is that a passing synthetic test proves wiring and nothing else — the
+higher rungs are what license claims about behaviour on real material. When adding a
+measurement that a policy will later read, build the ladder before the policy.
+
+### Program level offset (`domain::program_levels`)
+
+| Tier | Where | What it can prove | What it cannot |
+|------|-------|-------------------|----------------|
+| **1 — synthetic, committed, free** | `crates/clip-sync-repair/tests/cli_program_levels.rs`, fixture `clip-sync-repair-fixtures::gain_pair` | Wiring end to end through the real binary: decode → block levels → dB conversion → A↔B mapping → JSON. Sign convention (`offset_db` is **B minus A**). Sub-block misregistration does not move the gain | Nothing about behaviour. The chirp is constant-amplitude, so the steadiness filter never rejects; 120 s sits inside one 600 s chunk, so chunking never engages |
+| **2 — real masters, known gain** | `crates/clip-sync-repair/tests/corpus_program_levels.rs`, SHA-pinned public-domain / CC sources from `tests/corpus/sources.toml` | Recovery of a known gain on real dynamics and real codec noise; that the steadiness filter *does* reject on transient material; chunking end to end (the 666 s source is the only one past `CHUNK_SECS`); that attenuation shrinks the paired population | Anything about our production media. Also `#[ignore]` and skips loudly without ffmpeg or fetched sources |
+| **3 — the corpus read** | `--patch-only --format json` over the corpus, then `scripts/measure/census-program-levels.ps1` | Whether a single scalar describes real pairs at all, and what the thresholds a consumer needs should be. Dump-only: the census opens no media | Anything a corpus of matched masters has no instance of — see below |
+
+**Tier 2 is where mismatched-master thresholds get calibrated, not Tier 3.** The 2026-08-26
+corpus read found every pair inside ±0.26 dB, so guards that only bind when masters *differ*
+have no instance to calibrate against. `gained_pair()` in the Tier 2 binary manufactures them
+on real material with a known answer, which is what makes it the right rung for that job.
+Consumer-side detail: [TEMP-program-gain-plan.md](TEMP-program-gain-plan.md) § 4a.
+
+The census keeps four states apart — `measured`, `abstained` (B scanned, too few pairs),
+`unaligned` (B never scanned), `stale` (binary predates the field) — because collapsing them
+yields a confident wrong answer. Full rationale:
+[archive/TEMP-ab-program-levels-plan.md](archive/TEMP-ab-program-levels-plan.md) § 7a.
+
+---
+
 ## Where tests live
 
 | Location | Examples |
