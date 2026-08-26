@@ -280,14 +280,19 @@ measurement that a policy will later read, build the ladder before the policy.
 | Tier | Where | What it can prove | What it cannot |
 |------|-------|-------------------|----------------|
 | **1 — synthetic, committed, free** | `crates/clip-sync-repair/tests/cli_program_levels.rs`, fixture `clip-sync-repair-fixtures::gain_pair` | Wiring end to end through the real binary: decode → block levels → dB conversion → A↔B mapping → JSON. Sign convention (`offset_db` is **B minus A**). Sub-block misregistration does not move the gain | Nothing about behaviour. The chirp is constant-amplitude, so the steadiness filter never rejects; 120 s sits inside one 600 s chunk, so chunking never engages |
-| **2 — real masters, known gain** | `crates/clip-sync-repair/tests/corpus_program_levels.rs`, SHA-pinned public-domain / CC sources from `tests/corpus/sources.toml` | Recovery of a known gain on real dynamics and real codec noise; that the steadiness filter *does* reject on transient material; chunking end to end (the 666 s source is the only one past `CHUNK_SECS`); that attenuation shrinks the paired population | Anything about our production media. Also `#[ignore]` and skips loudly without ffmpeg or fetched sources |
+| **2 — real masters, known gain** | `crates/clip-sync-repair/tests/corpus_program_levels.rs`, SHA-pinned public-domain / CC sources from `tests/corpus/sources.toml` | Recovery of a known gain on real dynamics and real codec noise; that the steadiness filter *does* reject on transient material; chunking end to end (the 666 s source is the only one past `CHUNK_SECS`); that attenuation shrinks the paired population. Also the `calibration_*` cases: **negative** controls (`acompressor`, a time-varying gain ramp) whose pair has no single scalar at all, which is what a "does one exist" threshold is read off | Anything about our production media. Also `#[ignore]` and skips loudly without ffmpeg or fetched sources |
 | **3 — the corpus read** | `--patch-only --format json` over the corpus, then `scripts/measure/census-program-levels.ps1` | Whether a single scalar describes real pairs at all, and what the thresholds a consumer needs should be. Dump-only: the census opens no media | Anything a corpus of matched masters has no instance of — see below |
 
 **Tier 2 is where mismatched-master thresholds get calibrated, not Tier 3.** The 2026-08-26
 corpus read found every pair inside ±0.26 dB, so guards that only bind when masters *differ*
 have no instance to calibrate against. `gained_pair()` in the Tier 2 binary manufactures them
 on real material with a known answer, which is what makes it the right rung for that job.
-Consumer-side detail: [TEMP-program-gain-plan.md](TEMP-program-gain-plan.md) § 4a.
+
+**Manufacture the negative, not more of the positive.** The obvious extension — sweep more known
+gains — is degenerate: a flat gain is the same number on every block, so `spread_db` is exactly
+0.000 at every depth. A threshold needs the case where the statistic is *supposed* to fire, which
+means a fixture whose two sides differ by something that is not a scalar. Consumer-side detail and
+the resulting numbers: [TEMP-program-gain-plan.md](TEMP-program-gain-plan.md) § 4a–4b.
 
 The census keeps four states apart — `measured`, `abstained` (B scanned, too few pairs),
 `unaligned` (B never scanned), `stale` (binary predates the field) — because collapsing them

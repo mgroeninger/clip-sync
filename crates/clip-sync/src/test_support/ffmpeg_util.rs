@@ -291,6 +291,17 @@ pub fn delay_wav(input: &Path, output: &Path, delay_ms: u32) -> bool {
 /// wherever the master approaches full scale — and clipping *lowers* measured RMS gain while
 /// *raising* spread, which reads exactly like estimator bias when the fixture is what is wrong.
 pub fn gain_wav(input: &Path, output: &Path, gain_db: f64) -> bool {
+    filter_wav(input, output, &format!("volume={gain_db}dB"))
+}
+
+/// Re-encode `input` through an arbitrary ffmpeg **audio** filter chain (`-af`).
+///
+/// The general form behind [`gain_wav`] and [`delay_wav`]. It exists for the level-offset
+/// calibration fixtures, which need Bs that a *single scalar cannot describe* — a `volume`
+/// expression that varies with `t`, or an `acompressor` that varies with level — as the negative
+/// controls against which a "one scalar exists" threshold is set. Callers own the filter string;
+/// nothing here validates it, so a typo surfaces as `false`, not a panic.
+pub fn filter_wav(input: &Path, output: &Path, filter: &str) -> bool {
     if !ffmpeg_available() {
         return false;
     }
@@ -302,7 +313,34 @@ pub fn gain_wav(input: &Path, output: &Path, gain_db: f64) -> bool {
         .arg("-i")
         .arg(input)
         .arg("-af")
-        .arg(format!("volume={gain_db}dB"))
+        .arg(filter)
+        .arg(output)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+/// Write `input` repeated `times` times back to back.
+///
+/// Lengthens a source past a chunk boundary. The repo's longest master is 666 s against a 600 s
+/// `CHUNK_SECS`, which yields one full chunk and a 66 s tail — too little to read a per-chunk drift
+/// off. Repeating gives full-width chunks of the same real material. The joins are hard cuts, so
+/// expect one discontinuous block per seam.
+pub fn loop_wav(input: &Path, output: &Path, times: u32) -> bool {
+    if !ffmpeg_available() || times == 0 {
+        return false;
+    }
+
+    Command::new("ffmpeg")
+        .arg("-y")
+        .arg("-loglevel")
+        .arg("error")
+        // `-stream_loop N` repeats the input N *additional* times.
+        .args(["-stream_loop", &(times - 1).to_string()])
+        .arg("-i")
+        .arg(input)
         .arg(output)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
