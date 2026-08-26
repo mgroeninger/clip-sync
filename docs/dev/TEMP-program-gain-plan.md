@@ -14,7 +14,7 @@ non-local reference* → *Default `normalize_fill` off, gain fills from the prog
 **Companions:** capture
 [TEMP-ab-program-levels-plan.md](archive/TEMP-ab-program-levels-plan.md) § 8 (the
 requirements this plan discharges); local-reference defect
-[TEMP-fill-normalize-local-reference-2026-08-25.md](TEMP-fill-normalize-local-reference-2026-08-25.md);
+[TEMP-fill-normalize-local-reference-2026-08-25.md](archive/TEMP-fill-normalize-local-reference-2026-08-25.md);
 [settled.md](settled.md) § A **B-relative / donor-shoulder fill gain** (refuted —
 this plan is **not** that idea, see § 2); latched attenuation-half of *local*
 normalize ([settled.md](settled.md) § C — also not this idea, see § 4).
@@ -513,7 +513,7 @@ are, this plan is implemented but not accepted — do not archive it.
 ## Related
 
 - [TEMP-ab-program-levels-plan.md](archive/TEMP-ab-program-levels-plan.md) — measurement, trust inputs, § 8
-- [TEMP-fill-normalize-local-reference-2026-08-25.md](TEMP-fill-normalize-local-reference-2026-08-25.md) — why local defaults off
+- [TEMP-fill-normalize-local-reference-2026-08-25.md](archive/TEMP-fill-normalize-local-reference-2026-08-25.md) — why local defaults off
 - [TEMP-local-paired-gain-plan.md](TEMP-local-paired-gain-plan.md) — residual local estimator (separate Change)
 - [settled.md](settled.md) § A B-relative gain; § C local-attenuation latch; § E `normalize_gain` contaminates `peak_delta_db`
 - [pipeline.md](../pipeline.md) — current boost-only local normalize

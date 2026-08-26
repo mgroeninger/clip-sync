@@ -3,7 +3,10 @@
 **Status:** draft, 2026-08-26. **Startable** as a **separate Change** from
 [TEMP-program-gain-plan.md](TEMP-program-gain-plan.md) — do not bundle. The
 measurement it reuses (`paired_level_offset`) and the program prior
-(`program_levels.offset`) already exist on the scan report.
+(`program_levels.offset`) already exist on the scan report. Reviewed against
+the landed program-gain tree the same day: § 6 (scan threading + helper), § 7
+(`stack_fill_gain`), § 8 (apply signature), § 9 (`normalize_window_secs`) are
+the corrections; nothing in the estimator itself moved.
 
 **Tracked as:** [BACKLOG.md](../../BACKLOG.md) § *Fill normalize boosts against a
 non-local reference* → *Local paired-shoulder gain*.
@@ -13,7 +16,7 @@ non-local reference* → *Local paired-shoulder gain*.
 discharges); capture
 [archive/TEMP-ab-program-levels-plan.md](archive/TEMP-ab-program-levels-plan.md);
 local-reference defect
-[TEMP-fill-normalize-local-reference-2026-08-25.md](TEMP-fill-normalize-local-reference-2026-08-25.md);
+[TEMP-fill-normalize-local-reference-2026-08-25.md](archive/TEMP-fill-normalize-local-reference-2026-08-25.md);
 [settled.md](settled.md) § A **B-relative / donor-shoulder fill gain** (refuted —
 this plan is **not** that idea, see § 2); latched attenuation-half of *RMS* local
 normalize (§ C — also not this idea, see § 5).
@@ -49,7 +52,8 @@ of it.
 - Per-side “quieter of pre/post”. One median over the pooled collar.
 - ITU / LUFS, peak limiting.
 - Narrowing `normalize_window_secs` or otherwise patching `compute_a_border_rms`.
-  That function loses its production caller.
+  That function loses its **fill-gain** caller. The field stays the A-border
+  template / correlate window (§ 9) — do not treat it as unused.
 
 ---
 
@@ -94,6 +98,11 @@ error.
 `W = 2.0` matches the registration envelope context, not the 5 s normalize
 window. The 5 s pool was the defect; this is a different estimator, not a
 shorter RMS. Config-only; no CLI in v1.
+
+Stamping is **scan-time**, so `ScanGapsRequest` must carry `local_pair_collar_secs`
+(`composition.rs` today passes no gain knob into scan). Putting the width only
+on `PatchRequestSettings` would make a first scan hardcode 2.0 and leave
+`--patch-only` unable to change it. Patch never recomputes the collar.
 
 ---
 
@@ -152,7 +161,12 @@ product `g_total` may be below 1.
 
 **Boost-only `compute_fill_gain` is no longer on the production path** when this
 ships. Leave the function for now (tests / history); do not call it from
-`region`.
+`region`. Replace the RMS half of `domain::stack_fill_gain` — do not compose
+with it. That helper scales fill RMS into `compute_fill_gain` so the *old*
+estimator would not square the program offset; this estimator’s double-count
+guard is the residual formula, and feeding it a scaled RMS would be a third
+path. `debug_assert!(stacked.local >= 1.0)` in `region/characterize.rs` goes
+with it.
 
 ---
 
@@ -161,7 +175,7 @@ ships. Leave the function for now (tests / history); do not call it from
 Today dual-fit / SilenceSplice hard-code local unity because `compute_fill_gain`
 needs fill RMS. **This estimator does not** — the collar is scan-time, fill-agnostic.
 
-| Path | `g_program` (other plan) | `g_local` (this plan) |
+| Path | `g_program` (landed) | `g_local` (this plan) |
 |---|---|---|
 | Bracket fill | yes | if `normalize_fill` and collar did not abstain |
 | Dual-fit / SilenceSplice | yes | **same** — the old reason to skip it is gone |
@@ -189,48 +203,75 @@ pub struct CollarLevelOffset {
 }
 ```
 
-`n_pre` / `n_post` are provenance (is this a one-sided collar?), not a gate.
-No `chunks`. `channels_comparable` lives on the program object; do not
-duplicate it — if program says channels are incomparable, local pairing is the
-same confound: **do not stamp a collar** (or stamp and refuse at apply; prefer
-not stamping so JSON absence means “no pairing”, same as whole-file).
+`n_pre` / `n_post` are provenance (is this a one-sided collar?), not a gate —
+counts of **accepted pairs** whose A-block start falls in pre vs post.
+`first_pair_secs` / `last_pair_secs` are A-timeline, same as `AbLevelOffset`.
+No `chunks`. Type home: `program_levels.rs`, next to `AbLevelOffset`.
+
+`channels_comparable` lives on the program object; do not duplicate it. If
+program says channels are incomparable, local pairing is the same confound:
+**do not stamp a collar**, so JSON absence means “no pairing”, same as
+whole-file. Apply still needs a `channels` reason (§ 8): when collar is `None`,
+read `program_levels.offset.channels_comparable` (false, or no offset because
+channels blocked pairing). Do not infer `channels` from absence alone —
+absence is also `n_pairs < 8` and “B not scanned”.
 
 Home: `Gap.collar_level: Option<CollarLevelOffset>` (`skip_serializing_if =
 None`). Index-parallel extra vec is the wrong shape — this *is* the gap’s
 level reading. Mechanical `Gap { … }` literals get `collar_level: None`.
+`GapScanJson` already serializes `Vec<Gap>`, so the field appears without a
+DTO change.
 
-Extract a shared pair-collection helper from `paired_level_offset` that takes
-an optional A-time filter (`fn(block) -> bool` or a list of windows). Whole-file
-passes “all blocks”; the collar passes the union of pre/post. One median/MAD
-summarizer.
+Extract a shared pair-collection helper from `paired_level_offset`. The loop
+already accumulates `(a.start_secs, d_i)`. Split there:
+
+- **collect** — optional A-block predicate (collar = overlaps pre∪post and
+  does not overlap the core; whole-file = all blocks). Returns the pair vec.
+- **summarize** — one median/MAD path. Whole-file wraps as `AbLevelOffset`
+  with `MIN_PAIRS = 50`; collar wraps as `CollarLevelOffset` with
+  `MIN_LOCAL_PAIRS = 8`, then bins the same pair vec into `n_pre` / `n_post`
+  by A-start. A `fn(block) -> bool` cannot produce those counts by itself.
 
 Patch reads `request.report.gaps[i].collar_level` plus the already-decided
-`g_program` / applied `offset_db`. No second reduce.
+`g_program` / applied `offset_db`. No second reduce. `--patch-only` against a
+scan that predates this field sees `None` on every gap and abstains — same as
+“no pairing”.
 
 ---
 
 ## 7. Stacking at the splice (single multiply)
 
-Same as program-gain § 5: one `RegionPatch.gain`.
+Same as program-gain § 5: one `RegionPatch.gain`. Program-gain has **already
+landed** in this tree (`domain::program_gain`, `stack_fill_gain`,
+`request.program_gain: ProgramGainDecision`). Implement against that, replacing
+the RMS local half. Do not bundle the two Changes into one commit/PR.
 
 ```text
-g_program  = <other plan, or 1.0 if that Change has not landed>
-g_local    = normalize_fill ? collar_residual_gain(...) : 1.0
+g_program  = request.program_gain.gain()          # 1.0 on any refusal
+offset_prior = Applied { offset_db } else 0
+g_local    = collar_residual_gain(...)            # 1.0 when flag off / abstain / refuse
 g_total    = g_program * g_local
 ```
 
 **Do not** compute local from `rms(fill * g_program)` — that was the fix for
 the *RMS-ratio* estimator double-counting. The residual formula is the
-double-count guard for *this* estimator.
+double-count guard for *this* estimator. `stack_fill_gain` today *is* that RMS
+path; rewrite it (or replace the call site) so the local factor comes from
+`collar_residual_gain`, not `compute_fill_gain`.
 
-If this Change lands **before** program-gain: `g_program = 1`, prior = 0,
-`g_local = 10^(-d_local/20)`. A constant-gain donor is then matched from the
-collar (holes with enough pairs) and left unmatched where the collar abstains.
-That is acceptable; program-gain later fills those abstentions. A same-master
-quiet hole still gets residual 0.
+If this Change is ever replayed onto a tree **without** program-gain:
+`g_program = 1`, prior = 0, `g_local = 10^(-d_local/20)`. A constant-gain donor
+is then matched from the collar (holes with enough pairs) and left unmatched
+where the collar abstains. That is acceptable; program-gain later fills those
+abstentions. A same-master quiet hole still gets residual 0.
 
 `--no-normalize` remains local-off. It must not clear `collar_level` from the
 scan report (measurement stays; apply does not).
+
+Program-gain’s remaining media acceptance still expects `--normalize` to
+restore 15/g6 and 2/g6 via the RMS residual. **This plan withdraws that row**
+(§ 10). Run program-gain’s default-flags cohort (local off) first if that
+table is still owed; once this ships, the `--normalize` regain is obsolete.
 
 ---
 
@@ -242,16 +283,40 @@ Keep `normalize_gain` = `g_total` (splice multiplier; `fill_level` contract).
 |---|---|
 | `scan.gaps[].collar_level` | measurement; omit when `None` |
 | `status.patched.normalize_gain` | `g_total` (existing) |
-| `status.patched.program_gain` | other plan, if present |
+| `status.patched.program_gain` | landed program-gain field |
 | `status.patched.local_gain` | `g_local` (`1.0` when off or abstained), **unconditional** once this ships |
 
-`g_local = normalize_gain / program_gain` only when program-gain has shipped and
-is non-zero. Emit `local_gain` anyway — dividing is how the last plan avoided a
+`g_local = normalize_gain / program_gain` only when program-gain is present and
+non-zero. Emit `local_gain` anyway — dividing is how the last plan avoided a
 third field, but this estimator’s abstention vs “on and unity residual” are
 different facts; `1.0` from residual-zero and `1.0` from abstention would
-collapse. **Stamp the reason** on the patch record: `applied` / `abstained_n` /
-`refused_residual` / `flag_off` / `channels`. A small enum, serialized as a
-string, next to `local_gain`.
+collapse. **Stamp the reason** on the patch record next to `local_gain`.
+
+Mirror `program_fill_gain`: flag first (reason, not outcome — every failure is
+unity), then preconditions, then the residual bound.
+
+```text
+collar_residual_gain(
+    collar: Option<&CollarLevelOffset>,
+    enabled: bool,                 # normalize_fill
+    offset_prior: f64,             # Applied offset_db, else 0
+    max_residual_db: f64,          # max_fill_gain_db
+    channels_comparable: bool,     # from program_levels.offset; true if no offset object
+) -> LocalGainDecision
+```
+
+| Reason (`snake_case`) | When |
+|---|---|
+| `flag_off` | `enabled == false` (collar may still be on the scan JSON) |
+| `channels` | collar `None` and `channels_comparable == false` |
+| `abstained_n` | collar `None` otherwise (`n_pairs < 8`, B not scanned, old report) |
+| `refused_residual` | collar present, `\|d_local − offset_prior\| > max_residual_db` |
+| `applied` | collar present, residual inside the bound (including ~0) |
+
+`LocalGainDecision::{Applied { gain }, Refused { reason }}` — same shape as
+program gain, per-gap rather than per-run. Thread `gain` + reason onto bracket
+`RegionPatch` **and** `GapRepairStrategy::SilenceSplice` (today the splice
+only stores `normalize_gain = request.program_gain.gain()`).
 
 ---
 
@@ -260,14 +325,20 @@ string, next to `local_gain`.
 ```toml
 [repair]
 normalize_fill = false          # unchanged by this Change (program-gain owns the default)
-local_pair_collar_secs = 2.0    # new; config-only
+local_pair_collar_secs = 2.0    # new; config-only; **scan** reads this (ScanGapsRequest)
 # MIN_LOCAL_PAIRS = 8 is a code constant, not a knob, until something asks to tune it
 max_fill_gain_db = 12.0         # reuse: refuse |residual| past this, do not clamp to it
+normalize_window_secs = 5.0     # **keep reading** — A-border template / correlate_frames /
+                                # fingerprint noise_collar_secs. Named for normalization,
+                                # used as a border size. Not this estimator’s window.
 ```
 
-`normalize_window_secs` becomes dead for production. Leave the field (don’t
-break TOML) but stop reading it; document it as unused. No new CLI. `--normalize`
-/ `--no-normalize` stay the on/off for this path.
+Stop using `normalize_window_secs` for `compute_a_border_rms` / fill gain.
+Do **not** drop it from `PatchRequestSettings`, `FillWindowFrames`,
+`FillGeometryRecipe`, or the fingerprint probe. A checklist item that says
+“stop reading it in patch” is wrong and would break placement. Leave the TOML
+field; document that the name is historical. No new CLI. `--normalize` /
+`--no-normalize` stay the on/off for this path.
 
 ---
 
@@ -284,9 +355,11 @@ break TOML) but stop reading it; document it as unused. No new CLI. `--normalize
 - Fewer than 8 pairs → `None`.
 - Steadiness: the A block abutting the core is excluded; the next steady block
   can pair.
-- Residual: `offset_prior = 6`, `d_local = 6` → `g_local = 1`.
+- Residual: `offset_prior = 6`, `d_local = 6` → `g_local = 1`, reason `applied`.
 - Residual: `offset_prior = 0`, `d_local = 6` → `g_local ≈ 0.501`.
-- Refuse, do not clamp: `residual_db = 13` → `g_local = 1.0`.
+- Refuse, do not clamp: `residual_db = 13` → `g_local = 1.0`, reason `refused_residual`.
+- `enabled = false` → `g_local = 1`, reason `flag_off`, collar still `Some` on the gap.
+- Collar `None`, `channels_comparable = false` → reason `channels`, not `abstained_n`.
 
 **Apply / stacking**
 
@@ -313,17 +386,19 @@ Default flags (local off) are program-gain’s acceptance, not this plan’s.
 
 ## 11. Implement checklist
 
-- [ ] Extract pair-collection + summary from `paired_level_offset`; add window filter
-- [ ] `CollarLevelOffset` + `MIN_LOCAL_PAIRS` + collar window helper (pre/post, exclude core)
-- [ ] Stamp `Gap.collar_level` in `ScanGaps` next to `program_levels` (timelines still live)
-- [ ] `GapScanJson` / gap object table in [json-output.md](../json-output.md); omit when `None`
-- [ ] Pure `collar_residual_gain(collar, offset_prior, max_db) -> LocalGainDecision`
-- [ ] Replace `compute_fill_gain` production call; thread `g_local` onto bracket **and** dual-fit
+- [ ] Extract collect + summarize from `paired_level_offset`; collar predicate on A blocks; bin `n_pre`/`n_post` from pair A-times
+- [ ] `CollarLevelOffset` in `program_levels.rs` + `MIN_LOCAL_PAIRS` + collar window helper (pre/post, exclude core)
+- [ ] Thread `local_pair_collar_secs` onto `ScanGapsRequest` (`composition.rs` and every request literal)
+- [ ] Stamp `Gap.collar_level` in `ScanGaps` next to `program_levels` (timelines still live); skip when channels incomparable
+- [ ] Gap object table in [json-output.md](../json-output.md); omit when `None` (`GapScanJson` serializes `Gap` already)
+- [ ] Pure `collar_residual_gain` per § 8 (`enabled`, `offset_prior`, `max_residual_db`, `channels_comparable`)
+- [ ] Replace the RMS half of `stack_fill_gain` / `compute_fill_gain` production call; drop the local `debug_assert!(gain >= 1.0)`
+- [ ] Thread `g_local` + reason onto bracket **and** dual-fit / `SilenceSplice` (today splice stores only `program_gain`)
 - [ ] Emit `local_gain` + reason; `normalize_gain` remains the product
-- [ ] Config `local_pair_collar_secs`; stop reading `normalize_window_secs` in patch
-- [ ] Docs: [pipeline.md](../pipeline.md) § Fill normalization, README (`--normalize` now this estimator)
+- [ ] Config `local_pair_collar_secs`; **keep** reading `normalize_window_secs` for border geometry / fingerprint collar
+- [ ] Docs: [pipeline.md](../pipeline.md) § Fill gain (local half is this estimator), README (`--normalize` now this estimator); `max_fill_gain_db` is a residual refusal, not a boost clamp
 - [ ] Tests in § 10; `cargo test`; clippy clean
-- [ ] Do **not** bundle with program-gain. Do **not** keep `BlockLevel` arrays. Do **not** read B gap interior
+- [ ] Do **not** bundle with program-gain. Do **not** keep `BlockLevel` arrays. Do **not** read B gap interior. Do **not** stop reading `normalize_window_secs` as a border size
 
 ---
 
@@ -342,6 +417,6 @@ program-gain off is matched from the collar where it has pairs; and
 
 - [TEMP-program-gain-plan.md](TEMP-program-gain-plan.md) — file-wide scalar, stacking identity
 - [archive/TEMP-ab-program-levels-plan.md](archive/TEMP-ab-program-levels-plan.md) — pairing rules
-- [TEMP-fill-normalize-local-reference-2026-08-25.md](TEMP-fill-normalize-local-reference-2026-08-25.md) — defect this replaces the RMS fix for
+- [TEMP-fill-normalize-local-reference-2026-08-25.md](archive/TEMP-fill-normalize-local-reference-2026-08-25.md) — defect this replaces the RMS fix for
 - [settled.md](settled.md) § A B-relative gain; § C RMS-attenuation latch
-- [pipeline.md](../pipeline.md) — current boost-only RMS normalize
+- [pipeline.md](../pipeline.md) — current two-half fill gain (program scalar + RMS local residual)

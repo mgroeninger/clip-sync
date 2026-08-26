@@ -430,7 +430,7 @@ refuted cutting on `edge_delta_db`) carries `normalize_gain` **0.00 dB**. Three 
 ear-confirmed audible and a fourth is audible but confounded; the lowest confirmed is 45/g5 at only
 +5.61 dB of gain, so the audible threshold sits well below `max_fill_gain_db`. Full sizing, ear
 labels and the mechanism reconstruction:
-[dev/TEMP-fill-normalize-local-reference-2026-08-25.md](dev/TEMP-fill-normalize-local-reference-2026-08-25.md).
+[dev/archive/TEMP-fill-normalize-local-reference-2026-08-25.md](dev/archive/TEMP-fill-normalize-local-reference-2026-08-25.md).
 Gap indices there and here are **0-based** (dump-filename convention); the roll-up CSV's
 `Gap1Based` column collides with real, differently-numbered gaps if quoted directly.
 

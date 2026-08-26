@@ -67,7 +67,10 @@ so treat "both defects are at the post join" as one axis to **test**, not as an 
 
 Ear-confirmed defect, **n = 3** (45/g4, 45/g5, 19/g13; 31/g7 audible but confounded by its map-step
 straddle). Sizing, attribution and ear labels:
-[TEMP-fill-normalize-local-reference-2026-08-25.md](docs/dev/TEMP-fill-normalize-local-reference-2026-08-25.md).
+[TEMP-fill-normalize-local-reference-2026-08-25.md](docs/dev/archive/TEMP-fill-normalize-local-reference-2026-08-25.md)
+— **archived 2026-08-26**, all four of its questions promoted or closed. Its Results 1–5 are the
+durable measurement; its design half (a cap on the RMS ratio, the ~4.5 dB corridor) is **void**, see
+that note's § *What survives*.
 Durable reading: [json-output.md](docs/json-output.md) § FillLevelCheck and
 [pipeline.md](docs/pipeline.md) § Fill normalization (pair 19/g013, `normalize_gain = 3.88`,
 energy-pooled 5 s + 5 s vs −52 dB local shoulders). Boost-only PR archived:

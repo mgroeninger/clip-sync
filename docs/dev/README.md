@@ -65,7 +65,7 @@ is untracked — that is a bug in the catalog, not a state a doc may sit in.
 | Draft | What it is | Tracked as |
 |-------|-----------|-----------|
 | [TEMP-program-gain-plan.md](TEMP-program-gain-plan.md) | Apply trusted `offset_db` as a whole-program fill scalar; default `normalize_fill` off; local residual additive after the scalar. **Startable** 2026-08-26 — latch discharged; § 4a holds the calibration and names the one remaining blocker (three thresholds need a Tier 2 sweep) | [BACKLOG.md](../../BACKLOG.md) § *Fill normalize* |
-| [TEMP-local-paired-gain-plan.md](TEMP-local-paired-gain-plan.md) | Replace RMS `compute_fill_gain` with paired B−A collar residual around each gap, informed by the program offset. Separate Change from program-gain | [BACKLOG.md](../../BACKLOG.md) § *Fill normalize* |
+| [TEMP-local-paired-gain-plan.md](TEMP-local-paired-gain-plan.md) | Replace RMS `compute_fill_gain` with paired B−A collar residual around each gap, informed by the program offset. Separate Change from program-gain. **Startable** 2026-08-26 — `normalize_window_secs` stays a border size; collar width is a scan knob | [BACKLOG.md](../../BACKLOG.md) § *Fill normalize* |
 | [TEMP-flac-output-plan.md](TEMP-flac-output-plan.md) | In-process `--flac` lossless output, peer of `--wav`. Motivated by the RIFF `u32` data-chunk limit | [BACKLOG.md](../../BACKLOG.md) § *Repair R6* |
 | [TEMP-nway-donor-alignment-plan.md](TEMP-nway-donor-alignment-plan.md) | Repair one damaged copy from **multiple** donors with sparse non-overlapping damage | [settled.md](settled.md) § C — latched, no corpus |
 
@@ -74,13 +74,15 @@ is untracked — that is a bug in the catalog, not a state a doc may sit in.
 Measurement records. A findings note lives here only while it has an open question; once every
 question is promoted to [BACKLOG.md](../../BACKLOG.md) or closed, it archives.
 
-| Note | What it records | Tracked as |
-|------|-----------------|-----------|
-| [TEMP-fill-normalize-local-reference-2026-08-25.md](TEMP-fill-normalize-local-reference-2026-08-25.md) | Sizes the normalize-boost exposure (308 gaps: 65% unity, 6 of 8 hot fills hot only from our own gain) and carries four ear labels | [BACKLOG.md](../../BACKLOG.md) § *Fill normalize boosts against a non-local reference* |
-
-All four notes open on 2026-08-24 (the two flat-3000 runs, the collapsed-bridge census, the pair-50
-outcomes) went to [archive/](archive/) that day under exactly that rule, and their surviving questions
-are [BACKLOG.md](../../BACKLOG.md) § *Post-join defects (pairs 31 and 50)*.
+**None open.** All four notes open on 2026-08-24 (the two flat-3000 runs, the collapsed-bridge
+census, the pair-50 outcomes) went to [archive/](archive/) that day under exactly that rule, and
+their surviving questions are [BACKLOG.md](../../BACKLOG.md) § *Post-join defects (pairs 31 and 50)*.
+[archive/TEMP-fill-normalize-local-reference-2026-08-25.md](archive/TEMP-fill-normalize-local-reference-2026-08-25.md)
+followed on 2026-08-26 — the note that sized the normalize-boost exposure (308 gaps: 65% at unity,
+6 of 8 hot fills hot only from our own gain) and carried four ear labels. Its Q1 is
+[BACKLOG.md](../../BACKLOG.md) § *Fill normalize*; the other three closed with the program-gain
+Change. Note the section stayed **open** while the note archived: the rule is about the note's
+questions being promoted, not about the BACKLOG section closing.
 
 > Architecture: [../../PLAN.md](../../PLAN.md). Open work: [../../BACKLOG.md](../../BACKLOG.md).
 > Settled verdicts: [settled.md](settled.md).

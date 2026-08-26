@@ -11,7 +11,7 @@ now startable in [BACKLOG.md](../../../BACKLOG.md) § *Fill normalize*. Live sum
 
 **Companions:** [settled.md](../settled.md) § A **B-relative / donor-shoulder fill gain**
 (refuted — this plan is **not** that idea, see § 1); local-reference defect sizing
-[TEMP-fill-normalize-local-reference-2026-08-25.md](../TEMP-fill-normalize-local-reference-2026-08-25.md).
+[TEMP-fill-normalize-local-reference-2026-08-25.md](TEMP-fill-normalize-local-reference-2026-08-25.md).
 
 **Media hygiene:** pair index only; no filenames / titles / paths in the repo.
 

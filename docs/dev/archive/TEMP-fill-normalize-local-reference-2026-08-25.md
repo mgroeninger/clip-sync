@@ -1,10 +1,18 @@
 # TEMP — Fill normalize against a non-local reference: corpus sizing + ear labels (2026-08-25)
 
-**Status:** findings note, not a Change, 2026-08-25. Sizes the exposure behind
-[BACKLOG.md](../../BACKLOG.md) § *Fill normalize boosts against a non-local reference*, which until
-now rested on a single ear-confirmed gap (19/g13) and explicitly forbade designing from n = 1.
-**This note proposes no change**; it supplies the count that item asked for, plus four ear labels.
-Open questions are promoted to that BACKLOG section.
+**Status:** findings note, not a Change, 2026-08-25. **Archived 2026-08-26** under
+[../README.md](../README.md) § *Findings notes* — a note lives in `docs/dev/` only while it has an
+open question, and all four of this one's were promoted or closed that day (see § *What survives*).
+Sizes the exposure behind [BACKLOG.md](../../../BACKLOG.md) § *Fill normalize boosts against a
+non-local reference*, which until now rested on a single ear-confirmed gap (19/g13) and explicitly
+forbade designing from n = 1. **This note proposes no change**; it supplies the count that item asked
+for, plus four ear labels.
+
+> **Read § *What survives* before quoting the design half.** Results 1–5 are measurement and stand.
+> Result 6, the second headline ("the cap has to apply to every boost"), and Q2/Q4 argue for a cap on
+> `compute_fill_gain`'s RMS ratio — a fix **nobody is building**. The local reference is no longer
+> consulted by default (`normalize_fill` off, 2026-08-26) and its replacement is a paired collar
+> residual, not a cap. Do not mine the ~4.5 dB corridor for a threshold.
 
 **Headline.** Of 308 spliced gaps, 199 (65%) are already left at unity by the boost-only policy and
 109 are boosted. Of the 8 boosted gaps whose fill reads hotter than +3 dB at the seams, **6 would sit
@@ -18,9 +26,9 @@ rises ~15 dB within two seconds of the gap.
 measured `edge_delta_db` of only +4.89. A fix aimed at the `max_fill_gain_db` ceiling would miss it.
 The cap has to apply to every boost, not to the clamped cohort.
 
-Durable behaviour this note reads against: [../json-output.md](../json-output.md) § FillLevelCheck
-and [../pipeline.md](../pipeline.md) § Fill normalization. The boost-only PR that produced the
-current gain policy is [archive/TEMP-fill-normalize-boost-only-plan.md](archive/TEMP-fill-normalize-boost-only-plan.md).
+Durable behaviour this note reads against: [../../json-output.md](../../json-output.md) § FillLevelCheck
+and [../../pipeline.md](../../pipeline.md) § Fill normalization. The boost-only PR that produced the
+current gain policy is [TEMP-fill-normalize-boost-only-plan.md](TEMP-fill-normalize-boost-only-plan.md).
 
 ---
 
@@ -60,7 +68,7 @@ such rows must be held out rather than defaulted to 1.0. The 2026-08-24 run has 
 
 Because the gain is a uniform scalar on the fill, `edge_delta_db − gain_db` is what the fill would
 have measured at unity. That subtraction is the instrument this note rests on; the durable rule it
-applies is already stated in [../json-output.md](../json-output.md) § FillLevelCheck ("do not compare
+applies is already stated in [../../json-output.md](../../json-output.md) § FillLevelCheck ("do not compare
 these deltas across gaps without dividing out `normalize_gain` first").
 
 ## Result 1 — the exposure, sized
@@ -119,7 +127,7 @@ gain is divided out. Every donor-driven row above is at or near unity; every "ou
 
 31/g7's stutter is an independently recorded defect, not a level defect: the gap straddles pair 31's
 map step (`step_ms = −1122.2` on the 2026-08-23 dump; see the blocked step-boundary verdict in
-[settled.md](settled.md) § D and BACKLOG § *Fill placement*). A gap that stutters cannot cleanly
+[../settled.md](../settled.md) § D and BACKLOG § *Fill placement*). A gap that stutters cannot cleanly
 attribute audibility to level, so **the cohort should be counted as n = 3**, with 31/g7 corroborating
 only. Note this is dump `g007`, *not* the repo's 31/g8 — see § *Naming convention*.
 
@@ -174,7 +182,34 @@ the cohort. Consequences:
 
 ---
 
-## Open questions (promoted to BACKLOG § *Fill normalize boosts against a non-local reference*)
+## What survives (disposition, 2026-08-26)
+
+Written on archiving. The measurements are durable; the design half is not.
+
+| Section | Disposition |
+|---|---|
+| Results 1, 2, 4, 5 | **Stand.** Measurement of runs that are gitignored and deletable; this is their durable record. Result 5's mechanism (pooled 5 s + 5 s reference reading 7.6 dB hotter than the immediate shoulders on 5/g6) is still the diagnosis — the shipped change stops that reference being consulted by default rather than fixing it |
+| Result 2's obligation | **Re-incurred.** "Re-run the fill-level roll-up after any gain change" — the 2026-08-26 program-gain change is a gain change, so the discharge claimed here is spent. The 2026-08-25 program-gain census re-discharges it |
+| Result 3's instrument | **Stands, and was confirmed.** `edge_delta_db − 20·log10(normalize_gain)` predicted 5/g6 at **−1.39** dB and 2/g6 at **+3.02**; the program-gain census measured **−1.40** and **+2.97** with local off. But `normalize_gain` is now the product `g_program * g_local`, so "the excess is our gain" no longer localizes blame — attributing it to the **local** reference needs `normalize_gain / program_gain` |
+| Result 6, and the second headline | **Void.** Both argue that a cap must reach every boost, over a ~4.5 dB corridor between 15/g6 (+1.14 dB) and 45/g5 (+5.61 dB). That corridor was derived from whole-fill RMS against a wide A window, which is the estimator being replaced. No cap is being built |
+| **Q1** — are 5/g6 and 15/g3 audible? | **Promoted**, [BACKLOG.md](../../../BACKLOG.md) § *Fill normalize* ("Ear-label 5/g6 and 15/g3"). **Demoted in force**: it was framed as the question that picks between the three candidate fixes, and those are gone. It is now evidence for the collar-residual work, not a gate on shipping |
+| **Q2** — which fix? | **Closed.** All three candidates (narrow `normalize_window_secs`, quieter-of-wide-vs-local, cap by the local shoulder ratio) are withdrawn at [BACKLOG.md](../../../BACKLOG.md) § *Fill normalize*, superseded by [../TEMP-local-paired-gain-plan.md](../TEMP-local-paired-gain-plan.md) — a paired B−A collar residual around the hole, not an RMS-window choice |
+| **Q3** — default `normalize_fill` false? | **Answered yes**, shipped 2026-08-26 ([../TEMP-program-gain-plan.md](../TEMP-program-gain-plan.md)). This note argued *against* it, on the ground that 15/g6 (+1.14 dB) and 2/g6 (+0.25 dB) are genuine quiet-donor boosts that turning the policy off gives up. That cost is **accepted, not refuted**: both are under 1.2 dB and both are recoverable with `--normalize` |
+| **Q4** — the acceptance test | **Split.** "The six 'ours' gaps fall to approximately unity" and "24/g46 stays at 0.00 dB" survive verbatim as [../TEMP-program-gain-plan.md](../TEMP-program-gain-plan.md) § 11 rows 1–2. "15/g6 and 2/g6 must keep their boosts" is **withdrawn** — § 11 replaces it with *may lose under the default, must regain under `--normalize`* |
+
+What replaced the fix this note was sizing: a whole-program A↔B scalar
+(`g_program = 10^(−offset_db/20)`) on every B-derived fill with the hole-local knob defaulted off
+([../TEMP-program-gain-plan.md](../TEMP-program-gain-plan.md)), and a paired collar residual to
+replace `compute_fill_gain` when the local knob is re-enabled
+([../TEMP-local-paired-gain-plan.md](../TEMP-local-paired-gain-plan.md)). Neither is a cap on the
+RMS ratio. The corpus fact that made the whole-program half possible — every pair's offset inside
+±0.26 dB — also means the program scalar does **not** rescue this note's cohort: the six were
+boosted 5.6–12 dB by a local reference, and no ~0.2 dB master match touches that. Turning the local
+knob off is what removes them.
+
+---
+
+## Open questions as written 2026-08-25 — all four now dispositioned above
 
 **Q1 — Are 5/g6 and 15/g3 audible?** Neither pair has ever had a listen directory; both need a
 `--gap-listen` dump. 15/g3 is the discriminating one (see Result 6). Until it is labelled, the
