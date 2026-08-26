@@ -346,6 +346,11 @@ const CORPUS_MAX_SPREAD_DB: f64 = 2.412;
 /// Widest robust chunk drift on the same corpus, on pairs whose offset is likewise constant.
 const CORPUS_MAX_ROBUST_DRIFT_DB: f64 = 1.291;
 
+/// The value that actually ships, so this file measures the gate rather than the calibration that
+/// preceded it. It sits above [`CORPUS_MAX_SPREAD_DB`] by construction; the assertion below is that
+/// a real dynamics mismatch reads above *this*, not merely above the corpus.
+const SHIPPED_MAX_SPREAD_DB: f64 = clip_sync_repair::domain::DEFAULT_PROGRAM_GAIN_MAX_SPREAD_DB;
+
 /// dB-to-neper conversion, so the ramp expression needs no comma (a comma inside an ffmpeg filter
 /// argument separates filters, and escaping it through `Command` args is a portability trap).
 const LN10_OVER_20: f64 = 0.115_129_254_6;
@@ -580,19 +585,24 @@ fn calibration_compressed_b_must_show_up_as_spread() {
         let report = scan(&master, &compressed, temp.path());
         let reading = read_point(&format!("grieg B compressed {ratio}:1"), None, &report)
             .expect("compressed B should still pair");
-        if reading.spread_db > CORPUS_MAX_SPREAD_DB && detected.is_none() {
+        if reading.spread_db > SHIPPED_MAX_SPREAD_DB && detected.is_none() {
             detected = Some(ratio);
         }
     }
 
-    // A spread gate is only possible if a genuine dynamics difference lands clear of the widest
-    // corpus pair that a single scalar *does* describe. Which ratios clear it is the calibration;
-    // that at least one does is the assertion.
+    // The shipped refusal is only meaningful if a genuine dynamics difference lands clear of it.
+    // Which ratios clear it is the calibration; that at least one does is the assertion.
+    const {
+        assert!(
+            SHIPPED_MAX_SPREAD_DB > CORPUS_MAX_SPREAD_DB,
+            "the shipped max_spread_db must sit above the widest corpus pair that a single scalar does describe, or it refuses real work"
+        )
+    };
     assert!(
         detected.is_some(),
-        "no compression ratio in {COMPRESSOR_RATIOS:?} pushed spread past the widest corpus pair \
-         ({CORPUS_MAX_SPREAD_DB} dB) that a scalar does describe — § 4's max_spread_db cannot be \
-         calibrated on this evidence"
+        "no compression ratio in {COMPRESSOR_RATIOS:?} pushed spread past the shipped \
+         max_spread_db ({SHIPPED_MAX_SPREAD_DB} dB), so the shipped spread refusal catches no \
+         dynamics mismatch this fixture can produce"
     );
     eprintln!(
         "spread gate detection floor: {:?}:1 compression (ratios below it hide inside the corpus range)",

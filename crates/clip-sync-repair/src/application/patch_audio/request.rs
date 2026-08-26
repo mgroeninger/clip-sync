@@ -30,6 +30,10 @@ pub struct PatchAudioResult {
 /// Only per-run opt-ins that no config key feeds stay as mutable fields here.
 pub struct PatchAudioRequest {
     pub report: GapReport,
+    /// Whole-program fill gain for this run, resolved **once** from `report.program_levels` in
+    /// [`PatchRequestSettings::into_request`] — never re-derived per gap. Every B-derived fill on
+    /// every path multiplies by [`ProgramGainDecision::gain`]; a refusal is unity.
+    pub program_gain: crate::domain::ProgramGainDecision,
     /// Patch policy. Read through `Deref` (`request.fill_mode`); assign only via `patch_settings`.
     pub settings: PatchRequestSettings,
     /// P1 report-only: compute the residual/floor verdict per gap and attach it to the outcome/JSON.
@@ -59,9 +63,15 @@ pub struct PatchRequestSettings {
     pub measure_fill_level: bool,
     /// Unresolved `--only-gaps` / `--skip-gaps` intent; resolved in `run_repair` once the report exists.
     pub gap_selection: GapSelectionMode,
+    /// Hole-local residual boost. Default **off** since 2026-08-26 — see
+    /// [`RepairConfig::normalize_fill`](crate::infrastructure::config::RepairConfig::normalize_fill).
     pub normalize_fill: bool,
     pub normalize_window_secs: f64,
     pub max_fill_gain_db: f64,
+    /// Match B-derived fills to A's program level from the scan's paired offset. The decision it
+    /// produces is resolved once, in [`Self::into_request`].
+    pub program_gain: bool,
+    pub program_gain_params: crate::domain::ProgramGainParams,
     /// Minimum normalized Pearson correlation at each gap seam (pre and post). Regions below
     /// this threshold on either seam are skipped.
     pub min_fill_correlation: f32,
@@ -179,7 +189,13 @@ impl PatchRequestSettings {
     pub fn into_request(self, report: GapReport) -> Result<PatchAudioRequest, String> {
         let selection =
             crate::domain::gap_fill::resolve_gap_selection(&self.gap_selection, &report)?;
+        let program_gain = crate::domain::program_fill_gain(
+            report.program_levels.as_ref(),
+            self.program_gain,
+            &self.program_gain_params,
+        );
         Ok(PatchAudioRequest {
+            program_gain,
             report,
             settings: self,
             // Report-only residual measurement is opt-in; callers set it on the request directly.

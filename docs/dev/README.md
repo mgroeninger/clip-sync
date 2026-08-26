@@ -65,6 +65,7 @@ is untracked — that is a bug in the catalog, not a state a doc may sit in.
 | Draft | What it is | Tracked as |
 |-------|-----------|-----------|
 | [TEMP-program-gain-plan.md](TEMP-program-gain-plan.md) | Apply trusted `offset_db` as a whole-program fill scalar; default `normalize_fill` off; local residual additive after the scalar. **Startable** 2026-08-26 — latch discharged; § 4a holds the calibration and names the one remaining blocker (three thresholds need a Tier 2 sweep) | [BACKLOG.md](../../BACKLOG.md) § *Fill normalize* |
+| [TEMP-local-paired-gain-plan.md](TEMP-local-paired-gain-plan.md) | Replace RMS `compute_fill_gain` with paired B−A collar residual around each gap, informed by the program offset. Separate Change from program-gain | [BACKLOG.md](../../BACKLOG.md) § *Fill normalize* |
 | [TEMP-flac-output-plan.md](TEMP-flac-output-plan.md) | In-process `--flac` lossless output, peer of `--wav`. Motivated by the RIFF `u32` data-chunk limit | [BACKLOG.md](../../BACKLOG.md) § *Repair R6* |
 | [TEMP-nway-donor-alignment-plan.md](TEMP-nway-donor-alignment-plan.md) | Repair one damaged copy from **multiple** donors with sparse non-overlapping damage | [settled.md](settled.md) § C — latched, no corpus |
 

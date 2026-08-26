@@ -221,6 +221,14 @@ pub enum GapRepairStrategy {
         /// S1: independent shoulder-seam read vs. the applied placement, derived from `pre_lag`/`post_lag`/
         /// `pre_seam_r`/`post_seam_r` above — no new sweep. Record-only — no gate reads this.
         registration_residual_ms: Option<f64>,
+        /// Whole-program master match for this run (`domain::program_gain`), or `1.0` when refused.
+        /// Carried on the strategy — rather than read from the request at the splice — so the
+        /// executor and the preview-only `outcome_from_spec` cannot disagree about what was applied.
+        ///
+        /// This path takes **no local** normalize gain: hole-local normalization was never designed
+        /// for a dual-fit interior. Withholding the *program* half too would leave rescued holes at
+        /// B's master while bracket holes sit at A's, which is why this is not simply `1.0`.
+        normalize_gain: f32,
     },
 }
 
@@ -521,6 +529,7 @@ mod tests {
             residual: None,
             confidence: FillConfidence::High,
             registration_residual_ms: None,
+            normalize_gain: 1.0,
         }
     }
 

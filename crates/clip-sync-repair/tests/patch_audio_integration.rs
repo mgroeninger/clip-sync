@@ -847,6 +847,39 @@ fn patch_to_samples_and_summary(
     (samples, spec.sample_rate, spec.channels, summary)
 }
 
+/// A `ProgramLevels` carrying one paired offset, for the whole-program gain tests. `offset_db` is
+/// **B minus A**, so a negative value means B is the quieter master and the fill must come up.
+fn program_levels_offset(
+    offset_db: f64,
+    spread_db: f64,
+) -> clip_sync_repair::domain::program_levels::ProgramLevels {
+    use clip_sync_repair::domain::program_levels::{
+        AbLevelOffset, ProgramLevelContext, ProgramLevels,
+    };
+    let ctx = ProgramLevelContext {
+        mid_db: Some(-20.0),
+        floor_db: Some(-70.0),
+        n_active: 600,
+    };
+    ProgramLevels {
+        a: ctx,
+        b: Some(ctx),
+        offset: Some(AbLevelOffset {
+            offset_db,
+            spread_db,
+            p10_db: offset_db,
+            p90_db: offset_db,
+            n_pairs: 500,
+            n_active: 600,
+            n_steady: 550,
+            first_pair_secs: 0.0,
+            last_pair_secs: 600.0,
+            channels_comparable: true,
+            chunks: Vec::new(),
+        }),
+    }
+}
+
 /// The `normalize_gain` recorded for a single-gap patch run.
 fn only_gap_normalize_gain(summary: &PatchSummary) -> f32 {
     match &summary.gaps[0].status {
@@ -1025,6 +1058,89 @@ fn patch_audio_trusts_structure_when_waveform_seams_disagree() {
         } => {}
         other => panic!("expected structure-trusted patch, got {other:?}"),
     }
+}
+
+/// Whole-program gain, end to end (`docs/dev/TEMP-program-gain-plan.md`): a scan that measured B
+/// 6 dB *quieter* than A must make every fill come up by that much, with no hole-local
+/// normalization involved — and the JSON must say so twice, as the applied `normalize_gain` and as
+/// the run-level `program_gain` that lets a reader factor out the local residual.
+#[test]
+fn patch_audio_applies_the_whole_program_gain_without_local_normalize() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    // B is the same frequency but quieter than A's borders — the level difference this run corrects
+    // is the *program* one, declared by the scan below, not one measured at the hole.
+    let fixture = sine_gap_fixture(temp.path(), SAMPLE_RATE, SAMPLE_RATE, 440.0, 2_500.0);
+    let mut report = make_report(
+        fixture.path_a,
+        fixture.path_b,
+        stereo_identical_compat(SAMPLE_RATE),
+    );
+    report.program_levels = Some(program_levels_offset(-6.0, 0.3));
+
+    // Local normalization OFF: the applied gain must be the program scalar exactly.
+    let (_, _, _, summary) =
+        patch_to_samples_and_summary(patch_request(report, false, 2.0, 0.35), 10);
+
+    let expected = 10f32.powf(6.0 / 20.0);
+    let applied = only_gap_normalize_gain(&summary);
+    assert!(
+        (applied - expected).abs() < 1e-4,
+        "a -6 dB program offset must apply a {expected} boost to the fill, got {applied}"
+    );
+
+    let json = serde_json::to_value(&summary).expect("summary serializes");
+    let patched = &json["gaps"][0]["status"]["patched"];
+    let program_gain = patched["program_gain"]
+        .as_f64()
+        .expect("program_gain in JSON");
+    let normalize_gain = patched["normalize_gain"]
+        .as_f64()
+        .expect("normalize_gain in JSON");
+    assert!(
+        (program_gain - f64::from(expected)).abs() < 1e-4,
+        "per-gap program_gain must record the run scalar, got {program_gain}"
+    );
+    // The documented decomposition: g_local = normalize_gain / program_gain, and with local off
+    // that residual is exactly 1.
+    assert!(
+        (normalize_gain / program_gain - 1.0).abs() < 1e-4,
+        "local residual must be unity with normalize_fill off, got {}",
+        normalize_gain / program_gain
+    );
+
+    // And the run-level record of *why*, which is what a human line and a roll-up both read.
+    let run = &json["program_gain"];
+    assert!(
+        run["refused"].is_null(),
+        "a 0.3 dB spread at -6 dB must not be refused: {run}"
+    );
+    assert!(
+        (run["offset_db"].as_f64().expect("offset_db") + 6.0).abs() < 1e-9,
+        "{run}"
+    );
+}
+
+/// The same run with a spread past `program_gain_max_spread_db`: no single scalar describes the
+/// pair, so the policy refuses rather than applying a number it has reason to disbelieve, and the
+/// fill lands at B's own level (unity) — the pre-2026-08-26 behaviour, exactly.
+#[test]
+fn patch_audio_refuses_the_program_gain_on_a_wide_spread() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fixture = sine_gap_fixture(temp.path(), SAMPLE_RATE, SAMPLE_RATE, 440.0, 2_500.0);
+    let mut report = make_report(
+        fixture.path_a,
+        fixture.path_b,
+        stereo_identical_compat(SAMPLE_RATE),
+    );
+    report.program_levels = Some(program_levels_offset(-6.0, 9.0));
+
+    let (_, _, _, summary) =
+        patch_to_samples_and_summary(patch_request(report, false, 2.0, 0.35), 10);
+    assert_eq!(only_gap_normalize_gain(&summary), 1.0);
+
+    let json = serde_json::to_value(&summary).expect("summary serializes");
+    assert_eq!(json["program_gain"]["refused"], "spread");
+    assert_eq!(json["gaps"][0]["status"]["patched"]["program_gain"], 1.0);
 }
 
 #[test]

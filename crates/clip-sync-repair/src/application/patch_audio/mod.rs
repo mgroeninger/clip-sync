@@ -110,6 +110,17 @@ pub(crate) fn empty_plan_write_result(
     empty_plan_result(request, plan, PatchRunKind::Write)
 }
 
+/// The run's program-gain decision plus the measurement it was taken from, for the summary stamp.
+///
+/// The decision itself is resolved once in `PatchRequestSettings::into_request`; this only pairs it
+/// with the offset/spread/drift it read, so a refusal line can name the number it refused.
+fn program_gain_report(request: &PatchAudioRequest) -> crate::domain::ProgramGainReport {
+    crate::domain::ProgramGainReport::new(
+        request.program_gain,
+        request.report.program_levels.as_ref(),
+    )
+}
+
 /// Echo the border geometry this request will patch with. Every field is one the patch path reads —
 /// see [`crate::domain::patch_result::FillGeometryRecipe`] for why that rule is written down.
 fn fill_geometry_for(
@@ -141,8 +152,10 @@ fn empty_plan_result(
         },
         &[],
         &[],
+        request.program_gain.gain(),
     ))
-    .with_fill_geometry(fill_geometry_for(request));
+    .with_fill_geometry(fill_geometry_for(request))
+    .with_program_gain(program_gain_report(request));
     PatchAudioResult {
         pcm: None,
         summary,
@@ -368,8 +381,10 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                 // measure a fill level on.
                 &[],
                 &[],
+                request.program_gain.gain(),
             ))
-            .with_fill_geometry(fill_geometry_for(&request));
+            .with_fill_geometry(fill_geometry_for(&request))
+            .with_program_gain(program_gain_report(&request));
             return Ok(PatchAudioResult {
                 pcm: None,
                 summary,
@@ -550,8 +565,10 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             thresholds,
             &not_applied,
             &fill_level,
+            request.program_gain.gain(),
         ))
-        .with_fill_geometry(fill_geometry_for(&request));
+        .with_fill_geometry(fill_geometry_for(&request))
+        .with_program_gain(program_gain_report(&request));
         if let Some(anchors) = patch_anchors_used {
             summary = summary.with_patch_anchors(anchors);
         }

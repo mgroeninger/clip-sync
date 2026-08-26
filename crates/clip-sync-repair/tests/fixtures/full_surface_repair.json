@@ -175,7 +175,8 @@
             "gap_end_adjust_frames": 0,
             "anchor_seam_used": false,
             "dual_fit_used": false,
-            "normalize_gain": 1.0,
+            "normalize_gain": 0.76647854,
+            "program_gain": 0.76647854,
             "fit_terms": {
               "total": 0.71,
               "structure_combined": 0.82,
@@ -246,6 +247,12 @@
       "min_border_discovery_secs": 1.0,
       "fill_seam_search_secs": 0.25,
       "normalize_window_secs": 5.0
+    },
+    "program_gain": {
+      "gain": 0.76647854,
+      "offset_db": 2.31,
+      "spread_db": 0.42,
+      "robust_drift_db": 0.07000000000000028
     }
   }
 }

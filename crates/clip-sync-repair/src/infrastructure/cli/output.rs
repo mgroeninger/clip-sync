@@ -874,6 +874,11 @@ pub fn format_patch_summary(summary: &PatchSummary) -> String {
         summary.patched_count, summary.skipped_count, summary.not_planned_count
     ));
 
+    if let Some(line) = summary.program_gain.as_ref().map(format_program_gain_line) {
+        out.push_str(&line);
+        out.push('\n');
+    }
+
     if summary.gaps.is_empty() {
         out.push_str("  (no gaps in scan report)\n");
         return out;
@@ -953,6 +958,37 @@ fn format_program_level_line(offset: &crate::domain::program_levels::AbLevelOffs
         "Levels:    B\u{2212}A {:+.2} dB (spread {:.2} dB, n={}){caveat}",
         offset.offset_db, offset.spread_db, offset.n_pairs,
     )
+}
+
+/// One line for the run's whole-program fill gain -- applied, or refused and why.
+///
+/// Carries `robust_drift_db` because the drift gate is **reported, not gated**
+/// (`domain::program_gain`): this number is how a human sees the case the shipped policy chose
+/// not to defend against, and above `CHUNK_DRIFT_REVIEW_DB` it is the trigger to reconsider that.
+fn format_program_gain_line(report: &crate::domain::ProgramGainReport) -> String {
+    let measured = match (report.offset_db, report.spread_db) {
+        (Some(offset_db), Some(spread_db)) => {
+            format!("B\u{2212}A {offset_db:+.2} dB, spread {spread_db:.2} dB")
+        }
+        _ => "no paired offset".to_string(),
+    };
+    let drift = match report.robust_drift_db {
+        Some(drift) if report.drift_wants_review() => {
+            format!(", drift {drift:.2} dB \u{2014} not gated, review")
+        }
+        Some(drift) => format!(", drift {drift:.2} dB"),
+        None => String::new(),
+    };
+    match report.refused {
+        Some(reason) => format!(
+            "Gain:      program gain refused ({}) \u{2014} fills at B's level ({measured}{drift})",
+            reason.label()
+        ),
+        None => format!(
+            "Gain:      program gain {:+.2} dB on every fill ({measured}{drift})",
+            20.0 * f64::from(report.gain).log10()
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -1182,7 +1218,11 @@ mod tests {
                     anchor_seam_used: false,
                     anchor_bracket_move_frames: 0,
                     dual_fit_used: false,
-                    normalize_gain: 1.0,
+                    // The golden's scan measured B 2.31 dB hot, so a real run applies 0.7665 to
+                    // every fill and no local residual (normalize_fill is off by default since
+                    // 2026-08-26) — the two fields are equal here, and both must appear.
+                    normalize_gain: 0.766_478_54,
+                    program_gain: 0.766_478_54,
                     // Populated on the golden's one patched gap so the nested `fit_terms` object is
                     // part of the pinned contract, not just its absence. Every penalty is non-zero for
                     // the same reason the unit test makes them non-zero: an all-default breakdown would
@@ -1230,6 +1270,17 @@ mod tests {
             fill_seam_search_secs: 0.25,
             normalize_window_secs: 5.0,
         })
+        // Likewise stamped by every real patch run (`patch_audio::program_gain_report`). Derived
+        // from the golden's own scan rather than hand-written, so the applied number and the
+        // measurement it came from cannot drift apart in the fixture.
+        .with_program_gain(crate::domain::ProgramGainReport::new(
+            crate::domain::program_fill_gain(
+                full_surface_gap_report().program_levels.as_ref(),
+                true,
+                &crate::domain::ProgramGainParams::default(),
+            ),
+            full_surface_gap_report().program_levels.as_ref(),
+        ))
     }
 
     fn minimal_alignment_detail() -> AlignmentResult {
@@ -1360,6 +1411,57 @@ mod tests {
         std::fs::write(&path, json).expect("write golden fixture");
     }
 
+    /// The `Gain:` line under the patch header: what was applied (or refused), and the measurement
+    /// behind it. The dB shown is the **applied** gain, so it is the negation of `B−A` — a reader
+    /// who sees the two agree in sign is looking at a bug.
+    #[test]
+    fn program_gain_line_reports_the_applied_gain_and_its_measurement() {
+        let summary = full_surface_patch_summary();
+        let text = format_patch_summary(&summary);
+        let line = text
+            .lines()
+            .find(|l| l.starts_with("Gain:"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "no Gain: line in:
+{text}"
+                )
+            });
+        // The golden's scan reads B 2.31 dB hot, so the applied gain is -2.31 dB.
+        assert!(
+            line.contains("program gain -2.31 dB on every fill"),
+            "{line}"
+        );
+        assert!(
+            line.contains("+2.31 dB"),
+            "measurement must be shown too: {line}"
+        );
+        assert!(line.contains("spread 0.42 dB"), "{line}");
+        // Drift over the golden's three chunks is 0.07 dB — reported, and well under the 1.0 dB
+        // trigger, so no review suffix.
+        assert!(line.contains("drift 0.07 dB"), "{line}");
+        assert!(!line.contains("review"), "{line}");
+    }
+
+    /// A refusal says which one, and says the fills were left at B's level — not that no gain was
+    /// wanted. The two are different claims and the line must not blur them.
+    #[test]
+    fn program_gain_line_names_the_refusal() {
+        let report = crate::domain::ProgramGainReport {
+            gain: 1.0,
+            offset_db: Some(2.31),
+            spread_db: Some(3.1),
+            robust_drift_db: Some(1.4),
+            refused: Some(crate::domain::ProgramGainRefusal::Spread),
+        };
+        let line = super::format_program_gain_line(&report);
+        assert!(line.contains("refused (spread)"), "{line}");
+        assert!(line.contains("fills at B's level"), "{line}");
+        // Above CHUNK_DRIFT_REVIEW_DB: reported with the review suffix, still not a gate.
+        assert!(line.contains("drift 1.40 dB"), "{line}");
+        assert!(line.contains("not gated, review"), "{line}");
+    }
+
     /// Plan 1 Phase 0: byte-identical guard for the repair JSON contract (pre-DTO split).
     #[test]
     fn full_surface_repair_json_golden() {
@@ -1414,6 +1516,7 @@ mod tests {
                 anchor_bracket_move_frames: 0,
                 dual_fit_used: false,
                 normalize_gain: 1.0,
+                program_gain: 1.0,
                 fit_terms: None,
                 registration_residual_ms: None,
             },
@@ -1457,6 +1560,7 @@ mod tests {
                     anchor_bracket_move_frames: 0,
                     dual_fit_used: false,
                     normalize_gain: 1.0,
+                    program_gain: 1.0,
                     fit_terms: None,
                     registration_residual_ms: None,
                 },
@@ -1790,6 +1894,7 @@ mod tests {
                 anchor_bracket_move_frames: 0,
                 dual_fit_used: false,
                 normalize_gain: 1.0,
+                program_gain: 1.0,
                 fit_terms: None,
                 registration_residual_ms: None,
             },
@@ -1827,6 +1932,7 @@ mod tests {
             anchor_bracket_move_frames: 48_000,
             dual_fit_used: false,
             normalize_gain: 1.0,
+            program_gain: 1.0,
             fit_terms: None,
             registration_residual_ms: None,
         };
@@ -1908,6 +2014,7 @@ mod tests {
             anchor_bracket_move_frames: 0,
             dual_fit_used: true,
             normalize_gain: 1.0,
+            program_gain: 1.0,
             fit_terms: None,
             registration_residual_ms: None,
         };
@@ -1980,6 +2087,7 @@ mod tests {
                 anchor_bracket_move_frames: 0,
                 dual_fit_used: false,
                 normalize_gain: 1.0,
+                program_gain: 1.0,
                 fit_terms: None,
                 registration_residual_ms: None,
             },
@@ -2111,6 +2219,7 @@ mod tests {
                     anchor_bracket_move_frames: 0,
                     dual_fit_used: false,
                     normalize_gain: 1.0,
+                    program_gain: 1.0,
                     fit_terms: None,
                     registration_residual_ms: None,
                 },
@@ -2192,6 +2301,7 @@ mod tests {
                     anchor_bracket_move_frames: 0,
                     dual_fit_used: false,
                     normalize_gain: 1.0,
+                    program_gain: 1.0,
                     fit_terms: None,
                     registration_residual_ms: None,
                 },

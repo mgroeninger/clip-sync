@@ -889,6 +889,7 @@ mod tests {
             anchor_bracket_move_frames: 900,
             dual_fit_used: false,
             normalize_gain: 1.0,
+            program_gain: 1.0,
             fit_terms: None,
             registration_residual_ms: None,
         };
@@ -914,6 +915,7 @@ mod tests {
             anchor_bracket_move_frames: 0,
             dual_fit_used: true,
             normalize_gain: 1.0,
+            program_gain: 1.0,
             fit_terms: None,
             registration_residual_ms: None,
         };

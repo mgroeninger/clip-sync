@@ -747,26 +747,39 @@ pub(in crate::application::patch_audio) fn characterize_region(
         "6b.3a: executor bracket-fill reconstruction must byte-match the inline fill"
     );
 
-    let gain = if normalize_fill {
-        let border_rms = compute_a_border_rms(
+    // Whole-program master match, resolved once per run (`domain::program_gain`). Unity on a
+    // refusal, so a run without a trusted offset is the pre-2026-08-26 path exactly. The two halves
+    // compose in `stack_fill_gain` (plan § 5) — local is a residual on the already-matched fill.
+    let program_gain = request.program_gain.gain();
+    let b_border_rms = if normalize_fill {
+        compute_a_border_rms(
             a_pcm,
             refined.start_frame,
             refined.end_frame,
             normalize_window_secs,
             global_a_rms,
-        );
-        let b_rms = policies::rms_interleaved(&b_fill);
-        policies::compute_fill_gain(border_rms, b_rms, max_fill_gain_db)
+        )
     } else {
-        1.0f32
+        0.0
     };
-    // Boost-only: no production path may quiet a fill below the level it was assembled at. The
-    // clamp lives in `compute_fill_gain`; this pins the property at the one site that can violate
-    // it, so a future edit to the policy cannot silently reintroduce attenuation here.
-    debug_assert!(
-        gain >= 1.0,
-        "normalize gain must never attenuate (boost-only policy), got {gain}"
+    let stacked = crate::domain::stack_fill_gain(
+        program_gain,
+        b_border_rms,
+        policies::rms_interleaved(&b_fill),
+        max_fill_gain_db,
+        normalize_fill,
     );
+    // Boost-only: no production path may quiet a fill below the level it was assembled at. The
+    // clamp lives in `compute_fill_gain`; this pins the property at the one site that consumes it,
+    // so a future edit to the policy cannot silently reintroduce attenuation here. It is the
+    // *local* half that is boost-only — `program_gain` attenuates a louder donor by design (plan
+    // § 3), which is why `stacked.total` is not asserted.
+    debug_assert!(
+        stacked.local >= 1.0,
+        "local normalize gain must never attenuate (boost-only policy), got {}",
+        stacked.local
+    );
+    let gain = stacked.total;
 
     log_gap_fill_result_verbose(
         progress,

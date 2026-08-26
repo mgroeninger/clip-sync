@@ -110,8 +110,15 @@ pub fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
         config.repair.patch_only = true;
         config.repair.dry_run = true;
     }
-    if args.no_normalize {
+    // Local normalization only. `--no-normalize` must not touch the program gain: they are
+    // independent halves of `g_total = g_program * g_local` (TEMP-program-gain-plan § 5).
+    if args.normalize {
+        config.repair.normalize_fill = true;
+    } else if args.no_normalize {
         config.repair.normalize_fill = false;
+    }
+    if args.no_program_gain {
+        config.repair.program_gain = false;
     }
     if args.no_structure_trust {
         config.repair.disable_structure_trust = true;
@@ -1240,6 +1247,70 @@ mod cli_override_tests {
         let mut config = RepairAppConfig::default();
         apply_cli_overrides(&mut config, &args);
         assert!(validate_dump_gap_selector(&args, &config).is_ok());
+    }
+
+    /// The 2026-08-26 default flip and the independence of the two gain knobs, in one place: local
+    /// normalization is off unless asked for, the program scalar is on, and `--no-normalize` (the
+    /// flag that used to mean "no gain at all") must not reach the program half.
+    #[test]
+    fn gain_flags_are_two_independent_knobs() {
+        use clap::Parser;
+
+        let defaults = RepairAppConfig::default();
+        assert!(
+            !defaults.repair.normalize_fill,
+            "hole-local normalization is opt-in since 2026-08-26"
+        );
+        assert!(
+            defaults.repair.program_gain,
+            "the whole-program match is the default gain path"
+        );
+
+        let mut config = RepairAppConfig::default();
+        apply_cli_overrides(
+            &mut config,
+            &Args::parse_from(["clip-sync-repair", "a.wav", "b.wav", "--normalize"]),
+        );
+        assert!(config.repair.normalize_fill);
+        assert!(config.repair.program_gain, "--normalize is local-only");
+
+        let mut config = RepairAppConfig::default();
+        config.repair.normalize_fill = true;
+        apply_cli_overrides(
+            &mut config,
+            &Args::parse_from(["clip-sync-repair", "a.wav", "b.wav", "--no-normalize"]),
+        );
+        assert!(!config.repair.normalize_fill);
+        assert!(
+            config.repair.program_gain,
+            "--no-normalize must NOT disable the whole-program gain"
+        );
+
+        let mut config = RepairAppConfig::default();
+        config.repair.normalize_fill = true;
+        apply_cli_overrides(
+            &mut config,
+            &Args::parse_from(["clip-sync-repair", "a.wav", "b.wav", "--no-program-gain"]),
+        );
+        assert!(!config.repair.program_gain);
+        assert!(
+            config.repair.normalize_fill,
+            "--no-program-gain must NOT disable the local half"
+        );
+
+        // Last flag wins between the peers, as with --dual-fit / --no-dual-fit.
+        let mut config = RepairAppConfig::default();
+        apply_cli_overrides(
+            &mut config,
+            &Args::parse_from([
+                "clip-sync-repair",
+                "a.wav",
+                "b.wav",
+                "--no-normalize",
+                "--normalize",
+            ]),
+        );
+        assert!(config.repair.normalize_fill);
     }
 
     #[test]

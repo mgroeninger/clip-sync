@@ -53,6 +53,7 @@ fn gap_status_gating_core(status: &GapPatchStatus) -> GapPatchStatus {
             anchor_bracket_move_frames: *anchor_bracket_move_frames,
             dual_fit_used: false,
             normalize_gain: 1.0,
+            program_gain: 1.0,
             // Normalized away like `residual_db` — the gating comparison is about the decision, and the
             // score terms are a report of how it was reached.
             fit_terms: None,

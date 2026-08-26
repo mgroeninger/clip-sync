@@ -165,8 +165,25 @@ pub struct RepairConfig {
     /// Raise fill segment loudness toward A's border. **Boost-only** since 2026-08-12 — a fill
     /// louder than A's borders keeps its own level (see `policies::compute_fill_gain`), so this
     /// never quiets a patch.
-    #[serde(default = "default_true")]
+    ///
+    /// **Default off since 2026-08-26** (`docs/dev/TEMP-program-gain-plan.md` § 6): the reference is
+    /// a 5 s + 5 s pool of A's borders, which over-boosts a quiet passage whose window reaches
+    /// louder material. With [`Self::program_gain`] matching the two masters, this is demoted to an
+    /// additive residual — `--normalize` turns it back on.
+    #[serde(default)]
     pub normalize_fill: bool,
+    /// Match every B-derived fill to A's program level using the scan's paired offset
+    /// (`domain::program_gain`). On by default, subject to the two refusals in that module.
+    #[serde(default = "default_true")]
+    pub program_gain: bool,
+    /// Refuse the program gain when the paired blocks disagree by more than this (dB) — the
+    /// measurement's own confidence. Tier 2 calibrated: corpus max 2.412, 4:1 compression 2.770.
+    #[serde(default = "default_program_gain_max_spread_db")]
+    pub program_gain_max_spread_db: f64,
+    /// Refuse the program gain when `|offset_db|` exceeds this. A **refusal, not a clamp** — see
+    /// `domain::program_gain`. Unrelated to [`Self::max_fill_gain_db`], which bounds the local path.
+    #[serde(default = "default_max_program_gain_db")]
+    pub max_program_gain_db: f64,
     /// **A3 dual-fit repair** — fallback fill for bracket-exhausted skips (independent per-shoulder fit +
     /// interior trim, validated by the unchanged gate). On by default; `--no-dual-fit` to disable.
     #[serde(default = "default_true")]
@@ -470,6 +487,12 @@ fn default_normalize_window_secs() -> f64 {
 fn default_max_fill_gain_db() -> f64 {
     12.0
 }
+fn default_program_gain_max_spread_db() -> f64 {
+    crate::domain::DEFAULT_PROGRAM_GAIN_MAX_SPREAD_DB
+}
+fn default_max_program_gain_db() -> f64 {
+    crate::domain::DEFAULT_MAX_PROGRAM_GAIN_DB
+}
 fn default_gap_end_extend_max_ms() -> u64 {
     500
 }
@@ -601,7 +624,10 @@ impl Default for RepairConfig {
             disable_structure_trust: false,
             partial_structure_waveform_soften: default_partial_structure_waveform_soften(),
             crossfade_ms: default_crossfade_ms(),
-            normalize_fill: default_true(),
+            normalize_fill: false,
+            program_gain: default_true(),
+            program_gain_max_spread_db: default_program_gain_max_spread_db(),
+            max_program_gain_db: default_max_program_gain_db(),
             dual_fit: true,
             fingerprint_diagnostics: false,
             lag_envelope_max_lag_ms: default_lag_envelope_max_lag_ms(),
@@ -732,6 +758,11 @@ impl RepairConfig {
             measure_fill_level: self.measure_fill_level,
             gap_selection: self.gap_selection_mode(),
             normalize_fill: self.normalize_fill,
+            program_gain: self.program_gain,
+            program_gain_params: crate::domain::ProgramGainParams {
+                max_spread_db: self.program_gain_max_spread_db,
+                max_program_gain_db: self.max_program_gain_db,
+            },
             dual_fit: self.dual_fit,
             normalize_window_secs: self.normalize_window_secs,
             max_fill_gain_db: self.max_fill_gain_db,
@@ -831,6 +862,11 @@ impl RepairConfig {
             ),
             ("normalize_window_secs", self.normalize_window_secs),
             ("max_fill_gain_db", self.max_fill_gain_db),
+            (
+                "program_gain_max_spread_db",
+                self.program_gain_max_spread_db,
+            ),
+            ("max_program_gain_db", self.max_program_gain_db),
             ("fill_fit_structure_weight", self.fill_fit_structure_weight),
             ("fill_fit_waveform_weight", self.fill_fit_waveform_weight),
             (
@@ -938,6 +974,18 @@ impl RepairConfig {
         if self.normalize_window_secs <= 0.0 {
             return Err(ConfigError::InvalidValue {
                 field: "normalize_window_secs".into(),
+                reason: "must be greater than zero".into(),
+            });
+        }
+        if self.program_gain_max_spread_db <= 0.0 {
+            return Err(ConfigError::InvalidValue {
+                field: "program_gain_max_spread_db".into(),
+                reason: "must be greater than zero".into(),
+            });
+        }
+        if self.max_program_gain_db <= 0.0 {
+            return Err(ConfigError::InvalidValue {
+                field: "max_program_gain_db".into(),
                 reason: "must be greater than zero".into(),
             });
         }

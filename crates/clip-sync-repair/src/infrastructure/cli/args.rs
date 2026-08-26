@@ -205,9 +205,20 @@ pub struct Args {
     #[arg(long)]
     pub patch_only: bool,
 
-    /// Disable loudness normalization of fill segments [default: normalization enabled].
-    #[arg(long)]
+    /// Enable the hole-local loudness normalization of fill segments — a per-gap boost toward the
+    /// A-side border RMS, stacked on top of the whole-program gain [default: off since 2026-08-26].
+    #[arg(long, overrides_with = "no_normalize")]
+    pub normalize: bool,
+
+    /// Disable the hole-local fill normalization [default: already off]. Local only: the
+    /// whole-program A-to-B gain is a separate knob (`--no-program-gain`).
+    #[arg(long, overrides_with = "normalize")]
     pub no_normalize: bool,
+
+    /// Do not apply the whole-program A-to-B level scalar to B-derived fills; fills land at B's own
+    /// level [default: program gain applied when `scan.program_levels` measures it].
+    #[arg(long)]
+    pub no_program_gain: bool,
 
     /// Enable dual-fit repair fallback: when the seam gate would skip (except structure alignment failed),
     /// attempt independent per-shoulder fit + interior-trim fill, validated by the unchanged gate
@@ -644,6 +655,7 @@ mod tests {
             "[default: enabled]",
             "[default: disabled]",
             "no-dual-fit",
+            "no-program-gain",
             "[default: on]",
         ] {
             assert!(help.contains(needle), "help missing {needle:?}:\n{help}");

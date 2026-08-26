@@ -145,6 +145,11 @@ pub(in crate::application::patch_audio) struct RegionPatchOpts<'a> {
 ///
 /// `fill_level` is the record-only measurement of the PCM that was actually written, so it too is
 /// empty for callers that do not splice.
+// Eight arguments, and grouping them would not help: `gaps` / `plan` / `region_results` /
+// `not_applied` / `fill_level` are five differently-ordered sources this function exists to join,
+// and the remaining three are per-run constants stamped onto the result. A params struct would move
+// the list rather than shorten it.
+#[allow(clippy::too_many_arguments)]
 pub(in crate::application::patch_audio) fn outcomes_in_report_order(
     gaps: &[Gap],
     plan: &GapFillPlan,
@@ -153,6 +158,9 @@ pub(in crate::application::patch_audio) fn outcomes_in_report_order(
     thresholds: FillTierThresholds,
     not_applied: &[(usize, GapPatchNotAppliedReason)],
     fill_level: &[(usize, crate::domain::FillLevelCheck)],
+    // The run's whole-program gain (`request.program_gain.gain()`). A run constant: it is stamped
+    // on every patched row so a single row is self-describing, not re-derived per gap.
+    program_gain: f32,
 ) -> Vec<GapPatchOutcome> {
     let mut fill_level_by_gap: HashMap<usize, crate::domain::FillLevelCheck> =
         fill_level.iter().copied().collect();
@@ -196,6 +204,7 @@ pub(in crate::application::patch_audio) fn outcomes_in_report_order(
                     residual_summary_scalar_fields(residual.as_ref());
                 GapPatchStatus::Patched {
                     normalize_gain: *normalize_gain,
+                    program_gain,
                     pre_correlation: *pre_correlation,
                     post_correlation: *post_correlation,
                     align_adjustment_secs: *align_adjustment_secs,
@@ -459,6 +468,7 @@ pub(in crate::application::patch_audio) fn outcome_from_spec(
             residual,
             confidence,
             registration_residual_ms,
+            normalize_gain,
             ..
         }) => RegionPatchOutcome::Patched {
             pre_correlation: *pre_seam_r,
@@ -476,9 +486,9 @@ pub(in crate::application::patch_audio) fn outcome_from_spec(
             dual_fit_used: true,
             // Dual-fit does not run the unified objective at all — there is no placement search to report.
             fit_terms: None,
-            // Dual-fit never normalizes — the SilenceSplice strategy carries no gain and the
-            // executor splices its fill unity (`region/execute.rs` SilenceSplice arm, `gain: 1.0`).
-            normalize_gain: 1.0,
+            // Dual-fit takes the program scalar but never the local residual — the strategy
+            // carries it so this preview read and `region/execute.rs`'s splice cannot diverge.
+            normalize_gain: *normalize_gain,
             registration_residual_ms: *registration_residual_ms,
         },
         GapRepairVerdict::Skip { reason, .. } => {
@@ -490,6 +500,55 @@ pub(in crate::application::patch_audio) fn outcome_from_spec(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The dual-fit / silence-splice path takes the **program** half of the gain (never the local
+    /// residual), and it takes it off the strategy rather than the request — so this preview read
+    /// and the executor's splice cannot disagree about what was applied. A regression that reverted
+    /// this to a literal `1.0` would leave rescued holes at B's master while bracket holes sit at
+    /// A's, which is exactly the split the whole-program scalar exists to remove.
+    #[test]
+    fn silence_splice_outcome_carries_the_program_gain_from_the_strategy() {
+        use crate::domain::gap_repair_spec::{GapRepairStrategy, GapRepairTags, GapRepairVerdict};
+        use crate::domain::policies::RefinedGapFrames;
+        use crate::domain::BExtractWindow;
+
+        let g_program = 0.501_187f32;
+        let spec = GapRepairSpec {
+            gap_index: 0,
+            a_start_secs: 1.0,
+            a_end_secs: 2.0,
+            gap_offset_secs: 0.0,
+            refined: RefinedGapFrames {
+                start_frame: 48_000,
+                end_frame: 96_000,
+            },
+            b_extract: BExtractWindow {
+                start_frame: 48_000,
+                end_frame: 96_000,
+                b_mapped_start_frame: 48_000,
+            },
+            crossfade_secs: 0.01,
+            verdict: GapRepairVerdict::Patch(GapRepairStrategy::SilenceSplice {
+                fill: vec![0.0; 48_000],
+                pre_seam_r: 0.98,
+                post_seam_r: 0.97,
+                pre_lag: 0,
+                post_lag: 0,
+                trim_frames: 0,
+                residual: None,
+                confidence: crate::domain::FillConfidence::High,
+                registration_residual_ms: None,
+                normalize_gain: g_program,
+            }),
+            tags_ctx: GapRepairTags::default(),
+        };
+        match outcome_from_spec(&spec, 48_000) {
+            RegionPatchOutcome::Patched { normalize_gain, .. } => {
+                assert_eq!(normalize_gain, g_program)
+            }
+            other => panic!("expected a patched outcome, got {other:?}"),
+        }
+    }
 
     /// **M-GAPKEY — every gap gets its own outcome, in report order, regardless of plan order.**
     /// `outcomes_in_report_order` joins three differently-ordered sources (plan skips, region
@@ -578,6 +637,7 @@ mod tests {
             thresholds,
             &[],
             &[],
+            1.0,
         );
 
         assert_eq!(outcomes.len(), gaps.len(), "one outcome per reported gap");
@@ -694,6 +754,7 @@ mod tests {
             thresholds,
             &[(0, reason.clone())],
             &[],
+            1.0,
         );
 
         assert_eq!(

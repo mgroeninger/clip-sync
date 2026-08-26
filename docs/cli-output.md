@@ -237,7 +237,16 @@ Search:     3 window(s) @ 60s stride
   Levels:    B−A +2.31 dB (spread 0.42 dB, n=16902)
   ```
 
-  Read `spread` first: it says whether a single scalar describes the pair at all. When A and B channel counts differ the line ends `   not comparable (channel mismatch)` — block RMS is taken over interleaved samples, so the offset then carries a correlation-dependent constant. Report-only; **no fill gain derives from it**.
+  Read `spread` first: it says whether a single scalar describes the pair at all. When A and B channel counts differ the line ends `   not comparable (channel mismatch)` — block RMS is taken over interleaved samples, so the offset then carries a correlation-dependent constant. Since 2026-08-26 this **is** the fill gain: the patch pass applies its inverse to every B-derived fill and prints what it decided on its own `Gain:` line (below).
+
+- **Program gain (patch runs, when a request produced a decision):** one line directly under the `Patch results (…)` header, saying what scalar every fill was multiplied by — or which refusal sent it to unity — with the measurement behind it.
+
+  ```
+  Gain:      program gain -2.31 dB on every fill (B−A +2.31 dB, spread 0.42 dB)
+  Gain:      program gain refused (spread) — fills at B's level (B−A +2.31 dB, spread 3.10 dB)
+  ```
+
+  The dB shown is the **applied** gain, so it is the negation of `B−A`. Refusal labels: `flag-off`, `no-offset`, `channels`, `spread`, `too-large` — see [json-output.md](json-output.md) § ProgramGainReport. When per-600 s chunk drift was measurable it is appended as `, drift x.xx dB`, and above 1.0 dB as `, drift x.xx dB — not gated, review`: drift is reported rather than gated, and that suffix is the trigger to revisit the decision, not a warning about this run.
 
 #### Timeline / duration warnings
 

@@ -237,6 +237,8 @@ pub fn characterize_gaps_from_decode(
                 residual: None,
                 confidence: crate::domain::gap_fill_fit::FillConfidence::High,
                 registration_residual_ms: None,
+                // Placeholder strategy on a probe path — nothing here is ever spliced.
+                normalize_gain: 1.0,
             })
         };
         let spec = GapRepairSpec {

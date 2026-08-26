@@ -124,13 +124,14 @@ pub(in crate::application::patch_audio) fn execute_region_spec(
             residual,
             confidence,
             registration_residual_ms,
+            normalize_gain,
             ..
         }) => {
             // Dual-fit rescue: the fill is the synthesized bridge on the spec; seams sit at their own lags, so
             // there is no align/waveform slide and no structure trust.
             let patch = RegionPatch {
                 b_samples: fill,
-                gain: 1.0,
+                gain: normalize_gain,
                 a_start_frame: refined.start_frame,
                 a_end_frame: refined.end_frame,
                 crossfade_secs,
@@ -151,8 +152,9 @@ pub(in crate::application::patch_audio) fn execute_region_spec(
                 dual_fit_used: true,
                 // No unified search on this path — see the preview arm.
                 fit_terms: None,
-                // Unity by construction — matches the `gain: 1.0` on the patch just above.
-                normalize_gain: 1.0,
+                // The program scalar, matching the `gain` on the patch just above. Local
+                // normalize never runs on this path, so this is `g_program` with no residual.
+                normalize_gain,
                 registration_residual_ms,
             };
             (Some(patch), outcome)

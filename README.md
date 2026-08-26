@@ -181,7 +181,8 @@ clip-sync-repair [OPTIONS] <VIDEO_A> <VIDEO_B>
 | `--wav <PATH>` | — | Write patched multi-channel WAV (implies write mode) |
 | `--mux <PATH>` | — | Mux patched audio into video A via ffmpeg (implies write mode; requires build with `--features ffmpeg-mux` and `ffmpeg` on `PATH`). AAC is re-encoded; bitrate defaults to the lower measured rate of A and B (see `mux_audio_bitrate` below) |
 | `--patch-only` | — | Run the full patch (splice included) and report it, writing no audio. The way to collect splice-time measurements such as `fill_level` — `--repair-preview` stops before the splice. Mutually exclusive with `--wav` / `--mux` / `--repair-preview` |
-| `--no-normalize` | — | Disable loudness normalization of fill segments. Normalization is **boost-only**: it raises a quiet fill toward A's borders (up to `max_fill_gain_db`) and never attenuates a louder one, so this flag only turns off the boost |
+| `--normalize` / `--no-normalize` | off | Hole-local fill normalization, **off by default since 2026-08-26**. Boost-only: raises a quiet fill toward A's borders (up to `max_fill_gain_db`), never attenuates a louder one. Local only — it does not touch the whole-program gain |
+| `--no-program-gain` | — | Do not apply the whole-program A↔B level scalar (from `scan.program_levels.offset`) to B-derived fills; fills land at B's own master level |
 | `--no-dual-fit` | — | Disable dual-fit rescue (G6); bracket-only skip path for regression (D6) |
 | `--dual-fit` | on | Re-enable dual-fit after TOML/override; default is on — omit both flags for normal repair |
 | `--gap-fingerprints <DIR>` | — | After repair, write licensing-safe gap-fingerprint corpus (`corpus.json`, per-gap JSON, `manifest.json`) |
@@ -291,7 +292,7 @@ All flags are accepted with `fit`; none are rejected. Gate-only options have no 
 | `--border-standoff-secs` | **Active** |
 | `--no-gap-end-extend`, `--no-gap-start-extend` | **Active** — disable **joint grid** (not gate mode). See [gap-fill-modes.md](docs/gap-fill-modes.md). |
 | `--gap-end-extend-max-ms`, `--gap-end-extend-step-ms` | **Active** — grid span/step in fit; retry span/step in gate. |
-| `--crossfade-ms`, `--no-normalize` | **Active** |
+| `--crossfade-ms`, `--normalize` / `--no-normalize`, `--no-program-gain` | **Active** |
 | Align / scan flags (`--clip-length`, `--num-clips`, high-rate, query-reference, etc.) | **Active** — feed alignment and gap scan; orthogonal to `fit`. |
 
 **Example — drift + anchored retry** (when `interpolated` still skips hard gaps):
@@ -571,9 +572,12 @@ fingerprint_diagnostics = false             # true only meaningful with --gap-fi
 # anchor_seam_min_xcorr_peak = 0.5
 # anchor_seam_xcorr_ambiguous_band = 0.15
 crossfade_ms = 10
-normalize_fill = true            # boost-only: raises a quiet fill, never attenuates a loud one
+program_gain = true                 # apply the whole-program A<->B level scalar to every fill
+program_gain_max_spread_db = 2.5    # refuse (unity) when no single scalar describes the pair
+max_program_gain_db = 6.0           # refuse (unity) past this; deliberately NOT a clamp
+normalize_fill = false           # hole-local boost, off since 2026-08-26 (boost-only when on)
 normalize_window_secs = 5.0
-max_fill_gain_db = 12.0          # max BOOST; there is no attenuation side
+max_fill_gain_db = 12.0          # max LOCAL boost; there is no attenuation side
 dry_run = true
 
 [repair.output]

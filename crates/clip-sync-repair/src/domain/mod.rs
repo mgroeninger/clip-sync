@@ -24,6 +24,7 @@ pub mod patch_result;
 pub mod pcm;
 pub mod policies;
 pub mod ports;
+pub mod program_gain;
 pub mod program_levels;
 pub mod repair_profile;
 pub mod residual_gate;
@@ -64,6 +65,11 @@ pub use gap_tags::{
 pub use patch_anchor::{
     is_retryable_patch_skip, AnchorSearchPrior, PatchAnchorCandidate, PatchAnchorPolicy,
     PatchAnchorReport, PatchAnchorTable, PatchOffsetAnchor,
+};
+pub use program_gain::{
+    program_fill_gain, robust_chunk_drift_db, stack_fill_gain, ProgramGainDecision,
+    ProgramGainParams, ProgramGainRefusal, ProgramGainReport, StackedFillGain,
+    DEFAULT_MAX_PROGRAM_GAIN_DB, DEFAULT_PROGRAM_GAIN_MAX_SPREAD_DB,
 };
 pub use repair_profile::{
     boundary_grid_may_run, format_repair_profile_verbose, gap_extension_slack_secs,

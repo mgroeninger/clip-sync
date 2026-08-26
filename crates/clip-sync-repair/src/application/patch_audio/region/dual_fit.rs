@@ -428,6 +428,7 @@ pub(in crate::application::patch_audio::region) fn skip_or_dual_fit(
                                     residual,
                                     confidence,
                                     registration_residual_ms,
+                                    normalize_gain: request.program_gain.gain(),
                                 },
                                 tags_ctx,
                                 refined: RefinedGapFrames {

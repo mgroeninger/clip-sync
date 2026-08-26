@@ -428,6 +428,17 @@ pub enum GapPatchStatus {
         /// gaps with no `normalize_gain` at all, and a roll-up must hold those out rather than
         /// coerce them to a value.
         normalize_gain: f32,
+        /// The **whole-program** half of `normalize_gain` — A↔B master match from the scan's paired
+        /// offset (`domain::program_gain`), `1.0` when the run refused it or `--no-program-gain`.
+        ///
+        /// A run constant, repeated on every gap so a single patched row is self-describing: the
+        /// hole-local residual is `normalize_gain / program_gain`, and there is deliberately no
+        /// third field for it. Why this run applied (or refused) the value it did is stamped once on
+        /// [`PatchSummary::program_gain`], not here.
+        ///
+        /// **Always serialized** (this type is serialize-only, so there is no serde default to
+        /// lean on). Absence in a dump means the run predates 2026-08-26, not unity.
+        program_gain: f32,
         /// The unified fit objective's terms at the placement that was applied — `structure_combined`,
         /// `waveform_min`, and each prior's subtracted amount (see
         /// [`crate::domain::gap_fill_fit::UnifiedFitBreakdown`]).
@@ -520,6 +531,11 @@ pub struct PatchSummary {
     /// request in hand (domain tests), and absent from pre-2026-08-17 reports.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fill_geometry: Option<FillGeometryRecipe>,
+    /// What this run decided about whole-program fill gain, and the measurement it decided from —
+    /// stamped **once**, not per gap. `None` on summaries built without a request in hand (domain
+    /// tests), and absent from pre-2026-08-26 reports.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub program_gain: Option<crate::domain::ProgramGainReport>,
 }
 
 impl PatchSummary {
@@ -558,12 +574,19 @@ impl PatchSummary {
             donor_relation,
             patch_anchors_used: None,
             fill_geometry: None,
+            program_gain: None,
         }
     }
 
     /// Stamp the border geometry this run used — see [`FillGeometryRecipe`].
     pub fn with_fill_geometry(mut self, geometry: FillGeometryRecipe) -> Self {
         self.fill_geometry = Some(geometry);
+        self
+    }
+
+    /// Stamp the run's program-gain decision. See [`Self::program_gain`].
+    pub fn with_program_gain(mut self, report: crate::domain::ProgramGainReport) -> Self {
+        self.program_gain = Some(report);
         self
     }
 

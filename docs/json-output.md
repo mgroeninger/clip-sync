@@ -180,7 +180,7 @@ Top-level object: **RepairJsonOutput**.
 | `absolute_silence_rms` | number | always | Absolute RMS floor as **normalized** amplitude in `[0, 1)` (default ≈ `0.001007`, not the CLI 0–32767 display scale) |
 | `limit_fill_to_mapped_region` | bool | always | When true (default in query-reference mode), gaps outside mapped clip coverage are reported but not fillable |
 | `audio_timeline_skew` | [AudioTimelineSkew](#audiotimelineskew) \| null | always | Present when gap scan measured PTS vs decoded-sample clock; `null` when not measurable (e.g. seek-based scan fallback). Human report emits a warning when `delta_secs > 1.0` |
-| `program_levels` | [ProgramLevels](#programlevels) | when the scan populated it | Whole-program A/B level readings. **Report-only** — no gain is derived from it |
+| `program_levels` | [ProgramLevels](#programlevels) | when the scan populated it | Whole-program A/B level readings. Since 2026-08-26 `offset` **drives the fill gain** — see `patch.program_gain` and [pipeline.md](pipeline.md) § Fill gain |
 
 ### ProgramLevels
 
@@ -287,6 +287,7 @@ Gap positions in `gaps[]` use the **decoded-sample clock**. When `delta_secs` is
 | `donor_relation` | string | when residual measured on ≥1 gap | `same_master` \| `mixed` \| `diff_capture` — inferred from informative-floor fraction. **A cancellation rate, not a provenance finding — see note below** |
 | `patch_anchors_used` | array of PatchAnchorReport | when non-empty | Offset anchors built from pass-1 successes and reused by the anchored retry |
 | `fill_geometry` | object | since 2026-08-17, when patched from a request | Border-geometry **settings** this run patched with: `border_standoff_secs`, `fill_border_search_secs`, `min_border_discovery_secs`, `fill_seam_search_secs`. Settings, not per-gap effective widths — each is clamped against the material available at a given gap. Exists so a two-arm differential is attributable to the flag that changed rather than to the output directory |
+| `program_gain` | object | since 2026-08-26, when patched from a request | The run's whole-program fill gain and why it took the value it did — see [ProgramGainReport](#programgainreport) |
 | `gaps` | array of [GapPatchOutcome](#gappatchoutcome) | always | Per-gap outcomes in scan order |
 
 > **`donor_relation` claims more than it measures.** It is derived purely from the fraction of gaps
@@ -296,6 +297,23 @@ Gap positions in `gaps[]` use the **decoded-sample clock**. When `delta_secs` is
 > (default 10 ms) probe radius, or when its gaps are silent enough that no floor reference window is
 > found. Read the three values as *mostly cancelled* / *partly* / *never*, and do not branch on them as
 > a provenance decision — the field gates nothing in the repair pipeline and is emitted as a diagnostic.
+
+### ProgramGainReport
+
+The once-per-run decision to apply (or refuse) a whole-program A↔B level scalar to every B-derived
+fill. Source: the scan's `program_levels.offset`. See [pipeline.md](pipeline.md) § Fill gain.
+
+| Field | Type | Presence | Meaning |
+|-------|------|----------|---------|
+| `gain` | number | always | The linear scalar every fill was multiplied by. `1.0` on any refusal. It is the **inverse** of the measured offset: `10^(-offset_db/20)` |
+| `offset_db` | number | when the scan measured a paired offset | `program_levels.offset.offset_db`, i.e. **B minus A**. Positive ⇒ B is the louder master ⇒ `gain < 1` |
+| `spread_db` | number | same | The offset's MAD. *Does one scalar exist?* |
+| `robust_drift_db` | number | when the program spans ≥ 2 chunks that clear the population bar | Range of the per-600 s chunk offsets, over chunks holding at least half the median chunk population. **Reported, not gated** — thin chunks corrupt a raw range, and no real pair has yet measured above 1.0 dB. A value above 1.0 dB is the trigger to reconsider gating on it |
+| `refused` | string | only when refused | `flag-off` (`--no-program-gain`) \| `no-offset` (scan measured none) \| `channels` (A and B channel counts differ, so the offset is not a pure gain) \| `spread` (`spread_db` past `program_gain_max_spread_db`) \| `too-large` (the offset's magnitude is past `max_program_gain_db`) |
+
+The two threshold refusals fall back to unity rather than clamping to the bound: a large or wide
+offset is the signature of an undetected dynamics mismatch — a 2:1-compressed B reports a phantom
+−8.4 dB — and applying part of a number there is reason to disbelieve is worse than applying none.
 
 ### GapPatchOutcome
 
@@ -474,7 +492,8 @@ Orthogonal gap classification tags. `plan_skip_reason`, `fit_path`, and `signatu
 | `anchor_seam_used` | bool | when true | Editorial anchor bracket won (not scan-throat placement) |
 | `anchor_bracket_move_frames` | integer | when `anchor_seam_used` and > 0 | Total frame displacement from scan-refined baseline |
 | `dual_fit_used` | bool | when true | A3 dual-fit (G6) rescued this gap after the bracket search exhausted, not ordinary bracket-search fitting |
-| `normalize_gain` | number | always (since 2026-08-12) | Loudness gain applied to this fill before the splice. `1.0` = untouched donor level |
+| `normalize_gain` | number | always (since 2026-08-12) | **Total** gain applied to this fill before the splice — whole-program × hole-local. `1.0` = untouched donor level |
+| `program_gain` | number | always (since 2026-08-26) | The whole-program half of `normalize_gain`, repeated on every gap so a single row is self-describing. The hole-local residual is `normalize_gain / program_gain`; there is deliberately no third field for it |
 
 ### GapPatchStatus
 
@@ -484,7 +503,9 @@ Externally tagged (serde default): exactly one of the following keys.
 
 Optional `residual_db`, `floor_db`, `headroom_db` (worst-side scalars) are present when residual was measured; omitted otherwise. `anchor_seam_used` and `dual_fit_used` are **always serialized, including when `false`** (changed 2026-08-12; both were omitted-when-false before that). `false` on `dual_fit_used` means the A3 dual-fit path (G6) did not carry this gap — it ran and declined, or was never reached — and has never meant the path was disabled; the old absence was read that way at least once. `false` on `anchor_seam_used` means baseline-throat placement. When `dual_fit_used` is `true`, this gap was rescued by dual-fit after the bracket search exhausted — see [gap-fill-modes.md](gap-fill-modes.md) § Dual-fit rescue. `anchor_bracket_move_frames` is still omitted when 0. Full per-side detail is in `GapPatchOutcome.residual`.
 
-`normalize_gain` (added 2026-08-12) is the loudness gain the splice applied to this fill: `1.0` when `normalize_fill` is off, when dual-fit produced the fill (never normalized), or when the **boost-only** policy declined to touch a fill already at or above A's border level; `> 1.0` when a quiet fill was raised (bounded by `max_fill_gain_db`). It is **never below 1.0** — runs before 2026-08-12 could attenuate down to `-max_fill_gain_db`, and this field is how you tell the two vintages apart. It exists to make `fill_level` readable: those fields are measured on the *gained* fill, so without the gain a loud fill and a boosted quiet one are indistinguishable, and `peak_delta_db` / `edge_delta_db` cannot be compared across a gain-policy change. **Absence means the run predates the field, not unity** — dumps in `gap-files/` written before 2026-08-12 carry no `normalize_gain` at all, and a roll-up must hold those rows out rather than default them. See [pipeline.md](pipeline.md) § Fill normalization.
+`normalize_gain` (added 2026-08-12) is the loudness gain the splice applied to this fill: `1.0` when `normalize_fill` is off, when dual-fit produced the fill (never normalized), or when the **boost-only** policy declined to touch a fill already at or above A's border level; `> 1.0` when a quiet fill was raised (bounded by `max_fill_gain_db`). It is **never below 1.0** — runs before 2026-08-12 could attenuate down to `-max_fill_gain_db`, and this field is how you tell the two vintages apart. It exists to make `fill_level` readable: those fields are measured on the *gained* fill, so without the gain a loud fill and a boosted quiet one are indistinguishable, and `peak_delta_db` / `edge_delta_db` cannot be compared across a gain-policy change. **Absence means the run predates the field, not unity** — dumps in `gap-files/` written before 2026-08-12 carry no `normalize_gain` at all, and a roll-up must hold those rows out rather than default them. See [pipeline.md](pipeline.md) § Fill gain.
+
+Since 2026-08-26 it is a **product**, not just the local boost: `normalize_gain = program_gain × g_local`, and `g_local` (never serialized separately) is `normalize_gain / program_gain`. Because the hole-local half now defaults **off**, a typical run has `g_local == 1` and `normalize_gain == program_gain` — and unlike the local half, the program half **can be below 1.0** (it attenuates a louder donor by design). The "never below 1.0" rule above therefore describes `g_local`, not this field, on runs from 2026-08-26 onward. Per-gap `program_gain` is absent on older runs; that means the run predates the field, not unity. Why the run applied or refused the value it did is stamped once on [`patch.program_gain`](#programgainreport).
 
 `fit_terms` (added 2026-08-12) breaks the unified fit objective into the terms that produced the applied
 placement, so a placement can be explained rather than only located. `total` is the objective evaluated at that

@@ -245,6 +245,7 @@ mod tests {
             residual: None,
             confidence: FillConfidence::High,
             registration_residual_ms: None,
+            normalize_gain: 1.0,
         }
     }
 
