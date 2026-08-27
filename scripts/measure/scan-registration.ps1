@@ -96,6 +96,27 @@ foreach ($f in $forbidden) {
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
+# A zero-byte `<label>.json` is a corpse, never a result: PowerShell creates the redirect target
+# when the scan *starts*, and the report is written in one shot at the end. So an empty file means
+# the pair died mid-run - killed, out of memory, machine rebooted. The parse-based resume below
+# already re-scans such a pair, but the corpse is left behind for every later run to re-diagnose;
+# sweep them on the way in, and delete the current pair's own below rather than leaving one.
+function Remove-EmptyReport {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return $false }
+    if ((Get-Item -LiteralPath $Path).Length -ne 0) { return $false }
+    Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    return $true
+}
+
+$swept = @(Get-ChildItem -LiteralPath $OutDir -Filter '*.json' -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.Length -eq 0 } |
+    ForEach-Object { if (Remove-EmptyReport -Path $_.FullName) { $_.BaseName } })
+if ($swept.Count -gt 0) {
+    Write-Warning ("removed {0} empty report(s) from a previous run - these pairs will re-scan: {1}" -f
+        $swept.Count, ($swept -join ', '))
+}
+
 # Reports carry absolute media paths. Inside the repo, only `gap-files/` is gitignored.
 $outFull = (Resolve-Path $OutDir).Path.TrimEnd('\', '/')
 $repoFull = (Resolve-Path $RepoRoot).Path.TrimEnd('\', '/')
@@ -204,8 +225,13 @@ foreach ($row in $rows) {
     # a resumed manifest would report it as done and the corpus would be quietly short a pair.
     $summary = $null
     if ((Test-Path $json) -and -not $Force) {
-        try { $summary = Get-RegistrationSummary -JsonPath $json }
-        catch { Write-Warning "[$label] existing report did not parse, re-scanning: $json" }
+        if (Remove-EmptyReport -Path $json) {
+            Write-Warning "[$label] existing report was empty (killed mid-run), re-scanning: $json"
+        }
+        else {
+            try { $summary = Get-RegistrationSummary -JsonPath $json }
+            catch { Write-Warning "[$label] existing report did not parse, re-scanning: $json" }
+        }
     }
     if ($null -ne $summary) {
         Write-Host "[$label] report exists, skipping (use -Force to redo): $json" -ForegroundColor DarkGray
@@ -269,6 +295,12 @@ foreach ($row in $rows) {
         # existence as success. The stderr log is what diagnoses the failure, and it is kept.
         Remove-Item $json -Force -ErrorAction SilentlyContinue
         Write-Warning "[$label] exited $rc (stderr kept at $log)"
+    }
+    elseif (Remove-EmptyReport -Path $json) {
+        # Exit 0 with an empty stdout - the failure mode the rc!=0 branch above does not cover.
+        # Removing it is what makes the next invocation re-scan this pair instead of skipping a
+        # report that is not there; a non-empty report that fails to parse is kept for forensics.
+        Write-Warning "[$label] exited 0 but wrote no report - removed the empty file (stderr kept at $log)"
     }
 
     # Fail on the FIRST pair that could have shown registration and did not, rather than after the

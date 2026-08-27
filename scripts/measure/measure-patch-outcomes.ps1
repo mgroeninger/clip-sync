@@ -35,6 +35,14 @@
 # the splice - died with the report. `--patch-only` runs the same patch and skips the sink. Do not
 # reintroduce `--wav` here; `-WavDir` / `-KeepWav` are gone with it.
 #
+# RESUME: a pair whose `<label>.json` already parses is skipped (`-Force` redoes it). A **zero-byte**
+# report is not a report - PowerShell creates the redirect target when the repair starts and the
+# document is written in one shot at the end, so an empty file means that pair was killed mid-run
+# (out of memory, reboot, Ctrl-C). Empty reports are swept from -OutDir on startup and deleted rather
+# than left behind when a pair produces one, so resume re-runs those pairs instead of skipping a
+# result that does not exist. A non-empty report that fails to parse is kept for forensics and
+# re-run anyway.
+#
 # PRECHECK: the first pair with patched_count > 0 must carry at least one `fill_level`, and at least
 # one of those must carry `edge_delta_db`. A binary built before either produces healthy JSON with
 # the field silently absent - stop before the rest of the manifest pays full repair cost. Bypass
@@ -60,7 +68,8 @@ param(
     [ValidateSet('auto', 'comma', 'tab')]
     [string]$Delimiter = 'auto',
 
-    # Overwrite existing `<label>.json`. Without this, parseable reports are skipped (resume).
+    # Overwrite existing `<label>.json`. Without this, parseable reports are skipped (resume);
+    # zero-byte ones are swept and re-run either way - see RESUME in the header.
     [switch]$Force,
 
     # Skip the first-pair fill_level precheck.
@@ -97,6 +106,27 @@ foreach ($f in $forbidden) {
 
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+
+# A zero-byte `<label>.json` is a corpse, never a result: PowerShell creates the redirect target
+# when the repair *starts*, and the report is written in one shot at the end. So an empty file means
+# the pair died mid-run - killed, out of memory, machine rebooted - and the only thing it can do on a
+# later invocation is look like a report that exists. Sweep them on the way in so resume treats those
+# pairs as unrun, and delete the current pair's own corpse below rather than leaving one behind.
+function Remove-EmptyReport {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return $false }
+    if ((Get-Item -LiteralPath $Path).Length -ne 0) { return $false }
+    Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    return $true
+}
+
+$swept = @(Get-ChildItem -LiteralPath $OutDir -Filter '*.json' -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.Length -eq 0 } |
+    ForEach-Object { if (Remove-EmptyReport -Path $_.FullName) { $_.BaseName } })
+if ($swept.Count -gt 0) {
+    Write-Warning ("removed {0} empty report(s) from a previous run - these pairs will re-run: {1}" -f
+        $swept.Count, ($swept -join ', '))
+}
 
 $outFull = (Resolve-Path $OutDir).Path.TrimEnd('\', '/')
 $repoFull = (Resolve-Path $RepoRoot).Path.TrimEnd('\', '/')
@@ -375,8 +405,13 @@ foreach ($row in $rows) {
 
     $summary = $null
     if ((Test-Path -LiteralPath $json) -and -not $Force) {
-        try { $summary = Get-FillLevelSummary -JsonPath $json }
-        catch { Write-Warning "[$label] existing report did not parse, re-running: $json" }
+        if (Remove-EmptyReport -Path $json) {
+            Write-Warning "[$label] existing report was empty (killed mid-run), re-running: $json"
+        }
+        else {
+            try { $summary = Get-FillLevelSummary -JsonPath $json }
+            catch { Write-Warning "[$label] existing report did not parse, re-running: $json" }
+        }
     }
     if ($null -ne $summary) {
         Write-Host "[$label] report exists, skipping (use -Force to redo): $json" -ForegroundColor DarkGray
@@ -436,6 +471,12 @@ foreach ($row in $rows) {
     if ($rc -ne 0) {
         Remove-Item -LiteralPath $json -Force -ErrorAction SilentlyContinue
         Write-Warning "[$label] exited $rc (stderr kept at $log)"
+    }
+    elseif (Remove-EmptyReport -Path $json) {
+        # Exit 0 with an empty stdout. Seen 2026-08-26 on a pair sharing the machine with a second
+        # sweep. Removing it is what makes the next invocation re-run this pair instead of skipping
+        # a report that is not there; a non-empty report that fails to parse is kept for forensics.
+        Write-Warning "[$label] exited 0 but wrote no report - removed the empty file (stderr kept at $log)"
     }
 
     # Fail on the first pair that patched something but recorded no fill_level — otherwise the
