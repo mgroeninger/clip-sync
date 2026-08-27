@@ -1441,7 +1441,7 @@ mod tests {
             "measurement must be shown too: {line}"
         );
         assert!(line.contains("spread 0.42 dB"), "{line}");
-        // Drift over the golden's three chunks is 0.07 dB — reported, and well under the 1.0 dB
+        // Drift over the golden's three chunks is 0.07 dB — reported, and well under the 1.5 dB
         // trigger, so no review suffix.
         assert!(line.contains("drift 0.07 dB"), "{line}");
         assert!(!line.contains("review"), "{line}");
@@ -1455,14 +1455,14 @@ mod tests {
             gain: 1.0,
             offset_db: Some(2.31),
             spread_db: Some(3.1),
-            robust_drift_db: Some(1.4),
+            robust_drift_db: Some(1.6),
             refused: Some(crate::domain::ProgramGainRefusal::Spread),
         };
         let line = super::format_program_gain_line(&report);
         assert!(line.contains("refused (spread)"), "{line}");
         assert!(line.contains("fills at B's level"), "{line}");
         // Above CHUNK_DRIFT_REVIEW_DB: reported with the review suffix, still not a gate.
-        assert!(line.contains("drift 1.40 dB"), "{line}");
+        assert!(line.contains("drift 1.60 dB"), "{line}");
         assert!(line.contains("not gated, review"), "{line}");
     }
 

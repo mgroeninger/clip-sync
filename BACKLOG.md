@@ -20,11 +20,9 @@ Last updated: 2026-08-27.
 - Shipped work is recorded in `docs/dev/archive/*` and git history.
 - Out of scope: [PLAN.md](PLAN.md) § Out of scope.
 
-**Next:** [26/g6 start-sweep oracle](#fill-placement) — what the axis-2 objective scored at
-≈ −50 ms vs −1450 ms; do not retune the early-start penalty. Then
-[reconcile the donor-window numbers](#donor-registration). The highest-priority *defect* on the
-board is [50/g10's audible post join](#post-join-defects-pairs-31-and-50) — confirmed by ear, no
-causal model.
+**Next:** [Reconcile the donor-window numbers](#donor-registration). The highest-priority *defect*
+on the board is [50/g10's audible post join](#post-join-defects-pairs-31-and-50) — confirmed by
+ear, no causal model.
 
 ---
 
@@ -34,32 +32,44 @@ Two ear-confirmed wrong patches, two distinct defects. Findings:
 [gap-vocabulary.md](docs/dev/gap-vocabulary.md) § *Known holes*,
 [archive/TEMP-31g7-model-vs-findings.md](docs/dev/archive/TEMP-31g7-model-vs-findings.md) §8.
 Durable `lag_decision` behaviour: [gap-fingerprint.md](docs/dev/gap-fingerprint.md) § *`lag_decision`*.
-The 31/g7 step-boundary verdict is **blocked** — [settled.md](docs/dev/settled.md) § D. Seven
+The 31/g7 step-boundary skip is **blocked** — [settled.md](docs/dev/settled.md) § D. Seven
 diagnostic-field and conditional-ear-label leftovers moved to [settled.md](docs/dev/settled.md)
 § B / § C on 2026-08-24.
 
+**Already categorized (no row).** 26/g6 is Hole 1 (well-posed landmark ignored; axis-2 `waveform_min`
+won at −1450 ms, 2026-08-27). 17/g34 ear-pass 2026-08-27: patched, heard misaligned / possible pre
+echo, **cannot tell** 26-class wrong-when (jazz self-similarity; pair used start-clip offset at a
+gap that sits in the end-clip window). Hole 1 stays n=1. 31/g7 is Hole 2 (zero-length donor
+bridge; the path is skip, not a better fill).
+
+**Disposition tree** — every remaining row lands a category, then a successor.
+
+1. Right when? Licensed landmark vs applied: agree / contradict / no opinion.
+2. Contradict + both-live unique → Hole 1. Contradict + bridge ≈ 0 → Hole 2 (skip; blocked).
+3. Agree + audible → join, not search.
+4. We skipped → donor fail at the true when, or A-side never offered a candidate.
+
 | Item | Next action | Done when |
 |------|-------------|-----------|
-| **26/g6 — registration ignored** | Oracle the axis-2 start sweep: what did the objective score at ≈ −50 ms vs −1450 ms (findings §6.8)? Do **not** retune `fill_fit_early_start_penalty_scale` | The score curve over that axis is recorded and the −1450 ms win is either explained or shown to be a defect |
-| **31/g8 — Narrow-capture pre miss** | Write a TEMP. Shipped default `BorderCapture::Narrow` declines the pre at envelope +800 ms / r 0.816; Wide keeps −1146.1 / r 0.974 because the shared capture's 12% trim puts `D` at 1984 ms vs Narrow's 13 ms. Numbers: [archive/TEMP-envelope-adaptive-widen-plan.md](docs/dev/archive/TEMP-envelope-adaptive-widen-plan.md) deciding measurement 2 | A decision exists that is not "flip the default" ([settled.md](docs/dev/settled.md) § B) |
-| **Ear-pass 17/g34 and 47/g14** | Cheapest n > 2. 17/g34 is the same well-posed class as 26/g6; 47/g14 is the first failure-to-move. Labels, not a TEMP. Residual grouping 17/g34 with 31/g7 is **not** a shared fingerprint | Both are labelled |
-| **α / `border_standoff_secs`** | Fill sits ~25 ms late vs both shoulders; hypothesis is production's 0.35 s standoff. Run existing arms through `scripts/measure/diff-patch-adjustments.ps1`, or drop the item | Confirmed, or dropped |
+| **47/g14 — failure-to-move** | Ear-label as its own question. Did a licensed landmark say move, and search stay put? | Labelled. **Yes** → its own fork (not 26's "moved to the wrong tooth"). **No / cannot tell** → drop or re-categorize |
+| **31/g8 — Narrow-capture pre miss** | Capture, not the tree above. Write a TEMP. Shipped default `BorderCapture::Narrow` declines the pre at envelope +800 ms / r 0.816; Wide keeps −1146.1 / r 0.974 because the shared capture's 12% trim puts `D` at 1984 ms vs Narrow's 13 ms. Numbers: [archive/TEMP-envelope-adaptive-widen-plan.md](docs/dev/archive/TEMP-envelope-adaptive-widen-plan.md) deciding measurement 2 | A decision exists that is not "flip the default" ([settled.md](docs/dev/settled.md) § B) |
+| **α / `border_standoff_secs`** | Not Hole 1's 1.45 s. Fill sits ~25 ms late vs both shoulders; hypothesis is production's 0.35 s standoff. Run existing arms through `scripts/measure/diff-patch-adjustments.ps1`, or drop the item | Confirmed, or dropped |
 
 ## Post-join defects (pairs 31 and 50)
 
-Two ear-confirmed defects at the **post join** of technically-successful patches, plus the skip
-cluster beside them. Promoted 2026-08-24 from the census and pair-50 notes, both now archived:
+Right-when defects at the **join** of technically-successful patches, plus the skip cluster beside
+them. Promoted 2026-08-24 from the census and pair-50 notes, both now archived:
 [archive/TEMP-collapsed-bridge-census-2026-08-20.md](docs/dev/archive/TEMP-collapsed-bridge-census-2026-08-20.md)
 Q7 / Q11 and
 [archive/TEMP-pair50-anchor-seam-outcomes-2026-08-21.md](docs/dev/archive/TEMP-pair50-anchor-seam-outcomes-2026-08-21.md)
-Q1 / Q2. Both pairs' steps have opposite signs (-1.15 s vs +2.789 s) and the pairs share nothing else,
-so treat "both defects are at the post join" as one axis to **test**, not as an established link.
+Q1 / Q2. Both pairs' steps have opposite signs (−1.15 s vs +2.789 s) and share nothing else — same
+tree step 3/4 as above, not a shared class until a remnant comparison says so.
 
 | Item | Next action | Done when |
 |------|-------------|-----------|
-| **50/g10 — audible post join at the correct offset** (High) | The patch is correct (`anchor_seam_used`, ~2.8 s offset) and the post-onset remnant matches at r = 1.000, yet the join is audible. Only live lead: the overlap-only remnant locks at **13.2 ms**, not 0 — the same size as g10's own plateau split (2.805 vs 2.831 s; 50/g8 splits the same way, 2.767 vs 2.809). Test that seam residual as the echo mechanism. Silent-onset and unreached-region models are both **dead** | The 13.2 ms residual is confirmed or excluded as the mechanism |
-| **31/g10 — audible blip where g8 and g11 are clean** (Medium) | Same pair, same map step, same `shared_far_offset` shape, so that shape does not predict the defect. Cheapest first, no media run: (a) re-listen to `…_g010_full_a_patched.wav` and pin whether the blip is at the **post join** or at the fill's own end boundary — "end of the patch" does not distinguish them; (b) correlate the overlap-only post remnant for g10 **and** g11 with the pair-50 technique, compare residual lags; (c) a residual on g10 only makes it the same candidate as 50/g10. Do **not** fold 31/g8's Narrow `lag_decision` miss in — that is the capture item above. n=1 against n=2 clean twins: do not build a detector from it | The blip's locus is pinned and the g10-vs-g11 residual comparison exists |
-| **50/g11–g13 — skips between two correctly-resolved flanks** | Live lead from the flat-3000 dump: at the true +2.8 s registration `donor_interior_aligned.continuous` flips `true → false` on exactly g11/g12 (strict count two; g13/g17 gain an aligned donor that also reads discontinuous), while the patching flanks g10/g14 stay continuous and `nominal` stays `true` throughout. Read directly it says **B does not bridge the hole at the correct registration** — which would answer this without any A-side bracket story. Check whether that donor silence and the sub-threshold gate correlations (g11 −0.018/0.393, g12 −0.072/0.567, g13 anchor attempt 0.188/0.226) are the same fact seen twice. Second step if not: g11/g12 record no `best_attempt` at all — distinguish "no A-side anchor candidate found" from "none beat baseline" | Either the donor reading explains the skips, or the missing `best_attempt` is attributed |
+| **50/g10 — audible post join at the correct offset** (High) | Category: right when, bad join (`anchor_seam_used`, ~2.8 s). Live lead: overlap-only remnant locks at **13.2 ms**, not 0 — same size as g10's plateau split (2.805 vs 2.831 s; 50/g8 splits the same way, 2.767 vs 2.809). Test that residual as the echo. Silent-onset and unreached-region are dead ([archive/TEMP-pair50-anchor-seam-outcomes-2026-08-21.md](docs/dev/archive/TEMP-pair50-anchor-seam-outcomes-2026-08-21.md)) | **Confirmed** → splice-residual Change in scope. **Excluded** → this lead is dead; name the next mechanism or drop the item |
+| **31/g10 — audible blip where g8 and g11 are clean** (Medium) | First: re-listen and pin locus — **post join** vs the fill's own end boundary. Then: overlap-only post remnant for g10 **and** g11 (pair-50 technique), compare residual lags. 31/g8's Narrow miss is the capture row above, not this | Locus pinned. **Same remnant as 50/g10** → one join class. **Different** → keep separate. **Cannot tell** → stop (n=1 vs two clean twins) |
+| **50/g11–g13 — skips between two correctly-resolved flanks** | First question only: at the true +2.8 s, `donor_interior_aligned.continuous` is `false` on g11/g12 (strict count two; g13/g17 gain an aligned donor that also reads discontinuous) while flanks g10/g14 stay continuous and `nominal` stays `true`. If that donor reading explains the skip, stop. Only if the donor **does** bridge: g11/g12 have no `best_attempt` — "no A-side candidate" vs "none beat baseline". Gate numbers if needed: g11 −0.018/0.393, g12 −0.072/0.567, g13 anchor attempt 0.188/0.226 | **Donor fails to bridge** → honest skip, close. **Donor bridges** → missing `best_attempt` attributed |
 
 ## Fill normalize boosts against a non-local reference
 

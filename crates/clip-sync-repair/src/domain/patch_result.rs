@@ -412,10 +412,17 @@ pub enum GapPatchStatus {
         /// disabled", though the old omitted-when-false encoding was read that way.
         #[serde(default)]
         dual_fit_used: bool,
-        /// Loudness gain applied to this fill before the splice — `1.0` when `normalize_fill` is
-        /// off, and `1.0` whenever the boost-only policy declined to touch a fill already at or
-        /// above A's border level. **Never below 1.0** since 2026-08-12 (see
-        /// `policies::compute_fill_gain`); older runs could attenuate down to `-max_fill_gain_db`.
+        /// **Total** loudness gain applied to this fill before the splice — whole-program ×
+        /// hole-local (`domain::stack_fill_gain`), which is what [`Self::program_gain`] exists to
+        /// let a reader factor apart. `1.0` means the donor level was written untouched: the run
+        /// refused the program scalar *and* the local half was off or declined.
+        ///
+        /// **It can sit below 1.0 since 2026-08-26.** The program half attenuates a louder donor by
+        /// design (plan § 3). The boost-only floor introduced 2026-08-12 constrains only the
+        /// *local* half (`policies::compute_fill_gain`); runs before that date could attenuate
+        /// locally, down to `-max_fill_gain_db`. Neither half bounds the product: the program half
+        /// is bounded by `max_program_gain_db` and the local half by `max_fill_gain_db`, so a
+        /// boosting run can reach the sum of the two before the splice clamps samples.
         ///
         /// **Always serialized.** It exists to make the `fill_level` fields interpretable: those are
         /// measured on `gained_fill`, so without the gain there is no way to tell a loud fill from a

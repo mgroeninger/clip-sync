@@ -1,7 +1,8 @@
 # TEMP — The placement model, and 31/g7's findings set against it
 
 **Status:** findings note, **rev 2, 2026-08-18; archived 2026-08-19** (stable — everything it
-tracked has landed, been refuted, or moved to successor plans; nominal-first archived 2026-08-20; §§2, 5, 6, 8 numbers are
+tracked has landed, been refuted, or moved to successor plans; nominal-first archived 2026-08-20;
+§6.8's 26/g6 scoring question closed 2026-08-27; §§2, 5, 6, 8 numbers are
 pre-map-coordinates vintage, see the 2026-08-19 callout below). A full rewrite of the 2026-08-17
 rev 1 (in git history at `docs/dev/TEMP-31g7-model-vs-findings.md`) after two secondary reviews. Rev 1 carried a repeat/aliasing story for 31/g7
 that archived measurement had already refuted; this revision removes every claim that failed
@@ -31,6 +32,16 @@ One-sided closeability as a *gap cell* (31/g7 vs 26/g6) is parked in
 > [TEMP-lag-decision-map-coordinates-plan.md](TEMP-lag-decision-map-coordinates-plan.md).
 > Recenter still owns the far offsets. Do not read "type" in §8 as a cell or an S2b population.
 >
+> **Start-sweep oracle, 2026-08-27.** The open scoring question in §6.8 is closed. A throwaway
+> dump of every coarse `consider` in `unified_search_best_fill_start` (50 ms grid, ±10 s; CSV
+> gitignored under `gap-files/coarse-start-search-curve/`; dump reverted) shows −50 ms **was** a
+> candidate (rank 2 of 401 unique starts) and lost on `total`: `waveform_min` at −1450 ms
+> (0.367) outweighs better `structure_combined` at −50 ms (1.261 vs 1.167) under the default
+> 0.35 / 0.65 weights. `late_start_penalty` is 0 at both — `early_start_penalty_scale` defaults
+> to 0 and did not participate. The 0.997 shoulder lock is a different instrument than the seam
+> Pearson axis 2 ranks. Do **not** retune that scale from this n=1; next measurement on the class
+> is the ear-pass on 17/g34 (BACKLOG). Details in §6.8.
+>
 > **Map-coordinates landed and confirmed, 2026-08-19.** `lag_pair` now shifts each shoulder's B
 > search anchor by that shoulder's own `border_edge_displacement_frames`, removing the
 > uncorrected-`D` offset §6.3 point 2 flagged. Both of this doc's exemplars moved by exactly the
@@ -38,8 +49,8 @@ One-sided closeability as a *gap cell* (31/g7 vs 26/g6) is parked in
 > the unique landmark, `peak_r`-class unchanged; post stays `decorrelated` at nominal ±600 (true
 > −1160, recenter's territory, unchanged). **26/g6** now reads **−41.75 / −45.43 ms** both
 > shoulders (was −59.77 / −40.89), matching the archived plan's independent −41 ms figure almost
-> exactly — still both-live, still `balanced`, still the −1.45 s slide is the same unexplained
-> scoring choice (§6.8). **Every other number in §§2, 5, 6, 8 is pre-fix-vintage** (`peak_r`,
+> exactly — still both-live, still `balanced`; the −1.45 s slide is the same scoring choice,
+> diagnosed 2026-08-27 (§6.8). **Every other number in §§2, 5, 6, 8 is pre-fix-vintage** (`peak_r`,
 > `peak_z`, the percentile table, the 68/13/308-gap population counts) and should be re-derived
 > from a post-map-coordinates dump before being cited as current — the corpus-wide join is not
 > expected to change the 2-of-68 headline (outliers are 930–1390 ms; the fix moves things by tens
@@ -586,17 +597,46 @@ shoulder surface — found by the archived ±2000 ms sweep, not by `top2_spacing
   slides matching to 16 ms** — consistent with a regional map correction (*inference*).
   Classification: no opinion — explicitly neither a defect claim nor an exoneration;
   unverifiable at this vintage.
-- **Pair 26 @ 2151.69 — contradicted; the open scoring question.** Every sensor is healthy and
-  agreeing: `peak_r` 0.9969 / 0.9930, both `timing_offset`, `step_ms` 18.9, dual-fit **passes**
-  (0.993 / 0.931), envelope `lag_ms` 0.0 with `peak_r == nominal_r` 0.8036. The archived wide
-  sweep adds the mechanism-relevant fact: this shoulder surface genuinely **is** periodic — a
-  **480.5 ms comb** — and the applied −1.45 s sits on the **third tooth**; but the true peak
-  still **ranks first** in that sweep, so even the real comb did not out-score truth for the
-  sensor. Zero boundary move ⇒ E1 acceptance ⇒ the −1.45 s is **axis 2's argmax**: the joint
-  objective, searching ±10 s, preferred a 0.366-min seam 1.4 s away over a first-ranked
-  0.997-correlation landmark ~50 ms away. **Why is undiagnosed** — one probe (oracle the axis-2
-  start sweep at this gap) resolves it, and this is the cleanest source-defect lead in the corpus
-  because "correct" has an unambiguous answer here.
+- **Pair 26 @ 2151.69 — contradicted; scoring defect, diagnosed 2026-08-27.** Every sensor is
+  healthy and agreeing: `peak_r` 0.9969 / 0.9930, both `timing_offset`, `step_ms` 18.9, dual-fit
+  **passes** (0.993 / 0.931), envelope `lag_ms` 0.0 with `peak_r == nominal_r` 0.8036. The
+  archived wide sweep adds the mechanism-relevant fact: this shoulder surface genuinely **is**
+  periodic — a **480.5 ms comb** — and the applied −1.45 s sits on the **third tooth**; but the
+  true peak still **ranks first** in that sweep, so even the real comb did not out-score truth
+  for the sensor. Zero boundary move ⇒ E1 acceptance ⇒ the −1.45 s is **axis 2's argmax**.
+  The coarse start sweep (401 unique 50 ms steps over ±10 s; dump reverted) answers the three-way:
+
+  | hypothesis | result |
+  |---|---|
+  | −50 never a candidate (search defect) | false — exact grid point, rank **2**, every row finite |
+  | −50 scores higher and lost on tie-break | false — `total` gap 0.036 ≫ `SCORE_TIE_EPSILON` 1e-9 |
+  | −1450 wins `total` (scoring defect) | **true** — the term is `waveform_min` |
+
+  | start | `total` | `structure_combined` | `waveform_min` (`pre` / `post`) | `late_start_penalty` |
+  |---|---|---|---|---|
+  | −1450 ms | 0.647 | 1.167 | **0.367** (0.367 / 0.494) | 0 |
+  | −50 ms | 0.611 | **1.261** | 0.261 (0.698 / 0.261) | 0 |
+  | 0 (nominal) | 0.581 | 1.533 | 0.069 | 0 |
+
+  Default weights 0.35 structure / 0.65 waveform: structure prefers −50 by 0.094 (**+0.033** on
+  `total`); `waveform_min` prefers −1450 by 0.106 (**+0.069** on `total`); net **+0.036** for
+  −1450. `late_start_penalty` is 0 at both because `early_start_penalty_scale` defaults to 0 —
+  the early-start knob did not participate, and must not be retuned from this n=1.
+
+  The 0.997 landmark is a **different instrument**. At coarse −50 the seam Pearson is
+  `wave_pre` 0.698 / `wave_post` **0.261** — the min is the post seam, not the 1 s shoulder
+  lock at −41.8 / −45.4 ms. Axis 2 never sees 0.997. After −1450 wins coarse, refine densifies
+  only ± one 50 ms step around **−1450**, so the landmark is never integer-searched.
+
+  The shoulder comb is not a comb on this objective. Nearest coarse bins: 0 ms `total` 0.581 /
+  `wmin` 0.069; −500 ms 0.560 / 0.067; −950 ms 0.430 / 0.120; −1450 ms **0.647 / 0.367**. Only
+  the third tooth has a competitive seam min. Several farther starts have *higher*
+  `waveform_min` than −1450 and lose on structure.
+
+  Applied `fit_terms` (`total` 0.730, `structure_combined` 1.406, `waveform_min` 0.366, slide
+  −1.450 s) is end-search / polish / snap at the **same** −1.45 s: structure rises, the seam
+  min stays ~0.366. n=1 — this records why −1450 beat −50; it does not license a Change. Next
+  on the class is the ear-pass on 17/g34.
 - **Pair 31/g7 @ 1725.70 — contradicted; mechanism unexplained.** One live shoulder (−47 ms,
   unique in ±2 s), one dead. The gate accepted `min` **0.437** at −977 ms, where the wide sweep
   reads **r 0.087** for the pre-shoulder template. The two numbers come from different windows (a
@@ -604,8 +644,9 @@ shoulder surface — found by the archived ±2000 ms sweep, not by `top2_spacing
   measurement — but whatever the seam window matched at −977 ms, it was not the shoulder's content
   found again. With aliasing refuted, **the mechanism of a 0.437 Pearson at a wrong placement is
   an open scoring question on this gap**, not the same question as pair 26. Here the shape is
-  ill-posed (`min` over a dead post); there the shape is healthy and axis 2's argmax is
-  undiagnosed. Different windows still apply: seam Pearson at the joint vs 1 s shoulder template.
+  ill-posed (`min` over a dead post); there the shape is healthy and axis 2's argmax is now a
+  measured `waveform_min` win. Different windows still apply: seam Pearson at the joint vs 1 s
+  shoulder template.
 - **17/g34** (not in the 68-gap zero-move join; the archived plan's other residual giant) is a
   third member of pair 26's class: `peak_r` 0.990 / 0.987, `peak_z` 28.7 / 26.5, prominence
   0.79 / 0.66, dual-fit pass, envelope 0 — healthy, unique, agreeing registration, and a ~1.15 s
@@ -617,8 +658,9 @@ shoulder surface — found by the archived ±2000 ms sweep, not by `top2_spacing
    That is not the same as the lag-verdict one-dead **dump predicate**, which is 13 of 308 patched
    (§8) — and is mostly sensor error, not a class (banner).
 2. **Pair 26 is the better lead for the source defect**: every sensor healthy and agreeing, a
-   measured comb, a first-ranked truth — and a defined one-probe experiment. It is not the S2b
-   plan's class.
+   measured comb, a first-ranked truth — and the 2026-08-27 probe shows the joint objective
+   preferred −1450 on `waveform_min`, not because −50 was missing or lost a tie. It is not the
+   S2b plan's class. n=1: do not design a Change from this gap alone.
 3. Pair 50 is the independence proof (§0): the gate's score is not a registration measure.
 4. Recording `applied − landmark` inside the patcher is **BACKLOG S1** (blocked on
    envelope-recenter): a **patch diagnostic**, descriptive only. It is not a gap discriminator and
@@ -755,7 +797,8 @@ envelope `lag_ms` 0 with `peak_r == nominal_r`. §6.8's curve shape is a **broad
 (`top2_spacing_ms` 0.104 ms = the same lobe, five samples). Do **not** treat
 both-prominence-tiny (0.025 / 0.027) as an isolator — that is the misreading the broad-spike row
 warns about — and `peak_z` ~6 on both sides is common (60 of 308 both-live gaps have `z < 12`).
-The gap looks fillable. The failure is that scoring walked −1.45 s anyway (§6.8).
+The gap looks fillable. The failure is that scoring walked −1.45 s anyway: axis 2's `total`
+preferred a 0.367 seam min at −1450 ms over a 0.261 min at −50 ms (§6.8, 2026-08-27).
 
 **17/g34** is the same *gap* class as 26/g6: both-live, dual-fit pass, unique registration
 ignored (`peak_r` 0.990 / 0.987, `peak_z` 28.7 / 26.5, prominence 0.79 / 0.66, envelope 0) —
@@ -860,7 +903,8 @@ Rev 1 is in git history at this path. Removed, with reasons:
    inference, not an exoneration, and neither direction is claimable at this vintage (§6.8).
 7. **Pair 26's "maybe incommensurate bases" escape.** Both terms are displacements from
    `b_mapped_start_frame`, and the bulk's 22 ms agreement forecloses a base mismatch (§§6.2,
-   6.4). What remains for pair 26 is the sharper open question in §6.8.
+   6.4). Pair 26's remaining question — why axis 2 preferred −1450 — is closed 2026-08-27:
+   `waveform_min` at the third comb tooth beat better structure at −50 ms (§6.8).
 8. **Symmetric "±600 ms on both shoulders" reach.** The post sweep is re-centered by the measured
    pre lag and reported gross (§6.6); 31/g10 reads a post landmark at −1152 ms under a 600 ms max
    lag. Conclusions survived; the reach arithmetic did not. **Note (2026-08-19):** the mechanism

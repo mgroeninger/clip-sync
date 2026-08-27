@@ -28,10 +28,11 @@
 //! material. The corpus's ±0.26 dB readings are real, and applying them is both inaudible and right.
 //!
 //! **Chunk drift does not gate.** [`robust_chunk_drift_db`] is computed for *reporting* only —
-//! demoted 2026-08-26 (plan § 4) because zero corpus pairs drift at all, it is undefined for any
-//! program under ~20 minutes, and its usable margin over the corpus was 0.209 dB. Re-arm trigger:
-//! **any real pair measuring robust chunk drift above 1.0 dB**. The residual until then is a
-//! 3.4–10 dB drift applying a wrong scalar, bounded by `max_program_gain_db`.
+//! demoted 2026-08-26 (plan § 4) because no corpus pair drifts past the threshold Tier 2
+//! calibrated, it is undefined for any program under ~20 minutes, and its usable margin over the
+//! corpus was 0.209 dB. Re-arm trigger: **any real pair measuring robust chunk drift above
+//! 1.5 dB**. The residual until then is a 3.4–10 dB drift applying a wrong scalar, bounded by
+//! `max_program_gain_db`.
 
 use serde::Serialize;
 
@@ -48,7 +49,13 @@ pub const DEFAULT_MAX_PROGRAM_GAIN_DB: f64 = 6.0;
 
 /// Robust-chunk-drift reading above which the demoted drift gate should be reconsidered (plan § 4).
 /// Nothing branches on this — it exists so the number in the report has a stated meaning.
-pub const CHUNK_DRIFT_REVIEW_DB: f64 = 1.0;
+///
+/// **1.5, deliberately the same number as the gate Tier 2 calibrated** — restated from 1.0 on
+/// 2026-08-27 (`docs/dev/settled.md` § C). 1.0 sat *below* the corpus maximum (pair 31 reads
+/// 1.291), so it re-armed the latch against evidence already in the Tier 3 census: a trigger has to
+/// name evidence we do not have. At 1.5 the review fires exactly when a pair appears that the gate
+/// would have caught.
+pub const CHUNK_DRIFT_REVIEW_DB: f64 = 1.5;
 
 /// The two knobs. See the module docs for why there are two and not four.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -428,6 +435,39 @@ mod tests {
         let drift = report.robust_drift_db.expect("two populous chunks");
         assert!((drift - 5.342).abs() < 1e-6, "{report:?}");
         assert!(report.drift_wants_review(), "{report:?}");
+    }
+
+    /// The re-arm trigger must sit *above* the Tier 3 corpus maximum, or reading the census
+    /// re-arms the latch on evidence already in hand — which is why 1.0 was retracted on
+    /// 2026-08-27 (`docs/dev/settled.md` § C). Pair 31's 1.291 is that maximum.
+    #[test]
+    fn the_review_trigger_sits_above_the_corpus_maximum() {
+        let corpus_max_robust_drift_db = 1.291;
+        assert!(
+            corpus_max_robust_drift_db < CHUNK_DRIFT_REVIEW_DB,
+            "a trigger at or below {corpus_max_robust_drift_db} names evidence we already have"
+        );
+        let mut at_corpus_max = offset(-0.2, 0.668);
+        at_corpus_max.chunks = vec![
+            AbLevelOffsetChunk {
+                start_secs: 0.0,
+                end_secs: 600.0,
+                offset_db: -0.2,
+                n_pairs: 1500,
+            },
+            AbLevelOffsetChunk {
+                start_secs: 600.0,
+                end_secs: 1200.0,
+                offset_db: -0.2 + corpus_max_robust_drift_db,
+                n_pairs: 1500,
+            },
+        ];
+        let levels = levels(Some(at_corpus_max));
+        let report = ProgramGainReport::new(decide(&levels), Some(&levels));
+        assert!(
+            !report.drift_wants_review(),
+            "no corpus pair may ask for review: {report:?}"
+        );
     }
 
     #[test]

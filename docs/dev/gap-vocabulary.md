@@ -94,8 +94,8 @@ Registration and shared-source are **descriptive**, not dividers — patched and
 overlapping `|step|` ranges, and every donor on this corpus is same-master. What actually separates
 patch from skip is **bracket search** result crossed with **donor** state.
 
-> **Known holes (measured 2026-08-17; split 2026-08-18; Hole 2 resolved 2026-08-18): one open
-> hole, one resolved diagnosis.** The
+> **Known holes (measured 2026-08-17; split 2026-08-18; Hole 2 resolved 2026-08-18; Hole 1
+> scoring diagnosed 2026-08-27): one open hole, one resolved diagnosis.** The
 > corpus's two ear-confirmed wrong patches (26/g6, 31/g7) both land in the healthiest cell
 > (Bracket patch) with the calmest readout (`balanced`) — accurate on every existing axis — but
 > for **different reasons**, and they do not share a gap class. An earlier draft merged them into
@@ -107,8 +107,13 @@ patch from skip is **bracket search** result crossed with **donor** state.
 > **Hole 1 — no axis describes the *choice* (26/g6-class; registration well-posed).** Every axis
 > above describes the gap; none compares the placement the patcher **chose** against the
 > registration the sensors **measured**. Pair 26 slid −1450 ms from a 0.997-correlation landmark
-> both shoulders agree on to within 19 ms; 17/g34 is the same class (unique agreeing registration,
-> ~1.15 s slide anyway). The finding and the measurement: findings §§6–7. **Naming is withdrawn
+> both shoulders agree on to within 19 ms; 17/g34 was the class-test candidate (~1.15 s slide in
+> the 2026-08-13 join) and the 2026-08-27 ear-pass **could not confirm** 26-class wrong-when.
+> Hole 1 stays n=1. The 2026-08-27 axis-2 start sweep diagnosed *how* 26/g6's choice was made:
+> −50 ms was a scored candidate (rank 2) and lost on `total` because seam `waveform_min` at
+> −1450 beat better structure at −50; the 0.997 lock is a different instrument than the seam
+> Pearson the objective ranks ([findings §6.8](archive/TEMP-31g7-model-vs-findings.md)). That
+> closes the scoring question; it does not add the missing axis. **Naming is withdrawn
 > to a backlog sketch** (findings §7.5) pending prospective validation of the confidence filter
 > on a second dump vintage.
 >

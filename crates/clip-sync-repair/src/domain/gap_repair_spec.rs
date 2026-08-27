@@ -193,7 +193,10 @@ pub enum GapRepairStrategy {
         fit_used_boundary_grid: bool,
         fit_boundary_grid_cells: Option<u32>,
         residual: Option<SeamResidualVerdict>,
-        /// 1.0, or the RMS gain computed at characterize time (needs the sliced B).
+        /// The total splice gain — whole-program × hole-local (`domain::stack_fill_gain`), computed
+        /// at characterize time because the local half needs the sliced B. `1.0` when the run
+        /// refused the program scalar and local normalize is off or declined; **below 1.0** when
+        /// the program half attenuates a louder donor.
         normalize_gain: f32,
         /// The unified fit objective's terms at `alignment.start_frame` — decided at characterize time
         /// alongside the placement itself, because only the search knows them. `None` when the gate

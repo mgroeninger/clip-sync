@@ -751,7 +751,9 @@ pub(in crate::application::patch_audio) fn characterize_region(
     // refusal, so a run without a trusted offset is the pre-2026-08-26 path exactly. The two halves
     // compose in `stack_fill_gain` (plan § 5) — local is a residual on the already-matched fill.
     let program_gain = request.program_gain.gain();
-    let b_border_rms = if normalize_fill {
+    // The A-side border pool, and only ever A's: the local half reads A's shoulders, never B's
+    // (plan § 2 — reading B's shoulders at the hole is the refuted idea, `settled.md` § A).
+    let a_border_rms = if normalize_fill {
         compute_a_border_rms(
             a_pcm,
             refined.start_frame,
@@ -764,7 +766,7 @@ pub(in crate::application::patch_audio) fn characterize_region(
     };
     let stacked = crate::domain::stack_fill_gain(
         program_gain,
-        b_border_rms,
+        a_border_rms,
         policies::rms_interleaved(&b_fill),
         max_fill_gain_db,
         normalize_fill,

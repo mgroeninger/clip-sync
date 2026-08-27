@@ -518,11 +518,24 @@ matched, so every remaining local move is upward. Recorded in
 [../pipeline.md](../../pipeline.md) § Fill gain, because the flag's character changed
 without its code changing.
 
-**8 gaps sit pinned at +12.00 dB** under `--normalize` — `max_fill_gain_db`'s
+**7 gaps sit pinned at +12.00 dB** under `--normalize` — `max_fill_gain_db`'s
 4.0× ceiling, so the local knob wanted *more* than it was allowed and those
 readings are censored ([settled.md](../settled.md) § E). It costs nothing while the
 flag is off by default, and it is the standing argument against ever flipping
 that default.
+
+**Corrected from 8 on 2026-08-27** (re-counted off the same
+`…-census-normalize/` roll-up). The pins must be counted on the **local residual**
+`normalize_gain / program_gain`, which lands on 12.0000 dB exactly for
+10/g9, 10/g11, 19/g2, 43/g7, 44/g6, 45/g4 and 5/g6 — seven. The 8 was a naive
+count on `normalize_gain`, which is a *product* now, so the clamp no longer shows
+up at a fixed value of it: `g_program` moves each total off 12 by its own ±0.1 dB
+(10/g9 reads 12.012, 19/g2 reads 11.861), and a tolerance wide enough to recover
+19/g2 also admits 19/g13, whose local residual is 11.916 — wanted, but not
+clamped. A tight `|total − 12| < 0.1` on the same data finds only six. This is the
+concrete form of [settled.md](../settled.md) § E's censoring caution, and it is
+why [../pipeline.md](../../pipeline.md) § Fill gain says to read the pins on the
+residual and never on `normalize_gain`.
 
 ---
 
