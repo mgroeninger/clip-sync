@@ -118,6 +118,7 @@ fn synth_ab_inputs() -> (MultiChannelPcm, Vec<f32>, GapReport, PatchAudioRequest
             video_b_start_secs: Some(gap.0 as f64 / f64::from(rate)),
             video_b_end_secs: Some(gap.1 as f64 / f64::from(rate)),
             b_has_energy: true,
+            collar_level: None,
         }],
         gap_equivalence: Vec::new(),
         gap_offset_agreement: None,

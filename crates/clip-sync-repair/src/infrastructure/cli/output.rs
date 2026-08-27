@@ -1128,6 +1128,7 @@ mod tests {
                     video_b_start_secs: Some(57.34),
                     video_b_end_secs: Some(59.84),
                     b_has_energy: true,
+                    collar_level: None,
                 },
                 Gap {
                     video_a_start_secs: 120.0,
@@ -1135,6 +1136,7 @@ mod tests {
                     video_b_start_secs: None,
                     video_b_end_secs: None,
                     b_has_energy: false,
+                    collar_level: None,
                 },
             ],
             gap_equivalence: Vec::new(),
@@ -1153,6 +1155,7 @@ mod tests {
             // Populated (chunks included) so the whole `program_levels` object is pinned by the
             // contract golden, not just its absence.
             program_levels: Some(crate::domain::program_levels::ProgramLevels {
+                channels_comparable: true,
                 a: crate::domain::program_levels::ProgramLevelContext {
                     mid_db: Some(-23.4),
                     floor_db: Some(-71.2),
@@ -1341,6 +1344,7 @@ mod tests {
                 video_b_start_secs: Some(12.5),
                 video_b_end_secs: Some(72.5),
                 b_has_energy: true,
+                collar_level: None,
             }],
             gap_equivalence: Vec::new(),
             gap_offset_agreement: None,
@@ -1632,6 +1636,7 @@ mod tests {
                 video_b_start_secs: None,
                 video_b_end_secs: None,
                 b_has_energy: false,
+                collar_level: None,
             }],
             gap_equivalence: Vec::new(),
             gap_offset_agreement: None,
@@ -1853,6 +1858,7 @@ mod tests {
                 video_b_start_secs: Some(190.86),
                 video_b_end_secs: Some(193.61),
                 b_has_energy: true,
+                collar_level: None,
             },
             Gap {
                 video_a_start_secs: 0.0,
@@ -1860,6 +1866,7 @@ mod tests {
                 video_b_start_secs: None,
                 video_b_end_secs: None,
                 b_has_energy: false,
+                collar_level: None,
             },
         ];
 
@@ -2150,6 +2157,7 @@ mod tests {
                 video_b_start_secs: Some(12.5),
                 video_b_end_secs: Some(14.5),
                 b_has_energy: true,
+                collar_level: None,
             },
             Gap {
                 video_a_start_secs: 6128.0,
@@ -2157,6 +2165,7 @@ mod tests {
                 video_b_start_secs: Some(6140.0),
                 video_b_end_secs: Some(6371.7),
                 b_has_energy: true,
+                collar_level: None,
             },
         ];
         alignment_detail.clips = vec![
@@ -2266,6 +2275,7 @@ mod tests {
                 video_b_start_secs: Some(204.5),
                 video_b_end_secs: Some(206.5),
                 b_has_energy: true,
+                collar_level: None,
             },
             Gap {
                 video_a_start_secs: 0.0,
@@ -2273,6 +2283,7 @@ mod tests {
                 video_b_start_secs: None,
                 video_b_end_secs: None,
                 b_has_energy: false,
+                collar_level: None,
             },
             Gap {
                 video_a_start_secs: 6128.0,
@@ -2280,6 +2291,7 @@ mod tests {
                 video_b_start_secs: Some(6140.0),
                 video_b_end_secs: Some(6371.7),
                 b_has_energy: true,
+                collar_level: None,
             },
         ];
         let summary = PatchSummary::from_outcomes(vec![
@@ -2370,6 +2382,7 @@ mod tests {
             video_b_start_secs: Some(112.5),
             video_b_end_secs: Some(172.5),
             b_has_energy: false,
+            collar_level: None,
         };
         assert!((gap.duration_secs() - 60.0).abs() < 0.001);
         assert!(!gap.is_fillable());

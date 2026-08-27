@@ -573,6 +573,7 @@ mod tests {
             video_b_start_secs: Some(start),
             video_b_end_secs: Some(end),
             b_has_energy: true,
+            collar_level: None,
         };
         // Non-round values: these are the bit patterns the old float-keyed join relied on.
         let gaps = vec![
@@ -709,6 +710,7 @@ mod tests {
             video_b_start_secs: Some(1.5),
             video_b_end_secs: Some(2.5),
             b_has_energy: true,
+            collar_level: None,
         }];
         let fill_mode = FillMode::Fit;
         let thresholds = FillTierThresholds::DEFAULT;

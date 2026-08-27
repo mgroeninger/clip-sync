@@ -184,8 +184,8 @@ Top-level object: **RepairJsonOutput**.
 
 ### ProgramLevels
 
-Whole-program level readings derived from the scan's per-block RMS timelines. Capture only: nothing
-in the patch path reads them and no fill gain is derived from them.
+Whole-program level readings derived from the scan's per-block RMS timelines. Since 2026-08-26
+`offset` drives the fill gain (`patch.program_gain`); the per-side contexts remain capture only.
 
 | Field | Type | Presence | Meaning |
 |-------|------|----------|---------|
@@ -224,6 +224,34 @@ it.
 | `start_secs` / `end_secs` | number | always | Bucket bounds on A's timeline (600 s buckets) |
 | `offset_db` | number | always | Median paired difference inside the bucket |
 | `n_pairs` | integer | always | Pairs in the bucket (≥ 20; smaller buckets are not emitted) |
+
+#### CollarLevelOffset
+
+The same paired estimator as [AbLevelOffset](#ableveloffset), restricted to a **collar** around one
+gap: `[start − W, start)` ∪ `(end, end + W]` on A's timeline, `W = repair.local_pair_collar_secs`
+(default 2.0 s). Blocks overlapping the gap core never pair; the block abutting the core normally
+walks off by itself, because steadiness is judged against the core's silence rail rather than against
+a sliced-away neighbour.
+
+It exists because the whole-program `offset` is a single scalar over the entire runtime, and a fill
+dropped into a quiet passage inherits it whether or not it describes that passage. This object is the
+measurement of the same relationship where the fill actually lands. **Nothing reads it yet** — the
+scan stamps it, the apply path still uses `program_levels.offset`.
+
+It is a **measurement, not a verdict**: no minimum-pair floor, no spread gate, no refusal. Every
+threshold is the consumer's, so that the corpus census can see the full distribution before any of
+them is chosen.
+
+| Field | Type | Presence | Meaning |
+|-------|------|----------|---------|
+| `offset_db` | number | always | Median paired difference over both collars pooled. **B minus A** |
+| `spread_db` | number | always | MAD about `offset_db`. The trust gate, same as the whole-program reading |
+| `n_pairs` | integer | always | Accepted pairs. **No floor** — the estimator reports a collar of 3 as readily as one of 30, because hiding thin collars would censor the distribution that `MIN_LOCAL_PAIRS` is meant to be chosen from. A consumer turning this into a gain owes its own minimum |
+| `n_active` | integer | always | Collar A blocks above the active threshold, **before** the steadiness filter |
+| `n_steady` | integer | always | Active *and* steady — the pairing denominator. These two are why a collar came back thin: `n_steady / n_active` is what steadiness cost (answer: widen the collar), `n_pairs / n_steady` is B-coverage yield (answer: the collar is fine, B is not) |
+| `n_pre` / `n_post` | integer | always | Pairs from before / after the gap. **A straddle detector** — a gap sitting on a map step shows up as the two sides disagreeing (see `docs/dev/settled.md` § D). Also the honest denominator: a leading- or trailing-edge gap reads from one side only |
+| `pre_offset_db` / `post_offset_db` | number | when that side had any pairs | Per-side medians. **Reported, never gated on** — v1 refuses on nothing here |
+| `first_pair_secs` / `last_pair_secs` | number | always | Outermost A-times actually paired — where the collar reached after the walk-off, not the nominal `± W`. On a two-sided collar the interval **between** them contains the gap, so it is not a measured duration |
 
 #### ProgramLevelContext
 
@@ -265,6 +293,7 @@ Gap positions in `gaps[]` use the **decoded-sample clock**. When `delta_secs` is
 | `video_b_start_secs` | number \| null | always | Mapped position in B; `null` when alignment produced no offset |
 | `video_b_end_secs` | number \| null | always | |
 | `b_has_energy` | bool | always | B has audio energy at the mapped position (potential fill source) |
+| `collar_level` | [CollarLevelOffset](#collarleveloffset) | when anything in the collar paired | The A/B level relationship **local to this gap**, read from the material either side of it. Absent for every reason at once (channels incomparable, no alignment offset, nothing paired) — do not infer which. Absence does *not* mean "too few pairs": a thin collar is reported, floor and all |
 
 ### GapOffsetAgreement
 

@@ -712,6 +712,8 @@ fn build_scan_request(
         // Fixtures mirror production, so this tracks the shipped default rather than pinning a mode.
         apply_donor_registration: clip_sync_repair::infrastructure::config::RepairConfig::default()
             .apply_donor_registration,
+        local_pair_collar_secs: clip_sync_repair::infrastructure::config::RepairConfig::default()
+            .local_pair_collar_secs,
     }
 }
 

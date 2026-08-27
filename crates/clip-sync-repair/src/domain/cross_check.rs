@@ -350,6 +350,7 @@ mod tests {
                 video_b_end_secs: Some(13.0),
                 // Absolute occupancy wrong (false) — still excluded via RepairableDropout.
                 b_has_energy: false,
+                collar_level: None,
             },
             Gap {
                 video_a_start_secs: 30.0,
@@ -357,6 +358,7 @@ mod tests {
                 video_b_start_secs: Some(23.0),
                 video_b_end_secs: Some(33.0),
                 b_has_energy: true, // fillability would exclude; SharedSilence includes
+                collar_level: None,
             },
             Gap {
                 video_a_start_secs: 50.0,
@@ -364,6 +366,7 @@ mod tests {
                 video_b_start_secs: None,
                 video_b_end_secs: None,
                 b_has_energy: false,
+                collar_level: None,
             },
             Gap {
                 video_a_start_secs: 70.0,
@@ -371,6 +374,7 @@ mod tests {
                 video_b_start_secs: Some(63.0),
                 video_b_end_secs: Some(73.0),
                 b_has_energy: false, // NotEvaluated fallback includes
+                collar_level: None,
             },
         ];
         let equivalence = [

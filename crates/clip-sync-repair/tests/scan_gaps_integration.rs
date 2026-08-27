@@ -91,6 +91,7 @@ fn execute_detects_silent_gap_through_alignment_and_scan_pipeline() {
             gap_offset_tolerance_secs: 0.5,
             limit_fill_to_mapped_region: true,
             apply_donor_registration: true,
+            local_pair_collar_secs: 2.0,
         })
         .expect("full execute path should succeed");
 
@@ -149,6 +150,7 @@ fn execute_detects_short_two_second_gap() {
             gap_offset_tolerance_secs: 0.5,
             limit_fill_to_mapped_region: true,
             apply_donor_registration: true,
+            local_pair_collar_secs: 2.0,
         })
         .expect("scan should succeed");
 
@@ -210,6 +212,7 @@ fn ac3_dual_track_b_scan_detects_gap() {
             gap_offset_tolerance_secs: 0.5,
             limit_fill_to_mapped_region: true,
             apply_donor_registration: true,
+            local_pair_collar_secs: 2.0,
         })
         .expect("scan should succeed with dual-track AC-3 B");
 

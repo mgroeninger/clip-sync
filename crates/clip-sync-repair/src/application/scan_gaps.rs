@@ -44,6 +44,14 @@ pub struct ScanGapsRequest {
     /// [`DonorRegistrationMode::Apply`]: crate::domain::gap_equivalence::DonorRegistrationMode::Apply
     /// [`RepairConfig::apply_donor_registration`]: crate::infrastructure::config::RepairConfig::apply_donor_registration
     pub apply_donor_registration: bool,
+    /// Half-width (seconds) of the per-gap level collar stamped as
+    /// [`Gap::collar_level`](crate::domain::Gap::collar_level).
+    ///
+    /// A **scan** knob, not a patch one, and not because of `--patch-only` (that flag re-runs the
+    /// scan in-process): the block-level timelines the collar measures exist only inside this use
+    /// case and are dropped before patch ever sees a report. A width arriving at patch time would
+    /// have nothing to measure.
+    pub local_pair_collar_secs: f64,
 }
 
 /// Gap scan product: domain report plus the full aligner DTO for CLI/JSON output.
@@ -309,6 +317,8 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
                 video_b_start_secs: b_positions.map(|(s, _)| s),
                 video_b_end_secs: b_positions.map(|(_, e)| e),
                 b_has_energy,
+                // Stamped in step 6b, where the level params and both timelines are set up.
+                collar_level: None,
             });
 
             let b_mapped = offset_secs
@@ -402,14 +412,16 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             request.recipe.absolute_silence_rms(),
             request.recipe.scan_block_secs(),
         );
-        let program_levels = (!a_levels.is_empty()).then(|| {
-            // Fail closed: unknown compatibility is not evidence that the channel counts match,
-            // and this flag exists to warn that the offset is not a pure gain. (`Some` whenever a
-            // B session opened, which is a precondition for the offset below existing at all.)
-            let channels_comparable = track_compatibility
-                .as_ref()
-                .is_some_and(|tc| tc.channels_match);
-            crate::domain::program_levels::ProgramLevels {
+        // Fail closed: unknown compatibility is not evidence that the channel counts match, and
+        // this flag exists to warn that the offset is not a pure gain. (`Some` whenever a B session
+        // opened, which is a precondition for either offset below existing at all.) Hoisted out of
+        // the closure because the per-gap collar below gates on the same fact.
+        let channels_comparable = track_compatibility
+            .as_ref()
+            .is_some_and(|tc| tc.channels_match);
+        let program_levels =
+            (!a_levels.is_empty()).then(|| crate::domain::program_levels::ProgramLevels {
+                channels_comparable,
                 a: crate::domain::program_levels::program_level_context(&a_levels, &level_params),
                 b: b_levels_for_eq.map(|levels| {
                     crate::domain::program_levels::program_level_context(levels, &level_params)
@@ -426,8 +438,35 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
                             &level_params,
                         )
                     }),
+            });
+
+        // Step 6c: the same paired measurement per gap, over a collar of A blocks either side of
+        // the hole (`docs/dev/TEMP-local-paired-gain-plan.md`). Same siting reason as 6b and the
+        // same inputs — this is the last point at which the timelines exist.
+        //
+        // Skipped wholesale when the channel counts are not comparable: RMS over interleaved
+        // samples carries a correlation-dependent constant there, so a collar offset would not be
+        // a level difference. Absence then means "no pairing", exactly as it does whole-file, and
+        // `program_levels.channels_comparable` is what a consumer reads to tell the two apart.
+        //
+        // Measurement only in this Change: no gain reads `collar_level`, so this runs regardless of
+        // `normalize_fill` and costs one binary search plus ~`2 * collar / block` blocks per gap.
+        if channels_comparable {
+            if let (Some(delta), Some(b_levels)) = (offset_secs, b_levels_for_eq) {
+                for gap in &mut gaps {
+                    gap.collar_level = crate::domain::program_levels::collar_level_offset(
+                        &a_levels,
+                        b_levels,
+                        gap.video_a_start_secs,
+                        gap.video_a_end_secs,
+                        request.local_pair_collar_secs,
+                        delta,
+                        b_scan.scanned_end_secs,
+                        &level_params,
+                    );
+                }
             }
-        });
+        }
 
         let gap_count = gaps.len();
         progress.phase(&format_scan_summary(&request, gap_count));
@@ -1020,6 +1059,7 @@ mod tests {
             gap_offset_tolerance_secs: 0.5,
             limit_fill_to_mapped_region: true,
             apply_donor_registration: true,
+            local_pair_collar_secs: 2.0,
         }
     }
 
@@ -1221,6 +1261,7 @@ mod tests {
                     video_b_start_secs: Some(0.0),
                     video_b_end_secs: Some(60.0),
                     b_has_energy: true,
+                    collar_level: None,
                 },
                 Gap {
                     video_a_start_secs: 120.0,
@@ -1228,6 +1269,7 @@ mod tests {
                     video_b_start_secs: Some(120.0),
                     video_b_end_secs: Some(180.0),
                     b_has_energy: false,
+                    collar_level: None,
                 },
             ],
             gap_equivalence: Vec::new(),
@@ -1457,6 +1499,7 @@ mod tests {
             gap_offset_tolerance_secs: 0.5,
             limit_fill_to_mapped_region: false,
             apply_donor_registration: true,
+            local_pair_collar_secs: 2.0,
         };
         let line = format_scan_summary(&request, 30);
         assert!(line.contains("30 silent run(s)"));
@@ -1493,6 +1536,7 @@ mod tests {
             gap_offset_tolerance_secs: 0.5,
             limit_fill_to_mapped_region: true,
             apply_donor_registration: true,
+            local_pair_collar_secs: 2.0,
         };
 
         let report = scan

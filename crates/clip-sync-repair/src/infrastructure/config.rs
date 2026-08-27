@@ -211,6 +211,15 @@ pub struct RepairConfig {
     /// [`crate::application::gap_fingerprint::DEFAULT_LAG_ENVELOPE_WINDOW_SECS`].
     #[serde(default = "default_lag_envelope_window_secs")]
     pub lag_envelope_window_secs: f64,
+    /// Half-width (seconds) of the per-gap paired level collar stamped on the scan report
+    /// (`Gap::collar_level`). Read by **scan**, not patch — see `ScanGapsRequest`.
+    ///
+    /// **Provisional** (`docs/dev/TEMP-local-paired-gain-plan.md` § 4a): 2.0 matches the
+    /// registration envelope context, deliberately not [`Self::normalize_window_secs`]'s 5 s pool,
+    /// which is the defect this measurement exists to replace. The census sets the shipping value
+    /// from the pair-yield curve.
+    #[serde(default = "default_local_pair_collar_secs")]
+    pub local_pair_collar_secs: f64,
     /// Window size (seconds) for computing A's border RMS.
     #[serde(default = "default_normalize_window_secs")]
     pub normalize_window_secs: f64,
@@ -484,6 +493,9 @@ fn default_crossfade_ms() -> u64 {
 fn default_normalize_window_secs() -> f64 {
     5.0
 }
+fn default_local_pair_collar_secs() -> f64 {
+    2.0
+}
 fn default_max_fill_gain_db() -> f64 {
     12.0
 }
@@ -633,6 +645,7 @@ impl Default for RepairConfig {
             lag_envelope_max_lag_ms: default_lag_envelope_max_lag_ms(),
             border_capture: crate::application::gap_fingerprint::BorderCapture::default(),
             lag_envelope_window_secs: default_lag_envelope_window_secs(),
+            local_pair_collar_secs: default_local_pair_collar_secs(),
             normalize_window_secs: default_normalize_window_secs(),
             max_fill_gain_db: default_max_fill_gain_db(),
             output: RepairOutputConfig::default(),
@@ -860,6 +873,7 @@ impl RepairConfig {
                 "partial_structure_waveform_soften",
                 self.partial_structure_waveform_soften,
             ),
+            ("local_pair_collar_secs", self.local_pair_collar_secs),
             ("normalize_window_secs", self.normalize_window_secs),
             ("max_fill_gain_db", self.max_fill_gain_db),
             (
@@ -974,6 +988,12 @@ impl RepairConfig {
         if self.normalize_window_secs <= 0.0 {
             return Err(ConfigError::InvalidValue {
                 field: "normalize_window_secs".into(),
+                reason: "must be greater than zero".into(),
+            });
+        }
+        if self.local_pair_collar_secs <= 0.0 {
+            return Err(ConfigError::InvalidValue {
+                field: "local_pair_collar_secs".into(),
                 reason: "must be greater than zero".into(),
             });
         }

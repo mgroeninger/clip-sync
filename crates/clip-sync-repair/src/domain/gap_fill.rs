@@ -754,6 +754,7 @@ mod tests {
             video_b_start_secs: Some(a_start),
             video_b_end_secs: Some(a_end),
             b_has_energy: true,
+            collar_level: None,
         }
     }
 
@@ -813,6 +814,7 @@ mod tests {
                 video_b_start_secs: None,
                 video_b_end_secs: None,
                 b_has_energy: false,
+                collar_level: None,
             },
         ];
         let report = base_report(Some(stereo_identical()), gaps);
@@ -931,6 +933,7 @@ mod tests {
                 video_b_start_secs: None,
                 video_b_end_secs: None,
                 b_has_energy: false,
+                collar_level: None,
             }],
         );
         report.gap_equivalence = vec![classify_gap_equivalence(
@@ -966,6 +969,7 @@ mod tests {
                     video_b_start_secs: None,
                     video_b_end_secs: None,
                     b_has_energy: false,
+                    collar_level: None,
                 },
             ],
         );
@@ -993,6 +997,7 @@ mod tests {
                     video_b_start_secs: None,
                     video_b_end_secs: None,
                     b_has_energy: false,
+                    collar_level: None,
                 },
             ],
         );

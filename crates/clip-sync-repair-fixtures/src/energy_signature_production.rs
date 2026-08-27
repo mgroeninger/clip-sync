@@ -62,6 +62,7 @@ pub fn gap_report_from_energy_fixture(temp: &Path, fixture: &EnergySignatureFixt
             video_b_start_secs: Some(b_start),
             video_b_end_secs: Some(b_end),
             b_has_energy: true,
+            collar_level: None,
         }],
         gap_equivalence: Vec::new(),
         gap_offset_agreement: None,
@@ -124,6 +125,7 @@ pub fn gap_report_from_floor_oracle(
             video_b_start_secs: Some(a_start),
             video_b_end_secs: Some(a_end),
             b_has_energy: true,
+            collar_level: None,
         }],
         gap_equivalence: Vec::new(),
         gap_offset_agreement: None,
@@ -249,6 +251,7 @@ pub fn scan_gaps_for_fixture(fixture: &EnergySignatureFixture, temp: &Path) -> G
         gap_offset_tolerance_secs: repair.gap_offset_tolerance_secs,
         limit_fill_to_mapped_region: true,
         apply_donor_registration: false,
+        local_pair_collar_secs: repair.local_pair_collar_secs,
     };
     let media_reader = SymphoniaMediaReader;
     let progress = NoOpProgressReporter;

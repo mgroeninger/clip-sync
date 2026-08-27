@@ -198,6 +198,7 @@ fn default_sine_gap() -> Gap {
         video_b_start_secs: Some(3.0),
         video_b_end_secs: Some(6.0),
         b_has_energy: true,
+        collar_level: None,
     }
 }
 

@@ -74,6 +74,7 @@ fn gap_at(start: f64, end: f64) -> Gap {
         video_b_start_secs: Some(start),
         video_b_end_secs: Some(end),
         b_has_energy: true,
+        collar_level: None,
     }
 }
 

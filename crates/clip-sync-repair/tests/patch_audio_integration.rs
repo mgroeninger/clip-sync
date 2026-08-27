@@ -323,6 +323,7 @@ fn make_gap_on_a(a_start: f64, a_end: f64, report_b_offset: f64) -> Gap {
         video_b_start_secs: Some(a_start + report_b_offset),
         video_b_end_secs: Some(a_end + report_b_offset),
         b_has_energy: true,
+        collar_level: None,
     }
 }
 
@@ -682,6 +683,7 @@ fn default_gap() -> Gap {
         video_b_start_secs: Some(GAP_START),
         video_b_end_secs: Some(GAP_END),
         b_has_energy: true,
+        collar_level: None,
     }
 }
 
@@ -864,6 +866,7 @@ fn program_levels_offset(
     ProgramLevels {
         a: ctx,
         b: Some(ctx),
+        channels_comparable: true,
         offset: Some(AbLevelOffset {
             offset_db,
             spread_db,
@@ -1416,6 +1419,7 @@ fn patch_audio_fills_gap_with_imprecise_scan_boundaries() {
         video_b_start_secs: Some(GAP_START - BOUNDARY_SLACK_SECS),
         video_b_end_secs: Some(GAP_END - BOUNDARY_SLACK_SECS),
         b_has_energy: true,
+        collar_level: None,
     };
 
     let mut report = make_report(
@@ -1495,6 +1499,7 @@ fn scan_then_patch_fills_detected_gap() {
             gap_offset_tolerance_secs: 0.5,
             limit_fill_to_mapped_region: true,
             apply_donor_registration: true,
+            local_pair_collar_secs: 2.0,
         })
         .expect("scan should succeed");
 
@@ -1815,6 +1820,7 @@ fn patch_audio_gap_end_extension_retries_failed_post_seam() {
         video_b_start_secs: Some(GAP_START),
         video_b_end_secs: Some(EARLY_GAP_END),
         b_has_energy: true,
+        collar_level: None,
     };
 
     let report = make_report(path_a, path_b, stereo_identical_compat(SAMPLE_RATE));
@@ -1905,6 +1911,7 @@ fn patch_audio_fit_mode_joint_gap_end_extension_patches_weak_post_seam() {
         video_b_start_secs: Some(GAP_START),
         video_b_end_secs: Some(EARLY_GAP_END),
         b_has_energy: true,
+        collar_level: None,
     };
 
     let report = make_report(
@@ -1998,6 +2005,7 @@ fn patch_audio_full_profile_runs_boundary_grid_when_baseline_insufficient() {
         video_b_start_secs: Some(GAP_START),
         video_b_end_secs: Some(GAP_END),
         b_has_energy: true,
+        collar_level: None,
     };
     let report = make_report(
         path_a.clone(),
@@ -2196,6 +2204,7 @@ fn patch_audio_interpolated_offset_maps_late_gap_with_drift() {
         video_b_start_secs: Some(LATE_GAP_START + START_OFFSET),
         video_b_end_secs: Some(LATE_GAP_END + START_OFFSET),
         b_has_energy: true,
+        collar_level: None,
     };
 
     let alignment = make_drift_alignment(START_OFFSET, END_OFFSET, f64::from(TIMELINE_SECS));

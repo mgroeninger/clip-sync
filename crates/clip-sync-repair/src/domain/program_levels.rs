@@ -38,6 +38,34 @@ pub const STEADY_TOLERANCE_DB: f64 = 3.0;
 /// than inventing an offset from a handful of blocks.
 pub const MIN_PAIRS: usize = 50;
 
+/// Minimum accepted pairs before a collar offset may be **applied as a gain**.
+///
+/// **Provisional** — `docs/dev/TEMP-local-paired-gain-plan.md` § 4a. The argument behind 8 (a
+/// 2 s + 2 s collar is 40 blocks before the active/steady/B filters, so 8 is 0.8 s of accepted
+/// pairs) sets an order of magnitude, not a number: at `n = 8` the median's standard error over
+/// corpus-typical material is 0.5–1.5 dB, which is the same size as the residuals a local gain
+/// exists to correct. The shipping value comes from the corpus census, not from this comment.
+///
+/// **Deliberately not read by [`collar_level_offset`].** A floor inside the estimator would censor
+/// the dump at exactly the value the census exists to choose — the reading would stop at the rail
+/// and the rail would look like the answer, which is how `max_fill_gain_db` survived two policy
+/// changes at a number nobody picked (`settled.md` § E). The estimator measures; this is policy,
+/// checked where a gain is applied. Nothing reads it yet: the apply half is gated behind the
+/// census.
+pub const MIN_LOCAL_PAIRS: usize = 8;
+
+/// Refusal bound (dB) on the **local residual** `d_local − offset_prior`. Past it the collar is
+/// reaching the wrong material and the fill is left alone — a refusal, not a clamp.
+///
+/// **Provisional** — `docs/dev/TEMP-local-paired-gain-plan.md` § 4a sets the shipping value from
+/// where real readings stop. Deliberately not inherited from `max_fill_gain_db` (12.0), which
+/// bounds an RMS ratio and has never been calibrated, nor from
+/// [`DEFAULT_MAX_PROGRAM_GAIN_DB`](crate::domain::DEFAULT_MAX_PROGRAM_GAIN_DB), which bounds the
+/// whole-file offset rather than a residual against it.
+///
+/// Nothing reads this yet: the apply half of that plan is gated behind the census.
+pub const MAX_LOCAL_RESIDUAL_DB: f64 = 6.0;
+
 /// Minimum pairs for a per-chunk median to be emitted.
 pub const MIN_CHUNK_PAIRS: usize = 20;
 
@@ -163,6 +191,52 @@ pub struct AbLevelOffset {
     pub chunks: Vec<AbLevelOffsetChunk>,
 }
 
+/// The same paired **B minus A** measurement as [`AbLevelOffset`], restricted to a collar of A
+/// blocks either side of one gap — the hole's own master relationship, to be read against the
+/// whole-file one rather than instead of it.
+///
+/// Plan: `docs/dev/TEMP-local-paired-gain-plan.md`. Measurement only in this Change; no gain reads
+/// it. No `chunks` — a 4 s collar is one chunk by construction.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct CollarLevelOffset {
+    /// Median paired difference over the **pooled** collar. This — not either side alone — is what
+    /// a later gain reads.
+    pub offset_db: f64,
+    /// Median absolute deviation about `offset_db`. Emitted so a later Change can gate on it; over
+    /// ~10 samples it is not the same statistic as the whole-file MAD over ~500, so the apply-side
+    /// trust gate is [`MIN_LOCAL_PAIRS`] instead.
+    pub spread_db: f64,
+    /// Accepted pairs. **No floor is applied here** — see [`MIN_LOCAL_PAIRS`] for why the estimator
+    /// reports a thin collar rather than hiding it. A consumer that turns this into a gain owes its
+    /// own minimum.
+    pub n_pairs: usize,
+    /// Collar A blocks above the active threshold, **before** the steadiness filter, and those that
+    /// then survived it. Unlike the whole-file pair, these two are the reason a collar came back
+    /// thin: `n_steady / n_active` is what steadiness cost (widen the collar), `n_pairs / n_steady`
+    /// is B-coverage yield (the collar is fine, B is not). Without them a thin `n_pairs` names no
+    /// cause and the census cannot say which knob to turn.
+    pub n_active: usize,
+    pub n_steady: usize,
+    /// Accepted pairs whose A block starts before the gap / after it. Provenance — is this a
+    /// one-sided collar? — never a gate.
+    pub n_pre: usize,
+    pub n_post: usize,
+    /// Median of the pre-side pairs alone; `None` when that side contributed none.
+    ///
+    /// **A detector, not a gate.** Collar pairing maps A→B through the single global offset, which
+    /// is safe over ~500 pairs and not obviously safe over ~10: a gap sitting on a map step puts
+    /// the two sides on different lags, and one side of the pooled median is then differencing A
+    /// against the wrong B material with nothing to out-vote it. `settled.md` § D specifies exactly
+    /// this statistic — *"pre and post disagreeing by ≈ the pair's map step"* — and records a
+    /// corpus base rate of **one** gap, which is why nothing refuses on it. See the plan's § 3a.
+    pub pre_offset_db: Option<f64>,
+    /// Median of the post-side pairs alone; `None` when that side contributed none.
+    pub post_offset_db: Option<f64>,
+    /// A-timeline extent of the accepted pairs, same convention as [`AbLevelOffset`].
+    pub first_pair_secs: f64,
+    pub last_pair_secs: f64,
+}
+
 /// Per-side level context. Kept because it is the only thing available when B cannot be mapped, and
 /// because A's own floor is independently useful.
 ///
@@ -191,6 +265,15 @@ pub struct ProgramLevels {
     /// The paired offset. `None` when B was not scanned or too few pairs survived.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub offset: Option<AbLevelOffset>,
+    /// False when A and B channel counts differ — see [`AbLevelOffset::channels_comparable`], which
+    /// carries the same fact for consumers already reading it there.
+    ///
+    /// Hoisted here because it is computed from track compatibility *independently* of whether the
+    /// whole-file pairing cleared [`MIN_PAIRS`], while [`Self::offset`] is `None` whenever it did
+    /// not. Read off the offset object alone, a pair whose channels differ **and** whose pairing
+    /// abstained is indistinguishable from one that merely ran out of pairs — so a consumer
+    /// explaining an absent measurement would name the wrong cause.
+    pub channels_comparable: bool,
 }
 
 /// Per-side median levels above and below the active threshold. Digital zeros (`rms_db` at or below
@@ -238,12 +321,204 @@ pub fn paired_level_offset(
     channels_comparable: bool,
     params: &ProgramLevelParams,
 ) -> Option<AbLevelOffset> {
+    let collected = collect_pairs(
+        a_levels,
+        b_levels,
+        offset_secs,
+        b_scanned_end_secs,
+        params,
+        0..a_levels.len(),
+        &|_| true,
+    );
+    let pairs = collected.pairs;
+
+    if pairs.len() < params.min_pairs {
+        return None;
+    }
+
+    // The guard above proves the population is non-empty, so the sorted-slice estimators apply
+    // directly — no `Option` to unwrap, and one sort instead of four.
+    debug_assert!(!pairs.is_empty());
+    let summary = summarize_pairs(&pairs);
+    Some(AbLevelOffset {
+        offset_db: summary.offset_db,
+        spread_db: summary.spread_db,
+        p10_db: summary.p10_db,
+        p90_db: summary.p90_db,
+        n_pairs: pairs.len(),
+        n_active: collected.n_active,
+        n_steady: collected.n_steady,
+        first_pair_secs: pairs[0].0,
+        last_pair_secs: pairs[pairs.len() - 1].0,
+        channels_comparable,
+        chunks: chunk_offsets(&pairs, params),
+    })
+}
+
+/// The same measurement over a collar of A blocks around one gap — see [`CollarLevelOffset`].
+///
+/// The collar is `[gap_start − collar_secs, gap_start)` ∪ `(gap_end, gap_end + collar_secs]` on
+/// **A's scan timeline** (never patch-refined edges: 100 ms blocks make tens-of-ms refinement
+/// noise). A block joins it by *overlap*, and any block overlapping the gap core is excluded
+/// outright.
+///
+/// Nothing special-cases the core beyond that. A is inactive inside it, so those blocks never pair;
+/// and the first active block *abutting* the core fails the steadiness filter, which is the walk-off
+/// this estimator wants — the same job `border_standoff` does at patch time.
+///
+/// One-sided collars are valid, not errors: a gap at the head or tail of the file, or one whose
+/// other side is unsteady, still reports from the surviving side.
+///
+/// Returns `None` only when the collar cannot be *located* (a non-finite or inverted bound, a
+/// non-positive width) or when **nothing paired at all** — never because too few pairs survived.
+/// A thin collar is a measurement, and [`MIN_LOCAL_PAIRS`] is applied by whoever turns one into a
+/// gain; keeping the floor here would censor the very distribution that sets it.
+#[allow(clippy::too_many_arguments)]
+pub fn collar_level_offset(
+    a_levels: &[BlockLevel],
+    b_levels: &[BlockLevel],
+    gap_start_secs: f64,
+    gap_end_secs: f64,
+    collar_secs: f64,
+    offset_secs: f64,
+    b_scanned_end_secs: Option<f64>,
+    params: &ProgramLevelParams,
+) -> Option<CollarLevelOffset> {
+    // Written as a positive predicate so a NaN bound falls out here rather than through a negated
+    // comparison, which NaN passes.
+    let bounds_ok = collar_secs.is_finite()
+        && collar_secs > 0.0
+        && gap_start_secs.is_finite()
+        && gap_end_secs.is_finite()
+        && gap_end_secs >= gap_start_secs;
+    if !bounds_ok {
+        return None;
+    }
+    let pre_lo = gap_start_secs - collar_secs;
+    let post_hi = gap_end_secs + collar_secs;
+    let overlaps =
+        |level: &BlockLevel, lo: f64, hi: f64| level.start_secs < hi && level.end_secs > lo;
+    let in_collar = |level: &BlockLevel| {
+        (overlaps(level, pre_lo, gap_start_secs) || overlaps(level, gap_end_secs, post_hi))
+            && !overlaps(level, gap_start_secs, gap_end_secs)
+    };
+
+    // Only the collar's own index window may emit pairs — a gap must not cost a walk of the whole
+    // timeline. Blocks are ascending and non-overlapping, so both ends binary-search. The core
+    // sits inside the window and is rejected by `in_collar`, not by skipping indices, because
+    // `is_steady` must still be able to *see* it (below).
+    let first = a_levels.partition_point(|level| level.end_secs <= pre_lo);
+    let last = a_levels.partition_point(|level| level.start_secs < post_hi);
+
+    // The predicate gates **pairing**, never the timeline: `collect_pairs` keeps the full
+    // `a_levels` slice so `is_steady` reads block `i`'s real time-adjacent neighbours. Hand it a
+    // pre-sliced collar instead and the property above inverts — the block abutting the core loses
+    // its core-side neighbour, an absent neighbour is permissive, and the fade block that walk-off
+    // exists to reject pairs.
+    let collected = collect_pairs(
+        a_levels,
+        b_levels,
+        offset_secs,
+        b_scanned_end_secs,
+        params,
+        first..last,
+        &in_collar,
+    );
+    let pairs = collected.pairs;
+    // Empty, not "thin": the summary below takes a median and reads both ends of the vec, and a
+    // caller cannot act on a collar that measured nothing anyway.
+    if pairs.is_empty() {
+        return None;
+    }
+
+    // Accepted blocks never overlap the core, so an A start before the gap is a pre block.
+    let side_median = |before: bool| {
+        median_db(
+            pairs
+                .iter()
+                .filter(|&&(start, _)| (start < gap_start_secs) == before)
+                .map(|&(_, d)| d)
+                .collect(),
+        )
+    };
+    let n_pre = pairs
+        .iter()
+        .filter(|&&(start, _)| start < gap_start_secs)
+        .count();
+
+    let summary = summarize_pairs(&pairs);
+    Some(CollarLevelOffset {
+        offset_db: summary.offset_db,
+        spread_db: summary.spread_db,
+        n_pairs: pairs.len(),
+        n_active: collected.n_active,
+        n_steady: collected.n_steady,
+        n_pre,
+        n_post: pairs.len() - n_pre,
+        pre_offset_db: side_median(true),
+        post_offset_db: side_median(false),
+        first_pair_secs: pairs[0].0,
+        last_pair_secs: pairs[pairs.len() - 1].0,
+    })
+}
+
+/// Accepted pairs plus the two filter counters, from one walk of `emit`.
+struct PairCollection {
+    /// `(A block start, B dB − A dB)`, ascending in A — so chunking and per-side binning can
+    /// bucket by A's timeline without a second pass.
+    pairs: Vec<(f64, f64)>,
+    n_active: usize,
+    n_steady: usize,
+}
+
+/// Median / MAD / deciles of a **non-empty** pair population.
+struct PairSummary {
+    offset_db: f64,
+    spread_db: f64,
+    p10_db: f64,
+    p90_db: f64,
+}
+
+fn summarize_pairs(pairs: &[(f64, f64)]) -> PairSummary {
+    debug_assert!(!pairs.is_empty());
+    let mut diffs: Vec<f64> = pairs.iter().map(|&(_, d)| d).collect();
+    sort_db(&mut diffs);
+    let offset_db = median_of_sorted(&diffs);
+    let mut deviations: Vec<f64> = diffs.iter().map(|d| (d - offset_db).abs()).collect();
+    sort_db(&mut deviations);
+    PairSummary {
+        offset_db,
+        spread_db: median_of_sorted(&deviations),
+        p10_db: percentile_of_sorted(&diffs, 0.1),
+        p90_db: percentile_of_sorted(&diffs, 0.9),
+    }
+}
+
+/// The pairing walk shared by [`paired_level_offset`] and [`collar_level_offset`].
+///
+/// `emit` bounds which **indices** may produce a pair and `accept` which of those blocks may; both
+/// are restrictions on *pairing only*. `a_levels` is always the whole timeline, because
+/// [`is_steady`] resolves neighbours out of it by time, and a neighbour it cannot see counts as
+/// absent — which is permissive, and would admit exactly the transient-adjacent blocks the filter
+/// exists to drop.
+fn collect_pairs(
+    a_levels: &[BlockLevel],
+    b_levels: &[BlockLevel],
+    offset_secs: f64,
+    b_scanned_end_secs: Option<f64>,
+    params: &ProgramLevelParams,
+    emit: std::ops::Range<usize>,
+    accept: &dyn Fn(&BlockLevel) -> bool,
+) -> PairCollection {
     let mut n_active = 0usize;
     let mut n_steady = 0usize;
-    // (A block start, difference) so chunking can bucket by A's timeline without a second pass.
     let mut pairs: Vec<(f64, f64)> = Vec::new();
 
-    for (i, a) in a_levels.iter().enumerate() {
+    for i in emit {
+        let a = &a_levels[i];
+        if !accept(a) {
+            continue;
+        }
         // 0: a full-length block — a bucket-tail sliver is not a measurement.
         // 1: active on A. Counted before step 2 so `n_steady / n_active` exposes what the
         // steadiness filter cost.
@@ -283,31 +558,11 @@ pub fn paired_level_offset(
         pairs.push((a.start_secs, b.rms_db - a.rms_db));
     }
 
-    if pairs.len() < params.min_pairs {
-        return None;
-    }
-
-    // The guard above proves the population is non-empty, so the sorted-slice estimators apply
-    // directly — no `Option` to unwrap, and one sort instead of four.
-    debug_assert!(!pairs.is_empty());
-    let mut diffs: Vec<f64> = pairs.iter().map(|&(_, d)| d).collect();
-    sort_db(&mut diffs);
-    let offset_db = median_of_sorted(&diffs);
-    let mut deviations: Vec<f64> = diffs.iter().map(|d| (d - offset_db).abs()).collect();
-    sort_db(&mut deviations);
-    Some(AbLevelOffset {
-        offset_db,
-        spread_db: median_of_sorted(&deviations),
-        p10_db: percentile_of_sorted(&diffs, 0.1),
-        p90_db: percentile_of_sorted(&diffs, 0.9),
-        n_pairs: pairs.len(),
+    PairCollection {
+        pairs,
         n_active,
         n_steady,
-        first_pair_secs: pairs[0].0,
-        last_pair_secs: pairs[pairs.len() - 1].0,
-        channels_comparable,
-        chunks: chunk_offsets(&pairs, params),
-    })
+    }
 }
 
 /// A block long enough for its RMS to mean something — see [`MIN_BLOCK_FRACTION`].
@@ -824,5 +1079,267 @@ mod tests {
         assert!((active_threshold_db(0.001_007) + 59.94).abs() < 0.05);
         // Disabled absolute floor falls back rather than admitting digital zeros.
         assert_eq!(active_threshold_db(0.0), FALLBACK_ACTIVE_DB);
+    }
+
+    // ---- collar (per-gap) pairing ----------------------------------------------------------
+
+    /// A flat A timeline with a digital-zero hole over `[gap_from, gap_to)` blocks.
+    fn holed(n: usize, program_db: f64, gap_from: usize, gap_to: usize) -> Vec<f64> {
+        let mut dbs = flat(n, program_db);
+        for db in dbs.iter_mut().take(gap_to).skip(gap_from) {
+            *db = BLOCK_LEVEL_FLOOR_DB;
+        }
+        dbs
+    }
+
+    fn collar_of(
+        a: &[BlockLevel],
+        b: &[BlockLevel],
+        gap: (f64, f64),
+        collar_secs: f64,
+    ) -> Option<CollarLevelOffset> {
+        collar_level_offset(a, b, gap.0, gap.1, collar_secs, 0.0, None, &params())
+    }
+
+    #[test]
+    fn a_collar_reads_both_sides_and_never_the_core() {
+        // 10 s of program at 100 ms blocks with a 1 s hole at 4.0 s.
+        let a = timeline(0.0, &holed(100, -30.0, 40, 50));
+        let b = timeline(0.0, &flat(100, -30.0));
+
+        let got = collar_of(&a, &b, (4.0, 5.0), 2.0).expect("both collars pair");
+
+        assert!(got.offset_db.abs() < 1e-9, "{got:?}");
+        // 20 blocks a side, less the one abutting the hole — it fails steadiness against the rail,
+        // which is the walk-off this estimator wants and `border_standoff`'s job at patch time.
+        assert_eq!((got.n_pre, got.n_post), (19, 19), "{got:?}");
+        assert_eq!(got.n_pairs, 38);
+        // Both collars are active throughout; only the two blocks abutting the rail lose steadiness.
+        assert_eq!((got.n_active, got.n_steady), (40, 38), "{got:?}");
+        // Nothing from inside the hole, and nothing from beyond the collar.
+        assert!((got.first_pair_secs - 2.0).abs() < 1e-9, "{got:?}");
+        assert!((got.last_pair_secs - 6.9).abs() < 1e-9, "{got:?}");
+    }
+
+    #[test]
+    fn a_constant_gain_is_recovered_locally_at_any_hole_length() {
+        let b = timeline(0.0, &flat(100, -24.0));
+        for (from, to) in [(40usize, 42usize), (40, 50), (40, 70)] {
+            let a = timeline(0.0, &holed(100, -30.0, from, to));
+            let gap = (from as f64 * BLOCK_SECS, to as f64 * BLOCK_SECS);
+
+            let got = collar_of(&a, &b, gap, 2.0).expect("both collars pair");
+
+            assert!((got.offset_db - 6.0).abs() < 1e-9, "{from}..{to}: {got:?}");
+        }
+    }
+
+    /// The defect this estimator replaces: a quiet passage whose *reference window* reaches louder
+    /// material reads the wrong level relationship. Here A and B agree exactly over the quiet
+    /// passage and disagree by 12 dB outside it — a collar that stays inside the passage must read
+    /// 0, and one wide enough to leave it must not.
+    #[test]
+    fn the_collar_reads_the_passage_it_sits_in() {
+        // Quiet passage over [2.0, 7.0); loud program either side. Hole at [4.4, 5.0).
+        let mut a_dbs = flat(120, -20.0);
+        for db in a_dbs.iter_mut().take(70).skip(20) {
+            *db = -52.0;
+        }
+        let mut b_dbs = a_dbs.clone();
+        // B is 12 dB up on A everywhere *outside* the passage.
+        for db in b_dbs.iter_mut().take(20) {
+            *db += 12.0;
+        }
+        for db in b_dbs.iter_mut().skip(70) {
+            *db += 12.0;
+        }
+        for db in a_dbs.iter_mut().take(50).skip(44) {
+            *db = BLOCK_LEVEL_FLOOR_DB;
+        }
+        let (a, b) = (timeline(0.0, &a_dbs), timeline(0.0, &b_dbs));
+
+        let local = collar_of(&a, &b, (4.4, 5.0), 2.0).expect("both collars pair");
+        assert!(local.offset_db.abs() < 1e-9, "local collar: {local:?}");
+        assert!(local.spread_db.abs() < 1e-9, "local collar: {local:?}");
+
+        let wide = collar_of(&a, &b, (4.4, 5.0), 5.0).expect("both collars pair");
+        assert!(
+            wide.offset_db > 6.0,
+            "a 5 s reach leaves the passage and reads the loud material: {wide:?}"
+        );
+    }
+
+    #[test]
+    fn a_leading_edge_gap_reports_from_one_side() {
+        let a = timeline(0.0, &holed(100, -30.0, 0, 10));
+        let b = timeline(0.0, &flat(100, -24.0));
+
+        let got =
+            collar_of(&a, &b, (0.0, 1.0), 2.0).expect("the post collar alone clears the floor");
+
+        assert_eq!(got.n_pre, 0);
+        assert_eq!(got.n_post, 19);
+        assert_eq!(got.pre_offset_db, None, "an empty side has no median");
+        assert!((got.post_offset_db.expect("post pairs") - 6.0).abs() < 1e-9);
+        assert!((got.offset_db - 6.0).abs() < 1e-9, "{got:?}");
+    }
+
+    /// The floor lives at the apply site, not here. If the estimator hid thin collars, the census
+    /// that is supposed to *choose* `MIN_LOCAL_PAIRS` could never see the distribution below it.
+    #[test]
+    fn a_thin_collar_is_reported_not_hidden() {
+        let a = timeline(0.0, &holed(100, -30.0, 0, 10));
+        let b = timeline(0.0, &flat(100, -24.0));
+
+        // 0.5 s of one-sided collar is five blocks, four after the walk-off against the rail.
+        let got = collar_of(&a, &b, (0.0, 1.0), 0.5).expect("a thin collar still reports");
+
+        assert_eq!(got.n_pairs, 4);
+        assert!(
+            got.n_pairs < MIN_LOCAL_PAIRS,
+            "the sample must sit under the floor to be a test of it"
+        );
+        assert!((got.offset_db - 6.0).abs() < 1e-9, "{got:?}");
+    }
+
+    /// The counters name *why* a collar came back thin — the question a bare `n_pairs` leaves open.
+    /// Both halves below accept exactly 19 pairs and differ only in which filter spent the other
+    /// 19, which is the difference between "widen the collar" and "the collar is fine, B is not".
+    #[test]
+    fn the_counters_separate_an_unsteady_collar_from_an_uncovered_one() {
+        // Steadiness ate the pre side: alternating 6 dB steps leave no block with two flat
+        // neighbours. Every block is still active, so the loss is invisible in `n_active`.
+        let mut jittery = holed(100, -30.0, 40, 50);
+        for (i, db) in jittery.iter_mut().enumerate().take(40).skip(20) {
+            if i % 2 == 0 {
+                *db += 6.0;
+            }
+        }
+        let unsteady = collar_of(
+            &timeline(0.0, &jittery),
+            &timeline(0.0, &flat(100, -24.0)),
+            (4.0, 5.0),
+            2.0,
+        )
+        .expect("the post side still pairs");
+
+        // B never dropped a pair here, so the whole shortfall is the steadiness filter.
+        assert_eq!(unsteady.n_active, 40, "{unsteady:?}");
+        assert_eq!(
+            (unsteady.n_steady, unsteady.n_pairs),
+            (19, 19),
+            "{unsteady:?}"
+        );
+
+        // Same yield, other cause: A is clean throughout, but B is silent where the pre collar maps.
+        let mut b_dbs = flat(100, -24.0);
+        for db in b_dbs.iter_mut().take(40).skip(20) {
+            *db = BLOCK_LEVEL_FLOOR_DB;
+        }
+        let uncovered = collar_of(
+            &timeline(0.0, &holed(100, -30.0, 40, 50)),
+            &timeline(0.0, &b_dbs),
+            (4.0, 5.0),
+            2.0,
+        )
+        .expect("the post side still pairs");
+
+        assert_eq!(uncovered.n_pairs, 19, "same yield as the unsteady collar");
+        assert_eq!(
+            (uncovered.n_active, uncovered.n_steady),
+            (40, 38),
+            "{uncovered:?}"
+        );
+    }
+
+    /// A collar where **nothing** pairs is still `None`, so the counters cannot explain a total
+    /// abstention — only a thin one. Pinned so the limit is a decision rather than a surprise: an
+    /// `offset_db` over zero pairs does not exist, and `Option`-ing it to carry two counters would
+    /// push the emptiness check onto every future consumer.
+    #[test]
+    fn a_collar_that_pairs_nothing_reports_no_counters() {
+        let mut jittery = holed(100, -30.0, 40, 50);
+        for (i, db) in jittery.iter_mut().enumerate() {
+            if i % 2 == 0 && *db > BLOCK_LEVEL_FLOOR_DB {
+                *db += 6.0;
+            }
+        }
+
+        assert_eq!(
+            collar_of(
+                &timeline(0.0, &jittery),
+                &timeline(0.0, &flat(100, -24.0)),
+                (4.0, 5.0),
+                2.0
+            ),
+            None
+        );
+    }
+
+    /// **Pins the slicing hazard.** `is_steady` resolves neighbours out of the slice it is handed,
+    /// and a neighbour it cannot see counts as *absent*, which is permissive. Build the collar over
+    /// a pre-sliced timeline and the block abutting the hole loses its core-side neighbour, reads
+    /// steady, and pairs — so the fade blocks walk-off exists to reject would be measured. Every
+    /// other collar test here passes under that bug; this one does not.
+    #[test]
+    fn the_block_abutting_the_hole_is_judged_against_the_core() {
+        let mut a_dbs = holed(100, -30.0, 40, 50);
+        // A two-block fade into the hole. Block 39's only disqualifying neighbour is the core:
+        // block 38 sits at the same level, so nothing on the collar side rejects it.
+        a_dbs[38] = -40.0;
+        a_dbs[39] = -40.0;
+        let a = timeline(0.0, &a_dbs);
+        let b = timeline(0.0, &flat(100, -24.0));
+
+        let got = collar_of(&a, &b, (4.0, 5.0), 2.0).expect("both collars pair");
+
+        // 20 pre blocks less three: 37 (its neighbour 38 breaks), 38 (its neighbour 37 breaks) and
+        // 39 — rejected *only* because `is_steady` can see the rail at block 40.
+        assert_eq!(got.n_pre, 17, "{got:?}");
+        assert_eq!(got.n_post, 19, "{got:?}");
+        assert!((got.offset_db - 6.0).abs() < 1e-9, "{got:?}");
+    }
+
+    /// Per-side medians are a **detector** (`settled.md` § D, plan § 3a): they make a map straddle
+    /// visible on the scan JSON. Nothing refuses on them — `offset_db` stays the pooled median.
+    #[test]
+    fn per_side_medians_expose_a_straddle_without_gating() {
+        let a = timeline(0.0, &holed(100, -30.0, 40, 50));
+        // B holds a different level after the hole — what one side of a map step looks like in the
+        // level domain.
+        let mut b_dbs = flat(100, -30.0);
+        for db in b_dbs.iter_mut().skip(50) {
+            *db = -24.0;
+        }
+        let b = timeline(0.0, &b_dbs);
+
+        let got = collar_of(&a, &b, (4.0, 5.0), 2.0).expect("both collars pair");
+
+        assert!(
+            (got.pre_offset_db.expect("pre pairs")).abs() < 1e-9,
+            "{got:?}"
+        );
+        assert!(
+            (got.post_offset_db.expect("post pairs") - 6.0).abs() < 1e-9,
+            "{got:?}"
+        );
+        // Still reported, and still the pooled median of an evenly split population.
+        assert_eq!(got.n_pairs, 38);
+        assert!(
+            got.offset_db == 0.0 || got.offset_db == 6.0,
+            "pooled median is one of the two observed levels, not an average: {got:?}"
+        );
+    }
+
+    #[test]
+    fn an_unmeasurable_collar_is_none_not_a_panic() {
+        let a = timeline(0.0, &holed(100, -30.0, 40, 50));
+        let b = timeline(0.0, &flat(100, -30.0));
+
+        assert_eq!(collar_of(&a, &b, (4.0, 5.0), 0.0), None, "zero width");
+        assert_eq!(collar_of(&a, &b, (5.0, 4.0), 2.0), None, "inverted gap");
+        assert_eq!(collar_of(&a, &b, (f64::NAN, 5.0), 2.0), None, "NaN bound");
+        assert_eq!(collar_of(&[], &b, (4.0, 5.0), 2.0), None, "no A timeline");
+        assert_eq!(collar_of(&a, &[], (4.0, 5.0), 2.0), None, "no B timeline");
     }
 }

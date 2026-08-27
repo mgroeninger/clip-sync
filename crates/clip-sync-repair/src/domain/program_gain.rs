@@ -322,6 +322,7 @@ mod tests {
         ProgramLevels {
             a: ctx,
             b: Some(ctx),
+            channels_comparable: true,
             offset,
         }
     }

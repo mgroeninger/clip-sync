@@ -609,6 +609,7 @@ mod tests {
             video_b_start_secs: Some(start),
             video_b_end_secs: Some(end),
             b_has_energy: true,
+            collar_level: None,
         }
     }
 

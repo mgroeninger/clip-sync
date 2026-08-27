@@ -152,7 +152,8 @@
             "n_pairs": 5586
           }
         ]
-      }
+      },
+      "channels_comparable": true
     }
   },
   "patch": {

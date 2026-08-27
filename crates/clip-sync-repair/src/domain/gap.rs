@@ -30,6 +30,21 @@ pub struct Gap {
     pub video_b_end_secs: Option<f64>,
     /// Whether video B has audio energy at this position (potential fill source).
     pub b_has_energy: bool,
+    /// Paired **B minus A** level offset over a collar of A blocks either side of this gap —
+    /// the hole's own master relationship. Stamped at scan time, where both block-level timelines
+    /// and the global offset are live; see
+    /// [`collar_level_offset`](crate::domain::program_levels::collar_level_offset).
+    ///
+    /// `None` covers every reason at once — B not scanned, no alignment offset, channel counts not
+    /// comparable, or nothing in the collar paired — so a consumer must never infer *which* from
+    /// the absence. It does **not** mean "too few pairs": a thin collar is reported, and
+    /// [`MIN_LOCAL_PAIRS`](crate::domain::program_levels::MIN_LOCAL_PAIRS) is applied by whoever
+    /// turns one into a gain.
+    ///
+    /// Measurement only: nothing applies a gain from it. Plan:
+    /// `docs/dev/TEMP-local-paired-gain-plan.md`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub collar_level: Option<crate::domain::program_levels::CollarLevelOffset>,
 }
 
 impl Gap {
@@ -285,6 +300,7 @@ mod tests {
             video_b_start_secs: start,
             video_b_end_secs: end,
             b_has_energy: true,
+            collar_level: None,
         }
     }
 

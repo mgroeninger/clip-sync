@@ -577,6 +577,7 @@ program_gain_max_spread_db = 2.5    # refuse (unity) when no single scalar descr
 max_program_gain_db = 6.0           # refuse (unity) past this; deliberately NOT a clamp
 normalize_fill = false           # hole-local boost, off since 2026-08-26 (boost-only when on)
 normalize_window_secs = 5.0
+local_pair_collar_secs = 2.0     # per-gap A/B level collar each side of a hole (scan; report-only so far)
 max_fill_gain_db = 12.0          # max LOCAL boost; there is no attenuation side
 dry_run = true
 
