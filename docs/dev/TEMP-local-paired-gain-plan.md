@@ -1,7 +1,7 @@
 # TEMP — Local paired-shoulder fill gain (replace `compute_fill_gain`)
 
 **Status:** draft, 2026-08-26. **Startable** as a **separate Change** from
-[TEMP-program-gain-plan.md](TEMP-program-gain-plan.md) — do not bundle. The
+[TEMP-program-gain-plan.md](archive/TEMP-program-gain-plan.md) — do not bundle. The
 measurement it reuses (`paired_level_offset`) and the program prior
 (`program_levels.offset`) already exist on the scan report. Reviewed against
 the landed program-gain tree the same day: § 6 (scan threading + helper), § 7
@@ -12,7 +12,7 @@ the corrections; nothing in the estimator itself moved.
 non-local reference* → *Local paired-shoulder gain*.
 
 **Companions:** program scalar
-[TEMP-program-gain-plan.md](TEMP-program-gain-plan.md) § 5 (stacking this
+[TEMP-program-gain-plan.md](archive/TEMP-program-gain-plan.md) § 5 (stacking this
 discharges); capture
 [archive/TEMP-ab-program-levels-plan.md](archive/TEMP-ab-program-levels-plan.md);
 local-reference defect
@@ -376,7 +376,7 @@ vs a wide A window, which this estimator does not compute.
 
 | Gap | Expect with `--normalize` |
 |---|---|
-| 45/g4, 45/g5, 19/g13, 5/g6 | `local_gain ≈ 1` (same-master quiet collar, residual 0) |
+| 45/g4, 45/g5, 19/g13, 5/g6, 15/g3 | `local_gain ≈ 1` (same-master quiet collar, residual 0) |
 | 24/g46 | not crushed (scalar from shoulders, not fill RMS) |
 | 15/g6, 2/g6 | **may sit at unity**; not a failure |
 
@@ -407,7 +407,7 @@ Default flags (local off) are program-gain’s acceptance, not this plan’s.
 Scan JSON for a normal A+B run carries `collar_level` on gaps that had eight
 steady pairs; a synthetic quiet-hole-in-loud-program fixture reports `offset_db
 ≈ 0` on that collar (the RMS pool’s failure mode); `--normalize` on a
-same-master pair does not revive the n=3 over-boost; a constant-gain donor with
+same-master pair does not revive the n=5 over-boost; a constant-gain donor with
 program-gain off is matched from the collar where it has pairs; and
 `g_program * g_local` equals `10^(-d_local/20)` when both apply, not the square.
 
@@ -415,7 +415,7 @@ program-gain off is matched from the collar where it has pairs; and
 
 ## Related
 
-- [TEMP-program-gain-plan.md](TEMP-program-gain-plan.md) — file-wide scalar, stacking identity
+- [TEMP-program-gain-plan.md](archive/TEMP-program-gain-plan.md) — file-wide scalar, stacking identity
 - [archive/TEMP-ab-program-levels-plan.md](archive/TEMP-ab-program-levels-plan.md) — pairing rules
 - [TEMP-fill-normalize-local-reference-2026-08-25.md](archive/TEMP-fill-normalize-local-reference-2026-08-25.md) — defect this replaces the RMS fix for
 - [settled.md](settled.md) § A B-relative gain; § C RMS-attenuation latch

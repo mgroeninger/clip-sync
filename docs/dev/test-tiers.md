@@ -292,7 +292,7 @@ on real material with a known answer, which is what makes it the right rung for 
 gains — is degenerate: a flat gain is the same number on every block, so `spread_db` is exactly
 0.000 at every depth. A threshold needs the case where the statistic is *supposed* to fire, which
 means a fixture whose two sides differ by something that is not a scalar. Consumer-side detail and
-the resulting numbers: [TEMP-program-gain-plan.md](TEMP-program-gain-plan.md) § 4a–4b.
+the resulting numbers: [TEMP-program-gain-plan.md](archive/TEMP-program-gain-plan.md) § 4a–4b.
 
 The census keeps four states apart — `measured`, `abstained` (B scanned, too few pairs),
 `unaligned` (B never scanned), `stale` (binary predates the field) — because collapsing them

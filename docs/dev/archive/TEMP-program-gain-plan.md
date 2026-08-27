@@ -8,16 +8,16 @@ against media this corpus has zero instances of, and § 4b showed the most elabo
 the case it was added for. § 4 is now two refusals — `max_spread_db` and `max_program_gain_db` — with
 the deadband dropped and the chunk-drift gate demoted to reporting (latched on a trigger, § 4).
 
-**Tracked as:** [BACKLOG.md](../../BACKLOG.md) § *Fill normalize boosts against a
+**Tracked as:** [BACKLOG.md](../../../BACKLOG.md) § *Fill normalize boosts against a
 non-local reference* → *Default `normalize_fill` off, gain fills from the program scalar*.
 
 **Companions:** capture
-[TEMP-ab-program-levels-plan.md](archive/TEMP-ab-program-levels-plan.md) § 8 (the
+[TEMP-ab-program-levels-plan.md](TEMP-ab-program-levels-plan.md) § 8 (the
 requirements this plan discharges); local-reference defect
-[TEMP-fill-normalize-local-reference-2026-08-25.md](archive/TEMP-fill-normalize-local-reference-2026-08-25.md);
-[settled.md](settled.md) § A **B-relative / donor-shoulder fill gain** (refuted —
+[TEMP-fill-normalize-local-reference-2026-08-25.md](TEMP-fill-normalize-local-reference-2026-08-25.md);
+[settled.md](../settled.md) § A **B-relative / donor-shoulder fill gain** (refuted —
 this plan is **not** that idea, see § 2); latched attenuation-half of *local*
-normalize ([settled.md](settled.md) § C — also not this idea, see § 4).
+normalize ([settled.md](../settled.md) § C — also not this idea, see § 4).
 
 **Media hygiene:** pair index only; no filenames / titles / paths in the repo.
 
@@ -38,7 +38,7 @@ pinned at the 12.000 dB local `max_fill_gain_db` ceiling on a corpus whose maste
 match to within 0.26 dB. A 12 dB demand there cannot be a master mismatch — there is
 none to find — so it is the local 5 s + 5 s reference failing on its own. Whole-program
 gain would not have prevented one of them; defaulting local off would have prevented all
-seven. (Those pins also censor the distribution — [settled.md](settled.md) § E.)
+seven. (Those pins also censor the distribution — [settled.md](../settled.md) § E.)
 
 **Non-goals (v1)**
 
@@ -47,7 +47,7 @@ seven. (Those pins also censor the distribution — [settled.md](settled.md) § 
   **reported**, never a per-gap bucket (§ 4).
 - Fixing the local A-border window (5 s + 5 s energy pool). The replacement
   estimator is a separate Change:
-  [TEMP-local-paired-gain-plan.md](TEMP-local-paired-gain-plan.md). Do not bundle.
+  [TEMP-local-paired-gain-plan.md](../TEMP-local-paired-gain-plan.md). Do not bundle.
 - ITU / LUFS.
 - Peak-aware limiting / clip protection beyond a dB clamp.
 - Reopening the symmetric clamp on *local* normalize.
@@ -154,20 +154,27 @@ standard error — **not** a config knob, and not described as a noise floor.
 **Chunk drift is reported, not gated — latched.** § 4b calibrated
 `program_gain_max_chunk_drift_db` = 1.5 and it does catch a class spread misses (a level change
 partway through a program: drift sees ≈3.4 dB of it, spread needs ≈10 dB). It is demoted anyway,
-because it is undefined for any program under ~20 minutes, its margin over the corpus is 0.209 dB
-(1.291 → 1.5), and the corpus has **zero** pairs with any drift at all. A gate that thin, defending
-against media we have never seen, is complexity charged to every run for a hypothetical.
+because it is undefined for any program under ~20 minutes, and its margin over the corpus is
+0.209 dB (pair 31 reads 1.291, the corpus maximum). No corpus pair would be gated by it. A gate that
+thin, defending against media we have never seen, is complexity charged to every run for a
+hypothetical.
 
 The residual is explicit: a 3.4–10 dB drift now passes, and the wrong scalar it produces is bounded
 by `max_program_gain_db`. `robust_drift_db` is printed on the patch summary so a human can see it.
-**Trigger to re-arm the gate:** any real pair measuring robust chunk drift above 1.0 dB. Until then
-it stays a reported number. (When this plan closes, that verdict belongs in
-[settled.md](settled.md) § C, not in BACKLOG.)
+**Trigger to re-arm the gate:** any real pair measuring robust chunk drift above **1.5 dB**. Until
+then it stays a reported number.
+
+The trigger was written as 1.0 dB on 2026-08-26 and **restated to 1.5 on 2026-08-27**, because 1.0
+was self-satisfying: pair 31's 1.291 dB was already in the Tier 3 census and in § 4b's own table, so
+the latch re-armed the moment anyone read it against evidence in hand. A trigger has to name
+evidence we do **not** have. 1.5 is the threshold § 4b calibrated, which makes the trigger and the
+gate the same number — re-arm when a real pair appears that the gate would actually have caught.
+(Verdict now in [settled.md](../settled.md) § C, not in BACKLOG.)
 
 **When drift is read at all, it is the robust statistic, not raw max-minus-min** — the range over
 chunks holding at least half the median chunk population, as
 `scripts/measure/census-program-levels.ps1` computes it. Raw range is set by whichever chunk is least
-populated ([settled.md](settled.md) § E), and Tier 2 measures 2.195 raw vs 1.336 robust on the *same*
+populated ([settled.md](../settled.md) § E), and Tier 2 measures 2.195 raw vs 1.336 robust on the *same*
 fixture (§ 4b).
 
 `n_pairs` is already a capture abstention (`MIN_PAIRS = 50`); do not add a
@@ -198,7 +205,7 @@ corpus whose true answer is uniformly zero:
 | `max_spread_db` | **Not here — see § 4b** | Every corpus offset is ≈ 0, so spread never gates anything here. Nothing in this run says where a spread stops meaning "one scalar exists" |
 | `max_program_gain_db` | **Not here — see § 4b** | No corpus offset comes within 20× of the 6.0 dB § 4 settles on, and none within 45× of the 12 dB local cap. Do not inherit either number from the corpus |
 | ~~`program_gain_deadband_db`~~ | **dropped** | The 0.5 dB draft value was justified as a noise floor and is not one — the floor is ~0.055 dB (§ 4). What the corpus really shows is that the true offset is small everywhere, which argues for applying it, not for refusing it |
-| ~~`max_chunk_drift_db`~~ | **demoted to reporting** | Calibrated at 1.5 in § 4b, then latched (§ 4): zero corpus pairs drift, and the gate is undefined under ~20 min. What the corpus *does* fix is the **statistic** wherever drift is read: `robust_drift_db`, not raw max-minus-min — raw would have failed pair 24 on a single 359-block chunk ([settled.md](settled.md) § E) |
+| ~~`max_chunk_drift_db`~~ | **demoted to reporting** | Calibrated at 1.5 in § 4b, then latched (§ 4): zero corpus pairs drift, and the gate is undefined under ~20 min. What the corpus *does* fix is the **statistic** wherever drift is read: `robust_drift_db`, not raw max-minus-min — raw would have failed pair 24 on a single 359-block chunk ([settled.md](../settled.md) § E) |
 
 **What this corpus can never supply.** The open knobs bind only when a single scalar does
 *not* describe the pair, and this corpus has 51 pairs where one does. A corpus of matched masters
@@ -330,7 +337,7 @@ Need a CLI on-switch for local now that the default is off: `--normalize`
 
 ## 6. Why local defaults off (and what that gives up)
 
-The n = 3 audible defect is **local** over-boost against a non-local A
+The n = 5 audible defect is **local** over-boost against a non-local A
 reference, not a missing master offset. After § 5's order, that defect still
 fires on quiet holes if local stays default-on — the 5 s pool is unchanged.
 Default-off is therefore required for this policy, not an aesthetic.
@@ -466,6 +473,57 @@ If Tier 3 shows those over-boost pairs carry a large `offset_db`, re-read § 5
 before shipping — the stacking story assumed the defect is local, which the
 sweep already claims, but the cross-ref is the check.
 
+### Measured 2026-08-27 — all three rows pass
+
+Two `--patch-only` roll-ups over the same 51 pairs, 308 patched gaps each:
+`gap-files/2026-08-25-program-gain-census/` (default flags) and
+`…-census-normalize/` (`--normalize`). Identical key sets, zero structural
+mismatches (`AStartSecs` / `AEndSecs` / `Bins` / `BinMs` equal on all 308), so the
+two arms differ only in the gain. Gaps named by `Gap0Based`, as above.
+
+**Rows 1–2 — the over-boost is gone under default flags, and the gunshot is not crushed:**
+
+| Gap | gain before | `g_program` (default) | edge before | edge after |
+|---|---|---|---|---|
+| 45/g4 | 3.981 | 0.9996 (−0.00 dB) | +11.11 | −0.90 |
+| 45/g5 | 1.909 | 0.9996 (−0.00 dB) | +4.89 | −0.73 |
+| 19/g13 | 3.880 | 0.9841 (−0.14 dB) | +9.11 | −2.80 |
+| 5/g6 | 3.981 | 0.9986 (−0.01 dB) | +10.61 | −1.40 |
+| 15/g3 | 3.442 | 1.0119 (+0.10 dB) | +4.05 | −6.58 |
+| 31/g7 | 2.128 | 0.9986 (−0.01 dB) | +3.56 | −3.02 |
+| 24/g46 | 1.000 | 1.0190 (+0.16 dB) | +9.83 | **+9.99** — not crushed |
+
+Every remaining gain is `g_program` alone; `g_local = 1` on all six. 24/g46 is
+the strongest form of its row: the local knob declines it under **both** arms, so
+the loud restoration survives regardless of the flag.
+
+**Row 3 — `--normalize` regains both boosts exactly:**
+
+| Gap | expected | `g_program` | `g_total` with `--normalize` | total |
+|---|---|---|---|---|
+| 15/g6 | +1.14 dB | 1.0119 | 1.1400 | **+1.14 dB** |
+| 2/g6 | +0.25 dB | 0.9950 | 1.0295 | **+0.25 dB** |
+
+Not merely the right direction — the total lands on the pre-change value to the
+reported precision, with the local residual absorbing the program scalar
+(15/g6: +0.10 program + 1.04 local; 2/g6: −0.04 + 0.30). This is § 5's stacking
+identity read off real media rather than a fixture.
+
+**Two corpus-wide facts the roll-up added:**
+
+`--normalize` changed the gain on **111 of 308** gaps, **all boosts, zero cuts** —
+the flag is now a boost-only regime. Before the program scalar existed the local
+knob was the only gain and could go either way; now the programs are already
+matched, so every remaining local move is upward. Recorded in
+[../pipeline.md](../../pipeline.md) § Fill gain, because the flag's character changed
+without its code changing.
+
+**8 gaps sit pinned at +12.00 dB** under `--normalize` — `max_fill_gain_db`'s
+4.0× ceiling, so the local knob wanted *more* than it was allowed and those
+readings are censored ([settled.md](../settled.md) § E). It costs nothing while the
+flag is off by default, and it is the standing argument against ever flipping
+that default.
+
 ---
 
 ## 12. Implement checklist (do not start until § 10)
@@ -479,9 +537,9 @@ in `PatchRequestSettings::into_request` and carried on the request.
 - [x] `RegionPatch.gain` / `normalize_gain` = product; per-gap `program_gain` emitted, plus the run-level `PatchSummary::program_gain` (`ProgramGainReport`) and one `Gain:` line on human stdout
 - [x] Default `normalize_fill` false; added `program_gain`, `program_gain_max_spread_db`, `max_program_gain_db` config + `--no-program-gain` / `--normalize`. **Two knobs only** — no deadband, no drift threshold (§ 4)
 - [x] Dual-fit / SilenceSplice: takes `g_program`, keeps local at `1.0`
-- [x] Docs: [pipeline.md](../pipeline.md) § Fill gain (rewritten to two halves), [json-output.md](../json-output.md) (`normalize_gain` is now a product, per-gap `program_gain`, new § ProgramGainReport; `program_levels` no longer "report-only"), [cli-output.md](../cli-output.md) (the `Gain:` line, and the Levels line's "no fill gain derives from it" retracted), README flags + config block
+- [x] Docs: [pipeline.md](../../pipeline.md) § Fill gain (rewritten to two halves), [json-output.md](../../json-output.md) (`normalize_gain` is now a product, per-gap `program_gain`, new § ProgramGainReport; `program_levels` no longer "report-only"), [cli-output.md](../../cli-output.md) (the `Gain:` line, and the Levels line's "no fill gain derives from it" retracted), README flags + config block
 - [x] Tests in § 11; `cargo test --workspace` green; `cargo clippy` clean
-- [x] Did **not** bundle with [TEMP-local-paired-gain-plan.md](TEMP-local-paired-gain-plan.md). B shoulders unread
+- [x] Did **not** bundle with [TEMP-local-paired-gain-plan.md](../TEMP-local-paired-gain-plan.md). B shoulders unread
 
 ---
 
@@ -493,7 +551,7 @@ A synthetic pair whose B is a constant-gain copy of A applies
 gone, so byte-identity with today's `--no-normalize` run is no longer the test —
 gain-equals-measurement replaces it); a pair reading past `max_program_gain_db`
 applies unity, not the bound; `--normalize` does not square the gain; dual-fit
-fills follow the same `g_program`; and the n = 3 local-over-boost gaps no longer
+fills follow the same `g_program`; and the n = 5 local-over-boost gaps no longer
 carry a local boost under default flags.
 
 **Code-side: met 2026-08-26.** Every clause above that a synthetic fixture can decide is now a test —
@@ -503,17 +561,18 @@ end to end, and the JSON's `normalize_gain / program_gain` residual is exactly 1
 `stacking_applies_the_program_offset_once_not_twice`, and
 `silence_splice_outcome_carries_the_program_gain_from_the_strategy`.
 
-**Outstanding: the § 11 acceptance table.** The three cohort rows (over-boost gone at 45/g4, 45/g5,
-19/g13, 5/g6, 15/g3, 31/g7; 24/g46 not crushed; 15/g6 and 2/g6 regained under `--normalize`) need a
-real-media `--patch-only` roll-up against the 2026-08-25 cohort and have **not** been run. Until they
-are, this plan is implemented but not accepted — do not archive it.
+**Accepted 2026-08-27.** The § 11 cohort table ran as two 51-pair / 308-gap `--patch-only` roll-ups
+and **all three rows pass** — over-boost gone on the six with only `g_program` left, 24/g46 not
+crushed (declined by the local knob under both arms), and 15/g6 / 2/g6 regained to +1.14 / +0.25 dB
+under `--normalize`, the pre-change totals to reported precision. See § 11 § *Measured 2026-08-27*.
+Plan closed and archived that day.
 
 ---
 
 ## Related
 
-- [TEMP-ab-program-levels-plan.md](archive/TEMP-ab-program-levels-plan.md) — measurement, trust inputs, § 8
-- [TEMP-fill-normalize-local-reference-2026-08-25.md](archive/TEMP-fill-normalize-local-reference-2026-08-25.md) — why local defaults off
-- [TEMP-local-paired-gain-plan.md](TEMP-local-paired-gain-plan.md) — residual local estimator (separate Change)
-- [settled.md](settled.md) § A B-relative gain; § C local-attenuation latch; § E `normalize_gain` contaminates `peak_delta_db`
-- [pipeline.md](../pipeline.md) — current boost-only local normalize
+- [TEMP-ab-program-levels-plan.md](TEMP-ab-program-levels-plan.md) — measurement, trust inputs, § 8
+- [TEMP-fill-normalize-local-reference-2026-08-25.md](TEMP-fill-normalize-local-reference-2026-08-25.md) — why local defaults off
+- [TEMP-local-paired-gain-plan.md](../TEMP-local-paired-gain-plan.md) — residual local estimator (separate Change)
+- [settled.md](../settled.md) § A B-relative gain; § C local-attenuation latch; § E `normalize_gain` contaminates `peak_delta_db`
+- [pipeline.md](../../pipeline.md) — current boost-only local normalize

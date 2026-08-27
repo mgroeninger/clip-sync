@@ -5,7 +5,7 @@ see § 10). **Capture only** — stamp a whole-program A↔B level relationship 
 report. No gain policy, no change to `compute_fill_gain` / `normalize_fill`.
 
 **Tracked as:** nothing — closed. Verdicts: [settled.md](../settled.md) § B (steadiness window) and
-§ E (two measurement cautions). The consumer is [TEMP-program-gain-plan.md](../TEMP-program-gain-plan.md),
+§ E (two measurement cautions). The consumer is [TEMP-program-gain-plan.md](TEMP-program-gain-plan.md),
 now startable in [BACKLOG.md](../../../BACKLOG.md) § *Fill normalize*. Live summary of the § 7a ladder:
 [test-tiers.md](../test-tiers.md) § Validation ladders.
 
@@ -466,7 +466,7 @@ channel mismatches, B coverage 0.951-1.000.
 
 **The question is answered affirmatively: a single scalar exists**, and on this corpus it is
 approximately zero everywhere. That fires the [settled.md](../settled.md) § C trigger on
-[TEMP-program-gain-plan.md](../TEMP-program-gain-plan.md), whose § 4a carries the calibration.
+[TEMP-program-gain-plan.md](TEMP-program-gain-plan.md), whose § 4a carries the calibration.
 A corpus this well matched calibrates the **deadband** and nothing else — read § 4a before
 treating any other threshold as settled.
 
@@ -487,7 +487,7 @@ already established that level does not order audibility ([settled.md](../settle
 
 A later plan may use `offset_db` as a coarse master offset (`gain₀`), separate from
 hole-local normalize. That plan is now drafted:
-[TEMP-program-gain-plan.md](../TEMP-program-gain-plan.md) — it was latched on this TEMP's
+[TEMP-program-gain-plan.md](TEMP-program-gain-plan.md) — it was latched on this TEMP's
 § 7a Tier 3, which fired 2026-08-26, and is now startable. It must:
 
 - require `spread_db` below a threshold **and** `chunks` consistent — *a single scalar
@@ -534,7 +534,7 @@ behaviour changes (byte-identical fills vs before).
 Tier 2 recovering -6.0 dB on real dynamics, Tier 3 answering *yes, a single scalar exists* across
 51 pairs (§ 7a). The verdicts are in [settled.md](../settled.md) (§ B steadiness window, § E the two
 measurement cautions) and the consumer is unlatched into
-[TEMP-program-gain-plan.md](../TEMP-program-gain-plan.md). **This plan is closed and archived.**
+[TEMP-program-gain-plan.md](TEMP-program-gain-plan.md). **This plan is closed and archived.**
 
 ---
 
@@ -555,4 +555,4 @@ context only, never subtracted.
 - [json-output.md](../../json-output.md) — scan JSON schema (new fields go in the scan object table)
 - [pipeline.md](../../pipeline.md) — fill normalization (unchanged by this plan)
 - [settled.md](../settled.md) § A — B-relative / donor-shoulder gain refuted (distinct from this)
-- [TEMP-program-gain-plan.md](../TEMP-program-gain-plan.md) — first gain consumer (latched on § 7a)
+- [TEMP-program-gain-plan.md](TEMP-program-gain-plan.md) — first gain consumer (latched on § 7a)

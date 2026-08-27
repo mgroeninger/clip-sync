@@ -6,7 +6,7 @@ open question, and all four of this one's were promoted or closed that day (see 
 Sizes the exposure behind [BACKLOG.md](../../../BACKLOG.md) § *Fill normalize boosts against a
 non-local reference*, which until now rested on a single ear-confirmed gap (19/g13) and explicitly
 forbade designing from n = 1. **This note proposes no change**; it supplies the count that item asked
-for, plus four ear labels.
+for, plus six ear labels (four on 2026-08-25, two on 2026-08-27).
 
 > **Read § *What survives* before quoting the design half.** Results 1–5 are measurement and stand.
 > Result 6, the second headline ("the cap has to apply to every boost"), and Q2/Q4 argue for a cap on
@@ -17,7 +17,7 @@ for, plus four ear labels.
 **Headline.** Of 308 spliced gaps, 199 (65%) are already left at unity by the boost-only policy and
 109 are boosted. Of the 8 boosted gaps whose fill reads hotter than +3 dB at the seams, **6 would sit
 at or below their own shoulders at unity** — the entire excess is our gain, not a loud donor.
-Three of those six are now ear-confirmed audible, a fourth is audible but confounded by an
+Five of those six are now ear-confirmed audible, a sixth is audible but confounded by an
 independent defect. The mechanism is reconstructed end-to-end on 5/g6: the pooled A-border reference
 reads 7.6 dB louder than the immediate shoulders, because the window reaches into material that
 rises ~15 dB within two seconds of the gap.
@@ -54,6 +54,8 @@ durable record — see **Reproduction**.
 - **Ear labels, 2026-08-25**, from existing listen dumps: `2026-08-18-one-dead-listen/45`
   (45/g4, 45/g5), `2026-08-18-post-sweep` (31/g7), and
   `archive/mixed-ab/2026-08-12-{nonorm,normalize-boostonly}/19` (19/g13).
+- **Ear labels, 2026-08-27**, from `gap-files/ear-label-fill-normalize/{5,15}` (5/g6, 15/g3).
+  Dumps taken 2026-08-25 while local normalize was still the default.
 - **`gap-files/2026-08-23-complete-corpus/5/…_g006_full.json`** — the fingerprint dump used for the
   5/g6 mechanism reconstruction.
 
@@ -116,20 +118,29 @@ refuted cutting on `edge_delta_db` alone. Its gain is **0.00 dB** — the boost-
 The statistic that cannot separate correct-loud from incorrect-loud separates them cleanly once the
 gain is divided out. Every donor-driven row above is at or near unity; every "ours" row is boosted.
 
-## Result 4 — ear labels: 3 clean confirmations, 1 confounded
+## Result 4 — ear labels: 5 clean confirmations, 1 confounded
 
-| gap | gain | edge at unity | label (2026-08-25) |
+| gap | gain | edge at unity | label |
 |---|---|---|---|
-| 45/g4 | +12.00 | −0.89 | **audible** — hole falls in a near-silent passage; patch reads louder than the material either side |
-| 45/g5 | +5.61 | −0.72 | **audible** — same description, silent passage |
-| 19/g13 | +11.78 | −2.66 | **audible** — noticeably louder than surrounding sounds (re-confirms the 2026-08-12 label) |
-| 31/g7 | +6.56 | −3.00 | audible, **confounded** — also stutters |
+| 45/g4 | +12.00 | −0.89 | **audible** (2026-08-25) — hole falls in a near-silent passage; patch reads louder than the material either side |
+| 45/g5 | +5.61 | −0.72 | **audible** (2026-08-25) — same description, silent passage |
+| 19/g13 | +11.78 | −2.66 | **audible** (2026-08-25) — noticeably louder than surrounding sounds (re-confirms the 2026-08-12 label) |
+| 31/g7 | +6.56 | −3.00 | audible, **confounded** (2026-08-25) — also stutters |
+| 5/g6 | +12.00 | −1.39 | **audible** (2026-08-27) — gain for the patch is noticeably louder than surrounding sounds |
+| 15/g3 | +10.74 | −6.68 | **audible** (2026-08-27) — gain for the patch is noticeably louder than surrounding sounds |
 
 31/g7's stutter is an independently recorded defect, not a level defect: the gap straddles pair 31's
 map step (`step_ms = −1122.2` on the 2026-08-23 dump; see the blocked step-boundary verdict in
 [../settled.md](../settled.md) § D and BACKLOG § *Fill placement*). A gap that stutters cannot cleanly
-attribute audibility to level, so **the cohort should be counted as n = 3**, with 31/g7 corroborating
-only. Note this is dump `g007`, *not* the repo's 31/g8 — see § *Naming convention*.
+attribute audibility to level, so the 2026-08-25 cohort was counted as **n = 3**, with 31/g7
+corroborating only. Note this is dump `g007`, *not* the repo's 31/g8 — see § *Naming convention*.
+
+**2026-08-27.** 5/g6 and 15/g3 close the two unlabelled members. Both match the 45/g4 description —
+the patch jumps out of the surrounding program. The cohort is now **n = 5**, with 31/g7 still
+corroborating only. 15/g3 was the discriminator: +10.74 dB of our gain but only +4.05 dB of measured
+edge (and −6.68 dB at unity). It is still audible, so the audible axis is **the gain into a quiet
+passage**, not seam hotness. That does not pick among the withdrawn RMS-window candidates; it is
+evidence that `--normalize` as a collar residual must not revive this class.
 
 Independent measurement of the 45/g4 wav against its own `_a_surround.wav` sibling (6-channel
 interleaved RMS, 100 ms bins): fill −41.0 dB, shoulders −50.0 / −57.6, **+16.5 dB above the quieter
@@ -192,14 +203,14 @@ Written on archiving. The measurements are durable; the design half is not.
 | Result 2's obligation | **Re-incurred.** "Re-run the fill-level roll-up after any gain change" — the 2026-08-26 program-gain change is a gain change, so the discharge claimed here is spent. The 2026-08-25 program-gain census re-discharges it |
 | Result 3's instrument | **Stands, and was confirmed.** `edge_delta_db − 20·log10(normalize_gain)` predicted 5/g6 at **−1.39** dB and 2/g6 at **+3.02**; the program-gain census measured **−1.40** and **+2.97** with local off. But `normalize_gain` is now the product `g_program * g_local`, so "the excess is our gain" no longer localizes blame — attributing it to the **local** reference needs `normalize_gain / program_gain` |
 | Result 6, and the second headline | **Void.** Both argue that a cap must reach every boost, over a ~4.5 dB corridor between 15/g6 (+1.14 dB) and 45/g5 (+5.61 dB). That corridor was derived from whole-fill RMS against a wide A window, which is the estimator being replaced. No cap is being built |
-| **Q1** — are 5/g6 and 15/g3 audible? | **Promoted**, [BACKLOG.md](../../../BACKLOG.md) § *Fill normalize* ("Ear-label 5/g6 and 15/g3"). **Demoted in force**: it was framed as the question that picks between the three candidate fixes, and those are gone. It is now evidence for the collar-residual work, not a gate on shipping |
+| **Q1** — are 5/g6 and 15/g3 audible? | **Answered 2026-08-27, both audible** (Result 4). 15/g3 is the discriminator: a large boost is audible even when the seams are not hot, so the axis is the gain, not `edge_delta_db`. Evidence for the collar-residual `--normalize` must-not-revive test (now n = 5); not a gate on shipping and not a revival of the three RMS-window candidates |
 | **Q2** — which fix? | **Closed.** All three candidates (narrow `normalize_window_secs`, quieter-of-wide-vs-local, cap by the local shoulder ratio) are withdrawn at [BACKLOG.md](../../../BACKLOG.md) § *Fill normalize*, superseded by [../TEMP-local-paired-gain-plan.md](../TEMP-local-paired-gain-plan.md) — a paired B−A collar residual around the hole, not an RMS-window choice |
-| **Q3** — default `normalize_fill` false? | **Answered yes**, shipped 2026-08-26 ([../TEMP-program-gain-plan.md](../TEMP-program-gain-plan.md)). This note argued *against* it, on the ground that 15/g6 (+1.14 dB) and 2/g6 (+0.25 dB) are genuine quiet-donor boosts that turning the policy off gives up. That cost is **accepted, not refuted**: both are under 1.2 dB and both are recoverable with `--normalize` |
-| **Q4** — the acceptance test | **Split.** "The six 'ours' gaps fall to approximately unity" and "24/g46 stays at 0.00 dB" survive verbatim as [../TEMP-program-gain-plan.md](../TEMP-program-gain-plan.md) § 11 rows 1–2. "15/g6 and 2/g6 must keep their boosts" is **withdrawn** — § 11 replaces it with *may lose under the default, must regain under `--normalize`* |
+| **Q3** — default `normalize_fill` false? | **Answered yes**, shipped 2026-08-26 ([TEMP-program-gain-plan.md](TEMP-program-gain-plan.md)). This note argued *against* it, on the ground that 15/g6 (+1.14 dB) and 2/g6 (+0.25 dB) are genuine quiet-donor boosts that turning the policy off gives up. That cost is **accepted, not refuted**: both are under 1.2 dB and both are recoverable with `--normalize` |
+| **Q4** — the acceptance test | **Split.** "The six 'ours' gaps fall to approximately unity" and "24/g46 stays at 0.00 dB" survive verbatim as [TEMP-program-gain-plan.md](TEMP-program-gain-plan.md) § 11 rows 1–2. "15/g6 and 2/g6 must keep their boosts" is **withdrawn** — § 11 replaces it with *may lose under the default, must regain under `--normalize`* |
 
 What replaced the fix this note was sizing: a whole-program A↔B scalar
 (`g_program = 10^(−offset_db/20)`) on every B-derived fill with the hole-local knob defaulted off
-([../TEMP-program-gain-plan.md](../TEMP-program-gain-plan.md)), and a paired collar residual to
+([TEMP-program-gain-plan.md](TEMP-program-gain-plan.md)), and a paired collar residual to
 replace `compute_fill_gain` when the local knob is re-enabled
 ([../TEMP-local-paired-gain-plan.md](../TEMP-local-paired-gain-plan.md)). Neither is a cap on the
 RMS ratio. The corpus fact that made the whole-program half possible — every pair's offset inside
@@ -215,6 +226,8 @@ knob off is what removes them.
 `--gap-listen` dump. 15/g3 is the discriminating one (see Result 6). Until it is labelled, the
 question "is the audible axis gain or edge delta" is open, and it is the question that chooses
 between the three candidate fixes.
+
+**Answered 2026-08-27:** both audible; the axis is the gain. See Result 4.
 
 **Q2 — Which fix?** The three candidates are unchanged: narrow `normalize_window_secs` (5.0), take
 the quieter of wide-vs-local, or cap the gain by the local shoulder ratio. This note's evidence

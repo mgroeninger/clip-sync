@@ -4,7 +4,7 @@ Open follow-up work for `clip-sync`. Architecture: [PLAN.md](PLAN.md). Repair pi
 [docs/pipeline.md](docs/pipeline.md). Test corpus: [docs/dev/corpus-validation.md](docs/dev/corpus-validation.md).
 Error handling: [docs/error-mapping.md](docs/error-mapping.md).
 
-Last updated: 2026-08-25.
+Last updated: 2026-08-27.
 
 **How this doc works**
 
@@ -20,10 +20,8 @@ Last updated: 2026-08-25.
 - Shipped work is recorded in `docs/dev/archive/*` and git history.
 - Out of scope: [PLAN.md](PLAN.md) § Out of scope.
 
-**Next:** [Ear-label 5/g6 and 15/g3](#fill-normalize-boosts-against-a-non-local-reference) — two
-`--gap-listen` dumps that pick which normalize fix to build; the exposure behind them is sized and
-the defect is ear-confirmed on three gaps. Then
-[26/g6 start-sweep oracle](#fill-placement) and
+**Next:** [26/g6 start-sweep oracle](#fill-placement) — what the axis-2 objective scored at
+≈ −50 ms vs −1450 ms; do not retune the early-start penalty. Then
 [reconcile the donor-window numbers](#donor-registration). The highest-priority *defect* on the
 board is [50/g10's audible post join](#post-join-defects-pairs-31-and-50) — confirmed by ear, no
 causal model.
@@ -65,8 +63,8 @@ so treat "both defects are at the post join" as one axis to **test**, not as an 
 
 ## Fill normalize boosts against a non-local reference
 
-Ear-confirmed defect, **n = 3** (45/g4, 45/g5, 19/g13; 31/g7 audible but confounded by its map-step
-straddle). Sizing, attribution and ear labels:
+Ear-confirmed defect, **n = 5** (45/g4, 45/g5, 19/g13, 5/g6, 15/g3; 31/g7 audible but confounded
+by its map-step straddle). Sizing, attribution and ear labels:
 [TEMP-fill-normalize-local-reference-2026-08-25.md](docs/dev/archive/TEMP-fill-normalize-local-reference-2026-08-25.md)
 — **archived 2026-08-26**, all four of its questions promoted or closed. Its Results 1–5 are the
 durable measurement; its design half (a cap on the RMS ratio, the ~4.5 dB corridor) is **void**, see
@@ -78,12 +76,20 @@ energy-pooled 5 s + 5 s vs −52 dB local shoulders). Boost-only PR archived:
 B-relative gain is **refuted** ([settled.md](docs/dev/settled.md) § A); the unvalidated attenuation
 half is latched (§ C).
 
+**Shipped 2026-08-27** — the whole-program half of the fix is done and accepted:
+[archive/TEMP-program-gain-plan.md](docs/dev/archive/TEMP-program-gain-plan.md) applies
+`g_program = 10^(-offset_db/20)` to every B-derived fill and defaults `normalize_fill` **off**, which
+removed the n = 6 over-boost outright (only `g_program` remains, under 0.3 dB on every corpus pair)
+without crushing 24/g46. What is left below is the **local** half: the hole-local gain is still
+`compute_fill_gain`'s wide-A-border RMS ratio whenever `--normalize` is passed, and under that flag
+it is now a **boost-only** regime — 111 of 308 gaps changed, zero cuts, seven still pinned at the
+12 dB clamp. Do not re-litigate the default; the rows below are about making the local gain correct
+enough to enable.
+
 | Item | Next action | Done when |
 |------|-------------|-----------|
-| **Local paired-shoulder gain** | [TEMP-local-paired-gain-plan.md](docs/dev/TEMP-local-paired-gain-plan.md) — replace `compute_fill_gain` (5 s + 5 s A-border RMS vs whole-fill RMS) with the same paired B−A difference as the program scalar, restricted to collar blocks around the hole, applied as a residual against the applied program offset. **Separate Change** from program-gain; do not bundle. Does not flip the `normalize_fill` default. The RMS-window options (narrow / quieter-of / cap) and the findings-note Q4 “keep 15/g6 and 2/g6 boosts” test are withdrawn — those boosts were fill RMS vs a wide A window | Scan JSON carries `collar_level` where eight pairs exist; `--normalize` does not revive the n=3 over-boost; `g_program * g_local = 10^(-d_local/20)` when both apply |
-| **Default `normalize_fill` off, gain fills from the program scalar** | Implemented, awaiting acceptance: [TEMP-program-gain-plan.md](docs/dev/TEMP-program-gain-plan.md) — whole-program `g_program = 10^(-offset_db/20)` on every B-derived fill, local normalize default **off** and demoted to an additive residual when re-enabled. The Tier 3 census (2026-08-25, 51 pairs) discharged the latch: a single scalar exists (50/51 stable within 1 dB), and Tier 2 negative controls followed 2026-08-26 (plan § 4b, `calibration_*` in `corpus_program_levels.rs`). **Design settled 2026-08-26 at two knobs, not four** (§ 4): `program_gain_max_spread_db` = 2.5 and `max_program_gain_db` = 6.0, refusing past the bound rather than clamping to it. The deadband was **dropped** — 0.5 dB was justified as a noise floor and the floor is ~0.055 dB (median over ~500 blocks), so the corpus's ±0.26 dB offsets are real and get applied. The chunk-drift gate was **demoted to reporting**, latched on the trigger *any real pair measuring robust drift above 1.0 dB*; the residual it leaves is a 3.4–10 dB drift bounded by `max_program_gain_db`. **§ 12 implemented 2026-08-26** (`domain/program_gain.rs`, `--no-program-gain` / `--normalize`, `patch.program_gain` in the JSON, `Gain:` on stdout; workspace tests + clippy green). What remains is **acceptance**, not code: the § 11 cohort table needs a real-media `--patch-only` roll-up against the 2026-08-25 cohort — over-boost gone on the six, 24/g46 not crushed, 15/g6 and 2/g6 regained under `--normalize`. Do not decide Q3 in isolation | The cohort roll-up matches § 11 and the TEMP ships; on close, the drift latch moves to `docs/dev/settled.md` § C |
-| **Ear-label the seven clamp-pinned gaps** | The 2026-08-25 census found seven patched gaps pinned at the 12.000 dB `max_fill_gain_db` ceiling — 5@4199.1 s, 10@6479.8 s, 10@6501.0 s, 19@95.7 s, 43@6144.7 s, 44@1714.1 s, 45@1142.2 s. With corpus offsets inside 0.26 dB a 12 dB demand **cannot** be master mismatch, so each is a local-reference failure by construction — the largest available evidence for the default-off row above. `--gap-listen` each and label. Note the clamp censors: these mean *at least* 12 dB ([settled.md](docs/dev/settled.md) § E) | All seven are labelled and the audible fraction is known |
-| **Ear-label 5/g6 and 15/g3** | The two unlabelled cohort members; neither pair has ever had a listen directory, so both need a `--gap-listen` dump. **15/g3 is the discriminating one** — +10.74 dB of gain but only +4.05 dB of measured edge, so it probes whether the audible axis is the gain or the resulting edge delta. That answer picks the fix above | Both are labelled |
+| **Local paired-shoulder gain** | [TEMP-local-paired-gain-plan.md](docs/dev/TEMP-local-paired-gain-plan.md) — replace `compute_fill_gain` (5 s + 5 s A-border RMS vs whole-fill RMS) with the same paired B−A difference as the program scalar, restricted to collar blocks around the hole, applied as a residual against the applied program offset. **Separate Change** from program-gain; do not bundle. Does not flip the `normalize_fill` default. The RMS-window options (narrow / quieter-of / cap) and the findings-note Q4 “keep 15/g6 and 2/g6 boosts” test are withdrawn — those boosts were fill RMS vs a wide A window | Scan JSON carries `collar_level` where eight pairs exist; `--normalize` does not revive the n=5 over-boost; `g_program * g_local = 10^(-d_local/20)` when both apply |
+| **Ear-label the seven clamp-pinned gaps** | The 2026-08-25 census found seven patched gaps pinned at the 12.000 dB `max_fill_gain_db` ceiling — 5@4199.1 s, 10@6479.8 s, 10@6501.0 s, 19@95.7 s, 43@6144.7 s, 44@1714.1 s, 45@1142.2 s. With corpus offsets inside 0.26 dB a 12 dB demand **cannot** be master mismatch, so each is a local-reference failure by construction — the largest available evidence for the default-off row above. `--gap-listen` each and label. Note the clamp censors: these mean *at least* 12 dB ([settled.md](docs/dev/settled.md) § E). 5@4199.1 is 5/g6, labelled audible 2026-08-27 | All seven are labelled and the audible fraction is known |
 | **Re-label `2026-08-08-edge-listen`** | Pairs 7/8/12 are swapped. Required before quoting "lowest labelled clean" as a bound | Relabelled |
 | Residual seam `g` (`a ≈ g·b`) as the production gain | Candidate replacement — estimates level from the **seam** rather than whole-fill RMS. Needs verdict plumbing plus corpus rules for when the estimate is trustworthy | Evaluated against the sweep |
 
