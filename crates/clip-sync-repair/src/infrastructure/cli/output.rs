@@ -965,6 +965,11 @@ fn format_program_level_line(offset: &crate::domain::program_levels::AbLevelOffs
 /// Carries `robust_drift_db` because the drift gate is **reported, not gated**
 /// (`domain::program_gain`): this number is how a human sees the case the shipped policy chose
 /// not to defend against, and above `CHUNK_DRIFT_REVIEW_DB` it is the trigger to reconsider that.
+///
+/// What a refusal leaves behind depends on `normalize_fill`, so the line reads it rather than
+/// asserting one of the two. Unity program gain means the fills sit at B's level only on a run
+/// where the *local* half is also off; under `--normalize` that half is still live and still moves
+/// every fill toward its own A-side border.
 fn format_program_gain_line(report: &crate::domain::ProgramGainReport) -> String {
     let measured = match (report.offset_db, report.spread_db) {
         (Some(offset_db), Some(spread_db)) => {
@@ -979,9 +984,15 @@ fn format_program_gain_line(report: &crate::domain::ProgramGainReport) -> String
         Some(drift) => format!(", drift {drift:.2} dB"),
         None => String::new(),
     };
+    // Not "no gain was applied": on a normalizing run the local residual still is one.
+    let left_at = if report.normalize_fill {
+        "fills left to the local normalize residual"
+    } else {
+        "fills at B's level"
+    };
     match report.refused {
         Some(reason) => format!(
-            "Gain:      program gain refused ({}) \u{2014} fills at B's level ({measured}{drift})",
+            "Gain:      program gain refused ({}) \u{2014} {left_at} ({measured}{drift})",
             reason.label()
         ),
         None => format!(
@@ -1283,6 +1294,9 @@ mod tests {
                 &crate::domain::ProgramGainParams::default(),
             ),
             full_surface_gap_report().program_levels.as_ref(),
+            // The golden's own gaps stamp `normalize_gain` equal to the program gain, so the local
+            // half was off on the run this fixture describes.
+            false,
         ))
     }
 
@@ -1447,7 +1461,7 @@ mod tests {
         assert!(!line.contains("review"), "{line}");
     }
 
-    /// A refusal says which one, and says the fills were left at B's level — not that no gain was
+    /// A refusal says which one, and says where that left the fills — not that no gain was
     /// wanted. The two are different claims and the line must not blur them.
     #[test]
     fn program_gain_line_names_the_refusal() {
@@ -1456,6 +1470,7 @@ mod tests {
             offset_db: Some(2.31),
             spread_db: Some(3.1),
             robust_drift_db: Some(1.6),
+            normalize_fill: false,
             refused: Some(crate::domain::ProgramGainRefusal::Spread),
         };
         let line = super::format_program_gain_line(&report);
@@ -1464,6 +1479,37 @@ mod tests {
         // Above CHUNK_DRIFT_REVIEW_DB: reported with the review suffix, still not a gate.
         assert!(line.contains("drift 1.60 dB"), "{line}");
         assert!(line.contains("not gated, review"), "{line}");
+    }
+
+    /// Under `--normalize` the same refusal does NOT leave the fills at B's level: the local
+    /// residual is still live and still boosts each one toward its A-side border. The claim is the
+    /// useful half of the line, so it has to be the true one.
+    #[test]
+    fn program_gain_line_does_not_claim_bs_level_on_a_normalizing_run() {
+        let refused = crate::domain::ProgramGainReport {
+            gain: 1.0,
+            offset_db: Some(2.31),
+            spread_db: Some(3.1),
+            robust_drift_db: None,
+            normalize_fill: true,
+            refused: Some(crate::domain::ProgramGainRefusal::Spread),
+        };
+        let line = super::format_program_gain_line(&refused);
+        assert!(line.contains("refused (spread)"), "{line}");
+        assert!(
+            !line.contains("B's level"),
+            "the local half was live: {line}"
+        );
+        assert!(line.contains("local normalize residual"), "{line}");
+        // The clause is a property of the refusal arm only — an applied line never made the claim.
+        let applied = crate::domain::ProgramGainReport {
+            refused: None,
+            gain: 0.766_478_54,
+            ..refused
+        };
+        let line = super::format_program_gain_line(&applied);
+        assert!(line.contains("on every fill"), "{line}");
+        assert!(!line.contains("local normalize residual"), "{line}");
     }
 
     /// Plan 1 Phase 0: byte-identical guard for the repair JSON contract (pre-DTO split).

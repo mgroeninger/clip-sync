@@ -764,10 +764,17 @@ pub(in crate::application::patch_audio) fn characterize_region(
     } else {
         0.0
     };
+    // Both inputs are normalize-only, so both are gated the same way: `stack_fill_gain` discards
+    // this whenever the flag is off, and off is the default — no reason to walk the fill for it.
+    let b_fill_rms = if normalize_fill {
+        policies::rms_interleaved(&b_fill)
+    } else {
+        0.0
+    };
     let stacked = crate::domain::stack_fill_gain(
         program_gain,
         a_border_rms,
-        policies::rms_interleaved(&b_fill),
+        b_fill_rms,
         max_fill_gain_db,
         normalize_fill,
     );

@@ -118,6 +118,7 @@ fn program_gain_report(request: &PatchAudioRequest) -> crate::domain::ProgramGai
     crate::domain::ProgramGainReport::new(
         request.program_gain,
         request.report.program_levels.as_ref(),
+        request.normalize_fill,
     )
 }
 

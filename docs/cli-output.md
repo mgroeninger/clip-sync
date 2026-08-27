@@ -244,9 +244,12 @@ Search:     3 window(s) @ 60s stride
   ```
   Gain:      program gain -2.31 dB on every fill (B−A +2.31 dB, spread 0.42 dB)
   Gain:      program gain refused (spread) — fills at B's level (B−A +2.31 dB, spread 3.10 dB)
+  Gain:      program gain refused (spread) — fills left to the local normalize residual (B−A +2.31 dB, spread 3.10 dB)
   ```
 
-  The dB shown is the **applied** gain, so it is the negation of `B−A`. Refusal labels: `flag-off`, `no-offset`, `channels`, `spread`, `too-large` — see [json-output.md](json-output.md) § ProgramGainReport. When per-600 s chunk drift was measurable it is appended as `, drift x.xx dB`, and above 1.0 dB as `, drift x.xx dB — not gated, review`: drift is reported rather than gated, and that suffix is the trigger to revisit the decision, not a warning about this run.
+  The dB shown is the **applied** gain, so it is the negation of `B−A`. Refusal labels: `flag-off`, `no-offset`, `channels`, `spread`, `too-large`, `measurement not finite` — see [json-output.md](json-output.md) § ProgramGainReport. When per-600 s chunk drift was measurable it is appended as `, drift x.xx dB`, and above **1.5 dB** as `, drift x.xx dB — not gated, review`: drift is reported rather than gated, and that suffix is the trigger to revisit the decision, not a warning about this run.
+
+  A refusal names where it left the fills, and the two forms above are not interchangeable: unity program gain puts the fills at B's level only on a run where the hole-local half is *also* off, which is the default. Under `--normalize` that half is still live and still boosts every fill toward its own A-side border, so the line says so instead.
 
 #### Timeline / duration warnings
 

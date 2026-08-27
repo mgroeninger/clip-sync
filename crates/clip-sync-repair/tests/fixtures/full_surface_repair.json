@@ -253,7 +253,8 @@
       "gain": 0.76647854,
       "offset_db": 2.31,
       "spread_db": 0.42,
-      "robust_drift_db": 0.07000000000000028
+      "robust_drift_db": 0.07,
+      "normalize_fill": false
     }
   }
 }

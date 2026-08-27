@@ -73,7 +73,8 @@ impl Default for ProgramGainParams {
     }
 }
 
-/// Why a run applied no program gain. Four reasons, one per row of plan § 4 — plus the flag.
+/// Why a run applied no program gain. One per row of plan § 4, plus the flag and the
+/// never-expected non-finite reading.
 ///
 /// There is deliberately no `Deadband` and no `ChunkDrift` variant; both were dropped from the
 /// design (module docs), and re-adding either needs the trigger recorded there.
@@ -83,7 +84,8 @@ pub enum ProgramGainRefusal {
     /// `program_gain = false` (`--no-program-gain`).
     FlagOff,
     /// No paired offset on the scan report: B was not scanned, or fewer than `MIN_PAIRS` blocks
-    /// paired and the capture abstained rather than inventing one.
+    /// paired and the capture abstained rather than inventing one. Deliberately **not** the reason
+    /// for a measurement that ran and came back non-finite — that is [`Self::NotFinite`].
     NoOffset,
     /// A and B channel counts differ, so the offset carries a correlation-dependent constant that
     /// is not a gain (see [`crate::domain::program_levels`] module docs).
@@ -93,6 +95,13 @@ pub enum ProgramGainRefusal {
     /// `|offset_db|` past `max_program_gain_db` — an implausible answer, and the known signature of
     /// a dynamics mismatch the spread check cannot see. Refused, **not** clamped.
     TooLarge,
+    /// `offset_db` or `spread_db` came back NaN or infinite. Split out from [`Self::NoOffset`] on
+    /// 2026-08-27: the two are different operational stories — nothing paired, versus the
+    /// measurement ran and produced garbage — and only the second is a defect to chase.
+    ///
+    /// This should never fire. It is worth a variant *because* it should never fire: if it ever
+    /// does, this label is the whole diagnostic.
+    NotFinite,
 }
 
 impl ProgramGainRefusal {
@@ -104,6 +113,7 @@ impl ProgramGainRefusal {
             Self::ChannelsNotComparable => "channels",
             Self::Spread => "spread",
             Self::TooLarge => "too-large",
+            Self::NotFinite => "measurement not finite",
         }
     }
 }
@@ -164,7 +174,7 @@ pub fn program_fill_gain(
         return refuse(ProgramGainRefusal::ChannelsNotComparable);
     }
     if !offset.offset_db.is_finite() || !offset.spread_db.is_finite() {
-        return refuse(ProgramGainRefusal::NoOffset);
+        return refuse(ProgramGainRefusal::NotFinite);
     }
     // Then the two refusals.
     if offset.spread_db > params.max_spread_db {
@@ -216,6 +226,21 @@ pub fn robust_chunk_drift_db(chunks: &[AbLevelOffsetChunk]) -> Option<f64> {
     Some(max - min)
 }
 
+/// Decimal places [`ProgramGainReport::new`] rounds [`robust_chunk_drift_db`] to before recording
+/// it. Microdecibels — six orders of magnitude finer than the 1.5 dB review trigger, so the rounding
+/// cannot change [`ProgramGainReport::drift_wants_review`].
+///
+/// The rounding lives here and **not** in [`robust_chunk_drift_db`], which keeps returning the exact
+/// measurement to its own tests. Its only job is the committed surface: a `max − min` of two dB
+/// values lands on things like `0.07000000000000028`, and a serialized ulp is a golden that churns
+/// whenever anything upstream of the dB path shifts by one bit.
+const DRIFT_REPORT_DECIMALS: i32 = 6;
+
+fn round_drift_db(drift_db: f64) -> f64 {
+    let scale = 10f64.powi(DRIFT_REPORT_DECIMALS);
+    (drift_db * scale).round() / scale
+}
+
 /// What the patch summary stamps once per run. Record-only.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct ProgramGainReport {
@@ -229,21 +254,37 @@ pub struct ProgramGainReport {
     pub spread_db: Option<f64>,
     /// Robust chunk drift — **reported, not gated** (module docs). Above
     /// [`CHUNK_DRIFT_REVIEW_DB`] this run is the trigger to reconsider that.
+    ///
+    /// Rounded to microdecibels by [`Self::new`]; see [`DRIFT_REPORT_DECIMALS`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub robust_drift_db: Option<f64>,
+    /// Whether the run's *local* normalize half was live (`--normalize`).
+    ///
+    /// Recorded because without it `gain` cannot be read: on a refusal `gain` is `1.0` either way,
+    /// but the fills land at B's level only when this is `false`. With it `true` the local residual
+    /// still moves every fill toward its A-side border, so nothing about the applied level follows
+    /// from this block alone.
+    pub normalize_fill: bool,
     /// `None` when the gain was applied.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refused: Option<ProgramGainRefusal>,
 }
 
 impl ProgramGainReport {
-    pub fn new(decision: ProgramGainDecision, levels: Option<&ProgramLevels>) -> Self {
+    pub fn new(
+        decision: ProgramGainDecision,
+        levels: Option<&ProgramLevels>,
+        normalize_fill: bool,
+    ) -> Self {
         let offset: Option<&AbLevelOffset> = levels.and_then(|l| l.offset.as_ref());
         Self {
             gain: decision.gain(),
             offset_db: offset.map(|o| o.offset_db),
             spread_db: offset.map(|o| o.spread_db),
-            robust_drift_db: offset.and_then(|o| robust_chunk_drift_db(&o.chunks)),
+            robust_drift_db: offset
+                .and_then(|o| robust_chunk_drift_db(&o.chunks))
+                .map(round_drift_db),
+            normalize_fill,
             refused: decision.refusal(),
         }
     }
@@ -383,6 +424,73 @@ mod tests {
         assert_eq!(spread.gain(), 1.0);
     }
 
+    /// A measurement that ran and came back garbage is not "no offset". Both are unity, so the
+    /// only thing that distinguishes them is the reason — and the reason is the whole diagnostic
+    /// for a branch that should never be taken.
+    #[test]
+    fn a_non_finite_reading_is_not_reported_as_a_missing_one() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let in_offset = decide(&levels(Some(offset(bad, 0.5))));
+            assert_eq!(
+                in_offset.refusal(),
+                Some(ProgramGainRefusal::NotFinite),
+                "offset_db {bad}"
+            );
+            assert_eq!(in_offset.gain(), 1.0, "offset_db {bad}");
+            let in_spread = decide(&levels(Some(offset(-3.0, bad))));
+            assert_eq!(
+                in_spread.refusal(),
+                Some(ProgramGainRefusal::NotFinite),
+                "spread_db {bad}"
+            );
+            assert_eq!(in_spread.gain(), 1.0, "spread_db {bad}");
+        }
+        // The precondition still outranks it: nothing paired at all is `no-offset`, not garbage.
+        assert_eq!(
+            decide(&levels(None)).refusal(),
+            Some(ProgramGainRefusal::NoOffset)
+        );
+        // And an incomparable-channel pair keeps its own reason even carrying a NaN.
+        let mut mismatched = offset(f64::NAN, 0.5);
+        mismatched.channels_comparable = false;
+        assert_eq!(
+            decide(&levels(Some(mismatched))).refusal(),
+            Some(ProgramGainRefusal::ChannelsNotComparable)
+        );
+    }
+
+    /// The recorded drift is rounded for the committed surface only. Two properties: the value a
+    /// human reads is not a float artefact, and the rounding is far too fine to move the review
+    /// trigger it is compared against.
+    #[test]
+    fn recorded_drift_is_rounded_without_moving_the_trigger() {
+        // 2.38 - 2.31 in binary floating point is 0.06999999999999984, not 0.07 — the same shape
+        // of artefact that put `0.07000000000000028` in the committed repair-JSON golden.
+        let mut noisy = offset(-0.2, 0.5);
+        noisy.chunks = vec![
+            AbLevelOffsetChunk {
+                start_secs: 0.0,
+                end_secs: 600.0,
+                offset_db: 2.31,
+                n_pairs: 900,
+            },
+            AbLevelOffsetChunk {
+                start_secs: 600.0,
+                end_secs: 1200.0,
+                offset_db: 2.38,
+                n_pairs: 900,
+            },
+        ];
+        let raw = robust_chunk_drift_db(&noisy.chunks).expect("two populous chunks");
+        assert_ne!(raw, 0.07, "the unrounded measurement is the artefact: {raw:?}");
+        let levels = levels(Some(noisy));
+        let report = ProgramGainReport::new(decide(&levels), Some(&levels), false);
+        assert_eq!(report.robust_drift_db, Some(0.07), "{report:?}");
+        // A microdecibel either side of the trigger still reads the way the raw value would.
+        assert!(round_drift_db(CHUNK_DRIFT_REVIEW_DB + 1e-5) > CHUNK_DRIFT_REVIEW_DB);
+        assert!(round_drift_db(CHUNK_DRIFT_REVIEW_DB - 1e-5) < CHUNK_DRIFT_REVIEW_DB);
+    }
+
     #[test]
     fn past_the_bound_refuses_rather_than_clamping() {
         // Tier 2's 2:1-compressed reading: a phantom offset at a spread no gate rejects.
@@ -431,7 +539,7 @@ mod tests {
             decision.refusal().is_none(),
             "drift does not gate (plan § 4); it only reports"
         );
-        let report = ProgramGainReport::new(decision, Some(&levels(Some(drifting))));
+        let report = ProgramGainReport::new(decision, Some(&levels(Some(drifting))), false);
         let drift = report.robust_drift_db.expect("two populous chunks");
         assert!((drift - 5.342).abs() < 1e-6, "{report:?}");
         assert!(report.drift_wants_review(), "{report:?}");
@@ -463,7 +571,7 @@ mod tests {
             },
         ];
         let levels = levels(Some(at_corpus_max));
-        let report = ProgramGainReport::new(decide(&levels), Some(&levels));
+        let report = ProgramGainReport::new(decide(&levels), Some(&levels), false);
         assert!(
             !report.drift_wants_review(),
             "no corpus pair may ask for review: {report:?}"

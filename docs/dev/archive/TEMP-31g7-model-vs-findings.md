@@ -2,7 +2,8 @@
 
 **Status:** findings note, **rev 2, 2026-08-18; archived 2026-08-19** (stable — everything it
 tracked has landed, been refuted, or moved to successor plans; nominal-first archived 2026-08-20;
-§6.8's 26/g6 scoring question closed 2026-08-27; §§2, 5, 6, 8 numbers are
+§6.8's 26/g6 scoring question closed 2026-08-27; 17/g34 ear-pass the same day could not confirm
+the class; §§2, 5, 6, 8 numbers are
 pre-map-coordinates vintage, see the 2026-08-19 callout below). A full rewrite of the 2026-08-17
 rev 1 (in git history at `docs/dev/TEMP-31g7-model-vs-findings.md`) after two secondary reviews. Rev 1 carried a repeat/aliasing story for 31/g7
 that archived measurement had already refuted; this revision removes every claim that failed
@@ -39,8 +40,16 @@ One-sided closeability as a *gap cell* (31/g7 vs 26/g6) is parked in
 > (0.367) outweighs better `structure_combined` at −50 ms (1.261 vs 1.167) under the default
 > 0.35 / 0.65 weights. `late_start_penalty` is 0 at both — `early_start_penalty_scale` defaults
 > to 0 and did not participate. The 0.997 shoulder lock is a different instrument than the seam
-> Pearson axis 2 ranks. Do **not** retune that scale from this n=1; next measurement on the class
-> is the ear-pass on 17/g34 (BACKLOG). Details in §6.8.
+> Pearson axis 2 ranks. Do **not** retune that scale from this n=1. Details in §6.8.
+>
+> **17/g34 ear-pass, 2026-08-27.** Class test for Hole 1: **cannot tell.** `--gap-listen`
+> `--fingerprint-gap 35` patched (#35, dump `g034`, `_a_patched` written). Fingerprint still
+> well-posed (pre/post `peak_r` 0.990 / 0.987, `frac_lag_ms` −9 / −15, prominence 0.79 / 0.66,
+> dual-fit gate_pass). Ear: misaligned / possible pre echo on ragtime — not a confirmed
+> already-played stutter. This run's table is `patched (anchor 0.66→0.66)`, not the 2026-08-13
+> −1149 ms unified slide. Pair map used **start-clip** offset (+1.00 s) while the gap sits in the
+> **end-clip** window (offset +4.45 s; drift +3.45 s; silence cross-check disagrees). Hole 1
+> stays n=1. Clips gitignored under `gap-files/ear-label-17g34/`.
 >
 > **Map-coordinates landed and confirmed, 2026-08-19.** `lag_pair` now shifts each shoulder's B
 > search anchor by that shoulder's own `border_edge_displacement_frames`, removing the
@@ -635,8 +644,8 @@ shoulder surface — found by the archived ±2000 ms sweep, not by `top2_spacing
 
   Applied `fit_terms` (`total` 0.730, `structure_combined` 1.406, `waveform_min` 0.366, slide
   −1.450 s) is end-search / polish / snap at the **same** −1.45 s: structure rises, the seam
-  min stays ~0.366. n=1 — this records why −1450 beat −50; it does not license a Change. Next
-  on the class is the ear-pass on 17/g34.
+  min stays ~0.366. n=1 — this records why −1450 beat −50; it does not license a Change. The
+  class test (17/g34) could not confirm a twin (callout 2026-08-27).
 - **Pair 31/g7 @ 1725.70 — contradicted; mechanism unexplained.** One live shoulder (−47 ms,
   unique in ±2 s), one dead. The gate accepted `min` **0.437** at −977 ms, where the wide sweep
   reads **r 0.087** for the pre-shoulder template. The two numbers come from different windows (a
@@ -647,10 +656,13 @@ shoulder surface — found by the archived ±2000 ms sweep, not by `top2_spacing
   ill-posed (`min` over a dead post); there the shape is healthy and axis 2's argmax is now a
   measured `waveform_min` win. Different windows still apply: seam Pearson at the joint vs 1 s
   shoulder template.
-- **17/g34** (not in the 68-gap zero-move join; the archived plan's other residual giant) is a
-  third member of pair 26's class: `peak_r` 0.990 / 0.987, `peak_z` 28.7 / 26.5, prominence
-  0.79 / 0.66, dual-fit pass, envelope 0 — healthy, unique, agreeing registration, and a ~1.15 s
-  backward slide anyway.
+- **17/g34** (not in the 68-gap zero-move join; the archived plan's other residual giant) was the
+  class-test candidate: `peak_r` 0.990 / 0.987, `peak_z` 28.7 / 26.5, prominence 0.79 / 0.66,
+  dual-fit pass, envelope 0 — healthy, unique, agreeing registration, and a ~1.15 s backward
+  slide in the 2026-08-13 join. **Ear-pass 2026-08-27 could not confirm** 26-class wrong-when
+  (possible pre echo on self-similar ragtime; this run patched via **anchor** 0.66/0.66; pair
+  used start-clip offset at an end-clip-window gap). Fingerprint shape is still well-posed;
+  class membership is not. Hole 1 stays n=1.
 
 ### 6.9 What this changes
 
@@ -756,7 +768,7 @@ Rev 1 went further: a named placement-provenance axis (`confirmed` / `contradict
 predicate is exactly the §6.7 filter, which is post-hoc until prospectively validated on a second
 vintage; and 2-of-68 does not justify new vocabulary ahead of that validation. The **findings**
 stand — placement-vs-registration is real, measurable, and unnamed **for the well-posed
-failures** (26/g6, 17/g34); 31/g7's missing word is the gap cell, not that axis
+failure** (26/g6; 17/g34 did not confirm); 31/g7's missing word is the gap cell, not that axis
 ([TEMP-31g7-gap-shape-vocabulary.md](TEMP-31g7-gap-shape-vocabulary.md)). The **names** wait.
 
 What none of this argues for is re-tuning `min(pre, post)` at either call site. That number is
@@ -800,11 +812,11 @@ warns about — and `peak_z` ~6 on both sides is common (60 of 308 both-live gap
 The gap looks fillable. The failure is that scoring walked −1.45 s anyway: axis 2's `total`
 preferred a 0.367 seam min at −1450 ms over a 0.261 min at −50 ms (§6.8, 2026-08-27).
 
-**17/g34** is the same *gap* class as 26/g6: both-live, dual-fit pass, unique registration
-ignored (`peak_r` 0.990 / 0.987, `peak_z` 28.7 / 26.5, prominence 0.79 / 0.66, envelope 0) —
-sharper uniqueness than 26's broad lobe, same well-posed shape. Residual is what also groups it
-with 31/g7, which is why residual *looked* like a shared discriminator of unlike gaps, and why
-it is the wrong altitude for "discriminators of the gap".
+**17/g34** has the same *fingerprint shape* as 26/g6 (both-live, dual-fit pass, unique
+registration, `peak_r` 0.990 / 0.987) and a large residual in the 2026-08-13 join — but the
+2026-08-27 ear-pass **could not confirm** it as the same *patch* class. Residual still groups
+it with 31/g7, which is why residual *looked* like a shared discriminator of unlike gaps, and
+why it is the wrong altitude for "discriminators of the gap".
 
 **There is no shared gap signature to harvest.** The shared thing is only the patch symptom — a
 large backward slide onto already-played A. S1 may still emit residual as a descriptive patch
