@@ -249,6 +249,17 @@ is the re-census: the corrected cohort should converge on what the lag = 0
 cohort already reads (spread 0.25 / |resid| 0.08), and if it does not, the
 residuals are real material.
 
+**Answered 2026-08-27 by arm 3 — § 4b Result 3.** It converges: matched over the
+gaps whose map moved, spread ×0.293 and |residual| ×0.403, with every lag band
+improving and the worst-misregistered band improving most (0.605 → 0.129 median
+|residual| at ≥ 300 ms). The causation is settled in the direction assumed here.
+The two caveats above are **not** discharged, and neither one explains the ~1.3×
+spread / ~2× residual that remain against the lag = 0 cohort: the leftover peaks
+at 200 ms rather than staying flat (against quantization) and side disagreement
+is *lowest* at the largest lags (against one-lag-two-shoulders). The live
+hypothesis is selection — that a large lag clears the trust floor only on strong
+shoulder correlation — which needs `peak_r` joined per gap to test.
+
 ---
 
 ## 4. Residual, prior, and who applies
@@ -415,8 +426,8 @@ the CSVs**.
 |---|---|---|---|---|
 | 1 | 2.0 | nominal (global `offset_secs`) | `2026-08-27-collar-census` | complete |
 | 2 | 4.0 | nominal | `2026-08-27-collar-census-4s` | complete |
-| 3 | 2.0 | **corrected** (§ 3b, per-gap `map_lag_ms`) | `2026-08-27-collar-census-lag-work` | in flight |
-| 4 | 4.0 | corrected | — | not started; the shipping configuration |
+| 3 | 2.0 | **corrected** (§ 3b, per-gap `map_lag_ms`) | `2026-08-27-collar-census-lag-work` | complete |
+| 4 | 4.0 | corrected | `2026-08-28-collar-census-4s-lag` | in flight; the shipping configuration |
 
 Arms 1 and 2 share an identical gap list (1073 in both, none measured only at 2.0), so they compare
 **matched per gap**. Read matched ratios, never the ratio of aggregate medians: arm 2 measures 86
@@ -469,24 +480,89 @@ possible), is constrained to divisors of `silence_hold_ms`, bins the whole equiv
 2026-07-30), and its 100 ms value is the validated sensitive-recipe default from the 2026-07-20
 8-pair/121-gap work. Sweeping it for collar reasons reopens a settled detection calibration.
 
-### Result 3 — the corrected map. **Open; arm 3 in flight.**
+### Result 3 — the corrected map **converges**. § 3b confirmed; arm 3 complete.
 
-Read Q6 first. The question is whether the `lag > 0` cohort converges on what the `lag = 0` cohort
-already reads at the nominal map — median `spread_db` **0.25**, median `|residual|` **0.08** (n ≥ 8).
+Arm 3 held `W` at 2.0 and moved only the map, so it isolates § 3b; arms 1→2 held the map constant and
+isolated `W`. 940 of 1073 gaps carry a collar (87.6%, up from 920); 830 of 940 had a trusted lag, 110
+fell back to nominal with no fit above the trust floor, and 523 of the 830 actually moved.
 
-- **Converges** ⇒ § 3b is confirmed, the level half of arms 1–2 is superseded, and arm 4 becomes the
-  configuration to calibrate the three constants from.
-- **Does not converge** ⇒ the residuals are real material, not misregistration. `MAX_LOCAL_RESIDUAL_DB`
-  is then measuring the programme rather than the instrument, and § 3b's remaining caveats become the
-  suspects: 100 ms lag quantization (±50 ms survives by construction), and one core-fitted lag being
-  asked to describe both shoulders (`seam-splice-dualfit`).
+**Read the moved-only matched cohort, not the unfiltered one.** The unfiltered matched per-gap ratio
+is `1.000` for spread, residual *and* SE — an artefact, not a null: 307 of 830 trusted collars fitted
+a lag of **zero**, so those rows are bit-identical between the arms and swamp the median. This is the
+§ E trap in a new dress — the aggregate is real, it just answers a question nobody asked. On the 246
+gaps whose map actually moved (n ≥ 8 in both arms):
 
-Arm 3 holds `W` constant so it isolates the map; arms 1→2 held the map constant and isolated `W`.
-Arm 4 confounds both and is the shipping check, not an experiment — run it after arm 3 reads.
+| matched, moved, n ≥ 8 (246 gaps) | nominal | corrected | median per-gap ratio |
+|---|---|---|---|
+| `spread_db` | 0.942 | 0.344 | **×0.293** (improved on 216 of 246, 88%) |
+| `se_db` | 0.411 | 0.145 | **×0.288** |
+| `\|residual\|` | 0.371 | 0.163 | **×0.403** (improved on 177 of 246) |
 
-One provisional worry is already answered: a wider collar reaching further from where the lag was
-fitted might amplify misregistration. The matched spread ratio of ×1.00 is evidence against it, though
-not conclusive — the nominal-map spread floor may simply be hiding the bias.
+Reproduce with `./scripts/measure/compare-collar-arms.ps1 -BaseDir gap-files/2026-08-27-collar-census
+-NewDir gap-files/2026-08-27-collar-census-lag-work`. On these two arms the "changed" cohort and the
+"map moved" cohort coincide exactly (502 of 919 matched gaps, 246 at n ≥ 8), which is its own check:
+the map is the only thing that differs between the dumps.
+
+**Every lag band improves, and the improvement grows with the lag.** Banded at n ≥ 8, with the
+nominal column taken from **arm 1's own rows for the same gaps** (not § 3b's 273-dropout join, which
+is a different population and whose numbers do not belong in a matched table):
+
+| fitted lag | n | nominal spread / `\|resid\|` | corrected spread / `\|resid\|` |
+|---|---|---|---|
+| 0 ms | 163 | 0.262 / 0.084 | 0.262 / 0.084 |
+| 100 ms | 142 | 0.774 / 0.290 | **0.367 / 0.153** |
+| 200 ms | 47 | 1.334 / 0.418 | **0.351 / 0.256** |
+| ≥ 300 ms | 67 | 1.355 / 0.605 | **0.307 / 0.129** |
+
+The lag = 0 row is the control: the correction is a no-op there, the two columns are identical by
+construction, and it reproduces the recorded 0.250 / 0.080 baseline. Under the nominal map the
+degradation is monotone in lag; corrected, the band that was worst improves most.
+
+**Bins are half-open, and the edge matters.** An earlier version of this table used `> 200` under a
+`≥ 200` label, which parked the 47 collars sitting at exactly 200 ms — the worst remaining residual,
+0.256 — in the band below and manufactured an inversion (0.171 vs 0.129) that does not exist. Moving
+them across the edge simply moves the 0.171 with them. Census Q6 now emits these bands so the split
+is reproducible rather than re-derived by hand.
+
+**Convergence is substantial, not complete, and nothing here explains the remainder.** Pooled
+`lag > 0` at n ≥ 8 reads 0.349 / 0.165 against lag = 0's 0.262 / 0.084 — ~1.3× spread and ~2×
+residual outstanding. The honest profile of that remainder is **0.084 / 0.153 / 0.256 / 0.129**: it
+peaks at 200 ms and falls again. Neither of § 3b's named caveats accounts for that shape:
+
+- **Not a fixed quantization floor.** ±50 ms surviving by construction predicts a *flat* leftover.
+  This one is not flat, and it is not monotone in lag either.
+- **Not one lag failing to describe both shoulders** (`seam-splice-dualfit`). That predicts side
+  disagreement growing with lag. `|pre − post|` runs 0.154 / 0.249 / 0.236 / **0.129** — lowest in
+  the ≥ 300 ms band.
+- **Selection remains the live hypothesis**, and this arm cannot test it. A gap whose fit reads
+  exactly 0 is one where registration was easy, so `lag > 0` was never obliged to land on `lag = 0`;
+  and a *large* lag may only clear the trust floor when the shoulder correlation is strong, which
+  would explain the ≥ 300 ms band reading better than the 200 ms one. Testing it needs `peak_r`
+  joined per gap, which the collar CSV does not carry. **Do not read the outstanding 2× as a
+  measurement of anything** — of the instrument or of the programme — until that join exists.
+
+**Q5's profile survives the correction; the reopen condition did not fire.** Across the spread bands
+`|pre − post|` medians run 0.154 / 0.587 / 1.229 / 3.668 dB — still rising, so misregistration was
+not manufacturing the relationship, and § 3a stays refuted on its own terms. But this is a
+*repetition*, not a strengthening, and the counts must be read at one filter: § 3a's recorded
+"0 of 76" was `n_pre ≥ 8 && n_post ≥ 8`, and on that same cut the corrected arm reads **0 of 124** —
+unchanged. What the correction did change is the *population*: two-sided collars above 2.0 dB spread
+fall from 78 to 26 unfiltered (14 → 4 on the well-populated cut), so much of the high-spread
+material was misregistration, and what remains still tracks spread.
+
+One provisional worry from arms 1–2 is answered: a wider collar reaching further from where the lag
+was fitted might amplify misregistration. The matched spread ratio of ×1.00 was weak evidence against
+it because the nominal-map spread floor may have hidden the bias — arm 4 is the real test, and it now
+runs on a map that is right to within a block.
+
+**Still not constants.** Arm 3 is the right map at the wrong width. `MIN_LOCAL_PAIRS`,
+`local_pair_collar_secs` and `MAX_LOCAL_RESIDUAL_DB` come from arm 4. What arm 3 does fix is the
+floor's cost basis: at W = 2.0 corrected, `n_pairs < 8` sends **437 of 940 measured collars (46.5%)**
+back to program gain, and together with the 133 gaps that abstain outright that is **570 of 1073
+(53.1%) of all gaps** carried by program gain rather than by a collar — the two denominators are
+different questions and the census prints the second. `n_steady / n_active` is 0.333 and
+`n_pairs / n_steady` is 1.000 — B coverage
+costs nothing, steadiness costs everything, so Result 2's remedy points at `W` and not at the floor.
 
 **Standing caution, unchanged:** do not write `MIN_LOCAL_PAIRS`, `local_pair_collar_secs` or
 `MAX_LOCAL_RESIDUAL_DB` into the code from arms 1–2. Result 1 is strong enough that 4.0 is the
@@ -548,9 +624,23 @@ their only record. Arm 4 onward carries it.
 baseline was taken at n ≥ 8, and comparing an unfiltered cohort against it reads two different
 populations. Q5's banded profile is the secondary read — a flat profile there would reopen § 3a.
 
-**Comparing two arms:** join the per-gap CSVs on `(pair, gap_index)`, keep the gaps `measured` in
-both, and take the median **of the per-gap ratios** — never the ratio of the aggregate medians. See
-`settled.md` § E; this trap already produced one wrong reading of the `W` arms.
+**Comparing two arms: `./scripts/measure/compare-collar-arms.ps1 -BaseDir <a> -NewDir <b>`.** Each
+side is a dump dir or a per-gap CSV; a dump dir is run through `census-collar-levels.ps1` rather than
+re-parsed, so the two scripts can never disagree about the same dump. It reproduces every recorded
+number in Result 1 (gained 86 / lost 0, abstentions 153 → 67, cohort clearing 450 → 646, SE improved
+on 609 gaps), which is what makes it the record rather than the CSVs.
+
+It exists because both rules below have already produced a wrong reading, and neither is visible in
+the output that gets them wrong:
+
+- **Median of the per-gap ratios, never the ratio of aggregate medians** (`settled.md` § E). This
+  misread the `W` arms: aggregate SE 0.329 → 0.310 looks flat, matched is ×0.74.
+- **Exclude rows the change did not touch.** Where an arm moves only some gaps, the rest are
+  bit-identical and contribute an exact 1.000, so the median is 1.000 at any effect size. This
+  misread arms 1 → 3: unfiltered reads ×1.000 for spread, residual *and* SE against the true
+  ×0.293 / ×0.403. The script finds untouched rows by their *readings* being identical, so it needs
+  no knowledge of what the arms differ in, and it prints the unchanged count rather than hiding it —
+  "almost nothing changed" is a finding about the change, and the one shape that looks like a bug.
 
 ---
 
@@ -859,7 +949,8 @@ Default flags (local off) are program-gain’s acceptance, not this plan’s.
 - [ ] Thread `local_pair_collar_secs` onto `ScanGapsRequest` (`composition.rs` and every request literal) — because the timelines live in `ScanGaps`, **not** because of `--patch-only` (§ 3)
 - [ ] Stamp `Gap.collar_level` in `ScanGaps` next to `program_levels` (timelines still live); skip when channels incomparable. ~64 `Gap { … }` literals need the new field — add a constructor or `Default` rather than 64 mechanical edits
 - [ ] Gap object table in [json-output.md](../json-output.md); omit when `None` (`GapScanJson` serializes `Gap` already)
-- [ ] `scripts/measure/census-collar-levels.ps1` — per-**gap** sibling of `census-program-levels.ps1` (which is per-pair and cannot answer § 4a)
+- [x] `scripts/measure/census-collar-levels.ps1` — per-**gap** sibling of `census-program-levels.ps1` (which is per-pair and cannot answer § 4a)
+- [x] `scripts/measure/compare-collar-arms.ps1` — matched two-arm join; no single-dump census can answer "did it help?", and both of the rules that answer it wrong are silent failures (§ 4b)
 - [ ] **§ 4a: run the corpus census and set the three constants against it.** Everything below waits on this
 
 **Apply half**

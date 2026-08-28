@@ -486,6 +486,38 @@ if ($withLag.Count -eq 0) {
             }
         }
         Write-Host '    (baseline to beat: lag = 0 at n>=8 read spread 0.250 / |resid| 0.080 on the nominal-map arm)'
+
+        # Banded by lag magnitude, n>=8. Emitted here because deriving it by hand got the bin edge
+        # wrong once: a `> 200` filter under a `>= 200` label parks the collars sitting at exactly
+        # 200 ms in the band below, which on the 2026-08-27 corrected arm moved the worst remaining
+        # residual (0.256 over 47 collars) into the lower band and manufactured an inversion. Bins
+        # are HALF-OPEN and the boundary value belongs to the band it opens.
+        #
+        # Read the shape, not just the levels: what remains after the correction is the residual
+        # misregistration budget, and its profile is what discriminates the candidate causes. Flat
+        # would be the 100 ms quantization floor; monotone in lag would be uncorrected
+        # misregistration; `|pre-post|` rising with lag would be one fitted lag failing to describe
+        # both shoulders (seam-splice-dualfit). The corrected arm showed none of the three.
+        $bands = @(
+            @{ label = '0 ms      '; lo = 0.0; hi = 1e-9 },
+            @{ label = '100 ms    '; lo = 1e-9; hi = 200.0 },
+            @{ label = '200 ms    '; lo = 200.0; hi = 300.0 },
+            @{ label = '>= 300 ms '; lo = 300.0; hi = [double]::PositiveInfinity })
+        Write-Host '    -- by lag magnitude, n>=8 (half-open bins; the boundary belongs to the band it opens) --'
+        foreach ($band in $bands) {
+            $sub = @($reg | Where-Object {
+                    $a = [Math]::Abs([double]$_.map_lag_ms)
+                    [double]$_.n_pairs -ge 8 -and $a -ge $band.lo -and $a -lt $band.hi
+                })
+            if ($sub.Count -eq 0) { Write-Host ("      {0}: none" -f $band.label); continue }
+            $sp = [double[]]@($sub | ForEach-Object { [double]$_.spread_db } | Sort-Object)
+            $rs = [double[]]@($sub | Where-Object { $null -ne $_.residual_db } | ForEach-Object { [Math]::Abs([double]$_.residual_db) } | Sort-Object)
+            $sd = [double[]]@($sub | Where-Object { $null -ne $_.side_delta_db } | ForEach-Object { [double]$_.side_delta_db } | Sort-Object)
+            Write-Host ("      {0}: {1,4} collars | spread med {2} | |resid| med {3} | |pre-post| med {4}" -f `
+                    $band.label, $sub.Count, (Format-Ratio (Get-Percentile $sp 0.50)), `
+                $(if ($rs.Count) { Format-Ratio (Get-Percentile $rs 0.50) } else { '  -  ' }), `
+                $(if ($sd.Count) { Format-Ratio (Get-Percentile $sd 0.50) } else { '  -  ' }))
+        }
     }
 }
 
