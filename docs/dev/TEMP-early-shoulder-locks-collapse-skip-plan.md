@@ -39,7 +39,9 @@ donor, assemble. If the early scan already collapsed, you never call it.
 
 **After splice** (length-preserving fills are in; A still original clock): loop
 the captured list and `visit_shoulders_abut`. This Change’s visit is
-record-only. A later Change cuts A in that same loop.
+record-only.
+[TEMP-post-splice-introduced-silence-collapse-plan.md](TEMP-post-splice-introduced-silence-collapse-plan.md)
+warns in that same loop (drain only under `--collapse-introduced-silence`).
 
 Cheap search lives in **one** place. Dual-fit stays “accept and build a fill
 from locks we already have.”
@@ -177,8 +179,12 @@ frames are still in range, stamp the same vec onto `PatchSummary.shoulders_abut`
 post-splice A window (neighbours filled, hole still silent) as the review WAV;
 pre-splice `_a_surround` stays the before.
 
-A **later Change** puts cut/concatenate in that loop body. This Change ships
-the capture, the post-splice visit, and the summary list. It does not shorten A.
+The successor
+[TEMP-post-splice-introduced-silence-collapse-plan.md](TEMP-post-splice-introduced-silence-collapse-plan.md)
+puts the concat-confirm in that loop body: **warn by default**, drain A
+PCM only under `--collapse-introduced-silence`; mux is the current path
+(video was not padded). This Change ships the capture, the post-splice
+visit, and the summary list. It does not shorten A.
 
 ---
 
@@ -198,7 +204,8 @@ sees the still-silent hole on original-clock A (other gaps already filled).
 ## 6. Non-goals
 
 - Closing A’s timeline (cut/concatenate). This Change captures and visits;
-  a later Change mutates A inside that visit.
+  [TEMP-post-splice-introduced-silence-collapse-plan.md](TEMP-post-splice-introduced-silence-collapse-plan.md)
+  warns in that visit and drains only under `--collapse-introduced-silence`.
 - Settled § D pair staircase / `--steps`.
 - Lowering `SPLICE_MIN_PEAK_R`.
 - Changing plan / `b_has_energy`.
@@ -251,7 +258,8 @@ sees the still-silent hole on original-clock A (other gaps already filled).
 - [ ] Capture + post-splice visit: write-mode fixture with one abut skip and
       one real fill — visit runs **after** splice, A length unchanged, abut
       frames still in range, `patch.shoulders_abut` has that gap; preview has
-      the list and never visits; visit is a named function a later Change
+      the list and never visits; visit is a named function
+      [TEMP-post-splice-introduced-silence-collapse-plan.md](TEMP-post-splice-introduced-silence-collapse-plan.md)
       fills in.
 - [ ] 31/g7 production: `shoulders_abut`, not High keep (licensed listen WAVs
       already on disk, 2026-08-18 post-sweep stem).
