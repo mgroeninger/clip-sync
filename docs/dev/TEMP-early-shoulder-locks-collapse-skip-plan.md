@@ -31,17 +31,22 @@ thus `bridge_frames`.
 
 **Keep reads that:** if the two locks abut (`b_post_seam <= b_pre_seam`) →
 **skip** with reason `shoulders_abut` (payload below), never search a fill.
+**Capture** the skip (`gap_index`, A frames, lock payload) and hold it.
 
 **`try_dual_fit` no longer calls `seam_local_peak`.** It takes those locks and
 does the rest: `gate_pass`, collapse (same numbers, skip path), step-real,
 donor, assemble. If the early scan already collapsed, you never call it.
+
+**After splice** (length-preserving fills are in; A still original clock): loop
+the captured list and `visit_shoulders_abut`. This Change’s visit is
+record-only. A later Change cuts A in that same loop.
 
 Cheap search lives in **one** place. Dual-fit stays “accept and build a fill
 from locks we already have.”
 
 One sentence: **characterize computes the seam locks first; keep may skip on
 collapse; dual-fit and `splice_dualfit` consume the same locks and do not
-search.**
+search; abut skips are captured and visited after splice.**
 
 ---
 
@@ -91,6 +96,7 @@ characterize
                       → skip      → try_dual_fit
                                       seam_local_peak ±600 × 2
                                       gate / collapse / assemble
+execute / anchored retry / splice / summarize
 ```
 
 **This Change**
@@ -101,26 +107,36 @@ characterize
   nominal_first_seam_locks → (b_pre_seam, b_post_seam, bridge_frames)
        │
        ├─ abut?  → Skip { reason: shoulders_abut, cell: SilenceSplice }
-       │            No evaluate_seam_gate. No try_dual_fit.
+       │            capture ShouldersAbutSkip. No evaluate_seam_gate. No try_dual_fit.
        │
        ├─ evaluate_seam_gate → keep → Patch(Bracket)
        │
        └─ skip → try_dual_fit(locks)   // no seam_local_peak
                     gate_pass / collapse / step-real / donor / assemble
+
+execute patches
+anchored retry          // may rewrite fills; does not retry abut skips
+splice RegionPatches    // length-preserving; A clock unchanged
+for skip in captured shoulders_abut:
+    visit_shoulders_abut(skip, &a_pcm)   // this Change: record-only
+summarize
 ```
 
 `--no-dual-fit` does **not** skip the early scan. Collapse-before-keep is not a
 dual-fit feature. Dual-fit input buffers can stay gated on the flag; the lock
 helper runs from `a_pcm` + `b_samples` already in characterize.
 
+`--repair-preview` collects the list onto the summary and does **not** run the
+visit (no splice, A unpatched). Write mode and `--patch-only` run the visit.
+
 ---
 
-## 4. `shoulders_abut` — skip identity and later A-cut review
+## 4. `shoulders_abut` — skip identity, capture, post-splice visit
 
 Cell: **SilenceSplice** (Hole 2: degenerate splice, zero-length donor bridge).
 Not `ProgramQuiet`, not no-placement, not a new cell.
 
-New `GapPatchSkipReason` object:
+New `GapPatchSkipReason` object (per-gap status):
 
 ```json
 {
@@ -136,15 +152,33 @@ New `GapPatchSkipReason` object:
 `cell_for_skip_reason` / `reason_admits_cell` / `skip_cell_from_tags`: this
 reason is SilenceSplice only (wildcard-free match arms).
 
-Human line (stdout / `-v` / `--gap-listen` manifest) includes the four numbers
-so a skip table is the review set:
+Human line (stdout / `-v` / `--gap-listen` manifest) includes the four numbers:
 
 `shoulders abut (bridge=−48 frames, gap=53702, pre=−38.0 ms, post=−1160.3 ms)`
 
-That is the census key for a **later Change**: given these skips, decide whether
-A’s hole is extraneous program (cut A / concatenate PCM across the gap). This
-Change does **not** cut A. It must emit a reason you can grep, with the lock
-evidence still on the row, so that review does not re-search.
+**Capture** (final dispositions after anchored retry): a `ShouldersAbutSkip` per
+abut — `gap_index`, `a_start_frame`, `a_end_frame`, and the lock payload. Hold
+that vec through splice. Do not cut, and do not visit, during characterize or
+inside the splice loop. `splice_into_a` is length-preserving, so those A frames
+still name the hole after neighbouring fills are in.
+
+**Visit** (after the splice loop in `PatchAudio::run_with_decoded`, A still
+original length):
+
+```text
+for skip in shoulders_abut {
+    visit_shoulders_abut(skip, &mut a_pcm)
+}
+```
+
+This Change’s `visit_shoulders_abut` is record-only: confirm the destination
+frames are still in range, stamp the same vec onto `PatchSummary.shoulders_abut`
+(run-level JSON, omitted when empty). `--gap-listen` may also slice that
+post-splice A window (neighbours filled, hole still silent) as the review WAV;
+pre-splice `_a_surround` stays the before.
+
+A **later Change** puts cut/concatenate in that loop body. This Change ships
+the capture, the post-splice visit, and the summary list. It does not shorten A.
 
 ---
 
@@ -155,21 +189,23 @@ seam, ±600 is dead (`peak_r` ~0.12) so envelope consults; the shipped 1 s
 census already reports **−1160 ms** with envelope on. Fine retry is the 250 ms
 post seam recentered there.
 
-After this Change: early locks → `bridge_frames` ≤ 0 → `shoulders_abut`.
-Unified-fit ±10 s never runs. No −977 keep.
+After this Change: early locks → `bridge_frames` ≤ 0 → `shoulders_abut`,
+captured. Unified-fit ±10 s never runs. No −977 keep. After splice, the visit
+sees the still-silent hole on original-clock A (other gaps already filled).
 
 ---
 
 ## 6. Non-goals
 
-- Closing A’s timeline (cut/concatenate). Skip identity only; later Change
-  reads `shoulders_abut`.
+- Closing A’s timeline (cut/concatenate). This Change captures and visits;
+  a later Change mutates A inside that visit.
 - Settled § D pair staircase / `--steps`.
 - Lowering `SPLICE_MIN_PEAK_R`.
 - Changing plan / `b_has_energy`.
 - Envelope-first, the widen ladder, or dense `seam_local_peak` over ±2000.
 - Using 1 s `lag_pair` positions as dual-fit locks.
-- New CLI. Envelope knobs already exist.
+- New CLI. Envelope knobs already exist. Preview does not splice and does
+  not run the visit.
 
 ---
 
@@ -193,6 +229,10 @@ Unified-fit ±10 s never runs. No −977 keep.
 6. Wire `GapPatchSkipReason::ShouldersAbut { … }`, formatters, JSON contract
    ([json-output.md](../json-output.md), [gap-repair-guide.md](../gap-repair-guide.md)),
    Hole 2 detection sentence in [gap-vocabulary.md](gap-vocabulary.md).
+7. Collect `Vec<ShouldersAbutSkip>` from final skip specs (after anchored
+   retry). After the splice loop, call `visit_shoulders_abut` for each.
+   Stamp `PatchSummary.shoulders_abut`. Preview stamps the list, skips the
+   visit.
 
 ---
 
@@ -208,6 +248,11 @@ Unified-fit ±10 s never runs. No −977 keep.
       `bridge_frames <= 0`) on a rescued-but-abut fixture.
 - [ ] `ShouldersAbut` reason: serde, `cell_for_skip_reason` exhaustive tests,
       human format, JSON + repair-guide tables, vocab Hole 2 “detection” line.
+- [ ] Capture + post-splice visit: write-mode fixture with one abut skip and
+      one real fill — visit runs **after** splice, A length unchanged, abut
+      frames still in range, `patch.shoulders_abut` has that gap; preview has
+      the list and never visits; visit is a named function a later Change
+      fills in.
 - [ ] 31/g7 production: `shoulders_abut`, not High keep (licensed listen WAVs
       already on disk, 2026-08-18 post-sweep stem).
 
@@ -215,8 +260,11 @@ Unified-fit ±10 s never runs. No −977 keep.
 
 ## 9. Exit
 
-- Abutting locks → `shoulders_abut` skip, no fill-search; JSON payload carries
-  lags + `bridge_frames` + `gap_frames`.
+- Abutting locks → `shoulders_abut` skip, no fill-search; per-gap JSON payload
+  carries lags + `bridge_frames` + `gap_frames`; run-level
+  `patch.shoulders_abut` is the same set with `gap_index` + A frames.
+- Write / `--patch-only`: after splice, `visit_shoulders_abut` runs once per
+  captured skip; A length unchanged. Preview: list present, visit not called.
 - In-reach two-lag fillable silence-splice still reaches `try_dual_fit` with
   the same seam locks it would have searched; fill bytes unchanged.
 - Nominal-recoverable shoulders never consult envelope.
