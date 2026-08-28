@@ -268,7 +268,9 @@ Scan convention stays **B minus A**.
 
 ```text
 d_local        = median(d_i) over collar pairs          # None only if NOTHING paired
-apply_local    = d_local is not None and n_pairs >= MIN_LOCAL_PAIRS
+apply_local    = (d_local is not None and n_pairs >= MIN_LOCAL_PAIRS
+                  and n_pre >= 1 and n_post >= 1          # both shoulders spoke (§ 4b Result 4)
+                  and se_db <= MAX_LOCAL_SE_DB)           # dispersion abstention (§ 4b Result 4)
 offset_prior   = offset_db if g_program was Applied, else 0
 residual_db    = d_local − offset_prior
 g_local_db     = −residual_db
@@ -345,7 +347,9 @@ estimator, narrower window — so that sentence now cuts the other way: 12 has n
 claim on it either. `max_fill_gain_db` stays where it is, meaning what it means,
 and dies with `compute_fill_gain`.
 
-**Interim value: `MAX_LOCAL_RESIDUAL_DB = 6.0`, pending § 4a.** Not inherited
+**Interim value: `MAX_LOCAL_RESIDUAL_DB = 6.0`, pending § 4a.** *(Answered — § 4b Result 4
+sets it to 3.0, and demotes it from the tail's disposal to a backstop. The argument below is why
+it is not inherited from program gain, and that part stands.)* Not inherited
 from program gain — argued the same way. On a same-master pair the residual is
 ~0 by construction; corpus program offsets sit inside 0.26 dB; a collar reading
 several dB against the file average means the collar reached other material
@@ -427,7 +431,7 @@ the CSVs**.
 | 1 | 2.0 | nominal (global `offset_secs`) | `2026-08-27-collar-census` | complete |
 | 2 | 4.0 | nominal | `2026-08-27-collar-census-4s` | complete |
 | 3 | 2.0 | **corrected** (§ 3b, per-gap `map_lag_ms`) | `2026-08-27-collar-census-lag-work` | complete |
-| 4 | 4.0 | corrected | `2026-08-28-collar-census-4s-lag` | in flight; the shipping configuration |
+| 4 | 4.0 | corrected | `2026-08-28-collar-census-4s-lag` | complete; the shipping configuration |
 
 Arms 1 and 2 share an identical gap list (1073 in both, none measured only at 2.0), so they compare
 **matched per gap**. Read matched ratios, never the ratio of aggregate medians: arm 2 measures 86
@@ -555,7 +559,8 @@ was fitted might amplify misregistration. The matched spread ratio of ×1.00 was
 it because the nominal-map spread floor may have hidden the bias — arm 4 is the real test, and it now
 runs on a map that is right to within a block.
 
-**Still not constants.** Arm 3 is the right map at the wrong width. `MIN_LOCAL_PAIRS`,
+**Still not constants.** *(Answered by arm 4 — Result 4 below.)* Arm 3 is the right map at the
+wrong width. `MIN_LOCAL_PAIRS`,
 `local_pair_collar_secs` and `MAX_LOCAL_RESIDUAL_DB` come from arm 4. What arm 3 does fix is the
 floor's cost basis: at W = 2.0 corrected, `n_pairs < 8` sends **437 of 940 measured collars (46.5%)**
 back to program gain, and together with the 133 gaps that abstain outright that is **570 of 1073
@@ -627,6 +632,102 @@ and a 3 dB bound would refuse 9 either way. Refusal is stable under a map error 
 by up to 9 dB, which is the property § 4 wanted from refuse-not-clamp. What the unexplained
 remainder in Result 3 *does* block is the claim that the residual bound is calibrated: ~0.08 dB of
 median residual is immaterial as a gain and fatal as a claim about where the readings stop.
+
+### Result 4 — W = 4.0 on the corrected map. **Arm 4 complete; the shipping configuration, and the tail is not where § 4a expected it.**
+
+The last arm confirms Result 1's width on a map that is right to within a block, and then finds
+something the earlier arms could not: at the shipping width the residual tail is **not** a thin-collar
+artefact, and `MIN_LOCAL_PAIRS` alone does not dispose of it.
+
+**The width holds, and the arms-1–2 worry is answered.** Matched against arm 3 (changed rows,
+`n ≥ 8` in both, 500 gaps; `compare-collar-arms.ps1 -BaseDir …-lag-work -NewDir …-4s-lag`):
+
+| statistic | ratio med | direction |
+|---|---|---|
+| `n_pairs` | ×2.059 | higher on 500 of 500 |
+| `spread` | ×1.011 | flat |
+| `se` | ×0.717 | lower on 414 of 500 |
+| `\|resid\|` | ×0.928 | lower on 269 of 500 |
+
+Abstentions fall 133 → 50, so the collar now exists on **1023 of 1073 gaps (95.3%)**. The SE ratio of
+0.717 against 1/√2 = 0.707 is the whole answer to the provisional worry carried since arms 1–2: if
+reaching further from where the lag was fitted amplified misregistration, the extra material would be
+worse than the near material and SE would improve by *less* than the square root of the sample. It
+improves by exactly it, and `spread` does not move. The far half of a 4-second collar is as good as
+the near half **on a corrected map** — which the nominal-map arms could not have shown, because their
+spread floor could have hidden the bias in either direction.
+
+**But the width is a precision change, not a level change.** Decision impact, arm 3 → arm 4: median
+gain moved **0.046 dB**, p90 0.439, >1 dB on 3.6% of `n ≥ 8` gaps. Set that beside § 3b's map
+correction on the same measure — median **0.458 dB**, >0.5 dB on 47% — and the two changes are
+different in kind. The map was wrong about the level; the width was only imprecise about it. Both are
+worth having, and only one of them was a correctness bug.
+
+**The lag-band shape survives doubling the collar.** At `n ≥ 8`, remaining `|residual|` by fitted lag
+is **0.083 / 0.157 / 0.214 / 0.150** (0 / 100 / 200 / ≥ 300 ms) against arm 3's 0.084 / 0.153 / 0.256
+/ 0.129. Doubling `W` changed it by hundredths. Whatever the unexplained remainder in Result 3 is, it
+is not a collar-reach artefact, and the selection hypothesis (§ 3b) remains the live one and remains
+untested without `peak_r`.
+
+#### Where the tail actually lives
+
+`MIN_LOCAL_PAIRS` was the constant § 4a expected to carry the tail. At W = 4.0 it does not:
+
+```
+floor      n     p50     p90     p99     max   >0.5dB      %   >1dB   >3dB   >6dB
+n>=0     1023  0.178  0.935  4.718  9.347   207  20.2%    98     15      7
+n>=8      711  0.136  0.518  2.458  9.347    72  10.1%    27      6      4
+n>=16     544  0.117  0.418  2.458  9.347    42   7.7%    20      4      2
+```
+
+The max does not move from 9.347 dB no matter how high the floor goes. At W = 2.0 raising the floor
+did pull the tail in (Result 3g: 8 → 16 took >6 dB from 2 to 0); at W = 4.0 a 9.3 dB residual is read
+off **26 pairs**, so it is not thin. Reading the 11 worst `n ≥ 8` collars by hand says why: eight are
+**one-sided** (`n_pre` or `n_post` = 0), and every one that is two-sided carries a side disagreement
+of 3.9–9.6 dB. The tail is not sparsity. It is collars whose two shoulders flatly contradict each
+other, which sparsity was only ever a proxy for.
+
+Adding the two axes the collar already records:
+
+```
+n>=8                            n= 711 (66.3% of all gaps)  p50 0.136  p99 2.458  max 9.347  >1dB 27
+n>=8 + two-sided                n= 583 (54.3%)              p50 0.133  p99 1.773  max 7.087  >1dB 14
+n>=8 + two-sided + se<=1        n= 562 (52.4%)              p50 0.123  p99 0.909  max 1.573  >1dB  2
+n>=8 + two-sided + |pre-post|<=3 n= 566 (52.7%)             p50 0.125  p99 0.909  max 1.551  >1dB  2
+n>=8 + two-sided + spread<=2    n= 562 (52.4%)              p50 0.123  p99 0.831  max 1.175  >1dB  1
+```
+
+**A three-part admission test removes the tail completely.** Over 51 pairs and 1073 gaps, no admitted
+collar reads past 1.573 dB. The third gate costs 21 of 583 gaps and takes 12 of the 14 readings over
+1 dB with it — a 57% hit rate against a 0.4% base rate, which is what a gate that finds broken collars
+looks like rather than one that censors large true corrections. That distinction matters and is
+checkable: a real 6 dB level offset measured on a clean collar would have low SE and be **kept**. The
+four collars over 6 dB have SE 1.86 / 4.21 / 2.38 / 3.93 and side disagreements of 4.4–7.0 dB. They
+were unreliable, not large.
+
+This is not a new idea bolted on: § 4a's own SE row already says "raise it, widen `W`, **or add an
+SE-based abstention**". Arm 4 says the third branch is the one the corpus asks for.
+
+**Two honest limits on the third gate.** First, `se ≤ 1`, `|pre − post| ≤ 3` and `spread ≤ 2` are
+interchangeable here because at a fixed `n_pairs` they are the same measurement — pick one and do not
+claim the other two were independently confirmed. Second, the *threshold* is chosen against the
+residual distribution of this corpus, which is fitting; what arm 4 establishes is that **one
+dispersion axis separates the entire tail**, not that 1.0 dB is the calibrated place to cut it.
+
+#### The constants, stated against arm 4
+
+| constant | value | basis |
+|---|---|---|
+| `local_pair_collar_secs` | **4.0** | Result 1, re-confirmed on the corrected map: SE ×0.717 ≈ 1/√2 with `spread` flat, abstentions 133 → 50 |
+| `MIN_LOCAL_PAIRS` | **8** | Necessary, not sufficient. 711 of 1073 gaps (66.3%) clear it; 16 buys almost nothing at W = 4.0 (p50 0.136 → 0.117) and costs 167 gaps |
+| *(new)* dispersion abstention | `se_db ≤ 1.0` **and** both sides present | The axis that actually disposes of the tail; without it a 9.3 dB gain reaches a fill at any pair floor |
+| `MAX_LOCAL_RESIDUAL_DB` | **3.0**, not 6.0 | On the admitted cohort the readings stop at 1.573 dB (p99 0.909). 6.0 is 4× the observed maximum — the inherited `max_fill_gain_db` shape. 3.0 is ~2× it: a backstop against material this corpus does not contain, which is the only honest job left for it |
+
+The last row needs saying plainly: **on this corpus `MAX_LOCAL_RESIDUAL_DB` fires on nothing at any
+value from 2.0 up.** The admission test is the disposal; the residual bound is insurance against a
+failure mode 51 pairs did not produce. That is a reason to set it where the readings stop and move
+on, not a reason to drop it — but it does mean § 4's "refuse, don't clamp" is now carried by the
+admission gate, and the acceptance tests in § 10 should exercise *that*, not the bound.
 
 ### Running the remaining arms
 
@@ -890,6 +991,7 @@ collar_residual_gain(
 | `flag_off` | `enabled == false` (collar may still be on the scan JSON) |
 | `channels` | collar `None` and `channels_comparable == false` |
 | `abstained_n` | collar present but `n_pairs < MIN_LOCAL_PAIRS`, **or** collar `None` otherwise (nothing paired, no alignment offset, B not scanned, no A timeline) |
+| `abstained_dispersion` | collar present and populated, but one-sided (`n_pre` or `n_post` = 0) or `se_db > MAX_LOCAL_SE_DB` — § 4b Result 4's tail, distinguished from `abstained_n` because the remedy is different: a wider `W` fixes thinness, nothing fixes two shoulders that disagree |
 | `refused_residual` | collar present, `\|d_local − offset_prior\| > MAX_LOCAL_RESIDUAL_DB` |
 | `applied` | collar present, residual inside the bound (including ~0) |
 
@@ -908,11 +1010,17 @@ only stores `normalize_gain = request.program_gain.gain()`).
 ```toml
 [repair]
 normalize_fill = false          # unchanged by this Change (program-gain owns the default)
-local_pair_collar_secs = 2.0    # new; config-only; **scan** reads this (ScanGapsRequest)
-                                # provisional — § 4a's yield curve sets the shipping value
-# MIN_LOCAL_PAIRS      = 8   code constant, provisional (§ 4a); read at APPLY, not by the
-#                            estimator — a floor there would censor § 4a's own dump
-# MAX_LOCAL_RESIDUAL_DB = 6.0 code constant, provisional (§ 4a); refuse past it, do not clamp
+local_pair_collar_secs = 4.0    # new; config-only; **scan** reads this (ScanGapsRequest)
+                                # SET by § 4b Result 4 (arm 4). 2.0 was the provisional value
+# MIN_LOCAL_PAIRS      = 8   code constant, SET by § 4b Result 4; read at APPLY, not by the
+#                            estimator — a floor there would censor § 4a's own dump.
+#                            Necessary, NOT sufficient: at W=4.0 it leaves a 9.3 dB tail
+# MAX_LOCAL_SE_DB      = 1.0 code constant, NEW (§ 4b Result 4). The axis that actually
+#                            disposes of the tail, with `n_pre >= 1 and n_post >= 1`.
+#                            Threshold fitted to this corpus — the AXIS is the finding
+# MAX_LOCAL_RESIDUAL_DB = 3.0 code constant, SET by § 4b Result 4; refuse past it, do not
+#                            clamp. Admitted readings stop at 1.573 dB, so this fires on
+#                            nothing here — a backstop, no longer the disposal
 max_fill_gain_db = 12.0         # UNTOUCHED. Still the compute_fill_gain boost ceiling and
                                 # nothing else; it is not this estimator's bound (§ 4) and
                                 # dies with compute_fill_gain, not with this Change
@@ -958,6 +1066,10 @@ field; document that the name is historical. No new CLI. `--normalize` /
   median (detector, not a gate — nothing refuses).
 - Residual: `offset_prior = 6`, `d_local = 6` → `g_local = 1`, reason `applied`.
 - Residual: `offset_prior = 0`, `d_local = 6` → `g_local ≈ 0.501`.
+- **The admission test is what needs the coverage** (§ 4b Result 4): a one-sided collar and a
+  populated-but-dispersed one (`se_db` just past `MAX_LOCAL_SE_DB`) each abstain with
+  `abstained_dispersion`, at any `n_pairs`. These carry the tail that `MIN_LOCAL_PAIRS` does not;
+  a suite that only exercises the residual bound tests the branch that fires on nothing.
 - Refuse, do not clamp: `|residual|` just past `MAX_LOCAL_RESIDUAL_DB` →
   `g_local = 1.0`, reason `refused_residual`. Assert against the constant, not a
   literal, so § 4a can move it without rewriting the test.
@@ -1009,7 +1121,7 @@ Default flags (local off) are program-gain’s acceptance, not this plan’s.
 
 - [ ] Extract collect + summarize from `paired_level_offset`; collar predicate gates **pairing only** — `collect` keeps iterating the full `a_levels` slice so `is_steady` sees the core blocks (§ 6); binary-search the collar bounds rather than walking the timeline per gap
 - [ ] Bin `n_pre`/`n_post` **and** `pre_offset_db`/`post_offset_db` from pair A-times (§ 3a)
-- [ ] `CollarLevelOffset` in `program_levels.rs` (incl. `n_active` / `n_steady`) + `MIN_LOCAL_PAIRS` + `MAX_LOCAL_RESIDUAL_DB` + collar window helper (pre/post, exclude core); mark all three constants provisional per § 4a. `MIN_LOCAL_PAIRS` is **not** read by the estimator — no floor there, or the census is censored at the constant it sets
+- [ ] `CollarLevelOffset` in `program_levels.rs` (incl. `n_active` / `n_steady`) + `MIN_LOCAL_PAIRS` + `MAX_LOCAL_SE_DB` + `MAX_LOCAL_RESIDUAL_DB` + collar window helper (pre/post, exclude core); the constants are **set** by § 4b Result 4 (8 / 1.0 / 3.0 at `W` = 4.0), not provisional — but `MAX_LOCAL_SE_DB`'s threshold is fitted to the corpus and only its axis is established. `MIN_LOCAL_PAIRS` is **not** read by the estimator — no floor there, or the census is censored at the constant it sets
 - [ ] Hoist `channels_comparable` onto `ProgramLevels` (keep it on `AbLevelOffset`; same fact, existing consumers)
 - [ ] Thread `local_pair_collar_secs` onto `ScanGapsRequest` (`composition.rs` and every request literal) — because the timelines live in `ScanGaps`, **not** because of `--patch-only` (§ 3)
 - [ ] Stamp `Gap.collar_level` in `ScanGaps` next to `program_levels` (timelines still live); skip when channels incomparable. ~64 `Gap { … }` literals need the new field — add a constructor or `Default` rather than 64 mechanical edits
