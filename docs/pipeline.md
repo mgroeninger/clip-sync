@@ -13,7 +13,7 @@ The `clip-sync-repair` execution pipeline, phase by phase, with the reference do
 | **1** | **Align** | Fingerprint A and B, match, produce offset + confidence + start/end clip anchors; optional high-rate refinement; silence cross-check | [alignment.md](alignment.md) | `clip-sync` aligner |
 | **2** | **Scan gaps** | Detect silent runs in A; check B has energy at the aligned position → `fillable` / `unfillable` | [gap-scan.md](gap-scan.md) | `application/scan_gaps.rs` |
 | **3** | **Fill plan** | Per-gap B offset map (`fill_offset_mode`); classify each gap | [gap-fill-modes.md](gap-fill-modes.md), README § Gap patching pipeline | `application/patch_audio.rs` |
-| **4** | **Per-gap patch** | Unified fit (or gate) placement → seam tiers → optional anchor seam / boundary grid → residual gate → splice | [gap-repair-guide.md](gap-repair-guide.md), [gap-fill-modes.md](gap-fill-modes.md), [seam-scoring.md](seam-scoring.md) | `application/patch_region.rs`, `domain/gap_fill_fit.rs`, `gap_structure.rs`, `gap_energy.rs`, `domain/gap_anchor_seam.rs` |
+| **4** | **Per-gap patch** | Unified fit (or gate) placement → seam tiers → optional anchor seam / boundary grid → residual gate → splice | [gap-repair-guide.md](gap-repair-guide.md), [gap-fill-modes.md](gap-fill-modes.md), [seam-scoring.md](seam-scoring.md), [gap-vocabulary.md](dev/gap-vocabulary.md) § *Cell → action* | `application/patch_region.rs`, `domain/gap_fill_fit.rs`, `gap_structure.rs`, `gap_energy.rs`, `domain/gap_anchor_seam.rs` |
 | **5** | **Write / mux** | Write patched WAV / mux into A's container via ffmpeg | README § Write output, [cli-output.md](cli-output.md) § Timeline warnings | `application/repair_videos.rs`, `infrastructure/ffmpeg_mux.rs` |
 
 Phases **1–2** always run. Phases **3–5** run in **write mode**; phases **3–4** (pass-1 characterize) also run under **`--repair-preview`**, and phases **3–4 plus the splice** run under **`--patch-only`** with phase 5 skipped (see [Orchestration](#orchestration-scan-only-vs-preview-vs-patch-only-vs-write-mode) below).
@@ -96,7 +96,7 @@ When the envelope correlation is below `min_envelope_r` (or there are too few bi
 
 ## 4. Per-gap patch
 
-**Write mode and `--repair-preview`.** Phase 4 detail — bracket routing, per-bracket measurement, and flag matrix — is in [gap-fill-modes.md](gap-fill-modes.md). This section is the **run-level** map; read both documents together for a complete picture. Preview runs the same pass-1 characterize path as write, then stops (no execute / anchored retry / splice).
+**Write mode and `--repair-preview`.** Phase 4 detail — bracket routing, per-bracket measurement, and flag matrix — is in [gap-fill-modes.md](gap-fill-modes.md). This section is the **run-level** map; read both documents together for a complete picture. Which cell the gap falls into, and the patch or skip that cell takes, is [gap-vocabulary.md](dev/gap-vocabulary.md) § *Cell → action*. Preview runs the same pass-1 characterize path as write, then stops (no execute / anchored retry / splice).
 
 ### `PatchAudio` run (once per write)
 

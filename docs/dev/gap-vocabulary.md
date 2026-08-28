@@ -94,6 +94,24 @@ Registration and shared-source are **descriptive**, not dividers — patched and
 overlapping `|step|` ranges, and every donor on this corpus is same-master. What actually separates
 patch from skip is **bracket search** result crossed with **donor** state.
 
+## Cell → action
+
+The cell is the divider; patch or skip is a function of it. Scan and plan can drop a gap before it
+reaches this table ([pipeline.md](../pipeline.md) phases 2–3; § Silence-character pre-gate;
+§ Unfillable). How a Bracket patch is routed, and how a keep is spliced: [pipeline.md](../pipeline.md)
+§ 4 / [gap-fill-modes.md](../gap-fill-modes.md). Post-keep “right when?”
+(`registration_residual_ms`) is not a cell — field contract in [json-output.md](../json-output.md)
+(`GapPatchStatus`); work in [BACKLOG.md](../../BACKLOG.md) § *Fill placement*.
+
+| Cell | When | Patch action |
+|------|------|----------------|
+| **Bracket patch** | Search found a lag-0 placement both seams pass | Unified-fit fill from that placement (baseline, then optional **anchor**, then boundary grid). Donor-broken interiors still patch if the bracket passed. |
+| **Silence-splice** | Bracket exhausted; each shoulder registers at its *own* lag; real step; B occupied; `bridge_frames > 0` | **Dual-fit**: independent per-seam fit + length reconcile. Not a rigid slide. |
+| **Program-quiet** | B silent at the *same program time* (no donor) | **Skip** (permanent). Seam scores can look perfect; occupancy is the tell. |
+| **Decorrelated** | Bracket exhausted; B occupied; no lag recovers | **Skip**. Different content, not an offset. |
+| **No-placement** | Search never produced a candidate | **Skip**. Nothing to score at the seam. |
+| **Residual-veto** | Seams pass, least-squares says B ≠ A | **Skip**. Echo / similar-but-different. |
+
 > **Known holes (measured 2026-08-17; split 2026-08-18; Hole 2 resolved 2026-08-18; Hole 1
 > scoring diagnosed 2026-08-27): one open hole, one resolved diagnosis.** The
 > corpus's two ear-confirmed wrong patches (26/g6, 31/g7) both land in the healthiest cell
@@ -293,9 +311,10 @@ toward `drop`, so it cannot serve as the arbiter of a `keep`. Curated fixtures a
 
 ## Derived readouts (not primitives)
 
-The legacy Pearson tier (`patch_tier` / `seam_shape`, W1–W7 below) and `peak_z`/`prominence` uniqueness
-are **projections** of the cells above, not separate facts — useful as operator-facing shorthand and as
-diagnostics, but they don't add a new axis. Don't gate new decisions on them; read the cell instead.
+The legacy Pearson tier (`patch_tier` / `seam_shape` / `confidence`, W1–W7 below) and `peak_z`/`prominence`
+uniqueness are **projections** of the cells above, not separate facts — useful as operator-facing
+shorthand and as diagnostics, but they don't add a new axis. Don't gate new decisions on them; read
+the cell instead.
 
 ---
 

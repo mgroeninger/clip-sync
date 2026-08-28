@@ -45,7 +45,7 @@ plausible on their face — that is exactly why they keep coming back.
 
 | Doc | Covers |
 |-----|--------|
-| [gap-vocabulary.md](gap-vocabulary.md) | **Gap numbering** (0-based data / 1-based display), gap cells, silence-character pre-gate, fixture mapping |
+| [gap-vocabulary.md](gap-vocabulary.md) | **Gap numbering** (0-based data / 1-based display), cell → action, gap cells, silence-character pre-gate, fixture mapping |
 | [gap-fingerprint.md](gap-fingerprint.md) | Gap fingerprint dump schema and corpus format; bulk dump via `measure-gap-fingerprints.ps1` |
 | [shoulder-sweep.md](shoulder-sweep.md) | **`shoulder-sweep` bin contract** — the independent wide-window (±2 s) waveform lag sweep of both gap shoulders on the `--gap-listen` WAVs. Shares no correlation code with the `lag_decision` it checks; measures and records, does not classify |
 | [settled.md](settled.md) | **Verdict ledger** — what has been refuted, latched behind a trigger, or blocked, and the evidence that settled it. Read before proposing work |

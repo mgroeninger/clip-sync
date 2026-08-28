@@ -44,7 +44,8 @@ bridge; the path is skip, not a better fill).
 
 **Disposition tree** — every remaining row lands a category, then a successor.
 
-1. Right when? Licensed landmark vs applied: agree / contradict / no opinion.
+1. Right when? Licensed landmark vs applied: agree / contradict / no opinion. The check is
+   agreement, not magnitude ([json-output.md](docs/json-output.md) `registration_residual_ms`).
 2. Contradict + both-live unique → Hole 1. Contradict + bridge ≈ 0 → Hole 2 (skip; blocked).
 3. Agree + audible → join, not search.
 4. We skipped → donor fail at the true when, or A-side never offered a candidate.

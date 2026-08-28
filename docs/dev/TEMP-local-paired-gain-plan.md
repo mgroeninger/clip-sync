@@ -126,6 +126,21 @@ has nothing to measure. Patch never recomputes the collar.
 
 **Decided 2026-08-27: emit them. Detector only; the decision stays pooled.**
 
+> **REFUTED as a detector by the 2026-08-27 census — they stay, as provenance.**
+> Over 920 measured collars (51 pairs), side disagreement is a pure function of
+> `spread_db` and of nothing else: banded by spread, `|pre − post|` medians run
+> 0.15 / 0.74 / 1.16 / 3.67 dB across the < 0.5, 0.5–1, 1–2, > 2 dB bands, and
+> over well-populated collars **zero of 76** under 0.5 dB spread disagreed by
+> more than 1 dB against 12 of 14 above 2.0 dB. There is no dependence on gap
+> length at all. The corpus's one real straddle, 31/g7, reads 2.61 dB at n = 25
+> — mid-pack among the noise, because at that spread the per-side uncertainty is
+> the size of the step being hunted. Detecting a map step in the level domain
+> needs quieter shoulders than real holes have. The § 4a census reports the
+> banded profile instead of a flag count; a *flat* profile across those bands
+> would reopen this. Nothing below changes except the claim that the statistic
+> is diagnostic of registration — the ROOT registration problem was real, and
+> § 3b is what came of it.
+
 Collar pairing maps A→B through the single global `offset_secs`, exactly as the
 whole-file reduce does. That is safe over ~500 pairs — a wrong-material region
 becomes outliers the median discards and `spread_db` records. It is **not**
@@ -164,20 +179,75 @@ would be a **third** uncalibrated constant on an estimator that already owes
 constants. Per-side medians make the straddle *visible* on the scan JSON — and,
 because § 4a's pass reads every collar, countable.
 
-**Reopen as a gate when** § 4a's census shows `|pre − post|` large on materially
-more than the one collar § D predicts, or shows it correlated with the gaps the
-ear labels. The
-rule to write then is a refusal (`refused_straddle`), never a per-side
-selection — picking the "better" side is § 1's refuted *quieter-of* idea wearing
-a new hat.
+**Reopen as a gate when** § 4a's census shows `|pre − post|` large *independently
+of* `spread_db` — a flat profile across the spread bands — or shows it
+correlated with the gaps the ear labels. The 2026-08-27 census showed neither:
+the profile rises with spread and is flat in gap length. The rule to write if it
+ever does reopen is a refusal (`refused_straddle`), never a per-side selection —
+picking the "better" side is § 1's refuted *quieter-of* idea wearing a new hat.
 
-Two alternatives were considered and are **not** being built. Refusing on
-disagreement now: no calibration exists, see above. Mapping the collar through
-the per-clip / interpolated offset instead of the global one (`alignment.clips`,
-`offsets_consistent`, `offset_drift_secs` are all on the report at scan time):
-that fixes the cause rather than detecting it, but it changes the collar's own
-map relative to the whole-file offset the residual is taken *against*, which is
-a different Change and must not ride inside this one.
+Two alternatives were considered here. Refusing on disagreement now: no
+calibration exists, see above — and the census has since shown there is nothing
+to calibrate. Mapping the collar through a better offset than the global one:
+deferred as "a different Change", and then the census made it the *necessary*
+one — **that is § 3b**, which took the per-gap shoulder registration rather than
+the per-clip interpolation floated here. It does change the collar's map
+relative to the whole-file offset the residual is taken against; § 3b argues
+that is the point, and `map_lag_ms` keeps the two maps distinguishable.
+
+---
+
+## 3b. The map each collar is read through
+
+**Decided 2026-08-27, and shipped in the measurement half: map each gap at its
+own registered shoulder lag, not at the whole-program `offset_secs`.**
+
+The census found the real defect behind the thin, noisy collars. The estimator
+mapped A→B through the single global alignment offset — one scalar for the whole
+programme. Joining `donor_registration.lag_ms` (the per-gap shoulder-envelope
+fit, already computed on every scan, 100 ms block granularity) across all 51
+pairs shows that map sits at the shoulder-correlation peak on only **116 of 273
+repairable dropouts (42%)**, and is off by **≥ 100 ms on 59%**, out to 400 ms.
+
+That is fatal at collar scale and harmless at programme scale, which is why it
+survived this long: the whole-file reduce pools ~500 pairs and a wrong-material
+region becomes outliers the median discards, while a collar of ~10 has nothing
+to out-vote them with. Conditioned on the fitted lag, at n ≥ 8:
+
+| fitted lag | median `spread_db` | median `\|residual\|` |
+|---|---|---|
+| 0 ms | 0.25 | 0.08 |
+| 100–200 ms | 0.89 | 0.22 |
+| ≥ 200 ms | 1.40 | 0.42 |
+
+Every quantity § 4a wants to set a constant from degrades monotonically with
+misregistration. Choosing `MIN_LOCAL_PAIRS`, `local_pair_collar_secs` or
+`MAX_LOCAL_RESIDUAL_DB` off the nominal-map census would be calibrating against
+the defect — the `max_fill_gain_db` precedent.
+
+**What ships.** `collar_level_offset` takes a `map_lag_secs` and records it as
+`CollarLevelOffset::map_lag_ms`; `scan_gaps` supplies
+`DonorRegistration::trusted_lag_secs`, which believes a fit at or above
+`min_envelope_r` (0.70, unchanged) with at least `MIN_REGISTRATION_BINS` behind
+it, and `None` otherwise. `peak_r` is correlated over the **shoulders only** —
+exactly the material a collar reads — so it is the right confidence for this
+consumer.
+
+**Not behind a flag, and not conditioned on `--no-apply-donor-registration`.**
+That flag decides whether a registration may move a *verdict*. This is a
+measurement with no verdict to protect, choosing between the right map and one
+known to be wrong; `Observe` does not mean "measure through the wrong map".
+`map_lag_ms` records which map produced each number, so a nominal reading and a
+corrected one are never confused in a dump — `Some(0.0)` (believed, said zero)
+and `None` (nothing to believe) are deliberately different.
+
+**Open, and named.** The fit is quantized to 100 ms blocks, so ±50 ms of
+residual misregistration survives by construction. A single core-fitted lag may
+not describe both shoulders (see `seam-splice-dualfit`). And the direction of
+causation between lag and spread is suggestive, not proven — the decisive test
+is the re-census: the corrected cohort should converge on what the lag = 0
+cohort already reads (spread 0.25 / |resid| 0.08), and if it does not, the
+residuals are real material.
 
 ---
 
@@ -313,7 +383,8 @@ anything applies a local gain. No oracle cost, no listening cohort, no
 | When a collar is thin, *which* filter spent it? | `n_steady / n_active` vs `n_pairs / n_steady` | Decides between the two remedies: steadiness loss says widen `local_pair_collar_secs`, B-coverage loss says a wider collar will not help and the floor must carry it |
 | How noisy is one collar? | `spread_db`, as `1.25 × spread × 1.48 / √n_pairs` | The per-collar SE. If it lands near the +1.91 dB residuals being corrected, the floor is too low — raise it, widen `W`, or add an SE-based abstention |
 | Where do real residuals stop? | `d_local − offset_db` distribution | Sets `MAX_LOCAL_RESIDUAL_DB` from where readings stop, not from a rail |
-| How often do the sides disagree? | `\|pre_offset_db − post_offset_db\|` (§ 3a) | Decides whether the straddle detector needs to become a gate |
+| How often do the sides disagree? | `\|pre_offset_db − post_offset_db\|` banded by `spread_db` (§ 3a) | **Answered, refuting § 3a's premise:** it tracks spread and nothing else, so it never becomes a gate. A flat profile across the bands would reopen it |
+| Which map was each collar read through? | `map_lag_ms` present / zero / non-zero (§ 3b) | The corrected and already-registered cohorts must converge; if they do not, the residuals are real material and not misregistration |
 
 **It needs a script, and there isn't one.** `scripts/measure/census-program-levels.ps1`
 is per-**pair** (one row per `scan.program_levels`); every question above is
@@ -331,6 +402,155 @@ cohort table (§ 10) — until this dump exists and the three constants are stat
 against it. If the SE column says the estimator is noisier than the thing it
 corrects, the answer is a wider collar or a higher floor, not shipping and
 listening.
+
+---
+
+## 4b. Census results — what the arms have answered so far
+
+Corpus: 51 pairs, 1073 gaps (`gap-files/extended-pairs.csv`). Pair **indices only**; the dumps live
+under `gap-files/`, which is gitignored and ephemeral — **these numbers are the durable record, not
+the CSVs**.
+
+| Arm | `local_pair_collar_secs` | Map | Dump dir | Status |
+|---|---|---|---|---|
+| 1 | 2.0 | nominal (global `offset_secs`) | `2026-08-27-collar-census` | complete |
+| 2 | 4.0 | nominal | `2026-08-27-collar-census-4s` | complete |
+| 3 | 2.0 | **corrected** (§ 3b, per-gap `map_lag_ms`) | `2026-08-27-collar-census-lag-work` | in flight |
+| 4 | 4.0 | corrected | — | not started; the shipping configuration |
+
+Arms 1 and 2 share an identical gap list (1073 in both, none measured only at 2.0), so they compare
+**matched per gap**. Read matched ratios, never the ratio of aggregate medians: arm 2 measures 86
+gaps arm 1 abstained on, and those are the thin ones, so they drag every aggregate. The aggregate SE
+median moves 0.329 → 0.310 and looks flat; the matched median ratio is 0.74×. The aggregate is the
+artefact.
+
+### Result 1 — W = 4.0 dominates W = 2.0. **Final; map-independent.**
+
+| Matched median (920 gaps in both) | W = 2.0 | W = 4.0 | per-gap ratio |
+|---|---|---|---|
+| `n_pairs` | 8 | 20 | **×2.08** |
+| `n_active` | 30 | 60 | ×2.00 |
+| `n_steady` | 9 | 21 | ×2.33 |
+| `spread_db` | — | — | **×1.00** |
+| `se_db` | — | — | **×0.74** (improved on 609/815, 74.7%) |
+
+Pairs ×2.08 ⇒ √n = 1.44 ⇒ SE ×0.69 predicted, ×0.74 observed. Spread is **unchanged**, so the wider
+window reaches material just as similar to B — count is bought without buying noise. Abstentions fall
+153 → 67; 86 gaps gain a collar and **none loses one**.
+
+Cohort clearing `n_pairs ≥ 8` **and** SE ≤ 1 dB: **450 (41.9%) → 646 (60.2%)** of all gaps. At
+`n_pairs ≥ 16`: 256 (23.9%) → 516 (48.1%). At `≥ 4`: 563 (52.5%) → 724 (67.5%). *(Reporting cuts, not
+chosen constants — see the standing caution below.)*
+
+The cost is negligible: 161 of 815 gaps get a worse SE (median 1.30×, and they are the thin ones —
+median W = 2.0 `n_pairs` of 7 against 10 for those that improved), and only **3 gaps** cross from
+clearing both cuts to not clearing them.
+
+### Result 2 — steadiness does not see the window, and its bin-dependence is **unmeasured**
+
+`n_steady / n_active` is 0.342 → 0.333 across the doubling: flat. That is not a corpus quirk but
+structural — `is_steady` resolves `levels[i±1]` out of the **full** `a_levels` slice, and `W` enters
+`collect_pairs` only through the `emit` range, selecting which `i` are examined and never what the
+predicate returns for one. Widening therefore buys *absolute count*, not a better pass rate. § 4a's
+"steadiness loss says widen `local_pair_collar_secs`" is confirmed in effect, by that mechanism.
+
+What is **not** established: that steadiness depends on `scan_block_ms`. Every measurement here is at
+100 ms; the bin has never been varied. The sign is not even predictable a priori — a longer block puts
+more time between the neighbours being differenced (fewer steady) but averages more samples into each
+RMS (more steady), and which dominates at 100 ms on this material is exactly what is unmeasured. Do
+not assert a direction without an arm.
+
+If the two thirds of active blocks that steadiness spends is worth attacking, **`steady_tolerance_db`
+(3.0) is the clean lever and `scan_block_ms` is not.** The tolerance is a bare constant in
+`program_levels`, touching only this module — its one coupling is that `collect_pairs` serves the
+whole-program estimator too, so loosening it also moves the offset the residual is measured *against*.
+`scan_block_ms` is a **detection** knob: it changes which gaps are found (no matched comparison
+possible), is constrained to divisors of `silence_hold_ms`, bins the whole equivalence overlay (I1,
+2026-07-30), and its 100 ms value is the validated sensitive-recipe default from the 2026-07-20
+8-pair/121-gap work. Sweeping it for collar reasons reopens a settled detection calibration.
+
+### Result 3 — the corrected map. **Open; arm 3 in flight.**
+
+Read Q6 first. The question is whether the `lag > 0` cohort converges on what the `lag = 0` cohort
+already reads at the nominal map — median `spread_db` **0.25**, median `|residual|` **0.08** (n ≥ 8).
+
+- **Converges** ⇒ § 3b is confirmed, the level half of arms 1–2 is superseded, and arm 4 becomes the
+  configuration to calibrate the three constants from.
+- **Does not converge** ⇒ the residuals are real material, not misregistration. `MAX_LOCAL_RESIDUAL_DB`
+  is then measuring the programme rather than the instrument, and § 3b's remaining caveats become the
+  suspects: 100 ms lag quantization (±50 ms survives by construction), and one core-fitted lag being
+  asked to describe both shoulders (`seam-splice-dualfit`).
+
+Arm 3 holds `W` constant so it isolates the map; arms 1→2 held the map constant and isolated `W`.
+Arm 4 confounds both and is the shipping check, not an experiment — run it after arm 3 reads.
+
+One provisional worry is already answered: a wider collar reaching further from where the lag was
+fitted might amplify misregistration. The matched spread ratio of ×1.00 is evidence against it, though
+not conclusive — the nominal-map spread floor may simply be hiding the bias.
+
+**Standing caution, unchanged:** do not write `MIN_LOCAL_PAIRS`, `local_pair_collar_secs` or
+`MAX_LOCAL_RESIDUAL_DB` into the code from arms 1–2. Result 1 is strong enough that 4.0 is the
+expected answer for the collar width, but the two level-domain constants must come from a corrected
+arm — the `max_fill_gain_db` precedent (12.0, uncalibrated since 2026-06-08) is what happens
+otherwise.
+
+### Running the remaining arms
+
+**`local_pair_collar_secs` has no CLI flag** (§ 9: "No new CLI") — it is a `[repair]` TOML field, so
+an arm at a different `W` needs a config file passed through the runner's `-ScanArgs`:
+
+```toml
+# gap-files/collar-4s.toml   (gitignored dir; the value is the ONLY line that differs between arms)
+[repair]
+local_pair_collar_secs = 4.0
+```
+
+```powershell
+# 1. Scan. Do NOT add -SkipBuild: the default build is what puts the map correction in the binary.
+#    Default -Features 'he-aac,ac3' is correct — he-aac registers the only AAC decoder, including
+#    for AAC-LC. `calibration` is not needed; this path never passes --gap-fingerprints.
+./scripts/measure/scan-registration.ps1 `
+    -Manifest gap-files/extended-pairs.csv `
+    -OutDir   gap-files/<date>-collar-census-<arm> `
+    -ScanArgs "--config gap-files/collar-4s.toml"     # omit entirely for a W = 2.0 arm
+
+# 2. Census the dump. Consumer-only; re-runnable as often as you like.
+./scripts/measure/census-collar-levels.ps1 `
+    -DumpDir gap-files/<date>-collar-census-<arm> `
+    -CsvOut  gap-files/<date>-collar-census-<arm>/collar-levels.csv
+```
+
+**Verify the arm before spending the full run.** The scan's built-in precheck validates
+`donor_registration.envelopes`, *not* `map_lag_ms`, so a stale binary yields well-formed JSON with
+every collar silently at the nominal map. As soon as the first `<label>.json` is non-empty (a
+zero-byte file is the pair currently being written, not a failure):
+
+```powershell
+Select-String -Path gap-files/<dir>/*.json -Pattern '"map_lag_ms"' -List
+```
+
+A hit means the correction is live. `map_lag_ms` has no `skip_serializing_if`, so the key is present
+on every collar of a correct run even where no fit was trusted (it serializes as `null` there).
+
+**And confirm the arm is the arm you meant.** Since 2026-08-27 the scan stamps the width it measured
+at as `scan.program_levels.local_pair_collar_secs`, so a dump is no longer attributable to a `W` only
+by the directory it landed in — which is what the first two arms rested on. The census prints the
+stamped width in its header and refuses to pool a directory holding more than one:
+
+```powershell
+Select-String -Path gap-files/<dir>/*.json -Pattern '"local_pair_collar_secs"' -List
+```
+
+Arms 1–3 predate the stamp; the census prints `n/a` for them and the config that was passed stays
+their only record. Arm 4 onward carries it.
+
+**Then read Q6's `n>=8` block first**, against Result 3's branches. The cut matters: the 0.25 / 0.08
+baseline was taken at n ≥ 8, and comparing an unfiltered cohort against it reads two different
+populations. Q5's banded profile is the secondary read — a flat profile there would reopen § 3a.
+
+**Comparing two arms:** join the per-gap CSVs on `(pair, gap_index)`, keep the gaps `measured` in
+both, and take the median **of the per-gap ratios** — never the ratio of the aggregate medians. See
+`settled.md` § E; this trap already produced one wrong reading of the `W` arms.
 
 ---
 

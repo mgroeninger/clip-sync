@@ -192,6 +192,8 @@ Whole-program level readings derived from the scan's per-block RMS timelines. Si
 | `a` | [ProgramLevelContext](#programlevelcontext) | always | A-side context |
 | `b` | [ProgramLevelContext](#programlevelcontext) | when B produced a level timeline | Absent when B was not scanned — which includes a readable B with **no alignment offset**, since the B scan only runs when both exist |
 | `offset` | [AbLevelOffset](#ableveloffset) | when enough blocks paired | The A↔B level relationship |
+| `channels_comparable` | bool | always | Same fact as `offset.channels_comparable`, hoisted: it is computed from track compatibility *independently* of whether the pairing cleared its minimum, so when `offset` is absent this is the only place the cause is legible |
+| `local_pair_collar_secs` | number | always | Collar half-width (seconds either side of the hole) the per-gap [CollarLevelOffset](#collarleveloffset) readings in this report were measured over. Config-only, no CLI flag. Recorded here rather than in the recipe block because the recipe's contract is *same recipe ⇔ same gap list* and a collar width cannot move a gap boundary. Exists so a two-arm collar differential is attributable to the width that changed rather than to the output directory — the config that set it normally lives beside the dumps in an ephemeral directory |
 
 #### AbLevelOffset
 
@@ -242,16 +244,23 @@ It is a **measurement, not a verdict**: no minimum-pair floor, no spread gate, n
 threshold is the consumer's, so that the corpus census can see the full distribution before any of
 them is chosen.
 
+Since 2026-08-27 each collar is mapped into B at **that gap's own** registered shoulder lag rather
+than the whole-program alignment offset, and `map_lag_ms` records which map was used. The correction
+is unconditional — it is not gated by `--no-apply-donor-registration`, which governs whether a
+registration may change a *verdict*; a level reading has no verdict to protect and its alternative is
+a map the corpus shows is off by ≥ 100 ms at most dropouts.
+
 | Field | Type | Presence | Meaning |
 |-------|------|----------|---------|
 | `offset_db` | number | always | Median paired difference over both collars pooled. **B minus A** |
 | `spread_db` | number | always | MAD about `offset_db`. The trust gate, same as the whole-program reading |
-| `n_pairs` | integer | always | Accepted pairs. **No floor** — the estimator reports a collar of 3 as readily as one of 30, because hiding thin collars would censor the distribution that `MIN_LOCAL_PAIRS` is meant to be chosen from. A consumer turning this into a gain owes its own minimum |
+| `n_pairs` | integer | always | Accepted pairs. **No floor** — the estimator reports a collar of 3 as readily as one of 30, because hiding thin collars would censor the distribution that `MIN_LOCAL_PAIRS` is meant to be chosen from. `MIN_LOCAL_PAIRS` is an apply-side constant: a collar under it is still emitted in full. A consumer turning this into a gain owes its own minimum |
 | `n_active` | integer | always | Collar A blocks above the active threshold, **before** the steadiness filter |
 | `n_steady` | integer | always | Active *and* steady — the pairing denominator. These two are why a collar came back thin: `n_steady / n_active` is what steadiness cost (answer: widen the collar), `n_pairs / n_steady` is B-coverage yield (answer: the collar is fine, B is not) |
-| `n_pre` / `n_post` | integer | always | Pairs from before / after the gap. **A straddle detector** — a gap sitting on a map step shows up as the two sides disagreeing (see `docs/dev/settled.md` § D). Also the honest denominator: a leading- or trailing-edge gap reads from one side only |
-| `pre_offset_db` / `post_offset_db` | number | when that side had any pairs | Per-side medians. **Reported, never gated on** — v1 refuses on nothing here |
+| `n_pre` / `n_post` | integer | always | Pairs from before / after the gap. The honest denominator: a leading- or trailing-edge gap reads from one side only, and a collar with a zero here is not a two-sided agreement |
+| `pre_offset_db` / `post_offset_db` | number | when that side had any pairs | Per-side medians. **Reported, never gated on.** Specified as a map-straddle detector (`docs/dev/settled.md` § D); the 2026-08-27 corpus refuted that reading — side disagreement tracks `spread_db` and nothing else (0 of 76 well-populated collars under 0.5 dB spread disagreed by > 1 dB, against 12 of 14 above 2.0 dB), and the corpus's one real straddle reads mid-pack among the noise. Read it as provenance |
 | `first_pair_secs` / `last_pair_secs` | number | always | Outermost A-times actually paired — where the collar reached after the walk-off, not the nominal `± W`. On a two-sided collar the interval **between** them contains the gap, so it is not a measured duration |
+| `map_lag_ms` | number or null | always (since 2026-08-27) | The per-gap correction applied to the nominal A→B map before pairing, in ms; `null` when no registration cleared the trust floor and the collar was read at the nominal map. `0` and `null` are **different facts** — "a fit was believed and it said zero" versus "there was no fit to believe" — so a comparison across maps must split on presence, not on value |
 
 #### ProgramLevelContext
 
@@ -598,7 +607,10 @@ affecting the verdict. Omitted when neither shoulder's independent read is confi
 the field. On the dual-fit path (`dual_fit_used: true`) it is computed from the same `pre_lag`/`post_lag`/
 `pre_seam_r`/`post_seam_r` `try_dual_fit` already produced — no new sweep — against `applied_ms = 0.0`, matching
 `align_adjustment_secs`'s own hardcoded `0.0` for that path (dual-fit places each shoulder independently, so
-there is no single rigid "applied lag" to compare against).
+there is no single rigid "applied lag" to compare against). Read it only on a keep, and only when a
+shoulder landmark is licensed. The question is **agreement** with that landmark, not a magnitude cap
+on the slide. Work that uses this reading: [BACKLOG.md](../BACKLOG.md) § *Fill placement*. It does
+not classify the gap ([gap-vocabulary.md](dev/gap-vocabulary.md) § *Known holes*).
 
 `structure_trusted` is `true` only when `fill_mode` was `gate` and structure scores skipped the waveform gate. Under default `fill_mode = fit`, it is always `false`. `confidence` is `marginal` when the patch passed the warn tier (`min_fill_correlation - fill_marginal_margin` ≤ `min(pre, post)` < `min_fill_correlation`). `gap_*_adjust_frames` record how far the winning A gap edges moved from the pre-search refined bracket (fit mode).
 - `{"skipped": {"reason": <GapPatchSkipReason>}}`
