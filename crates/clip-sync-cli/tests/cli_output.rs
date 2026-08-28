@@ -85,8 +85,12 @@ fn full_surface_alignment_result() -> AlignmentResult {
                 video_a_decode_skips: 0,
                 video_b_decode_skips: 3,
                 repetition: None,
-                video_b_window_start_secs: None,
-                video_b_window_end_secs: None,
+                // Populated so the golden pins the field's shape, not just its absence — these are
+                // `skip_serializing_if` and were invisible here. The Start clip above keeps `None`
+                // so the absent state stays pinned too; this is the "paired planning differs from
+                // A" case the field exists for.
+                video_b_window_start_secs: Some(1812.355),
+                video_b_window_end_secs: Some(2712.355),
             },
         ],
         start_aligned: false,

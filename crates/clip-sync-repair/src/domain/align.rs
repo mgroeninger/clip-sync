@@ -44,7 +44,10 @@ pub struct AudioTimelineSkew {
 }
 
 /// Alignment summary carried on [`crate::domain::GapReport`] for fill planning.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// `Default` is "no alignment ran": no clips, nothing aligned, no offset. Used by
+/// [`crate::domain::GapReport`]'s own `Default`.
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct ScanAlignment {
     pub clips: Vec<AlignedClip>,
     pub start_aligned: bool,

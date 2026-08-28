@@ -388,31 +388,26 @@ pub struct RepairConfig {
     pub profile_field_mask: RepairProfileFieldMask,
 }
 
+// The five scan knobs and the decode chunk size are defined in `domain::gap` beside `ScanRecipe`,
+// which needs them for its own `Default`; these delegate, as the gain/residual/anchor knobs below
+// already do.
 fn default_min_gap_ms() -> u64 {
-    // Sensitive scan default (2026-07-20): catches sub-second dropouts ffmpeg `silencedetect` sees. The
-    // scan-time equivalence gate (`skip_equivalent_gaps`) drops the mutual/ambient-silence extras this
-    // surfaces, so "find everything, patch only real dropouts" is the default pairing.
-    500
+    crate::domain::gap::DEFAULT_MIN_GAP_MS
 }
 fn default_silence_peak_fraction() -> f32 {
-    0.01
+    crate::domain::gap::DEFAULT_SILENCE_PEAK_FRACTION
 }
 fn default_scan_block_ms() -> u64 {
-    // 100 ms analysis blocks (sensitive default) — finer silence-run resolution and the equivalence gate's
-    // measurement granularity. Media-validated identical to the fingerprint diagnostic path (8 pairs, 121
-    // gaps) — but see `docs/dev/archive/TEMP-equivalence-divergence-findings.md` F15: a divergent gap was
-    // found 2026-07-30, and the two paths differ by more than granularity, so "identical" holds for that
-    // corpus, not as an invariant. Since I1 this value is *also* the diagnostic path's bin width.
-    100
+    crate::domain::gap::DEFAULT_SCAN_BLOCK_MS
 }
 fn default_decode_chunk_secs() -> u64 {
-    10
+    crate::domain::gap::DEFAULT_DECODE_CHUNK_SECS
 }
 fn default_silence_hold_ms() -> u64 {
-    500
+    crate::domain::gap::DEFAULT_SILENCE_HOLD_MS
 }
 fn default_absolute_silence_rms() -> f32 {
-    33.0 / 32767.0
+    crate::domain::gap::DEFAULT_ABSOLUTE_SILENCE_RMS
 }
 
 /// Operator-facing `--absolute-silence-rms` uses a 0–32767 i16 amplitude scale; config / scanner

@@ -87,14 +87,42 @@
         "video_a_end_secs": 47.5,
         "video_b_start_secs": 57.34,
         "video_b_end_secs": 59.84,
-        "b_has_energy": true
+        "b_has_energy": true,
+        "collar_level": {
+          "offset_db": 2.28,
+          "spread_db": 0.31,
+          "n_pairs": 14,
+          "n_active": 21,
+          "n_steady": 18,
+          "n_pre": 8,
+          "n_post": 6,
+          "pre_offset_db": 2.19,
+          "post_offset_db": 2.41,
+          "first_pair_secs": 43.1,
+          "last_pair_secs": 49.4,
+          "map_lag_ms": -12.5
+        }
       },
       {
         "video_a_start_secs": 120.0,
         "video_a_end_secs": 125.0,
         "video_b_start_secs": null,
         "video_b_end_secs": null,
-        "b_has_energy": false
+        "b_has_energy": false,
+        "collar_level": {
+          "offset_db": 1.04,
+          "spread_db": 1.87,
+          "n_pairs": 3,
+          "n_active": 17,
+          "n_steady": 5,
+          "n_pre": 3,
+          "n_post": 0,
+          "pre_offset_db": 1.04,
+          "post_offset_db": null,
+          "first_pair_secs": 118.2,
+          "last_pair_secs": 119.6,
+          "map_lag_ms": null
+        }
       }
     ],
     "gap_offset_agreement": {
@@ -111,6 +139,11 @@
     "absolute_silence_rms": 0.0010071108,
     "limit_fill_to_mapped_region": true,
     "local_pair_collar_secs": 2.0,
+    "audio_timeline_skew": {
+      "pts_secs": 1799.482,
+      "sample_clock_secs": 1799.461,
+      "delta_secs": 0.021
+    },
     "program_levels": {
       "a": {
         "mid_db": -23.4,

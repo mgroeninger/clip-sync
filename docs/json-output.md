@@ -657,10 +657,33 @@ specifically calibrating the two — [dev/gap-fingerprint.md](dev/gap-fingerprin
 
 ## Revision procedure
 
-1. Change the report DTOs (`application/report.rs`) or repair output types — never re-derive `Serialize` on domain types.
+1. Change the report DTOs (`application/report.rs`) or repair output types. **Which domain types may
+   serialize directly:**
+   - A **behaviourless reporting record** — a struct of public data with no methods and no decision
+     logic, whose JSON names are its field names — may `derive(Serialize)` and be embedded directly.
+     The golden is its contract guard. `domain::program_levels` (5 such types, 38 public fields,
+     zero methods) and `GapEquivalenceVerdict` are the standing examples.
+   - A type **with behaviour**, or any type with a field whose JSON name must differ from its domain
+     name, gets a mirror DTO. `domain::gap::Gap` is the boundary case that decided the rule: it has
+     4 methods and `is_fillable` decision logic, so it earns one.
+
+   A 1:1 mirror for the record types would be the *worse* option, not the safer one: with no methods
+   to hide, the mirror only relocates the coupling into a hand-synced `From` impl whose failure mode
+   — add a domain field, forget the mirror, the field silently vanishes from the output with **no
+   compile error** — is strictly worse than the golden diff we get today.
+
+   The consequence to keep in mind: for these types, **renaming a domain field is a JSON contract
+   change**. It breaks no compile; step 2's golden is what catches it, which is why step 2 is not
+   optional and why every field in the additive log is populated in the golden rather than left
+   absent.
 2. Run the ignored fixture generators and review the diff:
    `cargo test -p clip-sync-cli write_full_surface_alignment_golden -- --ignored`
    `cargo test -p clip-sync-repair write_full_surface_repair_golden -- --ignored`
+
+   A new optional field must be **populated** in at least one golden gap/clip, not merely left
+   `None`. A `skip_serializing_if` field that is absent everywhere in the golden is a field the
+   golden does not guard — renaming it would pass every test. Where a field has two meaningfully
+   different states (`Some(0.0)` vs `None` on `collar_level.map_lag_ms`), pin both.
 3. Update this document (bump the version marker for breaking changes; additive fields may stay v1 if they are optional-absent).
 4. Land doc + fixture + code in the same commit.
 

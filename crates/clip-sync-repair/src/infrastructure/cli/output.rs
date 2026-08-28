@@ -1146,7 +1146,25 @@ mod tests {
                     video_b_start_secs: Some(57.34),
                     video_b_end_secs: Some(59.84),
                     b_has_energy: true,
-                    collar_level: None,
+                    // Populated so the whole `collar_level` object is pinned by the contract
+                    // golden, not just its absence — the same reason `program_levels` below is.
+                    // This gap carries the **registered** map state: a trusted shoulder fit was
+                    // available, so `map_lag_ms` is `Some`. `Some(0.0)` and `None` are different
+                    // facts, so the second gap pins the other state.
+                    collar_level: Some(crate::domain::program_levels::CollarLevelOffset {
+                        offset_db: 2.28,
+                        spread_db: 0.31,
+                        n_pairs: 14,
+                        n_active: 21,
+                        n_steady: 18,
+                        n_pre: 8,
+                        n_post: 6,
+                        pre_offset_db: Some(2.19),
+                        post_offset_db: Some(2.41),
+                        first_pair_secs: 43.1,
+                        last_pair_secs: 49.4,
+                        map_lag_ms: Some(-12.5),
+                    }),
                 },
                 Gap {
                     video_a_start_secs: 120.0,
@@ -1154,7 +1172,23 @@ mod tests {
                     video_b_start_secs: None,
                     video_b_end_secs: None,
                     b_has_energy: false,
-                    collar_level: None,
+                    // The **nominal** map state — no trusted registration, so `map_lag_ms` is
+                    // `null` in the golden — and a one-sided collar, so `post_offset_db` pins the
+                    // absent-side shape too.
+                    collar_level: Some(crate::domain::program_levels::CollarLevelOffset {
+                        offset_db: 1.04,
+                        spread_db: 1.87,
+                        n_pairs: 3,
+                        n_active: 17,
+                        n_steady: 5,
+                        n_pre: 3,
+                        n_post: 0,
+                        pre_offset_db: Some(1.04),
+                        post_offset_db: None,
+                        first_pair_secs: 118.2,
+                        last_pair_secs: 119.6,
+                        map_lag_ms: None,
+                    }),
                 },
             ],
             gap_equivalence: Vec::new(),
@@ -1169,7 +1203,14 @@ mod tests {
             limit_fill_to_mapped_region: true,
             b_scanned_end_secs: None,
             b_scan_truncated: false,
-            audio_timeline_skew: None,
+            // Populated for the same reason as `collar_level` and `program_levels`: a
+            // `skip_serializing_if` field that is `None` in the only JSON-shape golden is a field
+            // the golden does not guard.
+            audio_timeline_skew: Some(crate::domain::AudioTimelineSkew {
+                pts_secs: 1799.482,
+                sample_clock_secs: 1799.461,
+                delta_secs: 0.021,
+            }),
             // Populated (chunks included) so the whole `program_levels` object is pinned by the
             // contract golden, not just its absence.
             program_levels: Some(crate::domain::program_levels::ProgramLevels {

@@ -94,6 +94,43 @@ pub fn interval_fully_within_window(
     start_secs >= window_start_secs && end_secs <= window_end_secs
 }
 
+/// Default `min_gap_ms`. Sensitive scan default (2026-07-20): catches sub-second dropouts ffmpeg
+/// `silencedetect` sees. The scan-time equivalence gate (`skip_equivalent_gaps`) drops the
+/// mutual/ambient-silence extras this surfaces, so "find everything, patch only real dropouts" is
+/// the default pairing.
+pub const DEFAULT_MIN_GAP_MS: u64 = 500;
+
+/// Default `silence_peak_fraction`.
+pub const DEFAULT_SILENCE_PEAK_FRACTION: f32 = 0.01;
+
+/// Default `scan_block_ms`. 100 ms analysis blocks (sensitive default) — finer silence-run
+/// resolution and the equivalence gate's measurement granularity. Media-validated identical to the
+/// fingerprint diagnostic path (8 pairs, 121 gaps) — but see
+/// `docs/dev/archive/TEMP-equivalence-divergence-findings.md` F15: a divergent gap was found
+/// 2026-07-30, and the two paths differ by more than granularity, so "identical" holds for that
+/// corpus, not as an invariant. Since I1 this value is *also* the diagnostic path's bin width.
+pub const DEFAULT_SCAN_BLOCK_MS: u64 = 100;
+
+/// Default **configured** silence hold. Quantizes to
+/// [`DEFAULT_SILENCE_HOLD_BLOCKS`] at [`DEFAULT_SCAN_BLOCK_MS`]; the two are kept together so the
+/// relationship the scanner enforces is visible at the definition rather than inferred from two
+/// unrelated literals.
+pub const DEFAULT_SILENCE_HOLD_MS: u64 = 500;
+
+/// Default hold expressed in blocks — `DEFAULT_SILENCE_HOLD_MS / DEFAULT_SCAN_BLOCK_MS`, the form
+/// [`ScanRecipe::with_hold_blocks`] takes. Exact by construction; the assertion in
+/// [`ScanRecipe::silence_hold_blocks`] holds for the default recipe.
+pub const DEFAULT_SILENCE_HOLD_BLOCKS: u32 =
+    (DEFAULT_SILENCE_HOLD_MS / DEFAULT_SCAN_BLOCK_MS) as u32;
+
+/// Default `absolute_silence_rms` as **normalized** amplitude (33 i16 units on the operator-facing
+/// 0–32767 scale). See `normalize_absolute_silence_rms_i16`.
+pub const DEFAULT_ABSOLUTE_SILENCE_RMS: f32 = 33.0 / 32767.0;
+
+/// Default `decode_chunk_secs`. Decode throughput only — deliberately **not** part of
+/// [`ScanRecipe`], because it cannot move a gap boundary.
+pub const DEFAULT_DECODE_CHUNK_SECS: u64 = 10;
+
 /// The scan knobs that determine **which gaps are detected**. Equality means "same gap list".
 ///
 /// `PartialEq` is **bitwise** (including the two `f32` fields) and intentional: values are copied
@@ -186,6 +223,27 @@ impl ScanRecipe {
     }
 }
 
+/// The production scan defaults, built through [`Self::with_hold_blocks`] so hold geometry is
+/// exact rather than a zeroed placeholder.
+///
+/// **Deliberately the production recipe, not the recipe most tests spell out by hand.** A recipe
+/// is a claim about which gaps were detected, so the default has to be a set of values that
+/// actually detects gaps; a zeroed one would report 0 hold blocks, which is silently meaningless
+/// rather than loud. Existing call sites that name their own values keep them — this exists so a
+/// fixture that does not care about scan knobs can write `..Default::default()` instead of
+/// restating five.
+impl Default for ScanRecipe {
+    fn default() -> Self {
+        Self::with_hold_blocks(
+            DEFAULT_MIN_GAP_MS,
+            DEFAULT_SILENCE_HOLD_BLOCKS,
+            DEFAULT_SCAN_BLOCK_MS,
+            DEFAULT_SILENCE_PEAK_FRACTION,
+            DEFAULT_ABSOLUTE_SILENCE_RMS,
+        )
+    }
+}
+
 /// Full gap scan report produced by `ScanGaps`.
 #[derive(Debug, Clone)]
 pub struct GapReport {
@@ -236,6 +294,34 @@ pub struct GapReport {
     /// **nothing in the patch path reads this**, and no gain is derived from it. `None` on
     /// legacy/test constructors and when A produced no level timeline.
     pub program_levels: Option<crate::domain::program_levels::ProgramLevels>,
+}
+
+/// An empty report carrying the production [`ScanRecipe`] and no gaps.
+///
+/// Exists so a fixture can pin one field with `..Default::default()` instead of restating every
+/// other one. `video_a` / `video_b` are empty paths and `alignment` is the default: a default
+/// report describes **no scan**, and the only honest stand-in for "which media" is nothing. Real
+/// construction sites must keep setting them.
+impl Default for GapReport {
+    fn default() -> Self {
+        Self {
+            video_a: PathBuf::new(),
+            video_b: PathBuf::new(),
+            track_compatibility: None,
+            alignment: ScanAlignment::default(),
+            gaps: Vec::new(),
+            gap_equivalence: Vec::new(),
+            gap_offset_agreement: None,
+            decode_chunk_secs: DEFAULT_DECODE_CHUNK_SECS,
+            local_pair_collar_secs: None,
+            recipe: ScanRecipe::default(),
+            limit_fill_to_mapped_region: false,
+            b_scanned_end_secs: None,
+            b_scan_truncated: false,
+            audio_timeline_skew: None,
+            program_levels: None,
+        }
+    }
 }
 
 impl GapReport {
@@ -315,6 +401,45 @@ mod tests {
             b_has_energy: true,
             collar_level: None,
         }
+    }
+
+    /// The default recipe must be a recipe that could really have run: hold geometry exact, and
+    /// every knob non-zero. A zeroed recipe reports 0 hold blocks, which is silently meaningless
+    /// rather than loud — the reason `ScanRecipe` did not simply derive `Default`.
+    #[test]
+    fn default_recipe_is_a_valid_production_recipe() {
+        let recipe = ScanRecipe::default();
+
+        assert_eq!(recipe.min_gap_ms(), DEFAULT_MIN_GAP_MS);
+        assert_eq!(recipe.scan_block_ms(), DEFAULT_SCAN_BLOCK_MS);
+        assert_eq!(recipe.silence_peak_fraction(), DEFAULT_SILENCE_PEAK_FRACTION);
+        assert_eq!(recipe.absolute_silence_rms(), DEFAULT_ABSOLUTE_SILENCE_RMS);
+
+        // Effective hold is the quantized product, and it round-trips back to the block count.
+        assert_eq!(recipe.silence_hold_ms(), DEFAULT_SILENCE_HOLD_MS);
+        assert_eq!(recipe.silence_hold_blocks(), DEFAULT_SILENCE_HOLD_BLOCKS);
+        assert_eq!(
+            recipe.silence_hold_ms() % recipe.scan_block_ms(),
+            0,
+            "configured hold must quantize exactly at the default block size"
+        );
+
+        assert!(recipe.scan_block_ms() > 0, "a zeroed recipe detects nothing");
+        assert!(recipe.min_gap_ms() > 0);
+    }
+
+    /// The point of the impl: a fixture states the field it cares about and nothing else.
+    #[test]
+    fn default_report_lets_a_fixture_pin_one_field() {
+        let report = GapReport {
+            local_pair_collar_secs: Some(2.0),
+            ..Default::default()
+        };
+
+        assert_eq!(report.local_pair_collar_secs, Some(2.0));
+        assert_eq!(report.recipe, ScanRecipe::default());
+        assert!(report.gaps.is_empty());
+        assert_eq!(report.decode_chunk_secs, DEFAULT_DECODE_CHUNK_SECS);
     }
 
     #[test]

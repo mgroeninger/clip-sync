@@ -26,7 +26,9 @@
       "offset_secs": 12.355,
       "confidence": 0.91,
       "video_a_decode_skips": 0,
-      "video_b_decode_skips": 3
+      "video_b_decode_skips": 3,
+      "video_b_window_start_secs": 1812.355,
+      "video_b_window_end_secs": 2712.355
     }
   ],
   "start_aligned": false,
