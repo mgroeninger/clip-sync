@@ -66,6 +66,13 @@ pub struct PatchRequestSettings {
     /// Hole-local residual boost. Default **off** since 2026-08-26 — see
     /// [`RepairConfig::normalize_fill`](crate::infrastructure::config::RepairConfig::normalize_fill).
     pub normalize_fill: bool,
+    /// Coarse envelope half-width (ms) for the seam-lock rescue; `0` disables it. Same knob the
+    /// fingerprint's `lag_decision` uses, so the two paths recenter identically — see
+    /// [`RepairConfig::lag_envelope_max_lag_ms`](crate::infrastructure::config::RepairConfig::lag_envelope_max_lag_ms).
+    pub lag_envelope_max_lag_ms: u32,
+    /// Coarse envelope window (seconds) the seam-lock rescue correlates. Positive and finite
+    /// (enforced by `RepairConfig::validate`).
+    pub lag_envelope_window_secs: f64,
     pub normalize_window_secs: f64,
     pub max_fill_gain_db: f64,
     /// Match B-derived fills to A's program level from the scan's paired offset. The decision it

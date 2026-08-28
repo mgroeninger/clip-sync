@@ -41,6 +41,11 @@ pub struct EnvelopePeak {
     pub edge_pinned: bool,
 }
 
+/// Bin size (ms) every coarse envelope is built at. One const, three consumers: `lag_decision`'s
+/// rescue, the Tier-3 `wide_envelope` confirmer, and the patch path's seam locks. 100 ms is coarse
+/// enough to survive codec/encode differences and fine enough to recenter a fine sweep.
+pub const ENVELOPE_BIN_MS: f64 = 100.0;
+
 /// Geometry of the coarse search: how much A to correlate (`window`), how far to look
 /// (`max_lag`), and the bin size the envelope is built at (`bin`) — all in frames.
 #[derive(Clone, Copy, Debug)]
@@ -48,6 +53,31 @@ pub struct EnvelopeCfg {
     pub window: usize,
     pub max_lag: usize,
     pub bin: usize,
+}
+
+impl EnvelopeCfg {
+    /// The frame geometry these knobs describe, whether or not the envelope is enabled.
+    ///
+    /// Separate from [`Self::from_knobs`] because a caller may need the *reach*
+    /// (`window + max_lag`) to size a border capture even on the disabled arm — `lag.rs`'s
+    /// `wide_need` does exactly that.
+    pub fn geometry(max_lag_ms: u32, window_secs: f64, sample_rate: u32) -> Self {
+        let rate = f64::from(sample_rate).max(1.0);
+        Self {
+            // `.max(8)` matches the fine sweep's own floor: below it `envelope_shoulder` refuses
+            // anyway (`w < bin.max(8)`), so a smaller request cannot silently half-work.
+            window: ((window_secs * rate).round() as usize).max(8),
+            max_lag: ((f64::from(max_lag_ms) / 1000.0) * rate).round() as usize,
+            bin: ((ENVELOPE_BIN_MS / 1000.0) * rate).round().max(1.0) as usize,
+        }
+    }
+
+    /// `None` when `max_lag_ms == 0` — the documented disable: measure at the nominal `b_mapped`
+    /// only, consult no envelope, emit no `envelope_*` fields. The window knob has no disable value
+    /// (a non-positive window is rejected at config validation, not silently honored).
+    pub fn from_knobs(max_lag_ms: u32, window_secs: f64, sample_rate: u32) -> Option<Self> {
+        (max_lag_ms > 0).then(|| Self::geometry(max_lag_ms, window_secs, sample_rate))
+    }
 }
 
 /// One shoulder's inputs to the coarse search.

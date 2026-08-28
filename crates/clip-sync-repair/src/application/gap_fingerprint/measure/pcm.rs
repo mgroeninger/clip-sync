@@ -254,7 +254,9 @@ pub(in crate::application::gap_fingerprint::measure) fn flatness(bins: &[f32]) -
 }
 
 /// §3.6a frozen wide-envelope confirmer: 100 ms RMS bins, 2 s seam window, ±400 ms lag on the envelope.
-pub(in crate::application::gap_fingerprint::measure) const WIDE_ENV_BIN_MS: f64 = 100.0;
+/// The bin is [`crate::domain::lag_envelope::ENVELOPE_BIN_MS`] — one const for every envelope in the
+/// codebase; re-exported under the local name so this module's call sites keep their spelling.
+pub(in crate::application::gap_fingerprint::measure) use crate::domain::lag_envelope::ENVELOPE_BIN_MS as WIDE_ENV_BIN_MS;
 pub(in crate::application::gap_fingerprint::measure) const WIDE_ENV_WINDOW_SECS: f64 = 2.0;
 pub(in crate::application::gap_fingerprint::measure) const WIDE_ENV_MAX_LAG_MS: f64 = 400.0;
 

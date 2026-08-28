@@ -280,10 +280,11 @@ pub fn patch_request_with_options(
     // defaults are exercised separately via `patch_request_from_repair`. Everything below is a caller arg, a
     // `PatchTestOptions` knob, or a deliberate synthetic-fixture deviation.
     //
-    // Of the 56 settings fields, 40 stay explicit (4 caller args, 28 options knobs, 8
-    // deviations) and 16 are absorbed by the seed. Each absorbed field already equaled its
-    // production default in the previous hand-written literal, so the built request is
-    // value-identical to that literal.
+    // Of the 64 settings fields, 43 stay explicit (4 caller args, 31 options knobs, 8
+    // deviations) and 21 are absorbed by the seed. Each field absorbed at the time this was written
+    // already equaled its production default in the previous hand-written literal, so the built
+    // request is value-identical to that literal; fields added since (the two `lag_envelope_*`
+    // knobs) take their production defaults here deliberately.
     PatchRequestSettings {
         // ---- caller arguments ----
         normalize_fill,

@@ -509,10 +509,20 @@ pub(in crate::application::gap_fingerprint::measure) fn lag_at_placement(
     // template isn't capped to the ~150 ms `bin_frames*3` used for the structure probe.
     let window = ((cfg.lag_window_secs * rate).round() as usize).max(8);
     let max_lag = ((cfg.lag_max_lag_ms as f64 / 1000.0) * rate).round() as i64;
-    let env_on = cfg.lag_envelope_max_lag_ms > 0;
-    let env_window = ((cfg.lag_envelope_window_secs * rate).round() as usize).max(8);
-    let env_lag = ((cfg.lag_envelope_max_lag_ms as f64 / 1000.0) * rate).round() as usize;
-    let env_bin = ((WIDE_ENV_BIN_MS / 1000.0) * rate).round().max(1.0) as usize;
+    // One construction, shared with the patch path (`EnvelopeCfg::from_knobs`). `geometry` is the
+    // same numbers on the disabled arm, which `wide_need` below still needs to size a capture.
+    let envelope_cfg = EnvelopeCfg::from_knobs(
+        cfg.lag_envelope_max_lag_ms,
+        cfg.lag_envelope_window_secs,
+        sample_rate,
+    );
+    let env_on = envelope_cfg.is_some();
+    let env_geometry = EnvelopeCfg::geometry(
+        cfg.lag_envelope_max_lag_ms,
+        cfg.lag_envelope_window_secs,
+        sample_rate,
+    );
+    let (env_window, env_lag) = (env_geometry.window, env_geometry.max_lag);
     // Matches the old unconditional formula's reach exactly (`env_window + env_lag`) so a rescued
     // shoulder's envelope search has the same slack it always had — including the walk-off margin
     // `gap_border_frame_range` needs when the near-gap fade runs longer than `env_window` alone.
@@ -575,11 +585,7 @@ pub(in crate::application::gap_fingerprint::measure) fn lag_at_placement(
     };
     // Nominal-first: the envelope is only ever consulted by `rescue_shoulder` for a shoulder that
     // is dead at nominal, never up front (`docs/dev/archive/TEMP-lag-nominal-first-plan.md` § Change).
-    let envelope_cfg = env_on.then_some(EnvelopeCfg {
-        window: env_window,
-        max_lag: env_lag,
-        bin: env_bin,
-    });
+    // `envelope_cfg` is built above, next to the geometry `wide_need` shares.
 
     let mut out = LagFingerprint::default();
     let mut add = |pre: Option<LagSummary>, post: Option<LagSummary>| {

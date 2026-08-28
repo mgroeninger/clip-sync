@@ -192,10 +192,17 @@ pub struct RepairConfig {
     /// Off by default — `--gap-fingerprints` emits decision/repair (D/R) axes only unless enabled.
     #[serde(default)]
     pub fingerprint_diagnostics: bool,
-    /// Fingerprint-only: coarse envelope half-width (ms) that recenters `lag_decision`.
-    /// Default 2000. `0` disables (nominal `b_mapped`, no `envelope_*` on the wire).
-    /// Probe-only — not Apply's `max_lag_blocks`. Must match
+    /// Coarse envelope half-width (ms) for the nominal-first shoulder rescue. Default 2000.
+    /// `0` disables it (measure at the nominal `b_mapped` only, no `envelope_*` on the wire).
+    ///
+    /// **Read by both paths.** It sizes `lag_decision`'s rescue in the fingerprint *and* the patch
+    /// path's seam locks (`domain::seam_locks`), through the one shared
+    /// [`crate::domain::lag_envelope::EnvelopeCfg::from_knobs`]. It is **not** Apply's
+    /// `max_lag_blocks`. Must match
     /// [`crate::application::gap_fingerprint::DEFAULT_LAG_ENVELOPE_MAX_LAG_MS`].
+    ///
+    /// Note the CLI flag `--lag-envelope-max-lag-ms` still requires `--gap-fingerprints DIR`, so a
+    /// production repair run takes this from TOML or the default, never from the command line.
     #[serde(default = "default_lag_envelope_max_lag_ms")]
     pub lag_envelope_max_lag_ms: u32,
     /// Fingerprint-only: which arm sizes the **shared** A border capture behind `lag_decision`.
@@ -204,10 +211,16 @@ pub struct RepairConfig {
     /// field-by-field with narrow ones. Probe-only — production repair never reads it.
     #[serde(default)]
     pub border_capture: crate::application::gap_fingerprint::BorderCapture,
-    /// Fingerprint-only: coarse envelope **window** (seconds) the `lag_decision` recenter
-    /// correlates. Default 2.0. Rescue path only — the Tier-3 `wide_envelope` diagnostic keeps its
-    /// own pinned window, so a raised value makes the two lags in one dump incomparable (recorded
-    /// in `probe_recipe.lag_envelope_window_secs` for exactly that reason). Must match
+    /// Coarse envelope **window** (seconds) the recenter correlates. Default 2.0. Rescue path
+    /// only — the Tier-3 `wide_envelope` diagnostic keeps its own pinned window, so a raised value
+    /// makes the two lags in one dump incomparable (recorded in
+    /// `probe_recipe.lag_envelope_window_secs` for exactly that reason).
+    ///
+    /// **Read by both paths**, like [`Self::lag_envelope_max_lag_ms`] — same
+    /// `EnvelopeCfg::from_knobs`, same CLI caveat. Must be positive and finite ([`Self::validate`]):
+    /// there is no disable value here, and a non-positive window would land the geometry below the
+    /// 100 ms bin so `envelope_shoulder` refuses on every shoulder — a silently rescue-free run
+    /// whose recipe stamps the requested value as if it were deliberate. Must match
     /// [`crate::application::gap_fingerprint::DEFAULT_LAG_ENVELOPE_WINDOW_SECS`].
     #[serde(default = "default_lag_envelope_window_secs")]
     pub lag_envelope_window_secs: f64,
@@ -780,6 +793,8 @@ impl RepairConfig {
                 max_program_gain_db: self.max_program_gain_db,
             },
             dual_fit: self.dual_fit,
+            lag_envelope_max_lag_ms: self.lag_envelope_max_lag_ms,
+            lag_envelope_window_secs: self.lag_envelope_window_secs,
             normalize_window_secs: self.normalize_window_secs,
             max_fill_gain_db: self.max_fill_gain_db,
             min_fill_correlation: self.min_fill_correlation,
@@ -943,6 +958,7 @@ impl RepairConfig {
                 self.residual_headroom_margin_db,
             ),
             ("residual_lag_secs", self.residual_lag_secs),
+            ("lag_envelope_window_secs", self.lag_envelope_window_secs),
         ] {
             if !value.is_finite() {
                 return Err(ConfigError::InvalidValue {
@@ -950,6 +966,16 @@ impl RepairConfig {
                     reason: "must be a finite number".into(),
                 });
             }
+        }
+
+        // Mirrors the CLI's `--lag-envelope-window-secs` message. The CLI check only sees flags, so
+        // a TOML-set or profile-set value reached the envelope unvalidated; now that the patch path
+        // reads this too, an invalid window would silently disable rescue on a production run.
+        if self.lag_envelope_window_secs <= 0.0 {
+            return Err(ConfigError::InvalidValue {
+                field: "lag_envelope_window_secs".into(),
+                reason: "must be a positive, finite number of seconds".into(),
+            });
         }
 
         if self.min_gap_ms == 0 {
@@ -1637,6 +1663,39 @@ dry_run = true
         };
         let err = config.validate().expect_err("Inf");
         assert!(format!("{err:?}").contains("residual_lag_secs"), "{err:?}");
+    }
+
+    #[test]
+    fn rejects_non_positive_lag_envelope_window() {
+        // The CLI only guards the flag; TOML and profiles reach the envelope directly. A window of 0
+        // (or negative) sizes the geometry below the 100 ms bin, so `envelope_shoulder` refuses on
+        // every shoulder and the run is silently rescue-free -- now that the patch path reads this
+        // knob too, that would be a production behavior change with no error.
+        for (name, secs) in [("zero", 0.0), ("negative", -1.0), ("nan", f64::NAN)] {
+            let config = RepairConfig {
+                lag_envelope_window_secs: secs,
+                ..RepairConfig::default()
+            };
+            let err = config.validate().expect_err(name);
+            assert!(
+                format!("{err:?}").contains("lag_envelope_window_secs"),
+                "unexpected error for {name}: {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn patch_settings_carries_lag_envelope_knobs() {
+        // The patch path takes these through `patch_settings`, not a second config path: the seam
+        // locks and the fingerprint's `lag_decision` must recenter with the same geometry.
+        let config = RepairConfig {
+            lag_envelope_max_lag_ms: 1234,
+            lag_envelope_window_secs: 3.5,
+            ..RepairConfig::default()
+        };
+        let settings = config.patch_settings();
+        assert_eq!(settings.lag_envelope_max_lag_ms, 1234);
+        assert!((settings.lag_envelope_window_secs - 3.5).abs() < f64::EPSILON);
     }
 
     #[test]

@@ -456,6 +456,26 @@ measured at one length and spliced at another. `try_dual_fit` also now takes
 `w`/`gap_frames` **from the templates, not from `DualFitParams`**, and
 `debug_assert`s the two agree.
 
+> **Step 4 as built (2026-08-28).** `ENVELOPE_BIN_MS` + `EnvelopeCfg::geometry` /
+> `EnvelopeCfg::from_knobs` live in `domain::lag_envelope`;
+> `measure/pcm.rs`'s `WIDE_ENV_BIN_MS` is now a re-export of `ENVELOPE_BIN_MS`, so
+> the rescue path and the Tier-3 `wide_envelope` diagnostic cannot drift apart on
+> the bin. `measure/lag.rs` builds `envelope_cfg` from `from_knobs` and takes
+> `env_window`/`env_lag` from `geometry` (the second, duplicated `EnvelopeCfg { … }`
+> literal is deleted). `PatchRequestSettings` carries both knobs, filled from
+> `patch_settings()`; the two "Fingerprint-only / production repair never reads it"
+> doc comments are rewritten; `validate` gained the positivity arm (the finite check
+> came from adding the field to the existing finite tuple). Tests:
+> `rejects_non_positive_lag_envelope_window`, `patch_settings_carries_lag_envelope_knobs`.
+> **Nothing reads the new settings fields yet** — that is step 5.
+>
+> **Open, not changed:** the CLI still rejects `--lag-envelope-max-lag-ms` and
+> `--lag-envelope-window-secs` unless `--gap-fingerprints DIR` is given
+> (`cli/mod.rs:336–344`, calibration-gated). Once step 5 lands, a production repair
+> run can only set these from TOML or the default, never from the command line. The
+> `RepairConfig` fields are not feature-gated, so this is a flag-surface gap, not a
+> correctness one; ungating it is a separate decision this plan does not make.
+
 ### Step 5 is not a drop-in — three gaps found while implementing 1–3
 
 Reviewed `nominal_first_seam_locks` against the shipped `rescue_shoulder`
@@ -504,7 +524,7 @@ users are the fixtures. Not two copies of the predicate, one.
 `build_dual_fit_input` keeps building `DualFitRepairInput` but sources its
 templates from `SeamLockTemplates`.
 
-**4 — Plumb the two knobs to production.** Add
+**4 — Plumb the two knobs to production.** *(Done 2026-08-28.)* Add
 `lag_envelope_max_lag_ms: u32` and `lag_envelope_window_secs: f64` to
 `PatchRequestSettings` (`patch_audio/request.rs:57`), populated in
 `RepairConfig::patch_settings()` (`config.rs:763`) alongside
