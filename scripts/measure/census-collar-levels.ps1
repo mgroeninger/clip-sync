@@ -1,4 +1,5 @@
 #!/usr/bin/env pwsh
+#Requires -Version 7.0
 # Dump-only census of the per-gap collar level offset (`scan.gaps[*].collar_level`).
 #
 # Each collar is read through that gap's OWN registered map since 2026-08-27 (`map_lag_ms`), not the

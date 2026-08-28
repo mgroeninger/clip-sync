@@ -1,4 +1,5 @@
 #!/usr/bin/env pwsh
+#Requires -Version 7.0
 # Fingerprint a manifest of media pairs: one `--gap-fingerprints` dump per row.
 #
 # Sibling of `measure-repair-perf.ps1` (same manifest format), but runs the diagnostic dump path

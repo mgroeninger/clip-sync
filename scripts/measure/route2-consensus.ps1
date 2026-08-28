@@ -1,4 +1,5 @@
 #!/usr/bin/env pwsh
+#Requires -Version 7.0
 # Route 2 consensus + peak_z re-gate (docs/dev/archive/TEMP-fill-placement-registration-plan.md §0 S2).
 #
 # Asks one question: does the per-shoulder waveform lag (`lag_decision`, a measurement) agree

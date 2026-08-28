@@ -1,3 +1,4 @@
+#Requires -Version 7.0
 # Test tier selector for clip-sync workspace.
 # Run from repo root: .\scripts\test-tier.ps1 -Tier pr
 # See docs/dev/test-tiers.md and docs/dev/development.md.

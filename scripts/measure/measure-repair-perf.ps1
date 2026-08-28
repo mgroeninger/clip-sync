@@ -1,4 +1,5 @@
 #!/usr/bin/env pwsh
+#Requires -Version 7.0
 # Repair-path performance harness: runs a manifest of media pairs under span timing and reports where the
 # time actually goes, as a span tree with exclusive costs.
 #

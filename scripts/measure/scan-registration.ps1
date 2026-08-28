@@ -1,4 +1,5 @@
 #!/usr/bin/env pwsh
+#Requires -Version 7.0
 # Scan a manifest of media pairs and capture the **scan-only** JSON report for each — one
 # `<label>.json` per pair, carrying `scan.gap_equivalence[*].donor_registration` (lag, peak_r,
 # interior levels, `interior_delta_db`, and both dB envelopes) for EVERY gap.

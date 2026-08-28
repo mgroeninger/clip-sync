@@ -1,4 +1,5 @@
 #!/usr/bin/env pwsh
+#Requires -Version 7.0
 # Discover media pairs in a directory by the `<name>.<ext>` + `<name>.2.<ext>` convention,
 # list them, and/or run clip-sync-repair on each pair while saving per-pair logs.
 # Can also run from a previously written manifest (same format as measure-repair-perf.ps1).

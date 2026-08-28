@@ -1,4 +1,5 @@
 #!/usr/bin/env pwsh
+#Requires -Version 7.0
 # Full patch path over a pair manifest, captured as parseable per-gap JSON.
 #
 # Sibling of `scan-registration.ps1` (same manifest format, same stdout/stderr split) but runs the

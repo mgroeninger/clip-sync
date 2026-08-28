@@ -183,6 +183,23 @@ Not required for `--only-gaps` / `--skip-gaps`, both shipped.
 |------|-------------|-----------|
 | **`--gaps-from` manifest (v2)** | Reuse a prior gap list + embedded `ScanRecipe`; a mismatch errors on index entries. Prerequisites (ranges, recipe) shipped. Sketch: [archive/TEMP-gap-selection-deferred.md](docs/dev/archive/TEMP-gap-selection-deferred.md) §2 | Implemented |
 
+## Contract & tooling hygiene
+
+Uncovered 2026-08-27 while echoing `local_pair_collar_secs` into the scan report
+([TEMP-local-paired-gain-plan.md](docs/dev/TEMP-local-paired-gain-plan.md) § 4b). Pre-existing, and
+none blocks the collar census. The first three are **one piece of work, in order**: the golden is
+what actually guards the JSON contract, its coverage is hand-maintained and has drifted, and the
+missing `Default` is why keeping it covered is expensive. Do them in sequence or not at all — row 2
+exists to make row 1 cheap, and row 3 only describes what rows 1–2 make true. The binary-stamp axis
+is separate and lives in [Fingerprint provenance](#fingerprint-provenance).
+
+| Item | Next action | Done when |
+|------|-------------|-----------|
+| **The golden does not pin the newest contract fields** | `full_surface_repair_json_golden` is the *only* JSON-shape guard in the crate, and `collar_level` and `map_lag_ms` appear **zero** times in `tests/fixtures/full_surface_repair.json` — the fixture's gaps carry `collar_level: None` and the field is `skip_serializing_if`, so renaming `CollarLevelOffset::spread_db` fails no test today. Both are logged v1 additive fields. Populate at least one gap's `collar_level` (both `map_lag_ms` states: a trusted `Some` and a nominal `null`), then regenerate. The precedent and the reason are already written at `output.rs` `full_surface_gap_report()`: *"Populated (chunks included) so the whole object is pinned by the contract golden, not just its absence"* — it was applied to `program_levels` and never extended to the per-gap collar | Every field named in [json-output.md](docs/json-output.md)'s v1 additive log appears in the golden with a non-absent value |
+| **`GapReport` has no `Default`, so covering the golden is expensive** | 43 struct literals across 12 files, nearly all fixtures that do not care about the field being added. Two costs: it biases *placement* (this is exactly why `local_pair_collar_secs` was first put on `ProgramLevels` at 7 sites instead of where it belonged), and it makes richly-populated fixtures — the row above — expensive enough to skip. Not a naive derive: `ScanRecipe` keeps its fields private so effective hold cannot drift, and a zeroed recipe reports 0 hold blocks, which is silently meaningless rather than loud. Add a test-only builder, or `Default` with a deliberately valid recipe | A fixture can pin one field with `..Default::default()` and adding an optional field to `GapReport` touches the struct, the real construction site, and nothing else |
+| **Revision-procedure rule 1 does not describe what the code does** | [json-output.md](docs/json-output.md) § Revision procedure step 1 says *"never re-derive `Serialize` on domain types"*, but `domain/program_levels.rs` derives it on 5 types that `GapScanJson` embeds directly, as do `domain::gap::Gap` and `GapEquivalenceVerdict`. Mirror DTOs are the wrong fix for the record types: they have **zero methods** across 38 pub fields, so a 1:1 mirror relocates the coupling into a hand-synced `From` impl whose failure mode — add a domain field, forget the mirror, field silently vanishes from output with no compile error — is worse than the golden diff we get today. Amend the rule to the real policy: behaviourless reporting records may serialize directly and the golden is their guard; types with behaviour (`Gap` has 4 methods and decision logic) or any field whose JSON name must differ from its domain name get a DTO | A reader can tell from the rule alone whether renaming a domain field breaks the contract, without grepping for `derive(Serialize)` |
+| **12 of 16 `.ps1` scripts fail to parse under Windows PowerShell 5.1** | They are BOM-less UTF-8 containing non-ASCII (`—`, `−`, `§`, `→`, `±`); 5.1 reads BOM-less files as ANSI and dies at the first one, with parse errors pointing at innocent lines far from the cause — a genuinely misleading failure. `pwsh` 7 is fine, and no doc says to use it. Add a UTF-8 BOM to the affected files, or a `#Requires -Version 7` line so the failure names itself | A script run under 5.1 either works or says why not |
+
 ---
 
 The former *Defer / opportunistic* section moved wholesale to [settled.md](docs/dev/settled.md) § C

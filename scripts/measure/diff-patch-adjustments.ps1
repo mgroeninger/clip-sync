@@ -1,4 +1,5 @@
 #!/usr/bin/env pwsh
+#Requires -Version 7.0
 # Cross-arm placement differential for the `border_standoff_secs` sweep
 # (docs/dev/archive/TEMP-fill-placement-registration-plan.md § "Consequences" (2)).
 #

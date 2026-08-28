@@ -1,4 +1,5 @@
 #!/usr/bin/env pwsh
+#Requires -Version 7.0
 # Dump-only residual ProbeNonFinite census (historical input to
 # docs/dev/archive/TEMP-residual-measured-unify-plan.md). No gate change.
 #

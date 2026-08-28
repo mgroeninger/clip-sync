@@ -1,4 +1,5 @@
 #!/usr/bin/env pwsh
+#Requires -Version 7.0
 # Dump-only census of the whole-program A/B level offset (`scan.program_levels`).
 #
 # Tier 3 of the validation ladder in docs/dev/archive/TEMP-ab-program-levels-plan.md §7a, and the read the

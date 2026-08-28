@@ -1,3 +1,4 @@
+#Requires -Version 7.0
 # Verify clip-sync-repair integration test binaries match Cargo.toml [[test]] entries, and that
 # every declared binary is actually run by some tier in test-tier.ps1.
 #
