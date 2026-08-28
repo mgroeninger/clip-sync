@@ -414,6 +414,26 @@ if ($withResidual.Count -eq 0) {
         (Format-Ratio (Get-Percentile $absResiduals 0.50)), (Format-Ratio (Get-Percentile $absResiduals 0.90)), (Format-Ratio (Get-Percentile $absResiduals 1.0)))
     Write-Host ("  |residual| <= {0,-5} dB           {1} of {2}" -f $ResidualDb, @($withResidual | Where-Object { [Math]::Abs([double]$_.residual_db) -le $ResidualDb }).Count, $withResidual.Count)
     Write-Host '  (MAX_LOCAL_RESIDUAL_DB belongs where the readings stop, not at a rail)'
+
+    # |residual| IS |g_local_db| (§4: g_local_db = -(d_local - offset_prior)). Every row above is a
+    # gain that would land on a fill, not a diagnostic, so the same distribution is worth reading in
+    # the unit that ships - and read against each candidate floor, because the floor turns out to
+    # control the applied gain far more than the residual bound does.
+    Write-Host ''
+    Write-Host '  The same distribution as the GAIN it becomes (|residual| = |g_local_db|):'
+    Write-Host ('    floor      n     p50     p90     p99     max   >0.5dB      %   >1dB   >3dB   >6dB')
+    foreach ($floor in (@(0) + $PairFloors | Sort-Object -Unique)) {
+        $sub = [double[]]@($withResidual | Where-Object { [double]$_.n_pairs -ge $floor } |
+            ForEach-Object { [Math]::Abs([double]$_.residual_db) } | Sort-Object)
+        if ($sub.Count -eq 0) { continue }
+        $over = { param($t) @($sub | Where-Object { $_ -gt $t }).Count }
+        Write-Host ("    n>={0,-4} {1,5}  {2}  {3}  {4}  {5}  {6,4} {7,5:0.0}%  {8,4}   {9,4}   {10,4}" -f `
+                $floor, $sub.Count, (Format-Ratio (Get-Percentile $sub 0.50)), (Format-Ratio (Get-Percentile $sub 0.90)), `
+            (Format-Ratio (Get-Percentile $sub 0.99)), (Format-Ratio (Get-Percentile $sub 1.0)), `
+            (& $over 0.5), (100.0 * (& $over 0.5) / $sub.Count), (& $over 1.0), (& $over 3.0), (& $over 6.0))
+    }
+    Write-Host '    (a candidate MAX_LOCAL_RESIDUAL_DB above the p99 column is inert - the max_fill_gain_db'
+    Write-Host '     failure mode: a bound so far out it forfeits the detection §4 wants it for)'
 }
 
 $twoSided = @($measured | Where-Object { $null -ne $_.side_delta_db })

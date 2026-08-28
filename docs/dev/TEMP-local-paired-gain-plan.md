@@ -570,6 +570,64 @@ expected answer for the collar width, but the two level-domain constants must co
 arm — the `max_fill_gain_db` precedent (12.0, uncalibrated since 2026-06-08) is what happens
 otherwise.
 
+### Result 3g — the same readings in the gain domain (what actually lands on a fill)
+
+Results 1–3 are all about the *instrument*: spread, SE, ratios between arms. None of them says how
+loud anything gets. `residual_db` **is** the applied gain (`g_local_db = −residual_db`, § 4), so the
+same census read as a gain distribution answers a different question — and it is the question § 4a's
+two level-domain constants are actually about. Both tables below are emitted by the shipped scripts,
+not derived by hand; the numbers are the W = 2.0 corrected arm (`2026-08-27-collar-census-lag-work`)
+and will be re-read on arm 4.
+
+**How big is the gain?** `census-collar-levels.ps1`, Q4:
+
+```
+floor      n     p50     p90     p99     max   >0.5dB      %   >1dB   >3dB   >6dB
+n>=0      940  0.206  1.312  5.336  21.357   256  27.2%   132     28      8
+n>=4      682  0.162  0.765  4.861  14.037   117  17.2%    46     13      5
+n>=8      503  0.137  0.561  4.414  10.912    59  11.7%    27      9      2
+n>=16     267  0.096  0.394  1.707  4.311    18   6.7%     6      1      0
+```
+
+Three things follow.
+
+- **The typical correction is small and the tail is not.** At the provisional floor the median gain
+  is 0.137 dB — inaudible, and the honest reading of "the program prior is usually about right".
+  But 27 of 503 exceed 1 dB and 2 exceed 6 dB. A distribution with a 0.137 dB median and a 10.9 dB
+  max is exactly the shape that makes *refuse, don't clamp* (§ 4) the right disposal: the far tail
+  is not a large correction, it is a collar that should not have been trusted.
+- **`MIN_LOCAL_PAIRS` is the load-bearing constant.** It is the only knob that moves the tail:
+  8 → 16 takes >6 dB from 2 to 0 and >1 dB from 27 to 6, at the cost of 236 more gaps on program
+  gain. `MAX_LOCAL_RESIDUAL_DB` cannot do that job from where it sits.
+- **`MAX_LOCAL_RESIDUAL_DB = 6.0` is provisionally inert.** At `n ≥ 8` it fires on **2 of 503**
+  collars — it sits above p99 (4.414). That is the `max_fill_gain_db` failure mode named in § 4a
+  reproduced exactly: a bound placed so far out that it forfeits the detection it was added for.
+  This is not yet a decision (the width is wrong, and a bound's job is the tail, not the p99), but
+  arm 4 must state where the readings stop rather than inheriting 6.0.
+
+**How far did § 3b move the gain?** A ratio cannot answer this — ×0.4 on a 0.1 dB residual is
+nothing and ×0.4 on a 6 dB one is a different fill — so `compare-collar-arms.ps1` reports it as a
+difference in dB, arm 1 → arm 3:
+
+```
+all matched    n= 919  p50 0.092  p90 3.228  max 26.577   >0.5dB 35.8%  >1dB 23.9%  >3dB 10.3%
+n>=8 in both   n= 493  p50 0.000  p90 0.976  max  8.997   >0.5dB 23.5%  >1dB  9.3%  >3dB  1.2%
+changed, n>=8  n= 246  p50 0.458  p90 1.497  max  8.997   >0.5dB 47.2%  >1dB 18.7%  >3dB  2.4%
+```
+
+**§ 3b is a correctness fix on the product, not measurement hygiene.** On the gaps whose map moved
+and that clear the provisional floor, the median gain changed by 0.458 dB and nearly half changed by
+more than 0.5 dB. Read at the nominal map, those fills would have been delivered at the wrong level —
+not merely measured noisily. The `n ≥ 8 in both` line reads p50 0.000 only because half those rows
+were never touched (the lag fitted zero); that is rule 2 of the comparator, not a null result.
+
+**And it does not block v1.** The two readings disagree about the *level*, but barely about the
+*decision*: at `n ≥ 8`, `MAX_LOCAL_RESIDUAL_DB = 6.0` refuses 2 gaps corrected against 3 nominal,
+and a 3 dB bound would refuse 9 either way. Refusal is stable under a map error that moves the gain
+by up to 9 dB, which is the property § 4 wanted from refuse-not-clamp. What the unexplained
+remainder in Result 3 *does* block is the claim that the residual bound is calibrated: ~0.08 dB of
+median residual is immaterial as a gain and fatal as a claim about where the readings stop.
+
 ### Running the remaining arms
 
 **`local_pair_collar_secs` has no CLI flag** (§ 9: "No new CLI") — it is a `[repair]` TOML field, so
@@ -623,6 +681,13 @@ their only record. Arm 4 onward carries it.
 **Then read Q6's `n>=8` block first**, against Result 3's branches. The cut matters: the 0.25 / 0.08
 baseline was taken at n ≥ 8, and comparing an unfiltered cohort against it reads two different
 populations. Q5's banded profile is the secondary read — a flat profile there would reopen § 3a.
+
+**Then read Q4's gain table** (Result 3g), which is where the two level-domain constants are
+actually decided: `MIN_LOCAL_PAIRS` from which floor row pulls the >1 dB / >6 dB tail in, and
+`MAX_LOCAL_RESIDUAL_DB` from where the readings stop at that row — not from 6.0, which arm 3 shows
+firing on 2 of 503. The comparator's decision-impact block is the arm-4 companion: if W = 4.0 moves
+the gain by less than W = 2.0 did, Result 1's width preference has been confirmed in the domain that
+reaches the listener rather than only in the instrument.
 
 **Comparing two arms: `./scripts/measure/compare-collar-arms.ps1 -BaseDir <a> -NewDir <b>`.** Each
 side is a dump dir or a per-gap CSV; a dump dir is run through `census-collar-levels.ps1` rather than

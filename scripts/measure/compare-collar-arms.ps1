@@ -330,6 +330,36 @@ if ($anyLag.Count -gt 0) {
 }
 
 # ---------------------------------------------------------------------------------------------
+# DECISION IMPACT. Every ratio above compares the instrument; this compares the PRODUCT. |residual|
+# is |g_local_db| (§4), so the change in residual between two arms is, in dB, the change in the gain
+# that lands on a fill. A ratio cannot answer this: ×0.5 on a 0.1 dB residual is inaudible and ×0.5
+# on a 6 dB one is not, and an arm that halves a residual has still MOVED the gain by half of it.
+#
+# This is the number that says whether an arm is a measurement cleanup or a correctness fix, and it
+# is reported as a difference in dB against thresholds, never as a ratio.
+# ---------------------------------------------------------------------------------------------
+$gainRows = @($joined | Where-Object { $null -ne (AsD $_.b.residual_db) -and $null -ne (AsD $_.n.residual_db) })
+if ($gainRows.Count -gt 0) {
+    Write-Host ''
+    Write-Host 'Decision impact: how far the applied gain moved (|resid_new - resid_base|, dB)'
+    $sets = @(@('all matched   ', $gainRows),
+        @(("n>={0} in both " -f $MinPairs), @($gainRows | Where-Object { [double]$_.b.n_pairs -ge $MinPairs -and [double]$_.n.n_pairs -ge $MinPairs })))
+    # The changed-rows cut matters here for the same reason as everywhere else: untouched rows
+    # contribute an exact 0.000 dB and drag the median to zero however large the real effect is.
+    $sets += , @(("changed, n>={0}" -f $MinPairs), @($gainRows | Where-Object { $_.changed -and [double]$_.b.n_pairs -ge $MinPairs -and [double]$_.n.n_pairs -ge $MinPairs }))
+    foreach ($set in $sets) {
+        $d = [double[]]@($set[1] | ForEach-Object { [Math]::Abs((AsD $_.n.residual_db) - (AsD $_.b.residual_db)) } | Sort-Object)
+        if ($d.Count -eq 0) { Write-Host ("  {0} none" -f $set[0]); continue }
+        Write-Host ("  {0} n={1,4}  p50 {2}  p90 {3}  max {4}" -f `
+                $set[0], $d.Count, (Format-Ratio (Get-Percentile $d 0.50)), (Format-Ratio (Get-Percentile $d 0.90)), (Format-Ratio (Get-Percentile $d 1.0)))
+        foreach ($t in @(0.5, 1.0, 3.0)) {
+            $c = @($d | Where-Object { $_ -gt $t }).Count
+            Write-Host ("       moved the gain by > {0,3:0.0} dB  {1,4} of {2,4}  ({3,4:0.0}%)" -f $t, $c, $d.Count, (100.0 * $c / $d.Count))
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------------------------
 # Reporting cuts, not chosen constants (§4b's standing caution). Printed for both arms because the
 # cohort that clears a floor AND an SE bound is what a candidate `MIN_LOCAL_PAIRS` actually costs.
 # ---------------------------------------------------------------------------------------------
