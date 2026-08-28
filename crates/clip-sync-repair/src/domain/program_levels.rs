@@ -40,31 +40,64 @@ pub const MIN_PAIRS: usize = 50;
 
 /// Minimum accepted pairs before a collar offset may be **applied as a gain**.
 ///
-/// **Provisional** — `docs/dev/TEMP-local-paired-gain-plan.md` § 4a. The argument behind 8 (a
-/// 2 s + 2 s collar is 40 blocks before the active/steady/B filters, so 8 is 0.8 s of accepted
-/// pairs) sets an order of magnitude, not a number: at `n = 8` the median's standard error over
-/// corpus-typical material is 0.5–1.5 dB, which is the same size as the residuals a local gain
-/// exists to correct. The shipping value comes from the corpus census, not from this comment.
+/// **Necessary, not sufficient** — set by the 51-pair / 1073-gap corpus census, arm 4
+/// (`docs/dev/TEMP-local-paired-gain-plan.md` § 4b Result 4, `W` = 4.0 on the shoulder-corrected
+/// map). 711 gaps (66.3%) clear it; raising it to 16 moves the median residual only 0.136 → 0.117
+/// dB and costs 167 gaps, so the extra strictness buys nothing.
+///
+/// What it does **not** do is dispose of the residual tail, which is what it was originally
+/// expected to carry. At `W` = 4.0 the largest residual in the corpus (9.347 dB) is read off 26
+/// pairs and does not move at any floor. Reading the eleven worst collars by hand says why: eight
+/// are one-sided, and every two-sided one disagrees between its shoulders by 3.9–9.6 dB. Sparsity
+/// was only ever a proxy for dispersion, and [`MAX_LOCAL_SE_DB`] is the axis that actually
+/// separates the tail. Both gates are required at apply; neither substitutes for the other.
 ///
 /// **Deliberately not read by [`collar_level_offset`].** A floor inside the estimator would censor
 /// the dump at exactly the value the census exists to choose — the reading would stop at the rail
 /// and the rail would look like the answer, which is how `max_fill_gain_db` survived two policy
 /// changes at a number nobody picked (`settled.md` § E). The estimator measures; this is policy,
-/// checked where a gain is applied. Nothing reads it yet: the apply half is gated behind the
-/// census.
+/// checked where a gain is applied. Nothing reads it yet: the apply half is a separate Change.
 pub const MIN_LOCAL_PAIRS: usize = 8;
+
+/// Maximum standard error (dB) of a collar's median before it may be **applied as a gain**, paired
+/// with the requirement that both shoulders contributed at least one pair.
+///
+/// **The axis is the finding; the threshold is fitted to this corpus.** Arm 4 (§ 4b Result 4) put
+/// the corpus's entire residual tail behind one dispersion axis: over 1073 gaps, admitting only
+/// collars with `n_pairs >= MIN_LOCAL_PAIRS`, both sides present, and `se_db() <= 1.0` leaves a
+/// maximum reading of 1.573 dB against 9.347 unadmitted, and takes 12 of the 14 readings over 1 dB
+/// with it while costing 21 of 583 gaps — a 57% hit rate against a 0.4% base rate. That ratio is
+/// what distinguishes a gate finding broken collars from one censoring large true corrections, and
+/// it is checkable: a genuine 6 dB offset measured on a clean collar has a low SE and is **kept**.
+/// The four corpus collars over 6 dB have SEs of 1.86 / 4.21 / 2.38 / 3.93 and side disagreements
+/// of 4.4–7.0 dB. They were unreliable, not large.
+///
+/// **`se_db()`, `|pre_offset_db - post_offset_db|` and [`spread_db`](CollarLevelOffset::spread_db)
+/// are interchangeable here** — at a fixed `n_pairs` they are the same measurement, and all three
+/// cut the tail equally well on this corpus. Pick one; do not claim the other two as independent
+/// confirmation of it.
+pub const MAX_LOCAL_SE_DB: f64 = 1.0;
 
 /// Refusal bound (dB) on the **local residual** `d_local − offset_prior`. Past it the collar is
 /// reaching the wrong material and the fill is left alone — a refusal, not a clamp.
 ///
-/// **Provisional** — `docs/dev/TEMP-local-paired-gain-plan.md` § 4a sets the shipping value from
-/// where real readings stop. Deliberately not inherited from `max_fill_gain_db` (12.0), which
-/// bounds an RMS ratio and has never been calibrated, nor from
+/// **A backstop, not the disposal.** Set from where the readings stop: on the admitted cohort
+/// (§ 4b Result 4) the corpus's largest residual is 1.573 dB and p99 is 0.909, so 3.0 is roughly
+/// twice the observed maximum and **fires on nothing at any value from 2.0 up**. The tail this was
+/// drafted at 6.0 to catch is disposed of upstream by [`MIN_LOCAL_PAIRS`] together with
+/// [`MAX_LOCAL_SE_DB`]; what is left for this bound is material 51 pairs did not produce. That is a
+/// reason to set it where the readings stop and move on, not a reason to drop it — but it does mean
+/// the acceptance tests belong on the admission gate, not here.
+///
+/// Placing it at 6.0 would have reproduced the failure mode it exists to avoid: on arm 3 that value
+/// fired on 2 of 503 collars, sitting above p99, forfeiting the detection it was added for. It is
+/// deliberately not inherited from `max_fill_gain_db` (12.0), which bounds an RMS ratio and has
+/// never been calibrated, nor from
 /// [`DEFAULT_MAX_PROGRAM_GAIN_DB`](crate::domain::DEFAULT_MAX_PROGRAM_GAIN_DB), which bounds the
 /// whole-file offset rather than a residual against it.
 ///
-/// Nothing reads this yet: the apply half of that plan is gated behind the census.
-pub const MAX_LOCAL_RESIDUAL_DB: f64 = 6.0;
+/// Nothing reads this yet: the apply half of that plan is a separate Change.
+pub const MAX_LOCAL_RESIDUAL_DB: f64 = 3.0;
 
 /// Minimum pairs for a per-chunk median to be emitted.
 pub const MIN_CHUNK_PAIRS: usize = 20;
@@ -202,9 +235,10 @@ pub struct CollarLevelOffset {
     /// Median paired difference over the **pooled** collar. This — not either side alone — is what
     /// a later gain reads.
     pub offset_db: f64,
-    /// Median absolute deviation about `offset_db`. Emitted so a later Change can gate on it; over
-    /// ~10 samples it is not the same statistic as the whole-file MAD over ~500, so the apply-side
-    /// trust gate is [`MIN_LOCAL_PAIRS`] instead.
+    /// Median absolute deviation about `offset_db`. Over ~10 samples this is not the same statistic
+    /// as the whole-file MAD over ~500, which is why it is not read directly: the apply-side trust
+    /// gates are [`MIN_LOCAL_PAIRS`] on the count and [`MAX_LOCAL_SE_DB`] on
+    /// [`se_db()`](Self::se_db), which folds this together with that count.
     pub spread_db: f64,
     /// Accepted pairs. **No floor is applied here** — see [`MIN_LOCAL_PAIRS`] for why the estimator
     /// reports a thin collar rather than hiding it. A consumer that turns this into a gain owes its
@@ -217,8 +251,11 @@ pub struct CollarLevelOffset {
     /// cause and the census cannot say which knob to turn.
     pub n_active: usize,
     pub n_steady: usize,
-    /// Accepted pairs whose A block starts before the gap / after it. Provenance — is this a
-    /// one-sided collar? — never a gate.
+    /// Accepted pairs whose A block starts before the gap / after it.
+    ///
+    /// Emitted as provenance — is this a one-sided collar? — and then promoted: *both sides
+    /// present* is half the apply-side admission test (§ 4b Result 4), because eight of the eleven
+    /// worst collars in the corpus are one-sided. The other half is [`MAX_LOCAL_SE_DB`].
     pub n_pre: usize,
     pub n_post: usize,
     /// Median of the pre-side pairs alone; `None` when that side contributed none.
@@ -248,6 +285,32 @@ pub struct CollarLevelOffset {
     /// `Some(0.0)` and `None` are different facts — "the fit was believed and said zero" versus
     /// "there was no fit to believe" — so this is an `Option`, not a defaulted `0.0`.
     pub map_lag_ms: Option<f64>,
+}
+
+impl CollarLevelOffset {
+    /// Standard error (dB) of [`offset_db`](Self::offset_db), from the MAD and the pair count.
+    ///
+    /// **Derived, never stored.** A serialized field could disagree with the `spread_db` and
+    /// `n_pairs` sitting beside it in the same object; this cannot. It is also the one expression
+    /// the census script, the apply-side admission gate and the plan must not drift apart on, so it
+    /// lives here rather than being rewritten at each call site.
+    ///
+    /// Both constants are normal-theory — 1.4826 takes MAD to sigma, 1.2533 takes sigma to the SE
+    /// of a *median* rather than a mean. The collar population is small and not guaranteed normal,
+    /// so read the result as an order of magnitude, not a confidence interval. That is enough for
+    /// its job: [`MAX_LOCAL_SE_DB`] separates collars reading tenths of a dB from ones reading
+    /// several, and nothing depends on the boundary being exact.
+    ///
+    /// Zero pairs yields `None`, not infinity — the caller already has to handle an absent collar,
+    /// and a sentinel here would compare as "dispersed" in one direction and "clean" in the other
+    /// depending on the sign convention someone assumed.
+    #[must_use]
+    pub fn se_db(&self) -> Option<f64> {
+        if self.n_pairs == 0 {
+            return None;
+        }
+        Some(1.2533 * 1.4826 * self.spread_db / (self.n_pairs as f64).sqrt())
+    }
 }
 
 /// Per-side level context. Kept because it is the only thing available when B cannot be mapped, and

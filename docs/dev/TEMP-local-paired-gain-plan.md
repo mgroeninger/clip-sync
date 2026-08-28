@@ -18,6 +18,20 @@ apply), § 11 (the doc surface is wider than the gap table). The review's one op
 question — the map-straddle exposure — was decided the same day: **§ 3a, per-side
 medians as a detector, no gate.**
 
+**Revised 2026-08-28** — coherence pass after arm 4, no new decisions. § 3 carried
+the superseded `W = 2.0` default and its envelope-context justification, and
+described the collar as mapped through the global `offset_secs` (§ 3b replaced
+both); § 6's struct predated `n_active` / `n_steady` / `map_lag_ms` and left
+`se_db` — which § 4 and § 8 branch on — with no stated home (it is derived, not a
+field, and § 8's signature was missing `max_se_db`); § 6 still called
+`n_pre` / `n_post` "not a gate" after Result 4 made both-sides-present half of the
+admission test; § 12 required `collar_level` only on gaps clearing
+`MIN_LOCAL_PAIRS`, contradicting the un-censoring rule the whole plan rests on,
+and never mentioned the admission test. § 11's measurement half is now ticked
+against the tree (it had landed) and the **arm-4 write-back** is broken out as
+the remaining work — the four constants are decided in § 4b and still absent
+from the code.
+
 **Tracked as:** [BACKLOG.md](../../BACKLOG.md) § *Fill normalize boosts against a
 non-local reference* → *Local paired-shoulder gain*.
 
@@ -91,7 +105,8 @@ both: A is inactive, and the first active block that *abuts* the silent core
 fails steadiness (`|Δrms|` ≫ `STEADY_TOLERANCE_DB`). That walk-off is wanted
 (same job as `border_standoff`). Do not special-case it.
 
-**Collar (A timeline), default `local_pair_collar_secs = 2.0`:**
+**Collar (A timeline), `local_pair_collar_secs = 4.0` — SET by § 4b Results 1
+and 4; 2.0 was the provisional value the first three arms ran at:**
 
 ```text
 pre  = [gap.start − W, gap.start)
@@ -107,9 +122,23 @@ Then the existing pairing steps (active / steady / map / B prefix / B active /
 copy it. File-edge and one-sided collars are valid — an empty pre is not an
 error.
 
-`W = 2.0` matches the registration envelope context, not the 5 s normalize
-window. The 5 s pool was the defect; this is a different estimator, not a
-shorter RMS. Config-only; no CLI in v1.
+**The *map* step is not the whole-file one.** This section originally inherited
+the whole-file reduce's single global `offset_secs`. § 3b replaced it with the
+per-gap shoulder-registered lag after the census found the global offset sitting
+at the shoulder-correlation peak on only 42% of repairable dropouts. Everywhere
+below that says "the map", read § 3b's `map_lag_secs`.
+
+`W` is not a shorter version of the 5 s normalize window — the 5 s pool was the
+defect, and this is a different estimator, not a shorter RMS. Config-only; no
+CLI in v1.
+
+**Why 4.0 and not the 2.0 this section originally argued for.** The draft picked
+2.0 to match the registration envelope context. Arms 1→2 and then 3→4 measured
+the choice instead: doubling `W` buys `n_pairs` ×2.06 with `spread_db` **flat**
+(×1.01) and `se_db` ×0.717 ≈ 1/√2, abstentions fall 133 → 50, and no gap loses a
+collar. The far half of a 4 s collar is as good as the near half, which only
+became checkable once § 3b fixed the map — see § 4b Results 1 and 4. The code
+default is still 2.0 and is part of the arm-4 write-back (§ 11).
 
 Stamping is **scan-time**, so `ScanGapsRequest` must carry `local_pair_collar_secs`
 (`composition.rs` today passes no gain knob into scan). The reason is not
@@ -140,6 +169,10 @@ has nothing to measure. Patch never recomputes the collar.
 > would reopen this. Nothing below changes except the claim that the statistic
 > is diagnostic of registration — the ROOT registration problem was real, and
 > § 3b is what came of it.
+
+*(Written before § 3b. Collar pairing no longer maps through the global offset —
+the paragraph's premise is what § 3b went on to fix. Kept because the argument
+for emitting the statistic does not depend on it.)*
 
 Collar pairing maps A→B through the single global `offset_secs`, exactly as the
 whole-file reduce does. That is safe over ~500 pairs — a wrong-material region
@@ -836,22 +869,41 @@ pub struct CollarLevelOffset {
     pub offset_db: f64,
     pub spread_db: f64,
     pub n_pairs: usize,
+    /// Why a thin collar is thin: `n_steady / n_active` is what steadiness cost (remedy: widen
+    /// `W`), `n_pairs / n_steady` is B-coverage yield (remedy: none). § 4a has to choose between
+    /// those two remedies and a bare `n_pairs` names no cause.
+    pub n_active: usize,
+    pub n_steady: usize,
     pub n_pre: usize,
     pub n_post: usize,
-    /// Median of the pre-side pairs alone; `None` on a one-sided collar. Detector, not a gate
-    /// — see § 3a.
+    /// Median of the pre-side pairs alone; `None` on a one-sided collar. Specified as a straddle
+    /// detector (§ 3a) and **refuted as one** by the census; kept as provenance. Nothing gates.
     pub pre_offset_db: Option<f64>,
     /// Median of the post-side pairs alone; `None` on a one-sided collar.
     pub post_offset_db: Option<f64>,
+    /// Which map this collar was read through (§ 3b). `Some(0.0)` = a lag was trusted and it said
+    /// zero; `None` = nothing was trusted and the nominal map was used. Deliberately different.
+    pub map_lag_ms: Option<f64>,
     pub first_pair_secs: f64,
     pub last_pair_secs: f64,
 }
 ```
 
-`n_pre` / `n_post` are provenance (is this a one-sided collar?), not a gate —
-counts of **accepted pairs** whose A-block start falls in pre vs post.
-`pre_offset_db` / `post_offset_db` are the § 3a straddle detector over the same
-binning; nothing branches on them in v1. `first_pair_secs` / `last_pair_secs`
+**`se_db` is derived, not stored.** § 4's `apply_local` and § 8's
+`abstained_dispersion` both branch on it, and § 4a's census reads it, but it is
+a function of two fields already here — `1.25 × spread_db × 1.48 / √n_pairs`,
+the same expression the whole-file estimator's "no deadband" argument uses.
+Expose it as a method on `CollarLevelOffset` so the census script, the apply
+gate and the plan cannot drift apart on the constant factors; do not add a
+field, which would make it possible to serialize a value inconsistent with the
+`spread_db` / `n_pairs` beside it.
+
+`n_pre` / `n_post` are counts of **accepted pairs** whose A-block start falls in
+pre vs post. They began as pure provenance (is this a one-sided collar?); § 4b
+Result 4 made *both sides present* half of the admission test, because eight of
+the eleven worst collars in the corpus are one-sided. `pre_offset_db` /
+`post_offset_db` stay provenance — they were the § 3a straddle detector, that
+reading is refuted, and nothing branches on them. `first_pair_secs` / `last_pair_secs`
 are A-timeline, same as `AbLevelOffset`. No `chunks`. Type home:
 `program_levels.rs`, next to `AbLevelOffset`.
 
@@ -981,10 +1033,16 @@ collar_residual_gain(
     collar: Option<&CollarLevelOffset>,
     enabled: bool,                 # normalize_fill
     offset_prior: f64,             # Applied offset_db, else 0
+    max_se_db: f64,                # MAX_LOCAL_SE_DB (§ 4b Result 4) — the admission axis
     max_residual_db: f64,          # MAX_LOCAL_RESIDUAL_DB (§ 4) — NOT max_fill_gain_db
     channels_comparable: bool,     # program_levels.channels_comparable (hoisted, § 6)
 ) -> LocalGainDecision
 ```
+
+`se_db` is read off the collar (§ 6: derived from `spread_db` / `n_pairs`, not a
+field). `MIN_LOCAL_PAIRS` stays a module constant rather than a parameter — it is
+the same policy on every gap, whereas the two bounds are passed so the tests in
+§ 10 can drive the branches without a corpus-sized fixture.
 
 | Reason (`snake_case`) | When |
 |---|---|
@@ -1119,16 +1177,32 @@ Default flags (local off) are program-gain’s acceptance, not this plan’s.
 
 **Measurement half (lands first; local stays off, so this is shippable alone)**
 
-- [ ] Extract collect + summarize from `paired_level_offset`; collar predicate gates **pairing only** — `collect` keeps iterating the full `a_levels` slice so `is_steady` sees the core blocks (§ 6); binary-search the collar bounds rather than walking the timeline per gap
-- [ ] Bin `n_pre`/`n_post` **and** `pre_offset_db`/`post_offset_db` from pair A-times (§ 3a)
-- [ ] `CollarLevelOffset` in `program_levels.rs` (incl. `n_active` / `n_steady`) + `MIN_LOCAL_PAIRS` + `MAX_LOCAL_SE_DB` + `MAX_LOCAL_RESIDUAL_DB` + collar window helper (pre/post, exclude core); the constants are **set** by § 4b Result 4 (8 / 1.0 / 3.0 at `W` = 4.0), not provisional — but `MAX_LOCAL_SE_DB`'s threshold is fitted to the corpus and only its axis is established. `MIN_LOCAL_PAIRS` is **not** read by the estimator — no floor there, or the census is censored at the constant it sets
-- [ ] Hoist `channels_comparable` onto `ProgramLevels` (keep it on `AbLevelOffset`; same fact, existing consumers)
-- [ ] Thread `local_pair_collar_secs` onto `ScanGapsRequest` (`composition.rs` and every request literal) — because the timelines live in `ScanGaps`, **not** because of `--patch-only` (§ 3)
-- [ ] Stamp `Gap.collar_level` in `ScanGaps` next to `program_levels` (timelines still live); skip when channels incomparable. ~64 `Gap { … }` literals need the new field — add a constructor or `Default` rather than 64 mechanical edits
-- [ ] Gap object table in [json-output.md](../json-output.md); omit when `None` (`GapScanJson` serializes `Gap` already)
+*Landed — arms 1–4 could not have run otherwise; the ticks below are checked against the tree, not from memory.*
+
+- [x] Extract collect + summarize from `paired_level_offset`; collar predicate gates **pairing only** — `collect` keeps iterating the full `a_levels` slice so `is_steady` sees the core blocks (§ 6); binary-search the collar bounds rather than walking the timeline per gap
+- [x] Bin `n_pre`/`n_post` **and** `pre_offset_db`/`post_offset_db` from pair A-times (§ 3a)
+- [x] `CollarLevelOffset` in `program_levels.rs` (incl. `n_active` / `n_steady`, `map_lag_ms`) + `MIN_LOCAL_PAIRS` + `MAX_LOCAL_RESIDUAL_DB` + collar window helper (pre/post, exclude core). `MIN_LOCAL_PAIRS` is **not** read by the estimator — no floor there, or the census is censored at the constant it sets
+- [x] `map_lag_secs` parameter + `map_lag_ms` provenance (§ 3b); `scan_gaps` supplies `DonorRegistration::trusted_lag_secs`
+- [x] Hoist `channels_comparable` onto `ProgramLevels` (keep it on `AbLevelOffset`; same fact, existing consumers)
+- [x] Thread `local_pair_collar_secs` onto `ScanGapsRequest` (`composition.rs` and every request literal) — because the timelines live in `ScanGaps`, **not** because of `--patch-only` (§ 3); echoed back as `GapReport.local_pair_collar_secs` so a dump is attributable to its arm
+- [x] Stamp `Gap.collar_level` in `ScanGaps` next to `program_levels` (timelines still live); skip when channels incomparable
+- [x] Gap object table in [json-output.md](../json-output.md); omit when `None` (`GapScanJson` serializes `Gap` already)
 - [x] `scripts/measure/census-collar-levels.ps1` — per-**gap** sibling of `census-program-levels.ps1` (which is per-pair and cannot answer § 4a)
 - [x] `scripts/measure/compare-collar-arms.ps1` — matched two-arm join; no single-dump census can answer "did it help?", and both of the rules that answer it wrong are silent failures (§ 4b)
-- [ ] **§ 4a: run the corpus census and set the three constants against it.** Everything below waits on this
+- [x] **§ 4a: run the corpus census.** Arms 1–4 complete; the constants are stated against arm 4 in § 4b Result 4
+
+**Arm-4 write-back (the remaining measurement-half work; nothing in the apply half starts before it)**
+
+The four constants are *decided* in § 4b Result 4 and *not yet in the code*. As of 2026-08-28 the
+tree holds `default_local_pair_collar_secs() = 2.0`, `MAX_LOCAL_RESIDUAL_DB = 6.0` (doc-commented
+"Provisional"), and no `MAX_LOCAL_SE_DB` at all — so the plan currently reads as settled where the
+code reads as provisional, which is exactly the drift § 4a exists to prevent.
+
+- [ ] `default_local_pair_collar_secs()` 2.0 → **4.0** (§ 4b Results 1 and 4); update the `config.rs` doc comment to cite the arm, not the envelope-context argument § 3 originally made
+- [ ] `MAX_LOCAL_RESIDUAL_DB` 6.0 → **3.0**, and rewrite its doc comment: no longer "provisional pending § 4a" but a **backstop** — on this corpus it fires on nothing at any value from 2.0 up, and the admission test is the disposal
+- [ ] Add `MAX_LOCAL_SE_DB = 1.0` next to them, documenting that the **axis** is what arm 4 established and the threshold is fitted to this corpus; name the three interchangeable axes (`se`, `|pre − post|`, `spread`) so nobody later claims two of them as independent confirmation
+- [ ] `se_db()` method on `CollarLevelOffset` (§ 6 — derived, never a field) so census, apply gate and plan share one expression
+- [ ] `MIN_LOCAL_PAIRS` stays **8**; amend its doc comment — it is *necessary, not sufficient*, and at `W` = 4.0 it leaves a 9.3 dB tail that only the dispersion axis disposes of
 
 **Apply half**
 
@@ -1156,11 +1230,17 @@ Default flags (local off) are program-gain’s acceptance, not this plan’s.
 
 ## 12. Done when
 
-Scan JSON for a normal A+B run carries `collar_level` — with per-side medians —
-on gaps that cleared `MIN_LOCAL_PAIRS`; a synthetic quiet-hole-in-loud-program
+Scan JSON for a normal A+B run carries `collar_level` — with per-side medians,
+`n_active` / `n_steady` and `map_lag_ms` — on **every gap where anything paired
+at all**, thin collars included and *not* censored at `MIN_LOCAL_PAIRS` (the
+floor is apply-side, § 4; a `collar_level` that appears only above it is the
+failure this plan is written against); a synthetic quiet-hole-in-loud-program
 fixture reports `offset_db ≈ 0` on that collar (the RMS pool’s failure mode);
-**§ 4a's census exists and the three constants are stated against it, including
-the corpus abstention rate and the per-collar SE**; `--normalize` on a
+**§ 4a's census exists and all four constants are stated against it — the collar
+width, the pair floor, the dispersion admission test and the residual backstop —
+including the corpus abstention rate and the per-collar SE**; the admission test
+abstains on a one-sided collar and on a populated-but-dispersed one, so no gain
+above the corpus's admitted maximum can reach a fill; `--normalize` on a
 same-master pair does not revive the n=5 over-boost; a constant-gain donor with
 program-gain off is matched from the collar where it has pairs; and
 `g_program * g_local` equals `10^(-d_local/20)` when both apply, not the square.

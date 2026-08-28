@@ -214,10 +214,18 @@ pub struct RepairConfig {
     /// Half-width (seconds) of the per-gap paired level collar stamped on the scan report
     /// (`Gap::collar_level`). Read by **scan**, not patch — see `ScanGapsRequest`.
     ///
-    /// **Provisional** (`docs/dev/TEMP-local-paired-gain-plan.md` § 4a): 2.0 matches the
-    /// registration envelope context, deliberately not [`Self::normalize_window_secs`]'s 5 s pool,
-    /// which is the defect this measurement exists to replace. The census sets the shipping value
-    /// from the pair-yield curve.
+    /// **Set by the corpus census** (`docs/dev/TEMP-local-paired-gain-plan.md` § 4b Results 1 and
+    /// 4), which measured the choice rather than arguing it: doubling 2.0 → 4.0 buys `n_pairs`
+    /// ×2.06 with `spread_db` **flat** (×1.01) and the collar's standard error ×0.717 ≈ 1/√2, takes
+    /// abstentions from 133 to 50 over 1073 gaps, and costs no gap its collar. Improving by exactly
+    /// the square root of the sample is the answer to the worry the wider window raised — that
+    /// reaching further from where the shoulder lag was fitted would amplify misregistration, which
+    /// would have shown up as the extra material being *worse* than the near material. It is not.
+    ///
+    /// Deliberately not [`Self::normalize_window_secs`]'s 5 s pool, which is the defect this
+    /// measurement exists to replace; the two are unrelated windows that a shared number would
+    /// imply were the same one. The earlier 2.0 came from matching the registration envelope
+    /// context, an argument the arms superseded.
     #[serde(default = "default_local_pair_collar_secs")]
     pub local_pair_collar_secs: f64,
     /// Window size (seconds) for computing A's border RMS.
@@ -489,7 +497,7 @@ fn default_normalize_window_secs() -> f64 {
     5.0
 }
 fn default_local_pair_collar_secs() -> f64 {
-    2.0
+    4.0
 }
 fn default_max_fill_gain_db() -> f64 {
     12.0
