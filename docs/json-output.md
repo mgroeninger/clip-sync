@@ -179,6 +179,7 @@ Top-level object: **RepairJsonOutput**.
 | `silence_peak_fraction` | number | always | Peak-fraction threshold used for silence classification |
 | `absolute_silence_rms` | number | always | Absolute RMS floor as **normalized** amplitude in `[0, 1)` (default ≈ `0.001007`, not the CLI 0–32767 display scale) |
 | `limit_fill_to_mapped_region` | bool | always | When true (default in query-reference mode), gaps outside mapped clip coverage are reported but not fillable |
+| `local_pair_collar_secs` | number | when the scan populated it | Collar half-width (seconds either side of the hole) the per-gap [CollarLevelOffset](#collarleveloffset) readings in this report were measured over. Config-only, no CLI flag. Sits out here rather than among the recipe fields for the same reason `decode_chunk_secs` does: the recipe's contract is *same recipe ⇔ same gap list*, and a collar width cannot move a gap boundary. Exists so a two-arm collar differential is attributable to the width that changed rather than to the output directory — the config that set it normally lives beside the dumps in an ephemeral directory |
 | `audio_timeline_skew` | [AudioTimelineSkew](#audiotimelineskew) \| null | always | Present when gap scan measured PTS vs decoded-sample clock; `null` when not measurable (e.g. seek-based scan fallback). Human report emits a warning when `delta_secs > 1.0` |
 | `program_levels` | [ProgramLevels](#programlevels) | when the scan populated it | Whole-program A/B level readings. Since 2026-08-26 `offset` **drives the fill gain** — see `patch.program_gain` and [pipeline.md](pipeline.md) § Fill gain |
 
@@ -193,7 +194,6 @@ Whole-program level readings derived from the scan's per-block RMS timelines. Si
 | `b` | [ProgramLevelContext](#programlevelcontext) | when B produced a level timeline | Absent when B was not scanned — which includes a readable B with **no alignment offset**, since the B scan only runs when both exist |
 | `offset` | [AbLevelOffset](#ableveloffset) | when enough blocks paired | The A↔B level relationship |
 | `channels_comparable` | bool | always | Same fact as `offset.channels_comparable`, hoisted: it is computed from track compatibility *independently* of whether the pairing cleared its minimum, so when `offset` is absent this is the only place the cause is legible |
-| `local_pair_collar_secs` | number | always | Collar half-width (seconds either side of the hole) the per-gap [CollarLevelOffset](#collarleveloffset) readings in this report were measured over. Config-only, no CLI flag. Recorded here rather than in the recipe block because the recipe's contract is *same recipe ⇔ same gap list* and a collar width cannot move a gap boundary. Exists so a two-arm collar differential is attributable to the width that changed rather than to the output directory — the config that set it normally lives beside the dumps in an ephemeral directory |
 
 #### AbLevelOffset
 

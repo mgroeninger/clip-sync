@@ -371,7 +371,6 @@ mod tests {
             a: ctx,
             b: Some(ctx),
             channels_comparable: true,
-            local_pair_collar_secs: 2.0,
             offset,
         }
     }

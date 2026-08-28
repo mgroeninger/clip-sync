@@ -44,6 +44,7 @@ pub fn gap_report_from_energy_fixture(temp: &Path, fixture: &EnergySignatureFixt
     let (path_a, path_b) = write_fixture_wavs(temp, fixture);
     let (a_start, a_end, b_start, b_end, total_secs) = gap_report_times(fixture);
     GapReport {
+        local_pair_collar_secs: None,
         video_a: path_a,
         video_b: path_b,
         track_compatibility: Some(clip_sync_repair::domain::TrackCompatibility {
@@ -107,6 +108,7 @@ pub fn gap_report_from_floor_oracle(
     let total_secs = decoded_a_mono.len() as f64 / rate;
 
     GapReport {
+        local_pair_collar_secs: None,
         video_a: path_a.to_path_buf(),
         video_b: path_b.to_path_buf(),
         track_compatibility: Some(clip_sync_repair::domain::TrackCompatibility {

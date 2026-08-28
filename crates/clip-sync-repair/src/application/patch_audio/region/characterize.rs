@@ -1009,6 +1009,7 @@ mod tests {
             source_bit_depth: None,
         };
         let report = GapReport {
+            local_pair_collar_secs: None,
             video_a: Default::default(),
             video_b: Default::default(),
             track_compatibility: None,
@@ -1171,6 +1172,7 @@ mod tests {
             source_bit_depth: None,
         };
         let report = GapReport {
+            local_pair_collar_secs: None,
             video_a: Default::default(),
             video_b: Default::default(),
             track_compatibility: None,

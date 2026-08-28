@@ -760,6 +760,7 @@ mod tests {
 
     fn base_report(compat: Option<TrackCompatibility>, gaps: Vec<Gap>) -> GapReport {
         GapReport {
+            local_pair_collar_secs: None,
             video_a: PathBuf::from("a.wav"),
             video_b: PathBuf::from("b.wav"),
             track_compatibility: compat,

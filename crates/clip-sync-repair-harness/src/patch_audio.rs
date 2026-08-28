@@ -204,6 +204,7 @@ fn default_sine_gap() -> Gap {
 
 fn make_report(path_a: PathBuf, path_b: PathBuf, compat: TrackCompatibility) -> GapReport {
     GapReport {
+        local_pair_collar_secs: None,
         video_a: path_a,
         video_b: path_b,
         track_compatibility: Some(compat),

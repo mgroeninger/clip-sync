@@ -204,6 +204,19 @@ pub struct GapReport {
     pub gap_offset_agreement: Option<GapOffsetAgreement>,
     /// Decode chunk size used during sequential scan (seconds).
     pub decode_chunk_secs: u64,
+    /// Collar half-width (seconds either side of the hole) the per-gap
+    /// [`Gap::collar_level`] readings in this report were measured over — the scan's
+    /// `local_pair_collar_secs`, echoed so the report says what produced it.
+    ///
+    /// Outside [`Self::recipe`] for the same reason [`Self::decode_chunk_secs`] is: the recipe's
+    /// contract is `PartialEq` ⇔ same gap list, and a collar width cannot move a gap boundary.
+    ///
+    /// `None` on legacy/test constructors only — a real scan always stamps it. The knob is
+    /// config-only with no CLI flag, so without this the config that set it is the sole record,
+    /// and that config normally lives beside the dumps in an ephemeral directory: two census arms
+    /// differing only in collar width would be byte-indistinguishable in shape, and a differential
+    /// between them attributable to nothing sturdier than a directory name.
+    pub local_pair_collar_secs: Option<f64>,
     /// Scan knobs that determined which gaps were detected (`PartialEq` ⇔ same gap list).
     pub recipe: ScanRecipe,
     /// When query-reference alignment is used, only gaps inside the mapped clip coverage are fillable.

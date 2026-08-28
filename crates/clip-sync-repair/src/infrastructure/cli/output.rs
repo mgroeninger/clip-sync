@@ -752,6 +752,10 @@ struct GapScanJson {
     /// Normalized amplitude in `[0, 1)` (default ≈ `0.001007`).
     absolute_silence_rms: f32,
     limit_fill_to_mapped_region: bool,
+    /// Collar half-width the per-gap `collar_level` readings were measured over. Omitted only by a
+    /// report that never ran a scan (legacy/test constructors); see `GapReport`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    local_pair_collar_secs: Option<f64>,
     /// How far the B silence/level scan progressed; omitted when B was not scanned.
     #[serde(skip_serializing_if = "Option::is_none")]
     b_scanned_end_secs: Option<f64>,
@@ -784,6 +788,7 @@ impl GapScanJson {
             silence_peak_fraction: report.recipe.silence_peak_fraction(),
             absolute_silence_rms: report.recipe.absolute_silence_rms(),
             limit_fill_to_mapped_region: report.limit_fill_to_mapped_region,
+            local_pair_collar_secs: report.local_pair_collar_secs,
             b_scanned_end_secs: report.b_scanned_end_secs,
             b_scan_truncated: report.b_scan_truncated,
             audio_timeline_skew: report.audio_timeline_skew.map(|skew| {
@@ -1120,6 +1125,8 @@ mod tests {
     fn full_surface_gap_report() -> GapReport {
         let alignment_detail = full_surface_alignment_detail();
         GapReport {
+            // Populated so the golden pins the field's presence and shape, not just its absence.
+            local_pair_collar_secs: Some(2.0),
             video_a: PathBuf::from("video_a.mkv"),
             video_b: PathBuf::from("video_b.mkv"),
             track_compatibility: Some(TrackCompatibility {
@@ -1167,7 +1174,6 @@ mod tests {
             // contract golden, not just its absence.
             program_levels: Some(crate::domain::program_levels::ProgramLevels {
                 channels_comparable: true,
-                local_pair_collar_secs: 2.0,
                 a: crate::domain::program_levels::ProgramLevelContext {
                     mid_db: Some(-23.4),
                     floor_db: Some(-71.2),
@@ -1341,6 +1347,7 @@ mod tests {
     fn minimal_report() -> GapReport {
         let alignment_detail = minimal_alignment_detail();
         GapReport {
+            local_pair_collar_secs: None,
             video_a: PathBuf::from("a.mp4"),
             video_b: PathBuf::from("b.mp4"),
             track_compatibility: Some(TrackCompatibility {
@@ -1673,6 +1680,7 @@ mod tests {
             end_clip_anchor: None,
         };
         let report = GapReport {
+            local_pair_collar_secs: None,
             video_a: PathBuf::from("a.mp4"),
             video_b: PathBuf::from("b.mp4"),
             track_compatibility: None,

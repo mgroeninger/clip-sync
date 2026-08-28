@@ -772,6 +772,7 @@ fn make_report_with_alignment(
     gaps: Vec<Gap>,
 ) -> GapReport {
     GapReport {
+        local_pair_collar_secs: None,
         video_a: path_a,
         video_b: path_b,
         track_compatibility: Some(compat),
@@ -791,6 +792,7 @@ fn make_report_with_alignment(
 
 fn make_report(path_a: PathBuf, path_b: PathBuf, compat: TrackCompatibility) -> GapReport {
     GapReport {
+        local_pair_collar_secs: None,
         video_a: path_a,
         video_b: path_b,
         track_compatibility: Some(compat),
@@ -867,7 +869,6 @@ fn program_levels_offset(
         a: ctx,
         b: Some(ctx),
         channels_comparable: true,
-        local_pair_collar_secs: 2.0,
         offset: Some(AbLevelOffset {
             offset_db,
             spread_db,
@@ -1609,6 +1610,7 @@ fn patch_audio_dual_fit_rescues_inverted_post_border() {
     };
     let report = make_report(path_a, path_b, stereo_identical_compat(SAMPLE_RATE));
     let report = GapReport {
+        local_pair_collar_secs: None,
         gaps: vec![gap],
         ..report
     };
@@ -1690,6 +1692,7 @@ fn patch_audio_short_gap_one_strong_seam_fallback_enables_patch() {
 
     let report = make_report(path_a, path_b, stereo_identical_compat(SAMPLE_RATE));
     let report = GapReport {
+        local_pair_collar_secs: None,
         gaps: vec![gap],
         ..report
     };
@@ -1826,6 +1829,7 @@ fn patch_audio_gap_end_extension_retries_failed_post_seam() {
 
     let report = make_report(path_a, path_b, stereo_identical_compat(SAMPLE_RATE));
     let report = GapReport {
+        local_pair_collar_secs: None,
         gaps: vec![gap],
         ..report
     };
@@ -1921,6 +1925,7 @@ fn patch_audio_fit_mode_joint_gap_end_extension_patches_weak_post_seam() {
         stereo_identical_compat(SAMPLE_RATE),
     );
     let report = GapReport {
+        local_pair_collar_secs: None,
         gaps: vec![gap],
         ..report
     };
@@ -2014,6 +2019,7 @@ fn patch_audio_full_profile_runs_boundary_grid_when_baseline_insufficient() {
         stereo_identical_compat(SAMPLE_RATE),
     );
     let report = GapReport {
+        local_pair_collar_secs: None,
         gaps: vec![gap],
         ..report
     };
@@ -2071,6 +2077,7 @@ fn patch_audio_fit_mode_marginal_tier_patches_with_warn_confidence() {
 
     let report = make_report(path_a, path_b, stereo_identical_compat(SAMPLE_RATE));
     let report = GapReport {
+        local_pair_collar_secs: None,
         gaps: vec![default_gap()],
         ..report
     };
@@ -2142,6 +2149,7 @@ fn patch_audio_fit_mode_high_confidence_on_clean_fixture() {
 
     let report = make_report(path_a, path_b, stereo_identical_compat(SAMPLE_RATE));
     let report = GapReport {
+        local_pair_collar_secs: None,
         gaps: vec![default_gap()],
         ..report
     };
@@ -2276,6 +2284,7 @@ fn patch_audio_fit_default_repeat_penalty_patches_clean_fixture() {
     let temp = tempfile::tempdir().expect("tempdir");
     let fixture = sine_gap_fixture(temp.path(), SAMPLE_RATE, SAMPLE_RATE, 440.0, 16_000.0);
     let report = GapReport {
+        local_pair_collar_secs: None,
         gaps: vec![default_gap()],
         ..make_report(
             fixture.path_a,
@@ -2377,6 +2386,7 @@ fn patch_audio_anchored_retry_passes_on_clean_single_gap() {
     let temp = tempfile::tempdir().expect("tempdir");
     let fixture = sine_gap_fixture(temp.path(), SAMPLE_RATE, SAMPLE_RATE, 440.0, 16_000.0);
     let report = GapReport {
+        local_pair_collar_secs: None,
         gaps: vec![default_gap()],
         ..make_report(
             fixture.path_a,
@@ -2658,6 +2668,7 @@ fn patch_audio_anchored_retry_marginal_flag_without_anchors_skips_pass2() {
     );
 
     let report = GapReport {
+        local_pair_collar_secs: None,
         gaps: vec![default_gap()],
         ..make_report(path_a, path_b, stereo_identical_compat(SAMPLE_RATE))
     };
@@ -2710,6 +2721,7 @@ fn patch_audio_anchored_retry_skips_pass2_when_no_anchors() {
     );
 
     let report = GapReport {
+        local_pair_collar_secs: None,
         gaps: vec![default_gap()],
         ..make_report(path_a, path_b, stereo_identical_compat(SAMPLE_RATE))
     };
@@ -2737,6 +2749,7 @@ fn patch_audio_anchored_retry_skips_pass2_when_all_gaps_patch_in_pass1() {
     let temp = tempfile::tempdir().expect("tempdir");
     let fixture = sine_gap_fixture(temp.path(), SAMPLE_RATE, SAMPLE_RATE, 440.0, 16_000.0);
     let report = GapReport {
+        local_pair_collar_secs: None,
         gaps: vec![default_gap()],
         ..make_report(
             fixture.path_a,

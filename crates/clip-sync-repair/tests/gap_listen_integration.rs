@@ -99,6 +99,7 @@ fn build_fixture_with_b(gap_spans: &[(f64, f64)], write_b: impl Fn(&Path)) -> Fi
     write_b(&path_b);
 
     let report = GapReport {
+        local_pair_collar_secs: None,
         video_a: path_a,
         video_b: path_b,
         track_compatibility: Some(stereo_identical_compat(SAMPLE_RATE)),

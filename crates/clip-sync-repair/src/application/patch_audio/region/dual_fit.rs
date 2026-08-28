@@ -681,6 +681,7 @@ mod tests {
             query_reference_mode: false,
         };
         let report = GapReport {
+            local_pair_collar_secs: None,
             video_a: std::path::PathBuf::from("a.wav"),
             video_b: std::path::PathBuf::from("b.wav"),
             track_compatibility: None,

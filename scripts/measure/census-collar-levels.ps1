@@ -173,7 +173,7 @@ foreach ($file in $files) {
             program_offset_db = if ($null -eq $programOffset) { $null } else { [double](Get-Node $programOffset 'offset_db') }
             # The width these collars were read over, stamped by the scan since 2026-08-27. Null on
             # an older dump, where the only record is whichever config was passed at the time.
-            collar_secs       = if ($null -eq $levels) { $null } else { Get-Node $levels 'local_pair_collar_secs' }
+            collar_secs       = Get-Node $scan 'local_pair_collar_secs'
         })
     if ($state -ne 'measured') { continue }
 

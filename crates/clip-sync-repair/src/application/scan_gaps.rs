@@ -422,7 +422,6 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         let program_levels =
             (!a_levels.is_empty()).then(|| crate::domain::program_levels::ProgramLevels {
                 channels_comparable,
-                local_pair_collar_secs: request.local_pair_collar_secs,
                 a: crate::domain::program_levels::program_level_context(&a_levels, &level_params),
                 b: b_levels_for_eq.map(|levels| {
                     crate::domain::program_levels::program_level_context(levels, &level_params)
@@ -500,6 +499,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         }
 
         let report = GapReport {
+            local_pair_collar_secs: Some(request.local_pair_collar_secs),
             video_a: request.video_a,
             video_b: request.video_b,
             track_compatibility,
@@ -1274,6 +1274,7 @@ mod tests {
         use crate::domain::gap::{Gap, GapReport};
 
         let report = GapReport {
+            local_pair_collar_secs: None,
             video_a: PathBuf::from("a.wav"),
             video_b: PathBuf::from("b.wav"),
             track_compatibility: None,
@@ -1948,11 +1949,7 @@ mod tests {
             .scan_after_alignment(request, aligned_result(Some(0.0)))
             .expect("scan should succeed");
 
-        let levels = report
-            .program_levels
-            .as_ref()
-            .expect("program levels are stamped whenever A produced a timeline");
-        assert_eq!(levels.local_pair_collar_secs, 3.5);
+        assert_eq!(report.local_pair_collar_secs, Some(3.5));
     }
 
     #[test]

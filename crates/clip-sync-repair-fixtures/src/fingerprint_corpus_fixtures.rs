@@ -99,6 +99,7 @@ fn synth_ab_inputs() -> (MultiChannelPcm, Vec<f32>, GapReport, PatchAudioRequest
         source_bit_depth: None,
     };
     let report = GapReport {
+        local_pair_collar_secs: None,
         video_a: Default::default(),
         video_b: Default::default(),
         track_compatibility: None,

@@ -533,7 +533,7 @@ A hit means the correction is live. `map_lag_ms` has no `skip_serializing_if`, s
 on every collar of a correct run even where no fit was trusted (it serializes as `null` there).
 
 **And confirm the arm is the arm you meant.** Since 2026-08-27 the scan stamps the width it measured
-at as `scan.program_levels.local_pair_collar_secs`, so a dump is no longer attributable to a `W` only
+at as `scan.local_pair_collar_secs`, so a dump is no longer attributable to a `W` only
 by the directory it landed in — which is what the first two arms rested on. The census prints the
 stamped width in its header and refuses to pool a directory holding more than one:
 

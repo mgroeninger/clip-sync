@@ -287,20 +287,6 @@ pub struct ProgramLevels {
     /// abstained is indistinguishable from one that merely ran out of pairs — so a consumer
     /// explaining an absent measurement would name the wrong cause.
     pub channels_comparable: bool,
-    /// Collar half-width the per-gap [`CollarLevelOffset`]s in this report were read over
-    /// (`local_pair_collar_secs`, seconds either side of the hole).
-    ///
-    /// Provenance for a *measurement* knob, which is why it is here and not in
-    /// [`ScanRecipe`](crate::domain::gap::ScanRecipe): the recipe's contract is `PartialEq` ⇔ same
-    /// gap list, and this width cannot move a gap boundary. Stamped because it is config-only with
-    /// no CLI flag, so the config that set it is the sole other record — and that config normally
-    /// lives beside the dumps in an ephemeral directory. Without this, two census arms that differ
-    /// only in collar width are byte-indistinguishable in shape and a differential between them is
-    /// attributable to nothing sturdier than a directory name.
-    ///
-    /// Always present, including when [`Self::offset`] abstained: a collar exists only when B
-    /// levels do, which implies A levels do, which is the condition for this whole object.
-    pub local_pair_collar_secs: f64,
 }
 
 /// Per-side median levels above and below the active threshold. Digital zeros (`rms_db` at or below

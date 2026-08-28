@@ -881,6 +881,7 @@ mod tests {
             source_bit_depth: None,
         };
         let report = GapReport {
+            local_pair_collar_secs: None,
             video_a: Default::default(),
             video_b: Default::default(),
             track_compatibility: None,
@@ -1398,6 +1399,7 @@ mod tests {
             source_bit_depth: None,
         };
         let report = GapReport {
+            local_pair_collar_secs: None,
             video_a: Default::default(),
             video_b: Default::default(),
             track_compatibility: None,
@@ -1582,6 +1584,7 @@ mod tests {
         };
         let f = |x: usize| x as f64 / f64::from(rate);
         let report = |gap_equivalence: Vec<GapEquivalenceVerdict>| GapReport {
+            local_pair_collar_secs: None,
             video_a: Default::default(),
             video_b: Default::default(),
             track_compatibility: None,
@@ -1734,6 +1737,7 @@ mod tests {
         };
 
         let report = GapReport {
+            local_pair_collar_secs: None,
             video_a: Default::default(),
             video_b: Default::default(),
             track_compatibility: None,
@@ -1991,6 +1995,7 @@ mod tests {
         };
         let b = vec![0.01f32; b_frames * b_ch as usize];
         let report = GapReport {
+            local_pair_collar_secs: None,
             video_a: Default::default(),
             video_b: Default::default(),
             track_compatibility: None,
