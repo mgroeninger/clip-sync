@@ -422,6 +422,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         let program_levels =
             (!a_levels.is_empty()).then(|| crate::domain::program_levels::ProgramLevels {
                 channels_comparable,
+                local_pair_collar_secs: request.local_pair_collar_secs,
                 a: crate::domain::program_levels::program_level_context(&a_levels, &level_params),
                 b: b_levels_for_eq.map(|levels| {
                     crate::domain::program_levels::program_level_context(levels, &level_params)
@@ -449,11 +450,33 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         // a level difference. Absence then means "no pairing", exactly as it does whole-file, and
         // `program_levels.channels_comparable` is what a consumer reads to tell the two apart.
         //
+        // Each gap is mapped at its **own** registered lag, not at the global offset. The two are
+        // routinely a block or more apart — over the 2026-08-27 corpus the global map sat at the
+        // shoulder-correlation peak on 42% of repairable dropouts and was off by >=100 ms on 59% —
+        // and a collar of ~10 pairs cannot out-vote that the way the ~500-pair whole-program reading
+        // can. The lag is free here: `gap_equivalence` was built above, is indexed 1:1 with `gaps`,
+        // and `peak_r` is correlated over the shoulders, which is the material a collar reads.
+        //
+        // Not conditioned on `request.apply_donor_registration`. That flag decides whether the
+        // registration may move a *verdict*; this is a measurement with no verdict to protect, and
+        // its alternative is a map known to be wrong. `map_lag_ms` records which map was used, so
+        // the two are never confused in a dump.
+        //
         // Measurement only in this Change: no gain reads `collar_level`, so this runs regardless of
         // `normalize_fill` and costs one binary search plus ~`2 * collar / block` blocks per gap.
         if channels_comparable {
             if let (Some(delta), Some(b_levels)) = (offset_secs, b_levels_for_eq) {
-                for gap in &mut gaps {
+                debug_assert_eq!(
+                    gaps.len(),
+                    gap_equivalence.len(),
+                    "gap/equivalence index join is positional"
+                );
+                for (gap, verdict) in gaps.iter_mut().zip(&gap_equivalence) {
+                    let map_lag_secs = equivalence_params_shell
+                        .donor_registration
+                        .as_ref()
+                        .zip(verdict.donor_registration.as_ref())
+                        .and_then(|(rp, reg)| reg.trusted_lag_secs(rp));
                     gap.collar_level = crate::domain::program_levels::collar_level_offset(
                         &a_levels,
                         b_levels,
@@ -461,6 +484,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
                         gap.video_a_end_secs,
                         request.local_pair_collar_secs,
                         delta,
+                        map_lag_secs,
                         b_scan.scanned_end_secs,
                         &level_params,
                     );
@@ -1904,6 +1928,31 @@ mod tests {
             "the offset's active count is the same predicate over the same timeline as A's context"
         );
         assert!(offset.channels_comparable);
+    }
+
+    /// The collar width is config-only with no CLI flag, so a dump that did not carry it could be
+    /// attributed to a width only by the directory it landed in. Echoing a **non-default** width
+    /// here is the point: a stamp hard-coded to the 2.0 default would pass a weaker test.
+    #[test]
+    fn scan_stamps_the_collar_width_it_measured_at() {
+        let dur = Duration::from_secs(60);
+        let reader = FixedReader::new()
+            .with("a.wav", SessionKind::Loud, dur)
+            .with("b.wav", SessionKind::Loud, dur);
+        let progress = FakeProgressReporter;
+        let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
+
+        let mut request = scan_request("a.wav", "b.wav", 60);
+        request.local_pair_collar_secs = 3.5;
+        let report = scan
+            .scan_after_alignment(request, aligned_result(Some(0.0)))
+            .expect("scan should succeed");
+
+        let levels = report
+            .program_levels
+            .as_ref()
+            .expect("program levels are stamped whenever A produced a timeline");
+        assert_eq!(levels.local_pair_collar_secs, 3.5);
     }
 
     #[test]

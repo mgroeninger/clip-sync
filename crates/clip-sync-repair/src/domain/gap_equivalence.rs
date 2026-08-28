@@ -170,6 +170,31 @@ pub struct DonorRegistration {
     pub envelopes: Option<RegistrationEnvelopes>,
 }
 
+impl DonorRegistration {
+    /// The lag a **level measurement** should map B by, in seconds — `None` to stay at the nominal
+    /// map because the fit is not worth believing.
+    ///
+    /// Separate from [`DonorRegistrationMode`], and deliberately so. That mode governs whether the
+    /// registration may change a *verdict*, which is why it defaults to `Observe` and why the rate
+    /// had to be measured before `Apply` shipped. A consumer that only measures a level has no
+    /// verdict to protect: it is choosing between the right map and a map known to be wrong, and
+    /// there is no configuration in which the wrong one is preferable. So this reads the trust floor
+    /// and not the mode — see `collar_level_offset`, its first caller.
+    ///
+    /// The floor is [`DonorRegistrationParams::min_envelope_r`] unchanged, because it is the same
+    /// question ("do these two timelines correspond here?") answered over the same material:
+    /// `peak_r` is correlated over the **shoulders only**, which is exactly what a collar reads.
+    pub fn trusted_lag_secs(&self, params: &DonorRegistrationParams) -> Option<f64> {
+        // `bins` cannot be under the minimum on anything this crate constructs — `register_donor_window`
+        // returns `None` first — but the struct is `Deserialize`, so a replayed dump is checked too.
+        let trusted = self.bins >= MIN_REGISTRATION_BINS
+            && self.peak_r.is_finite()
+            && self.peak_r >= params.min_envelope_r
+            && self.lag_ms.is_finite();
+        trusted.then_some(self.lag_ms / 1000.0)
+    }
+}
+
 /// The dB envelopes [`register_donor_window`] correlated, recorded so that **every question which
 /// moves the donor window can be re-asked from a dump alone**.
 ///
@@ -2181,5 +2206,77 @@ mod tests {
             v.donor_silence_fraction,
             0.5
         ));
+    }
+
+    // ---- trusted_lag_secs (the level-measurement consumer) -------------------------------------
+
+    fn registration(peak_r: f64, bins: usize, lag_ms: f64) -> DonorRegistration {
+        DonorRegistration {
+            lag_blocks: (lag_ms / 100.0).round() as i64,
+            lag_ms,
+            peak_r,
+            nominal_r: 0.5,
+            bins,
+            a_interior_db: None,
+            b_interior_db: None,
+            interior_delta_db: None,
+            envelopes: None,
+        }
+    }
+
+    #[test]
+    fn an_untrusted_registration_leaves_a_level_measurement_at_the_nominal_map() {
+        let params = DonorRegistrationParams::default();
+        assert_eq!(params.min_envelope_r, 0.70, "the floor this test is about");
+
+        // Believed: at or above the floor, with enough bins behind it.
+        assert_eq!(
+            registration(0.70, MIN_REGISTRATION_BINS, 300.0).trusted_lag_secs(&params),
+            Some(0.3),
+            "the floor is inclusive, and ms convert to seconds"
+        );
+        assert_eq!(
+            registration(0.99, MIN_REGISTRATION_BINS, -200.0).trusted_lag_secs(&params),
+            Some(-0.2),
+            "a negative lag is a direction, not a failure"
+        );
+        // A trusted fit that lands on zero still says so — the caller records `Some(0.0)`, which is
+        // a different fact from `None` and is how the census separates its cohorts.
+        assert_eq!(
+            registration(0.99, MIN_REGISTRATION_BINS, 0.0).trusted_lag_secs(&params),
+            Some(0.0)
+        );
+
+        // Not believed: the two timelines do not correspond here, so moving the window on the
+        // strength of that correlation would be worse than leaving it alone.
+        assert_eq!(
+            registration(0.69, MIN_REGISTRATION_BINS, 300.0).trusted_lag_secs(&params),
+            None
+        );
+        assert_eq!(
+            registration(0.99, MIN_REGISTRATION_BINS - 1, 300.0).trusted_lag_secs(&params),
+            None,
+            "too few bins — unreachable from `register_donor_window`, reachable from a dump"
+        );
+        assert_eq!(
+            registration(f64::NAN, MIN_REGISTRATION_BINS, 300.0).trusted_lag_secs(&params),
+            None,
+            "NaN must fail closed rather than through a negated comparison"
+        );
+    }
+
+    /// The mode governs whether registration may move a **verdict**. A level measurement has no
+    /// verdict to protect and its alternative is a map known to be wrong, so it reads the trust
+    /// floor and nothing else — `Observe` does not mean "measure through the wrong map".
+    #[test]
+    fn the_trusted_lag_does_not_depend_on_the_apply_mode() {
+        let reg = registration(0.95, MIN_REGISTRATION_BINS, 300.0);
+        for mode in [DonorRegistrationMode::Observe, DonorRegistrationMode::Apply] {
+            let params = DonorRegistrationParams {
+                mode,
+                ..Default::default()
+            };
+            assert_eq!(reg.trusted_lag_secs(&params), Some(0.3), "{mode:?}");
+        }
     }
 }

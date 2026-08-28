@@ -1167,6 +1167,7 @@ mod tests {
             // contract golden, not just its absence.
             program_levels: Some(crate::domain::program_levels::ProgramLevels {
                 channels_comparable: true,
+                local_pair_collar_secs: 2.0,
                 a: crate::domain::program_levels::ProgramLevelContext {
                     mid_db: Some(-23.4),
                     floor_db: Some(-71.2),

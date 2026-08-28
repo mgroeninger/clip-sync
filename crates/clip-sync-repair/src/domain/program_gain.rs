@@ -371,6 +371,7 @@ mod tests {
             a: ctx,
             b: Some(ctx),
             channels_comparable: true,
+            local_pair_collar_secs: 2.0,
             offset,
         }
     }
@@ -482,7 +483,10 @@ mod tests {
             },
         ];
         let raw = robust_chunk_drift_db(&noisy.chunks).expect("two populous chunks");
-        assert_ne!(raw, 0.07, "the unrounded measurement is the artefact: {raw:?}");
+        assert_ne!(
+            raw, 0.07,
+            "the unrounded measurement is the artefact: {raw:?}"
+        );
         let levels = levels(Some(noisy));
         let report = ProgramGainReport::new(decide(&levels), Some(&levels), false);
         assert_eq!(report.robust_drift_db, Some(0.07), "{report:?}");

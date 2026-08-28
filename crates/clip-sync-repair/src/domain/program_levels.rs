@@ -223,18 +223,31 @@ pub struct CollarLevelOffset {
     pub n_post: usize,
     /// Median of the pre-side pairs alone; `None` when that side contributed none.
     ///
-    /// **A detector, not a gate.** Collar pairing maps A→B through the single global offset, which
-    /// is safe over ~500 pairs and not obviously safe over ~10: a gap sitting on a map step puts
-    /// the two sides on different lags, and one side of the pooled median is then differencing A
-    /// against the wrong B material with nothing to out-vote it. `settled.md` § D specifies exactly
-    /// this statistic — *"pre and post disagreeing by ≈ the pair's map step"* — and records a
-    /// corpus base rate of **one** gap, which is why nothing refuses on it. See the plan's § 3a.
+    /// **Provenance, not a straddle detector — and not a gate.** It was specified as the latter
+    /// (`settled.md` § D: *"pre and post disagreeing by ≈ the pair's map step"*, corpus base rate
+    /// **one** gap) and the 2026-08-27 corpus refuted that reading. Disagreement is a pure function
+    /// of [`spread_db`](Self::spread_db): over well-populated two-sided collars, **zero of 76** with
+    /// a spread under 0.5 dB disagreed by more than 1 dB, against 12 of 14 above 2.0 dB, with no
+    /// dependence on gap length at all. It is two small medians drawn from unsteady material, which
+    /// `spread_db` already reports. The one real straddle in the corpus (31/g7) reads 2.61 dB at
+    /// n = 25 — mid-pack among the noise, because at that spread the per-side uncertainty is the
+    /// same size as the step being hunted. Detecting a map step in the level domain needs quieter
+    /// shoulders than real holes have. Still worth emitting as provenance; nothing refuses on it.
     pub pre_offset_db: Option<f64>,
     /// Median of the post-side pairs alone; `None` when that side contributed none.
     pub post_offset_db: Option<f64>,
     /// A-timeline extent of the accepted pairs, same convention as [`AbLevelOffset`].
     pub first_pair_secs: f64,
     pub last_pair_secs: f64,
+    /// Per-gap correction applied to the nominal A→B map before pairing, in ms, or `None` when
+    /// this collar was read at the nominal map because no trusted registration was available.
+    ///
+    /// **Provenance for the map itself, and it has to be here.** Every other field is a reading
+    /// *through* a mapping; without this one, a corrected collar and a nominal one are
+    /// indistinguishable in the dump, and the census cannot ask the question it exists to ask.
+    /// `Some(0.0)` and `None` are different facts — "the fit was believed and said zero" versus
+    /// "there was no fit to believe" — so this is an `Option`, not a defaulted `0.0`.
+    pub map_lag_ms: Option<f64>,
 }
 
 /// Per-side level context. Kept because it is the only thing available when B cannot be mapped, and
@@ -274,6 +287,20 @@ pub struct ProgramLevels {
     /// abstained is indistinguishable from one that merely ran out of pairs — so a consumer
     /// explaining an absent measurement would name the wrong cause.
     pub channels_comparable: bool,
+    /// Collar half-width the per-gap [`CollarLevelOffset`]s in this report were read over
+    /// (`local_pair_collar_secs`, seconds either side of the hole).
+    ///
+    /// Provenance for a *measurement* knob, which is why it is here and not in
+    /// [`ScanRecipe`](crate::domain::gap::ScanRecipe): the recipe's contract is `PartialEq` ⇔ same
+    /// gap list, and this width cannot move a gap boundary. Stamped because it is config-only with
+    /// no CLI flag, so the config that set it is the sole other record — and that config normally
+    /// lives beside the dumps in an ephemeral directory. Without this, two census arms that differ
+    /// only in collar width are byte-indistinguishable in shape and a differential between them is
+    /// attributable to nothing sturdier than a directory name.
+    ///
+    /// Always present, including when [`Self::offset`] abstained: a collar exists only when B
+    /// levels do, which implies A levels do, which is the condition for this whole object.
+    pub local_pair_collar_secs: f64,
 }
 
 /// Per-side median levels above and below the active threshold. Digital zeros (`rms_db` at or below
@@ -369,6 +396,12 @@ pub fn paired_level_offset(
 /// One-sided collars are valid, not errors: a gap at the head or tail of the file, or one whose
 /// other side is unsteady, still reports from the surviving side.
 ///
+/// `map_lag_secs` corrects the nominal A→B map for **this gap** and is recorded as
+/// [`CollarLevelOffset::map_lag_ms`]. Pass the shoulder-registered lag whenever one is trusted
+/// (`DonorRegistration::trusted_lag_secs`) and `None` otherwise: a collar is ~10 samples where the
+/// whole-program reading is ~500, so it has nothing to out-vote a mapping error, and the corpus says
+/// the nominal map is off by >=100 ms at most dropouts.
+///
 /// Returns `None` only when the collar cannot be *located* (a non-finite or inverted bound, a
 /// non-positive width) or when **nothing paired at all** — never because too few pairs survived.
 /// A thin collar is a measurement, and [`MIN_LOCAL_PAIRS`] is applied by whoever turns one into a
@@ -381,6 +414,7 @@ pub fn collar_level_offset(
     gap_end_secs: f64,
     collar_secs: f64,
     offset_secs: f64,
+    map_lag_secs: Option<f64>,
     b_scanned_end_secs: Option<f64>,
     params: &ProgramLevelParams,
 ) -> Option<CollarLevelOffset> {
@@ -415,10 +449,18 @@ pub fn collar_level_offset(
     // pre-sliced collar instead and the property above inverts — the block abutting the core loses
     // its core-side neighbour, an absent neighbour is permissive, and the fade block that walk-off
     // exists to reject pairs.
+    // The whole-program offset is one scalar over the entire runtime and is measurably wrong at an
+    // individual gap: over the 2026-08-27 corpus it sat at the shoulder-correlation peak on only 42%
+    // of repairable dropouts, off by >=100 ms on 59%, out to 400 ms. A 100 ms error pairs a syllable
+    // in A against the space between syllables in B, and the dB difference between two *different
+    // moments* is not a level relationship at all — it lands in `spread_db` and drags `offset_db`.
+    // `donor_registration` already fits that lag, on the shoulders, in the same scan.
+    //
+    // Sign matches `register_donor_window`: the lag is what B's window moves by, positive later in B.
     let collected = collect_pairs(
         a_levels,
         b_levels,
-        offset_secs,
+        offset_secs + map_lag_secs.unwrap_or(0.0),
         b_scanned_end_secs,
         params,
         first..last,
@@ -459,6 +501,7 @@ pub fn collar_level_offset(
         post_offset_db: side_median(false),
         first_pair_secs: pairs[0].0,
         last_pair_secs: pairs[pairs.len() - 1].0,
+        map_lag_ms: map_lag_secs.map(|secs| secs * 1000.0),
     })
 }
 
@@ -1098,7 +1141,28 @@ mod tests {
         gap: (f64, f64),
         collar_secs: f64,
     ) -> Option<CollarLevelOffset> {
-        collar_level_offset(a, b, gap.0, gap.1, collar_secs, 0.0, None, &params())
+        collar_level_offset(a, b, gap.0, gap.1, collar_secs, 0.0, None, None, &params())
+    }
+
+    /// `collar_of` with an explicit per-gap map correction.
+    fn collar_at_lag(
+        a: &[BlockLevel],
+        b: &[BlockLevel],
+        gap: (f64, f64),
+        collar_secs: f64,
+        map_lag_secs: Option<f64>,
+    ) -> Option<CollarLevelOffset> {
+        collar_level_offset(
+            a,
+            b,
+            gap.0,
+            gap.1,
+            collar_secs,
+            0.0,
+            map_lag_secs,
+            None,
+            &params(),
+        )
     }
 
     #[test]
@@ -1303,7 +1367,7 @@ mod tests {
     /// Per-side medians are a **detector** (`settled.md` § D, plan § 3a): they make a map straddle
     /// visible on the scan JSON. Nothing refuses on them — `offset_db` stays the pooled median.
     #[test]
-    fn per_side_medians_expose_a_straddle_without_gating() {
+    fn per_side_medians_are_reported_without_gating() {
         let a = timeline(0.0, &holed(100, -30.0, 40, 50));
         // B holds a different level after the hole — what one side of a map step looks like in the
         // level domain.
@@ -1341,5 +1405,85 @@ mod tests {
         assert_eq!(collar_of(&a, &b, (f64::NAN, 5.0), 2.0), None, "NaN bound");
         assert_eq!(collar_of(&[], &b, (4.0, 5.0), 2.0), None, "no A timeline");
         assert_eq!(collar_of(&a, &[], (4.0, 5.0), 2.0), None, "no B timeline");
+    }
+
+    // ---- per-gap map correction ---------------------------------------------------------------
+
+    /// A ramp makes misregistration arithmetic instead of noise: at `slope` dB per block, pairing
+    /// A against B shifted by `k` blocks biases every difference by exactly `k * slope`. Real
+    /// material turns that bias into scatter (the corpus reads it as `spread_db`), but a ramp pins
+    /// the magnitude *and* the sign, which scatter cannot.
+    const RAMP_SLOPE_DB: f64 = 0.8;
+    const RAMP_BASE_DB: f64 = -55.0;
+
+    fn ramp(n: usize, shift_blocks: i64, gain_db: f64) -> Vec<f64> {
+        (0..n)
+            .map(|i| RAMP_BASE_DB + (i as i64 - shift_blocks) as f64 * RAMP_SLOPE_DB + gain_db)
+            .collect()
+    }
+
+    /// **The reason the collar takes a lag at all.** B is the same program 6 dB up, but its true
+    /// correspondence with A is three blocks later than the global map claims. Read at the nominal
+    /// map, the estimator confidently reports the wrong gain; read at the registered lag it is
+    /// exact. Both readings have zero spread, so nothing downstream could have told them apart.
+    #[test]
+    fn a_misregistered_map_biases_the_reading_and_the_lag_removes_it() {
+        const SHIFT: i64 = 3;
+        let mut a_dbs = ramp(55, 0, 0.0);
+        for db in a_dbs.iter_mut().take(30).skip(25) {
+            *db = BLOCK_LEVEL_FLOOR_DB;
+        }
+        let a = timeline(0.0, &a_dbs);
+        let b = timeline(0.0, &ramp(55, SHIFT, 6.0));
+        let gap = (25.0 * BLOCK_SECS, 30.0 * BLOCK_SECS);
+
+        let nominal = collar_at_lag(&a, &b, gap, 2.0, None).expect("pairs at the nominal map");
+        let bias = SHIFT as f64 * RAMP_SLOPE_DB;
+        assert!(
+            (nominal.offset_db - (6.0 - bias)).abs() < 1e-9,
+            "a {SHIFT}-block error biases the reading by exactly {bias} dB: {nominal:?}"
+        );
+        assert!(
+            nominal.spread_db.abs() < 1e-9,
+            "and it is a bias, not scatter — nothing here looks wrong: {nominal:?}"
+        );
+
+        let lag_secs = SHIFT as f64 * BLOCK_SECS;
+        let fixed = collar_at_lag(&a, &b, gap, 2.0, Some(lag_secs)).expect("pairs at the lag");
+        assert!(
+            (fixed.offset_db - 6.0).abs() < 1e-9,
+            "the registered lag recovers the real gain: {fixed:?}"
+        );
+        // Sign, pinned: `register_donor_window`'s lag is what B's window moves by, positive later
+        // in B. Correct it the other way and the error doubles instead of cancelling.
+        let wrong_way =
+            collar_at_lag(&a, &b, gap, 2.0, Some(-lag_secs)).expect("pairs at the wrong sign");
+        assert!(
+            (wrong_way.offset_db - (6.0 - 2.0 * bias)).abs() < 1e-9,
+            "negating the lag doubles the error: {wrong_way:?}"
+        );
+    }
+
+    /// `None` (no trusted fit, read at nominal) and `Some(0.0)` (fit trusted, and it said zero) are
+    /// different facts about how the number was obtained, and the census separates its cohorts on
+    /// exactly that. Identical readings must still be distinguishable in the dump.
+    #[test]
+    fn the_map_a_collar_was_read_through_is_recorded() {
+        let a = timeline(0.0, &holed(100, -30.0, 40, 50));
+        let b = timeline(0.0, &flat(100, -24.0));
+        let gap = (4.0, 5.0);
+
+        let unregistered = collar_at_lag(&a, &b, gap, 2.0, None).expect("pairs");
+        let registered = collar_at_lag(&a, &b, gap, 2.0, Some(0.0)).expect("pairs");
+
+        assert_eq!(unregistered.map_lag_ms, None);
+        assert_eq!(registered.map_lag_ms, Some(0.0));
+        assert!(
+            (unregistered.offset_db - registered.offset_db).abs() < 1e-9,
+            "a zero correction is not a different measurement, only a different provenance"
+        );
+
+        let moved = collar_at_lag(&a, &b, gap, 2.0, Some(0.3)).expect("pairs");
+        assert_eq!(moved.map_lag_ms, Some(300.0), "recorded in ms");
     }
 }
