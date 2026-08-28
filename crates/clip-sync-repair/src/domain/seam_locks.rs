@@ -127,6 +127,10 @@ pub struct SeamLock {
     pub z: Option<f64>,
     /// `true` when the coarse envelope moved this shoulder off its nominal center.
     pub rescued: bool,
+    /// The accepted peak sat on the boundary of the lags actually searched (`SeamPeak::edge_pinned`) —
+    /// the search was exhausted, so a larger lag was never scored. Of the **accepted** search: after a
+    /// rescue this describes the recentered sweep, not the nominal probe.
+    pub edge_pinned: bool,
 }
 
 /// Both shoulders, plus everything derivable from them.
@@ -143,6 +147,11 @@ pub struct SeamLocks {
     /// Both shoulders clear the fill gate. Computed here so `try_dual_fit` and `splice_dualfit`
     /// cannot disagree about it.
     pub gate_pass: bool,
+    /// `nominal + lag` before the `.max(0)` clamp that produces `b_*_seam`. Kept because the clamp can
+    /// *manufacture* an abut: two negative seams collapse onto frame 0 and read as `bridge_frames == 0`.
+    /// See [`SeamLocks::clamped`].
+    pub b_pre_seam_unclamped: i64,
+    pub b_post_seam_unclamped: i64,
 }
 
 impl SeamLocks {
@@ -153,6 +162,12 @@ impl SeamLocks {
     /// a legitimate decision on every decorrelated gap.
     pub fn abut(&self) -> bool {
         self.gate_pass && self.bridge_frames <= 0
+    }
+
+    /// The abut exists only because of the `.max(0)` clamp: unclamped the shoulders still leave a bridge.
+    /// A lookalike tag, not a separate reason — the successor collapse Change reads it before draining.
+    pub fn clamped(&self) -> bool {
+        self.b_post_seam_unclamped - self.b_pre_seam_unclamped > 0 && self.bridge_frames <= 0
     }
 }
 
@@ -212,12 +227,14 @@ fn lock_shoulder(
     } else {
         nominal_center
     };
-    let (r, lag, z) = seam_local_peak(a_seam, b_mono, anchor_start, max_lag_frames)?;
+    let peak = seam_local_peak(a_seam, b_mono, anchor_start, max_lag_frames)?;
+    let r = peak.r;
     let nominal = SeamLock {
         r,
-        lag,
-        z,
+        lag: peak.lag,
+        z: peak.z,
         rescued: false,
+        edge_pinned: peak.edge_pinned(sample_rate),
     };
 
     let Some(env_cfg) = envelope else {
@@ -247,20 +264,21 @@ fn lock_shoulder(
     }
 
     let recentered = (anchor_start as i64 + shift).max(0) as usize;
-    let Some((r2, lag2, z2)) = seam_local_peak(a_seam, b_mono, recentered, max_lag_frames) else {
+    let Some(retry) = seam_local_peak(a_seam, b_mono, recentered, max_lag_frames) else {
         return Some(nominal);
     };
-    if r2 < triage_r {
+    if retry.r < triage_r {
         // Rescued but still untrustworthy — keep the honest nominal rather than a second guess.
         return Some(nominal);
     }
     Some(SeamLock {
-        r: r2,
+        r: retry.r,
         // Report the lag relative to the ORIGINAL nominal center, so `b_*_seam` arithmetic below is
         // identical whether or not a rescue happened.
-        lag: shift + lag2,
-        z: z2,
+        lag: shift + retry.lag,
+        z: retry.z,
         rescued: true,
+        edge_pinned: retry.edge_pinned(sample_rate),
     })
 }
 
@@ -302,8 +320,10 @@ pub fn nominal_first_seam_locks(
         triage_r,
     )?;
 
-    let b_pre_seam = (templates.b_mapped_start() as i64 + pre.lag).max(0) as usize;
-    let b_post_seam = (templates.b_post_nominal() as i64 + post.lag).max(0) as usize;
+    let b_pre_seam_unclamped = templates.b_mapped_start() as i64 + pre.lag;
+    let b_post_seam_unclamped = templates.b_post_nominal() as i64 + post.lag;
+    let b_pre_seam = b_pre_seam_unclamped.max(0) as usize;
+    let b_post_seam = b_post_seam_unclamped.max(0) as usize;
     Some(SeamLocks {
         pre,
         post,
@@ -311,5 +331,73 @@ pub fn nominal_first_seam_locks(
         b_post_seam,
         bridge_frames: b_post_seam as i64 - b_pre_seam as i64,
         gate_pass: floors.passes(pre.r.min(post.r)),
+        b_pre_seam_unclamped,
+        b_post_seam_unclamped,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lock(r: f64, lag: i64, edge_pinned: bool) -> SeamLock {
+        SeamLock {
+            r,
+            lag,
+            z: None,
+            rescued: false,
+            edge_pinned,
+        }
+    }
+
+    fn locks(pre_unclamped: i64, post_unclamped: i64, gate_pass: bool) -> SeamLocks {
+        let b_pre_seam = pre_unclamped.max(0) as usize;
+        let b_post_seam = post_unclamped.max(0) as usize;
+        SeamLocks {
+            pre: lock(0.9, 0, false),
+            post: lock(0.9, 0, false),
+            b_pre_seam,
+            b_post_seam,
+            bridge_frames: b_post_seam as i64 - b_pre_seam as i64,
+            gate_pass,
+            b_pre_seam_unclamped: pre_unclamped,
+            b_post_seam_unclamped: post_unclamped,
+        }
+    }
+
+    /// `clamped` is the lookalike tag for "the `.max(0)` manufactured this abut": both seams landed left of
+    /// B's start, so they collapse onto frame 0 and read as a zero bridge that the unclamped arithmetic does
+    /// not show. The successor collapse Change refuses to drain A's PCM on a row carrying this tag.
+    #[test]
+    fn clamped_marks_an_abut_the_clamp_manufactured() {
+        let manufactured = locks(-500, -100, true);
+        assert!(manufactured.abut(), "clamped seams both land on frame 0");
+        assert_eq!(manufactured.bridge_frames, 0);
+        assert!(
+            manufactured.clamped(),
+            "but unclamped they leave a 400-frame bridge"
+        );
+
+        let real = locks(10_000, 9_800, true);
+        assert!(real.abut());
+        assert!(
+            !real.clamped(),
+            "a genuine crossing is not a clamp artifact"
+        );
+
+        let in_reach = locks(10_000, 10_400, true);
+        assert!(!in_reach.abut());
+        assert!(
+            !in_reach.clamped(),
+            "`clamped` never fires without an abut to explain"
+        );
+    }
+
+    /// `abut` is `gate_pass` **first**: two dead shoulders produce noise lags that cross about half the
+    /// time, so an unqualified collapse would preempt a legitimate decision on every decorrelated gap.
+    #[test]
+    fn unqualified_locks_never_abut() {
+        assert!(!locks(10_000, 9_800, false).abut());
+        assert!(locks(10_000, 9_800, true).abut());
+    }
 }

@@ -111,8 +111,9 @@ reads them on the patch path; they stop being fingerprint-only. Default
 (fine ±600 only). B extract already includes `fill_border_search_secs`
 (default 10 s), so the ±2000 ms haystack is in the decoded window.
 
-Three things follow from those fields being fingerprint-only **today**, and
-each is a step in §7, not an assumption:
+Three things followed from those fields being fingerprint-only when this plan was
+written; each was a step in §7, not an assumption, and **all three are now done
+(step 4, 2026-08-28)**. Kept as written-and-struck so the reasoning stays readable:
 
 - They **were** config-file settable but CLI-unreachable on a repair run:
   `--lag-envelope-max-lag-ms` / `--lag-envelope-window-secs` existed only under
@@ -124,12 +125,15 @@ each is a step in §7, not an assumption:
   `--fingerprint-diagnostics` / `--border-capture` / `--gap-listen`. The exit
   criteria below are still written against config values, which is unaffected —
   a flag is now just a second way to set the same field.
-- `RepairConfig::validate` has **no arm** for `lag_envelope_window_secs`; the
-  positivity guard lives only in the CLI path a config-file run never reaches.
-  Once production reads the field, a non-positive value silently disables every
-  rescue. §7 adds the arm.
-- Both doc comments say “Fingerprint-only … production repair never reads it.”
-  Both become wrong on merge; §7 rewrites them.
+- `RepairConfig::validate` had **no arm** for `lag_envelope_window_secs`; the
+  positivity guard lived only in the CLI path a config-file run never reaches, so
+  a non-positive value would have silently disabled every rescue once production
+  read the field. **Added in step 4** (2026-08-28), alongside the finite check —
+  the field joined `validate`'s existing finite tuple, which is what catches NaN
+  (`NaN <= 0.0` is false, so the positivity arm alone would let it through).
+- Both doc comments said “Fingerprint-only … production repair never reads it.”
+  **Rewritten in step 4**; both now say the knob is read by both paths and name
+  the shared `EnvelopeCfg::from_knobs`.
 
 ---
 
@@ -250,6 +254,17 @@ these tags
 | **Envelope at ≈ `−gap − pre_lag`** | Same `bridge ≤ 0` as 31/g7. Discriminator is uniqueness of *that* peak, not that envelope ran. | `*_envelope_rescue` + `*_z`. Not a different reason |
 | **Same B event** (`post_lag ≈ pre_lag − gap`) | Same number as Hole 2. `step-real` will not separate them. A-pre vs A-post / concat vs B is the successor confirm | `*_z` only. Concat stays in the visit |
 
+> **`edge_pinned` is exact for what it says, not for what it is often read to mean
+> (noted 2026-08-28, implementing step 2a).** It fires when the accepted peak sits on the boundary of the
+> lags *actually scored* — search exhausted. It does **not** detect "the true peak lies beyond reach":
+> out-of-reach content produces a flat noise curve that peaks somewhere in the middle, so the guard reads
+> `false`. That is already on the record — pair 50 reads `edge_pinned: false` on all four shoulders with the
+> content ~2.8 s away
+> ([archive/TEMP-31g7-model-vs-findings.md](archive/TEMP-31g7-model-vs-findings.md) §7.2). So the tag's
+> "Exact" rating above is exact **for the pin**, and a `false` on an abut row certifies nothing about reach.
+> On the patch path this is narrow — the abut only fires on `gate_pass`, so a flat noise curve is not in
+> play — but the successor must not read `!edge_pinned` as "in reach".
+
 `program_quiet: true` on this reason is still SilenceSplice, not a
 `ProgramQuiet` skip. Scan-time `shared_silence` remains the live drop for
 shared pauses that never reach characterize. This tag is the leak
@@ -322,10 +337,13 @@ already filled).
 - Changing plan / `b_has_energy`.
 - Envelope-first, the widen ladder, or dense `seam_local_peak` over ±2000.
 - Using 1 s `lag_pair` positions as dual-fit locks.
-- New CLI. Envelope knobs already exist as config fields; relaxing
+- New CLI. Envelope knobs already exist as config fields. ~~Relaxing
   `validate_fingerprint_flags` so `--lag-envelope-*` works without
-  `--gap-fingerprints DIR` is a separate Change (§1). Preview does not splice
-  and does not run the visit.
+  `--gap-fingerprints DIR` is a separate Change (§1).~~ **Retired 2026-08-28, on
+  request: the relaxation was done inside step 4** — no new flag, the two
+  existing ones simply stopped being calibration-gated and dump-dir-gated once
+  production started reading the same fields. Still a non-goal: any *new* flag.
+  Preview does not splice and does not run the visit.
 - Unqualified abut. A collapse read off sub-floor locks decides nothing (§0).
 - Splitting `shoulders_abut` into lookalike reasons, gating the skip on
   `peak_z`, or withholding capture for clamp / edge-pin / quiet. Stamp
@@ -445,6 +463,17 @@ search), whether each accepted lock came from envelope retry, and unclamped
 `nominal + lag` so characterize can set `clamped`. `None` only when a seam
 window is out of range.
 
+> **Step 2 shipped without two thirds of that payload (recorded 2026-08-28).**
+> The refactor half is complete and verified; of the payload half, only
+> `rescued: bool` exists. `edge_pinned` was **deferred** because it is not
+> readable at the call site (step 2a), and the unclamped `nominal + lag` values
+> are computed and thrown away at `seam_locks.rs:305–306`. The step 1–3 tripwire
+> could not catch either — it is a parity check, and these fields have no
+> consumer until step 5. Both are prerequisites for step 5's *payload*, not for
+> its abut *decision*; the successor collapse Change refuses without them
+> (it drains A's PCM only for rows that are not `clamped` / `edge_pinned` /
+> `program_quiet`), so they are not optional.
+
 `wide_a`: on the patch path A is fully decoded in `a_pcm`, so the wider
 envelope window is a plain slice — no lazy-fetch closure needed. The parameter
 exists for the fingerprint’s `wide_a_border` closure, which cannot slice.
@@ -488,11 +517,43 @@ measured at one length and spliced at another. `try_dual_fit` also now takes
 > both with `--features calibration,he-aac` (718) and with no features (686), clippy
 > clean on both.
 
-### Step 5 is not a drop-in — three gaps found while implementing 1–3
+**2a — widen `seam_local_peak` (own change, no behavior change).** Step 2's
+`edge_pinned` is not free. `seam_local_peak` (`domain/seam_local.rs:183`) returns
+`Option<(f64, i64, Option<f64>)>` and **clamps its own reach**
+(`max_lag.min(anchor_start).min(b_mono.len() - (anchor_start + n))`), so the
+caller cannot tell where the search actually ended — and a naive
+`lag.abs() == max_lag` test is wrong precisely on the B-edge-proximate gaps this
+plan cares about.
+
+Return a named `SeamPeak { r, lag, z, lag_lo, lag_hi }` rather than a wider
+tuple: `characterize.rs:651` annotates a closure parameter as
+`Option<(f64, i64, Option<f64>)>`, and a 5-tuple there is unreadable. `lag_lo` /
+`lag_hi` are the **post-clamp** bounds, read the way `measure/lag.rs:133–135`
+reads them off the curve's first/last entries. Add
+`SeamPeak::edge_pinned(sample_rate)` using `lag.rs:130–136`'s exact definition,
+and promote `LAG_EDGE_TOL_MS` (`lag.rs:15`, today
+`pub(in crate::application::gap_fingerprint::measure)`) into
+`domain::seam_local`, re-exported from `lag.rs` — the same move step 1 made for
+`SEAM_LOCK_RECOVERABLE_R`, and for the same reason: one definition of "pinned",
+not two.
+
+Six call sites: `probes.rs:292`, `:294`, `characterize.rs:637`, `:644` (plus the
+`:651` annotation), `seam_locks.rs:215`, `:250`. Tests: peak at the search edge
+→ pinned; interior peak → not; **a search whose `max_lag` was clamped by B-edge
+proximity reports the clamped bound**. Verification is that every existing
+number is unchanged.
+
+Then finish step 2's payload: `SeamLock.edge_pinned` (from the *accepted*
+search — the recentered one when a rescue fired, not the nominal probe), and
+`SeamLocks.b_pre_seam_unclamped` / `b_post_seam_unclamped` with
+`clamped()` = "unclamped seams do not abut but clamped ones do", plus the two
+§8.3 unit tests. Nothing reads these yet, so again no existing value moves.
+
+### Step 6 is not a drop-in — three gaps found while implementing 1–3
 
 Reviewed `nominal_first_seam_locks` against the shipped `rescue_shoulder`
 (`measure/lag.rs:309`) it is meant to replace. Steps 1–3 do not touch the
-fingerprint, so none of these is a live defect — but step 5 cannot be a
+fingerprint, so none of these is a live defect — but step 6 cannot be a
 mechanical swap, and sizing them now is cheaper than discovering them mid-step.
 
 1. **`SeamLock` cannot carry the fingerprint's wire fields.** `rescue_shoulder`
@@ -501,7 +562,7 @@ mechanical swap, and sizing them now is cheaper than discovering them mid-step.
    `envelope_lag_ms`, `envelope_peak_r`, `envelope_edge_pinned` — all of them
    serialized. `SeamLock` has a single `rescued: bool`, which collapses
    `NotConsulted` and `Declined` into the same value and drops the other four.
-   Step 5 must widen `SeamLock` (returning the `EnvelopePeak` and a three-state
+   Step 6 must widen `SeamLock` (returning the `EnvelopePeak` and a three-state
    outcome), or every corpus dump loses those columns.
 2. **The `gross_lag_shift` mismatch is real but benign.** `rescue_shoulder`
    returns the retry's lag *relative to the recentered anchor* and adds
@@ -565,7 +626,20 @@ return — no `evaluate_seam_gate`, no `try_dual_fit`. Otherwise carry the locks
 (`characterize.rs:381`) — the gate may mutate `refined` afterwards.
 
 Under `--no-dual-fit` the lock scan still runs (§3); only
-`build_dual_fit_input`’s heavier buffers stay flag-gated.
+`build_dual_fit_input`’s heavier buffers stay flag-gated. Three of them are
+**not** heavy and must hoist out of the `request.dual_fit.then(…)` gate at
+`characterize.rs:383` — `templates`, `b_mono`, `a_gap_floor_db` — because the
+locks, the `clamped` tag, and `program_quiet_at_nominal` all need them on every
+run. Consequence to record rather than discover: a `--no-dual-fit` run newly
+pays one B mono conversion plus two ±600 ms searches per gap. Narrow, since
+`dual_fit` defaults to `true`.
+
+**Steps 5 and 7 are one compile unit (2026-08-28).** They cannot land
+separately: step 5's `skip_region_spec` call needs
+`GapPatchSkipReason::ShouldersAbut` to exist, and the moment it exists the four
+wildcard-free matches (§8.2) refuse to compile without their arms. Do them as
+one change; the checklist keeps them as two entries only because the
+verification differs.
 
 **6 — `splice_dualfit_at`.** Replace its template build + two
 `seam_local_peak`s with `SeamLockTemplates` + `nominal_first_seam_locks`;
@@ -588,9 +662,32 @@ retry re-characterizes every abut gap and re-abuts it, which is §3’s “does 
 retry abut skips” by luck rather than by construction.
 
 **8 — Capture + visit.** Collect `Vec<ShouldersAbutSkip>` from the final skip
-specs (after the anchored-retry pass, where `region_results` settles). After
+specs (after the anchored-retry pass at `patch_audio/mod.rs:463`, where
+`region_results` settles). **Source the A frames from those specs, not from the
+outcomes** — `GapPatchOutcome` (`domain/patch_result.rs:306–322`) carries
+`a_start_secs` / `a_end_secs` in *seconds* and no gap index, so §4's
+`a_start_frame` / `a_end_frame` cannot be read off it without a lossy round-trip
+through the sample rate. The visit goes between the `patch_splice` loop
+(closing ~`mod.rs:556`) and `PatchSummary::from_outcomes` (`:560`), where `a_pcm`
+is still owned and mutable; the summary field arrives via a
+`.with_shoulders_abut(…)` builder alongside the existing `.with_fill_geometry`
+/ `.with_program_gain`. After
 the splice loop in `run_with_decoded`, call `visit_shoulders_abut` for each.
 Stamp `PatchSummary.shoulders_abut`. Preview stamps the list, skips the visit.
+
+
+**9 — Close out.** Docs first: the skip reason's row in
+[json-output.md](../json-output.md) and
+[gap-repair-guide.md](../gap-repair-guide.md), the run-level
+`patch.shoulders_abut` shape, and Hole 2's detection sentence in
+[gap-vocabulary.md](gap-vocabulary.md) (§7 step 7 lists these; they are not
+optional trailing work). Then the three-step BACKLOG move: (1) mark the
+[BACKLOG.md](../../BACKLOG.md) entry done, (2) file the verdicts this plan
+settled — the `[0.35, 0.5)` band correction, the refuted NaN polarity, Tier 0's
+n=1 — into [settled.md](settled.md) under their letters, (3) **delete the
+BACKLOG text**. Step 3 is the one that gets skipped. Finally delete this
+`TEMP-` document or archive it under `docs/dev/archive/`, per whichever the
+successor collapse plan still needs to cite.
 
 ---
 
@@ -742,7 +839,7 @@ cost; that per-gap sweep is a Full-tier dump cost, not a production one.
 compile-time vocabulary guarantee), plus `format_gap_patch_skip_reason`
 (`domain/patch_result.rs:205`). All four take `ShouldersAbut => SilenceSplice`.
 
-**Compile-silent — the real risk (2 sites).**
+**Compile-silent — the real risk (3 sites).**
 
 * `is_retryable_patch_skip` (`domain/patch_anchor.rs:340`) is a `matches!`
   allowlist, so a new variant silently defaults to `false`. That *is* what this
@@ -753,6 +850,12 @@ compile-time vocabulary guarantee), plus `format_gap_patch_skip_reason`
   its name and its “C4b backstop” comment it cannot detect an unlisted variant —
   the wildcard-free match is the only real guarantee. Add the 8th case; do not
   rely on it to remind you.
+* `gap_tags.rs:462` ends in `_ => (PatchTier::NotApplicable,
+  SeamShape::NotApplicable)` (found 2026-08-28, missing from this list when it
+  said 2 sites). A new variant lands there silently. `NotApplicable` is the right
+  answer for an abut skip — no tier, no seam shape — but decide it explicitly
+  with a comment naming `ShouldersAbut`, or the next reader cannot tell the
+  default from a decision.
 
 **Rewrites (~6 functions).** Step 3 changes `try_dual_fit`'s signature to take
 `SeamLocks`. Test callers: `domain/dual_fit.rs:304`, `:382`, `:483`, `:524`,
@@ -797,6 +900,15 @@ claim and is the signal to stop.
       honest nominal, `edge_pinned` is true iff the accepted peak is on
       `±max_lag` of the producing search, `clamped` is true iff unclamped
       seams do not abut and `.max(0)` makes them abut.
+- [ ] `seam_local_peak` widening (step 2a): returns `SeamPeak` with the
+      post-clamp `lag_lo` / `lag_hi`; one `LAG_EDGE_TOL_MS`, in `domain`,
+      re-exported from `measure/lag.rs`; all six call sites updated; **every
+      existing value unchanged**. Unit tests: edge peak pinned, interior peak
+      not, and a B-edge-clamped search reports the *clamped* bound (the case
+      `lag.abs() == max_lag` gets wrong).
+- [ ] Step 2's deferred payload: `SeamLock.edge_pinned` from the accepted
+      search, `SeamLocks.b_*_seam_unclamped` retained rather than discarded at
+      `seam_locks.rs:305–306`.
 - [ ] **Unqualified locks decide nothing**: dead-shoulder fixture
       (`min(pre_r, post_r)` below floor) whose noise lags cross produces **no**
       abut skip and reaches `evaluate_seam_gate` — same outcome as today.
@@ -810,7 +922,8 @@ claim and is the signal to stop.
       `is_retryable_patch_skip(ShouldersAbut) == false` (anchored retry does not
       re-characterize an abut gap). This one is **compile-silent** — the
       `matches!` allowlist defaults a new variant to `false`, so the assertion
-      is the only thing that captures the intent (§8.2).
+      is the only thing that captures the intent (§8.2). `gap_tags.rs:462`'s
+      `_ =>` arm is the third silent site — decide `NotApplicable` explicitly.
 - [ ] `splice_dualfit_at` + `dual_fit_rescue_flag` (already declines
       `bridge_frames <= 0`) on a rescued-but-abut fixture.
 - [ ] `ShouldersAbut` reason: serde, all four wildcard-free matches, human
@@ -863,8 +976,11 @@ claim and is the signal to stop.
   today’s path whatever `bridge_frames` says.
 - `lag_envelope_max_lag_ms = 0` **in the config file** → 31/g7 post stays dead
   at ±600 → no abut skip from this path (keep may still High, same as today).
-  The CLI flag stays dump-gated (§1), so this criterion is exercised through
-  config, not `--lag-envelope-max-lag-ms`.
+  ~~The CLI flag stays dump-gated (§1), so this criterion is exercised through
+  config, not `--lag-envelope-max-lag-ms`.~~ **Stale since the 2026-08-28
+  relaxation** — the flag now sets the same field on any run, so exercise the
+  criterion either way; config remains the canonical form because it is what a
+  production run uses.
 - A non-positive `lag_envelope_window_secs` in the config file is rejected at
   load, not silently rescue-free.
 - **Tier 2 clean**: the `--patch-only` diff against

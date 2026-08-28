@@ -289,9 +289,10 @@ pub(in crate::application::gap_fingerprint::measure) fn splice_dualfit_at(
     let b_pre_nominal = b_mapped_start;
     let b_post_nominal = b_mapped_start + gap_frames;
     let pre_start = b_pre_nominal.checked_sub(window)?;
-    let (pre_seam_r, pre_lag, pre_seam_z) = seam_local_peak(&a_pre, b_mono, pre_start, max_lag)?;
-    let (post_seam_r, post_lag, post_seam_z) =
-        seam_local_peak(&a_post, b_mono, b_post_nominal, max_lag)?;
+    let pre_peak = seam_local_peak(&a_pre, b_mono, pre_start, max_lag)?;
+    let (pre_seam_r, pre_lag, pre_seam_z) = (pre_peak.r, pre_peak.lag, pre_peak.z);
+    let post_peak = seam_local_peak(&a_post, b_mono, b_post_nominal, max_lag)?;
+    let (post_seam_r, post_lag, post_seam_z) = (post_peak.r, post_peak.lag, post_peak.z);
 
     // Seam correlations arrive already finite: `seam_local_peak` returns `finite(peak_r)`, so a
     // zero-variance (digital-silence) shoulder reads **0.0, not NaN** — and production reads the same

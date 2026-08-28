@@ -10,9 +10,6 @@ use crate::domain::policies::{
 use super::config::*;
 use super::pcm::*;
 
-/// A lag peak within this many ms of the searched boundary is treated as edge-pinned (search-exhausted):
-/// the parabolic vertex can't be trusted and a larger lag was never scored. See [`LagSummary::edge_pinned`].
-pub(in crate::application::gap_fingerprint::measure) const LAG_EDGE_TOL_MS: f64 = 2.0;
 /// Search knobs for a per-shoulder lag correlation sweep (`lag_side_sweep` / [`lag_pair`]).
 #[derive(Debug, Clone, Copy)]
 pub(in crate::application::gap_fingerprint::measure) struct LagSweepParams {
@@ -70,8 +67,10 @@ pub(in crate::application::gap_fingerprint::measure) fn seam_prominence(
 /// `lag_correlation_curve` + `seam_local_peak` moved to the shared `domain::seam_local` so the production
 /// dual-fit repair (A3) and this diagnostic scan use one implementation (no drift). Re-exported here so the
 /// existing call sites / tests keep their paths.
+/// `LAG_EDGE_TOL_MS` and the `lag_is_edge_pinned` predicate moved with them: `SeamPeak::edge_pinned` and
+/// `LagSummary::edge_pinned` are the same test, so it is one function in `domain`, not one per path.
 pub use crate::domain::seam_local::{
-    lag_correlation_curve, lag_correlation_curve_auto, seam_local_peak,
+    lag_correlation_curve, lag_correlation_curve_auto, lag_is_edge_pinned, seam_local_peak,
 };
 /// The coarse-envelope primitives moved to the shared `domain::lag_envelope` for the same reason
 /// `seam_local` did: the production patch path and this diagnostic scan must use one implementation
@@ -129,11 +128,11 @@ pub fn summarize_lag_curve(
     let std = (curve.iter().map(|(_, r)| (r - mean).powi(2)).sum::<f64>() / n.max(1.0)).sqrt();
     // Edge-pin: the peak lands at (or within tol of) the boundary of the *searched* lags. Read the
     // boundary from the curve itself (`lag_correlation_curve` masks high-side lags where the window runs
-    // past B), so this is the true searched extent, not the nominal `±max_lag`.
-    let tol = ((LAG_EDGE_TOL_MS / 1000.0) * rate).round() as i64;
+    // past B), so this is the true searched extent, not the nominal `±max_lag`. The predicate itself is
+    // `domain::seam_local`'s, shared with `SeamPeak::edge_pinned` — one definition of "pinned".
     let lo_lag = curve.first().map(|(l, _)| *l).unwrap_or(peak_lag);
     let hi_lag = curve.last().map(|(l, _)| *l).unwrap_or(peak_lag);
-    let edge_pinned = (peak_lag - lo_lag) <= tol || (hi_lag - peak_lag) <= tol;
+    let edge_pinned = lag_is_edge_pinned(peak_lag, lo_lag, hi_lag, sample_rate);
     Some(LagSummary {
         window_ms,
         max_lag_ms,

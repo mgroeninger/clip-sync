@@ -648,9 +648,15 @@ pub(in crate::application::patch_audio) fn characterize_region(
             max_lag_for_residual,
         );
         let applied_ms = slide_secs * 1000.0;
-        let shoulder_ms = |peak: Option<(f64, i64, Option<f64>)>| {
-            peak.and_then(|(r, lag, _)| {
-                registration_shoulder_residual_ms(r, lag, applied_ms, sample_rate, confident_floor)
+        let shoulder_ms = |peak: Option<crate::domain::seam_local::SeamPeak>| {
+            peak.and_then(|p| {
+                registration_shoulder_residual_ms(
+                    p.r,
+                    p.lag,
+                    applied_ms,
+                    sample_rate,
+                    confident_floor,
+                )
             })
         };
         select_registration_residual_ms(shoulder_ms(pre_peak), shoulder_ms(post_peak))

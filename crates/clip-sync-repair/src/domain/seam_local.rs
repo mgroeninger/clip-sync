@@ -173,10 +173,56 @@ pub fn seam_correlation_over_bases(
         .collect()
 }
 
-/// Best `(peak_r, peak_lag_frames, peak_z)` of one seam over a ±`max_lag` search around `anchor_start` (the
-/// start of the seam's B window; `lag 0` aligns `a_seam` at `anchor_start`). `max_lag` auto-clamps to the
-/// available B context (0 ⇒ a plain lag-0 score). `peak_z` = the peak's whole-curve z-score (the
-/// periodicity/alias signal). `None` when the seam is too short or the window is out of range.
+/// A lag peak within this many ms of the searched boundary is treated as edge-pinned (search-exhausted):
+/// the parabolic vertex can't be trusted and a larger lag was never scored. Shared with the fingerprint's
+/// `LagSummary::edge_pinned` (re-exported from `measure/lag.rs`) so "pinned" has one definition.
+pub const LAG_EDGE_TOL_MS: f64 = 2.0;
+
+/// One seam's ±`max_lag` search result. `lag_lo` / `lag_hi` are the **searched** lag bounds *after*
+/// clamping, which is why they are returned rather than recomputed: `seam_local_peak` narrows `max_lag` to
+/// the available B context, and `lag_correlation_curve` masks high-side lags whose window runs past B, so
+/// `lag.abs() == max_lag` is not a sound edge test on any seam near an edge of B.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SeamPeak {
+    /// Peak correlation, clamped finite (a silent gap can cancel to `inf`/`NaN`).
+    pub r: f64,
+    /// Peak lag in frames, relative to `anchor_start`.
+    pub lag: i64,
+    /// The peak's whole-curve z-score (the periodicity/alias signal); `None` on a degenerate curve.
+    pub z: Option<f64>,
+    /// Lowest lag actually scored.
+    pub lag_lo: i64,
+    /// Highest lag actually scored.
+    pub lag_hi: i64,
+}
+
+/// The peak lands at (or within [`LAG_EDGE_TOL_MS`] of) the boundary of the searched lags — the search was
+/// exhausted, so a larger lag was never scored and the reported lag is a floor, not a measurement.
+///
+/// `lag_lo` / `lag_hi` must be the bounds actually *scored*, read off the curve: both the caller's clamp to
+/// the available B context and `lag_correlation_curve`'s edge mask narrow the search silently, so a
+/// `lag.abs() == max_lag` test is unsound near either end of B.
+///
+/// One definition, shared by [`SeamPeak::edge_pinned`] and the fingerprint's `LagSummary::edge_pinned` —
+/// the same reason `seam_local_peak` itself is shared. (The coarse envelope's `EnvelopePeak::edge_pinned`
+/// is deliberately *not* this: it tests bin equality, because its bins are already 100 ms wide.)
+pub fn lag_is_edge_pinned(peak_lag: i64, lag_lo: i64, lag_hi: i64, sample_rate: u32) -> bool {
+    let rate = f64::from(sample_rate).max(1.0);
+    let tol = ((LAG_EDGE_TOL_MS / 1000.0) * rate).round() as i64;
+    (peak_lag - lag_lo) <= tol || (lag_hi - peak_lag) <= tol
+}
+
+impl SeamPeak {
+    /// See [`lag_is_edge_pinned`]. Note a `max_lag = 0` search (a plain lag-0 score) is pinned by
+    /// construction — correctly: nothing else was scored.
+    pub fn edge_pinned(&self, sample_rate: u32) -> bool {
+        lag_is_edge_pinned(self.lag, self.lag_lo, self.lag_hi, sample_rate)
+    }
+}
+
+/// Best [`SeamPeak`] of one seam over a ±`max_lag` search around `anchor_start` (the start of the seam's B
+/// window; `lag 0` aligns `a_seam` at `anchor_start`). `max_lag` auto-clamps to the available B context
+/// (0 ⇒ a plain lag-0 score). `None` when the seam is too short or the window is out of range.
 ///
 /// The peak / z extraction is identical to `summarize_lag_curve`'s (argmax by `r` with last-max tie-break;
 /// `z = (peak − mean)/std` over the curve), so callers that migrate from that path see the same numbers.
@@ -185,7 +231,7 @@ pub fn seam_local_peak(
     b_mono: &[f64],
     anchor_start: usize,
     max_lag: usize,
-) -> Option<(f64, i64, Option<f64>)> {
+) -> Option<SeamPeak> {
     let n = a_seam.len();
     if n < 8 || anchor_start + n > b_mono.len() {
         return None;
@@ -202,7 +248,17 @@ pub fn seam_local_peak(
     let mean = curve.iter().map(|(_, r)| *r).sum::<f64>() / m;
     let std = (curve.iter().map(|(_, r)| (r - mean).powi(2)).sum::<f64>() / m).sqrt();
     let peak_z = (std > 1e-9).then(|| (peak_r - mean) / std);
-    Some((finite(peak_r), peak_lag, peak_z))
+    // Read the searched bounds off the curve itself, not from `max_lag`: the clamp above and the edge mask
+    // inside `lag_correlation_curve` both narrow it, and both do so silently.
+    let lag_lo = curve.first().map(|(l, _)| *l).unwrap_or(peak_lag);
+    let lag_hi = curve.last().map(|(l, _)| *l).unwrap_or(peak_lag);
+    Some(SeamPeak {
+        r: finite(peak_r),
+        lag: peak_lag,
+        z: peak_z,
+        lag_lo,
+        lag_hi,
+    })
 }
 
 #[cfg(test)]
@@ -228,16 +284,72 @@ mod tests {
         let start = (anchor_start as i64 + true_lag) as usize;
         b[start..start + n].copy_from_slice(&a);
 
-        let (r, lag, peak_z) = seam_local_peak(&a, &b, anchor_start, max_lag).expect("peak");
+        let peak = seam_local_peak(&a, &b, anchor_start, max_lag).expect("peak");
+        let (r, lag, peak_z) = (peak.r, peak.lag, peak.z);
         assert!(r > 0.99, "seam recovers at its offset: r={r}");
         assert_eq!(lag, true_lag, "finds the seam-local lag, not lag 0");
         assert!(
             peak_z.is_some_and(|z| z > 5.0),
             "unique peak has a high z-score: {peak_z:?}"
         );
+        assert!(
+            !peak.edge_pinned(48_000),
+            "an interior peak is not edge-pinned: lag {lag} in [{}, {}]",
+            peak.lag_lo,
+            peak.lag_hi
+        );
 
         let lag0 = normalized_correlation(&a, &b[anchor_start..anchor_start + n]);
         assert!(lag0 < 0.5, "lag-0 score misses the offset seam: {lag0}");
+    }
+
+    /// A peak that lands on the searched boundary is edge-pinned: the sweep was exhausted, so a larger
+    /// lag was never scored and the reported lag is a floor, not a measurement.
+    #[test]
+    fn seam_local_peak_flags_a_peak_on_the_search_boundary() {
+        let n = 2000usize;
+        let a = noise(0xa11, n, 1.0);
+        let (anchor_start, true_lag, max_lag) = (600usize, 200i64, 200usize);
+        let total = anchor_start + n + max_lag + 400;
+        let mut b = noise(0xb22, total, 0.001);
+        let start = (anchor_start as i64 + true_lag) as usize;
+        b[start..start + n].copy_from_slice(&a);
+
+        let peak = seam_local_peak(&a, &b, anchor_start, max_lag).expect("peak");
+        assert_eq!(peak.lag, true_lag);
+        assert_eq!((peak.lag_lo, peak.lag_hi), (-200, 200));
+        assert!(
+            peak.edge_pinned(48_000),
+            "peak at +max_lag is pinned: {peak:?}"
+        );
+    }
+
+    /// The bounds are the **clamped** ones. `seam_local_peak` narrows `max_lag` to the B context, so a
+    /// seam close to B's start is searched over a smaller range than it asked for — and a naive
+    /// `lag.abs() == max_lag` test reads that peak as interior when it is in fact exhausted.
+    #[test]
+    fn seam_local_peak_reports_the_clamped_search_bounds() {
+        let n = 2000usize;
+        let a = noise(0xc33, n, 1.0);
+        // Only 50 frames of B ahead of the seam, but 200 requested: the low side clamps to −50.
+        let (anchor_start, true_lag, max_lag) = (50usize, -50i64, 200usize);
+        let total = anchor_start + n + max_lag + 400;
+        let mut b = noise(0xd44, total, 0.001);
+        let start = (anchor_start as i64 + true_lag) as usize;
+        b[start..start + n].copy_from_slice(&a);
+
+        let peak = seam_local_peak(&a, &b, anchor_start, max_lag).expect("peak");
+        assert_eq!(peak.lag, true_lag);
+        assert_eq!(
+            (peak.lag_lo, peak.lag_hi),
+            (-50, 50),
+            "bounds are the clamped search, not the requested ±200"
+        );
+        assert!(
+            peak.lag.abs() != max_lag as i64,
+            "precondition: the naive `lag.abs() == max_lag` test would miss this"
+        );
+        assert!(peak.edge_pinned(48_000), "but it IS exhausted: {peak:?}");
     }
 
     fn noise(seed: u64, n: usize, scale: f64) -> Vec<f64> {

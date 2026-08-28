@@ -345,6 +345,23 @@ mod tests {
         );
         assert_eq!(r.fill.len(), gap * ch, "fill is exactly the gap length");
         assert_eq!(r.trim_frames, step, "trim = the step");
+
+        // The locks behind that fill are interior reads, not exhausted searches: both peaks sit far from
+        // the ±600 ms boundary, so `edge_pinned` is false and the skip payload would carry no such tag.
+        let l = nominal_seam_locks(
+            &templates(&a_pre_mono, &a_post_mono, b_mapped_start, &p),
+            &b_mono,
+            &p,
+        )
+        .expect("locks");
+        assert!(l.gate_pass, "both shoulders clear the gate: {l:?}");
+        assert!(
+            !l.pre.edge_pinned && !l.post.edge_pinned,
+            "interior peaks: {:?} / {:?}",
+            l.pre,
+            l.post
+        );
+        assert!(!l.clamped(), "seams are well inside B: {l:?}");
     }
 
     /// Regression for the 2026-07-05 production false-skip (the "previously fixed gaps now
