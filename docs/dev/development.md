@@ -13,6 +13,13 @@ Build commands, Cargo feature flags per crate, and how to run the full test matr
 | Rust (stable) | build and all tests |
 | `ffmpeg` on `PATH` | generated alignment corpus cases, `ffmpeg-tests` adapter tests, repair mux integration |
 | `ffprobe` on `PATH` | repair `cli_mux_integration` (`mux_writes_video`) |
+| **PowerShell 7+** (`pwsh`) | every `scripts/*.ps1` |
+
+The repo scripts are `pwsh` 7, not Windows PowerShell 5.1. Most carry non-ASCII text (`—`, `−`,
+`§`) and are BOM-less UTF-8, which 5.1 reads as ANSI; where those bytes land inside a string
+literal their cp1252 decoding ends in a smart quote (`—` = `E2 80 94` → `â€”`), the string
+terminates early, and the parse dies pointing at innocent lines far from the cause. The affected
+scripts declare `#Requires -Version 7.0`, so 5.1 now refuses them by name instead.
 
 ---
 
