@@ -32,15 +32,15 @@ Two ear-confirmed wrong patches, two distinct defects. Findings:
 [gap-vocabulary.md](docs/dev/gap-vocabulary.md) § *Known holes*,
 [archive/TEMP-31g7-model-vs-findings.md](docs/dev/archive/TEMP-31g7-model-vs-findings.md) §8.
 Durable `lag_decision` behaviour: [gap-fingerprint.md](docs/dev/gap-fingerprint.md) § *`lag_decision`*.
-The 31/g7 step-boundary skip is **blocked** — [settled.md](docs/dev/settled.md) § D. Seven
+The 31/g7 **pair-sequence** skip classifier is **blocked** — [settled.md](docs/dev/settled.md) § D.
+The **per-gap** keep-path refuse (early locks, abut → skip) is the row below. Seven
 diagnostic-field and conditional-ear-label leftovers moved to [settled.md](docs/dev/settled.md)
 § B / § C on 2026-08-24.
 
 **Already categorized (no row).** 26/g6 is Hole 1 (well-posed landmark ignored; axis-2 `waveform_min`
 won at −1450 ms, 2026-08-27). 17/g34 ear-pass 2026-08-27: patched, heard misaligned / possible pre
 echo, **cannot tell** 26-class wrong-when (jazz self-similarity; pair used start-clip offset at a
-gap that sits in the end-clip window). Hole 1 stays n=1. 31/g7 is Hole 2 (zero-length donor
-bridge; the path is skip, not a better fill).
+gap that sits in the end-clip window). Hole 1 stays n=1.
 
 **Disposition tree** — every remaining row lands a category, then a successor.
 
@@ -52,6 +52,7 @@ bridge; the path is skip, not a better fill).
 
 | Item | Next action | Done when |
 |------|-------------|-----------|
+| **Early shoulder locks / collapse skip (31/g7)** | [TEMP-early-shoulder-locks-collapse-skip-plan.md](docs/dev/TEMP-early-shoulder-locks-collapse-skip-plan.md) — nominal-first rescue once before keep and dual-fit; abut → skip; `try_dual_fit` takes locks, no `seam_local_peak` | 31/g7 skips before unified-fit; in-reach dual-fit still assembles from the same locks; `--no-dual-fit` still collapse-skips |
 | **47/g14 — failure-to-move** | Ear-label as its own question. Did a licensed landmark say move, and search stay put? | Labelled. **Yes** → its own fork (not 26's "moved to the wrong tooth"). **No / cannot tell** → drop or re-categorize |
 | **31/g8 — Narrow-capture pre miss** | Capture, not the tree above. Write a TEMP. Shipped default `BorderCapture::Narrow` declines the pre at envelope +800 ms / r 0.816; Wide keeps −1146.1 / r 0.974 because the shared capture's 12% trim puts `D` at 1984 ms vs Narrow's 13 ms. Numbers: [archive/TEMP-envelope-adaptive-widen-plan.md](docs/dev/archive/TEMP-envelope-adaptive-widen-plan.md) deciding measurement 2 | A decision exists that is not "flip the default" ([settled.md](docs/dev/settled.md) § B) |
 | **α / `border_standoff_secs`** | Not Hole 1's 1.45 s. Fill sits ~25 ms late vs both shoulders; hypothesis is production's 0.35 s standoff. Run existing arms through `scripts/measure/diff-patch-adjustments.ps1`, or drop the item | Confirmed, or dropped |
