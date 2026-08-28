@@ -73,6 +73,13 @@ pub(in crate::application::gap_fingerprint::measure) fn seam_prominence(
 pub use crate::domain::seam_local::{
     lag_correlation_curve, lag_correlation_curve_auto, seam_local_peak,
 };
+/// The coarse-envelope primitives moved to the shared `domain::lag_envelope` for the same reason
+/// `seam_local` did: the production patch path and this diagnostic scan must use one implementation
+/// (no drift). Re-exported here so the existing call sites / tests keep their paths.
+pub use crate::domain::lag_envelope::{
+    envelope_recenter_frames, envelope_shoulder, EnvelopeCfg, EnvelopePeak, EnvelopeSide,
+    SEAM_LOCK_RECOVERABLE_R,
+};
 /// Summarize a lag curve: lag-0 value, integer peak, parabolic-interpolated (fractional) peak, and a
 /// [`LagVerdict`]. `None` for an empty curve.
 pub fn summarize_lag_curve(
@@ -260,20 +267,12 @@ pub(in crate::application::gap_fingerprint::measure) fn lag_side_sweep(
     }
     summary
 }
-/// Coarse-envelope config for the rescue branch — `None` disables rescue entirely
-/// (`--lag-envelope-max-lag-ms 0`).
-#[derive(Clone, Copy)]
-pub(in crate::application::gap_fingerprint::measure) struct EnvelopeCfg {
-    pub(in crate::application::gap_fingerprint::measure) window: usize,
-    pub(in crate::application::gap_fingerprint::measure) max_lag: usize,
-    pub(in crate::application::gap_fingerprint::measure) bin: usize,
-}
 /// A shoulder is recoverable — and therefore untouchable by the envelope rescue — once its own
 /// fine sweep clears `peak_r ≥ 0.5` (`classify_lag`'s recoverable line, `measure.rs:418`; the
 /// nominal-first plan's triage predicate, **not** `LagSummary::is_landmark` — see "The
 /// `is_landmark` trap", `docs/dev/archive/TEMP-lag-nominal-first-plan.md`).
 pub(in crate::application::gap_fingerprint::measure) fn is_recoverable(s: &LagSummary) -> bool {
-    s.peak_r >= 0.5
+    s.peak_r >= SEAM_LOCK_RECOVERABLE_R
 }
 pub(in crate::application::gap_fingerprint::measure) fn stamp_rescue(
     mut s: LagSummary,
@@ -335,7 +334,16 @@ pub(in crate::application::gap_fingerprint::measure) fn rescue_shoulder(
     // infer it from the recipe (which cannot express either adjustment).
     let env_window_ms = (env_cfg.window.min(envelope_side.a_border.len()) as f64) * 1000.0
         / f64::from(params.sample_rate).max(1.0);
-    let peak = envelope_shoulder(envelope_side, env_cfg, params.sample_rate);
+    let peak = envelope_shoulder(
+        EnvelopeSide {
+            a_border: envelope_side.a_border,
+            b_signal: envelope_side.b_signal,
+            anchor_frame: envelope_side.anchor_frame,
+            pre_shoulder: envelope_side.pre_shoulder,
+        },
+        env_cfg,
+        params.sample_rate,
+    );
     let env_frames = envelope_recenter_frames(peak, params.sample_rate);
     if env_frames == 0 {
         return Some(stamp_rescue(
@@ -477,94 +485,6 @@ pub(in crate::application::gap_fingerprint::measure) struct LagAtPlacementInput<
     pub(in crate::application::gap_fingerprint::measure) start_frame: usize,
     pub(in crate::application::gap_fingerprint::measure) cfg: &'a FingerprintConfig,
     pub(in crate::application::gap_fingerprint::measure) sample_rate: u32,
-}
-/// Coarse 100 ms-bin envelope peak at one shoulder's `b_mapped` (before the fine ±600 ms sweep).
-#[derive(Clone, Copy)]
-pub(in crate::application::gap_fingerprint::measure) struct EnvelopePeak {
-    lag_ms: f64,
-    peak_r: f64,
-    edge_pinned: bool,
-}
-pub(in crate::application::gap_fingerprint::measure) fn envelope_peak_at(
-    a_win: &[f64],
-    b_ctx: &[f64],
-    sample_rate: u32,
-    env_bin: usize,
-    max_lag_samples: usize,
-) -> Option<EnvelopePeak> {
-    if a_win.len() < env_bin.max(8) {
-        return None;
-    }
-    let rate = f64::from(sample_rate).max(1.0);
-    let ea = fine_rms_envelope(a_win, env_bin);
-    let eb = fine_rms_envelope(b_ctx, env_bin);
-    if ea.len() < 3 {
-        return None;
-    }
-    let env_max_lag = (max_lag_samples / env_bin.max(1)) as i64;
-    if env_max_lag < 1 {
-        return None;
-    }
-    let curve = lag_correlation_curve(&ea, &eb, env_max_lag);
-    if curve.is_empty() {
-        return None;
-    }
-    let &(peak_lag_bin, peak_r) = curve
-        .iter()
-        .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))?;
-    let lo = curve.first().map(|(l, _)| *l).unwrap_or(peak_lag_bin);
-    let hi = curve.last().map(|(l, _)| *l).unwrap_or(peak_lag_bin);
-    // ≥1 bin inside the searched coarse window; a peak on the last searched bin is saturated.
-    let edge_pinned = peak_lag_bin == lo || peak_lag_bin == hi;
-    Some(EnvelopePeak {
-        lag_ms: peak_lag_bin as f64 * env_bin as f64 * 1000.0 / rate,
-        peak_r: finite_corr(peak_r),
-        edge_pinned,
-    })
-}
-pub(in crate::application::gap_fingerprint::measure) fn envelope_shoulder(
-    side: LagSideSweep<'_>,
-    cfg: EnvelopeCfg,
-    sample_rate: u32,
-) -> Option<EnvelopePeak> {
-    let w = cfg.window.min(side.a_border.len());
-    if w < cfg.bin.max(8) {
-        return None;
-    }
-    let max_lag = cfg.max_lag;
-    let (a_win, lo, hi) = if side.pre_shoulder {
-        if side.anchor_frame < w + max_lag {
-            return None;
-        }
-        let lo = side.anchor_frame - w - max_lag;
-        let hi = (side.anchor_frame + max_lag).min(side.b_signal.len());
-        (&side.a_border[side.a_border.len() - w..], lo, hi)
-    } else {
-        if side.anchor_frame < max_lag {
-            return None;
-        }
-        let lo = side.anchor_frame.saturating_sub(max_lag);
-        let hi = (side.anchor_frame + w + max_lag).min(side.b_signal.len());
-        (&side.a_border[..w], lo, hi)
-    };
-    if hi <= lo {
-        return None;
-    }
-    envelope_peak_at(a_win, &side.b_signal[lo..hi], sample_rate, cfg.bin, max_lag)
-}
-pub(in crate::application::gap_fingerprint::measure) fn envelope_recenter_frames(
-    peak: Option<EnvelopePeak>,
-    sample_rate: u32,
-) -> i64 {
-    let Some(p) = peak else {
-        return 0;
-    };
-    let min_r = crate::domain::gap_equivalence::DonorRegistrationParams::default().min_envelope_r;
-    if p.peak_r >= min_r && !p.edge_pinned {
-        (p.lag_ms / 1000.0 * f64::from(sample_rate)).round() as i64
-    } else {
-        0
-    }
 }
 /// Lag fingerprint for a placement: A's kept border vs the B haystack swept over ±`max_lag`, on the
 /// mono downmix **and** the gate-selected channel (where a multichannel failure lives).

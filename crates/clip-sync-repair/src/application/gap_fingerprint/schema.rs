@@ -943,12 +943,14 @@ pub struct DualFitRescueInput<'a> {
 /// dump and the corpus projection use, so the two paths cannot drift. See
 /// [`GateOutcome::dual_fit_rescue`] for what the value means and its limits.
 ///
-/// Models the accept conditions of `domain::dual_fit::try_dual_fit` (same conjunction
-/// `gap_repair_spec::classify_bracket_exhausted_skip` uses for the `SilenceSplice` cell):
+/// Models the accept conditions of `domain::dual_fit::dual_fit_at_nominal` (same conjunction
+/// `gap_repair_spec::classify_bracket_exhausted_skip` uses for the `SilenceSplice` cell). Conditions
+/// 2–3 are the two *lock-level* rejections, now owned by `dual_fit_at_nominal` /
+/// `domain::seam_locks` rather than by `try_dual_fit` itself:
 ///
 /// 1. the bracket failure class is dual-fit-eligible ([`brackets_dual_fit_eligible`]);
-/// 2. `gate_pass` — both shoulders clear the seam floors (NaN-aware: matches production's
-///    `smin < floor` form, not `smin >= floor`);
+/// 2. `gate_pass` — both shoulders clear the seam floors (`SeamGateFloors::passes`; seam
+///    correlations are finite by construction, so there is no NaN case here);
 /// 3. shoulders do **not** cross — `bridge_frames > 0` (production declines when
 ///    `b_post_seam <= b_pre_seam`);
 /// 4. the **step is real** — `post_seam_r` beats `post_seam_global_r` by
@@ -971,7 +973,8 @@ pub fn dual_fit_rescue_flag(input: &DualFitRescueInput<'_>) -> Option<bool> {
     let aligned = input.donor_aligned?;
     let nominal = input.donor_nominal?;
 
-    // Mirror `try_dual_fit`: decline when `partial_cmp` is None (NaN) or Less.
+    // Mirror `try_dual_fit`: decline when `partial_cmp` is None (NaN) or Less. Unlike the seam
+    // correlations, `post_seam_global_r` really can be NaN (OOB window or zero-variance silence).
     let step_real = df
         .post_seam_r
         .partial_cmp(&(df.post_seam_global_r + crate::domain::dual_fit::DUALFIT_STEP_REAL_MARGIN))
@@ -1509,7 +1512,7 @@ pub struct GateOutcome {
     /// `None` ⇒ not applicable (the gate patched it) or not measurable (no `splice_dualfit`).
     ///
     /// **Predictive, not observed.** Assumes `--dual-fit` is on (the fingerprint has no request flag)
-    /// and reflects `try_dual_fit`'s accept conditions over dump measurements — production still
+    /// and reflects `dual_fit_at_nominal`'s accept conditions over dump measurements — production still
     /// re-validates the assembled seams and can decline. A-border construction matches production
     /// (`mono(refined ± w)` in `splice_dualfit_at`; F14). Read as "dual-fit rescue candidate", not
     /// "this was patched".
@@ -1752,8 +1755,8 @@ mod tests {
         );
     }
 
-    /// The seam gate alone is NOT the accept condition — `try_dual_fit` also requires non-crossed
-    /// shoulders, a real step, a continuous aligned donor, and a non-quiet nominal donor. Each must
+    /// The seam gate alone is NOT the accept condition — production also requires non-crossed
+    /// shoulders (the caller-owned lock check in `dual_fit_at_nominal`), a real step, a continuous aligned donor, and a non-quiet nominal donor. Each must
     /// independently veto, or the flag over-promises repair coverage on exactly the gaps production
     /// declines (the curated `04_program_quiet` regression).
     #[test]

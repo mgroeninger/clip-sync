@@ -66,9 +66,11 @@ wrong on three counts, all readable in `region/characterize.rs`:
 
 Cheap sensor first, expensive search only when the cheap sensor does not decide.
 
-**`try_dual_fit` no longer calls `seam_local_peak`.** It takes those locks and
-does the rest: `gate_pass`, collapse (same numbers, skip path), step-real,
-donor, assemble. If the early scan already collapsed, you never call it.
+**`try_dual_fit` no longer calls `seam_local_peak`, and no longer computes
+`gate_pass`.** Both move into the lock helper (one place, same numbers). It
+takes the locks and does the rest: step-real, donor, trim, assemble — with the
+collapse test kept only as a caller guard. If the early scan already collapsed,
+you never call it.
 
 **After splice** (length-preserving fills are in; A still original clock): loop
 the captured list and `visit_shoulders_abut`. This Change’s visit is
@@ -79,9 +81,14 @@ warns in that same loop (drain only under `--collapse-introduced-silence`).
 Cheap search lives in **one** place. Dual-fit stays “accept and build a fill
 from locks we already have.”
 
+**Stamp lookalike tags on the skip; do not split the reason.** `bridge ≤ 0`
+is one number — Hole 2 and the lookalikes in §4 share it. This Change still
+skips. Clamp, fine-edge pin, and program-quiet are exact; uniqueness and
+envelope-at-`−gap` are not. The successor reads the tags before it drains.
+
 One sentence: **characterize computes the seam locks first; keep may skip on
 collapse; dual-fit and `splice_dualfit` consume the same locks and do not
-search; abut skips are captured and visited after splice.**
+search; abut skips are captured (with lookalike tags) and visited after splice.**
 
 ---
 
@@ -189,7 +196,7 @@ visit (no splice, A unpatched). Write mode and `--patch-only` run the visit.
 Cell: **SilenceSplice** (Hole 2: degenerate splice, zero-length donor bridge).
 Not `ProgramQuiet`, not no-placement, not a new cell.
 
-New `GapPatchSkipReason` object (per-gap status):
+New `GapPatchSkipReason` object (per-gap status). 31/g7:
 
 ```json
 {
@@ -197,23 +204,60 @@ New `GapPatchSkipReason` object (per-gap status):
     "pre_lag_ms": -38.0,
     "post_lag_ms": -1160.3,
     "bridge_frames": -48,
-    "gap_frames": 53702
+    "gap_frames": 53702,
+    "pre_z": 14.1,
+    "post_z": 8.2,
+    "post_envelope_rescue": "rescued",
+    "clamped": false,
+    "edge_pinned": false,
+    "program_quiet": false
   }
 }
 ```
 
-`cell_for_skip_reason` / `reason_admits_cell` / `skip_cell_from_tags`: this
-reason is SilenceSplice only (wildcard-free match arms).
+Bools omitted when false is acceptable (`skip_serializing_if`); `pre_z` /
+`post_z` are `seam_local_peak`'s already-returned uniqueness; envelope rescue
+is stamped only on a shoulder that actually retried. `cell_for_skip_reason` /
+`reason_admits_cell` / `skip_cell_from_tags`: this reason is SilenceSplice
+only (wildcard-free match arms). Do not add a second variant for lookalikes.
 
-Human line (stdout / `-v` / `--gap-listen` manifest) includes the four numbers:
+Human line (stdout / `-v` / `--gap-listen` manifest) stays the four geometry
+numbers; tags live on the object:
 
 `shoulders abut (bridge=−48 frames, gap=53702, pre=−38.0 ms, post=−1160.3 ms)`
 
+### Lookalikes (stamp, do not split)
+
+Abut means both A edges landed on the same (or overlapping) B instant. Hole 2
+is that number *and* the two edges are adjacent program. Four other paths
+qualify and collapse. This Change still skips them as `shoulders_abut`. It
+does not gate on `peak_z` (settled § B: do not wire `dualfit_confident` into
+production dual-fit — stamping `z` on a skip already decided is a different
+use). It does not withhold capture. The collapse Change filters drain from
+these tags
+([TEMP-post-splice-introduced-silence-collapse-plan.md](TEMP-post-splice-introduced-silence-collapse-plan.md)
+§ 1).
+
+| Path | vs Hole 2 | Stamp |
+|------|-----------|-------|
+| **Clamp** — unclamped `nominal + lag` does not abut; `.max(0)` makes both seams frame 0 | Exact. Near the start of B, not a join. | `clamped` — compare before `.max(0)` |
+| **Fine-edge pin** — accepted peak sits on `±max_lag` of the search that produced it (nominal ±600, or the recentered ±600 after rescue). Short gap + silence/period can put locks at opposite corners | Exact. 31/g7 is **not** this: post is dead *inside* ±600, then rescued at −1160, interior to the recentered window. | `edge_pinned` (either shoulder) |
+| **Program-quiet** — B silent at nominal `b_mapped` | Exact for the shared-pause leak. Scan `shared_silence` already dropped most; this is `not_evaluated` / flag off. | `program_quiet` from `program_quiet_at_nominal` on the `b_mono` already in characterize — run it at skip, do not wait for `try_dual_fit` |
+| **Envelope at ≈ `−gap − pre_lag`** | Same `bridge ≤ 0` as 31/g7. Discriminator is uniqueness of *that* peak, not that envelope ran. | `*_envelope_rescue` + `*_z`. Not a different reason |
+| **Same B event** (`post_lag ≈ pre_lag − gap`) | Same number as Hole 2. `step-real` will not separate them. A-pre vs A-post / concat vs B is the successor confirm | `*_z` only. Concat stays in the visit |
+
+`program_quiet: true` on this reason is still SilenceSplice, not a
+`ProgramQuiet` skip. Scan-time `shared_silence` remains the live drop for
+shared pauses that never reach characterize. This tag is the leak
+(`not_evaluated` / flag off) so the drain visit can refuse the cut.
+
 **Capture** (final dispositions after anchored retry): a `ShouldersAbutSkip` per
-abut — `gap_index`, `a_start_frame`, `a_end_frame`, and the lock payload. Hold
-that vec through splice. Do not cut, and do not visit, during characterize or
-inside the splice loop. `splice_into_a` is length-preserving, so those A frames
-still name the hole after neighbouring fills are in.
+abut — `gap_index`, `a_start_frame`, `a_end_frame`, and the lock payload
+(lags, bridge, gap, `z`, envelope rescue, `clamped`, `edge_pinned`,
+`program_quiet`). Hold that vec through splice. Do not cut, and do not visit,
+during characterize or inside the splice loop. `splice_into_a` is
+length-preserving, so those A frames still name the hole after neighbouring
+fills are in.
 
 **Visit** (after the splice loop in `PatchAudio::run_with_decoded`, A still
 original length):
@@ -233,7 +277,8 @@ pre-splice `_a_surround` stays the before.
 The successor
 [TEMP-post-splice-introduced-silence-collapse-plan.md](TEMP-post-splice-introduced-silence-collapse-plan.md)
 puts the concat-confirm in that loop body: **warn by default**, drain A
-PCM only under `--collapse-introduced-silence`; mux is the current path
+PCM only under `--collapse-introduced-silence` **and** only for rows that
+are not `clamped` / `edge_pinned` / `program_quiet`; mux is the current path
 (video was not padded). This Change ships the capture, the post-splice
 visit, and the summary list. It does not shorten A.
 
@@ -246,9 +291,20 @@ seam, ±600 is dead (`peak_r` ~0.12) so envelope consults; the shipped 1 s
 census already reports **−1160 ms** with envelope on. Fine retry is the 250 ms
 post seam recentered there.
 
-After this Change: early locks → `bridge_frames` ≤ 0 → `shoulders_abut`,
-captured. Unified-fit ±10 s never runs. No −977 keep. After splice, the visit
-sees the still-silent hole on original-clock A (other gaps already filled).
+**It clears the §0 qualification with room.** At each shoulder's own lag the
+seams read **0.83 / 0.78** ([archive/TEMP-31g7-gap-shape-vocabulary.md](archive/TEMP-31g7-gap-shape-vocabulary.md)
+§9.2; post 0.7820 at −1160.25 confirmed by the 2026-08-24 corpus run), against
+`min_fill_correlation` 0.35 and `fill_absolute_floor` 0.12. `gate_pass` is true
+by ~2×, so the qualification does not cost us the motivating case — it only
+excludes the noise-lag gaps (`0.966 / 0.123` at nominal is what the *unrescued*
+post reads, and that pair would not have qualified). Those published numbers
+are 1 s-census / wide-sweep readings; the checklist's 31/g7 run is what confirms
+the same margin on the 250 ms seam template (F14 — different placement).
+
+After this Change: early locks → `gate_pass` ∧ `bridge_frames` ≤ 0 →
+`shoulders_abut`, captured. Unified-fit ±10 s never runs. No −977 keep. After
+splice, the visit sees the still-silent hole on original-clock A (other gaps
+already filled).
 
 ---
 
@@ -267,6 +323,9 @@ sees the still-silent hole on original-clock A (other gaps already filled).
   `--gap-fingerprints DIR` is a separate Change (§1). Preview does not splice
   and does not run the visit.
 - Unqualified abut. A collapse read off sub-floor locks decides nothing (§0).
+- Splitting `shoulders_abut` into lookalike reasons, gating the skip on
+  `peak_z`, or withholding capture for clamp / edge-pin / quiet. Stamp
+  those on the object (§4); the collapse Change is who refuses the drain.
 
 ---
 
@@ -303,7 +362,40 @@ paths and tests are untouched.
 
 Also move the `0.5` triage line to a domain const
 `SEAM_LOCK_RECOVERABLE_R` and have `is_recoverable(&LagSummary)`
-(`lag.rs:275`) read it. One number, two callers.
+(`lag.rs:275`) read it. That const is the **fingerprint's** recoverable line and
+the helper's *default* — **not** a number the patch path may inherit; see step 2.
+
+**The triage threshold is a parameter, not a shared const (corrected
+2026-08-28).** Triage (`is this reading trustworthy enough not to need help?`,
+0.5) and the gate (`is this good enough to build a fill from?`,
+`min_fill_correlation` 0.35 / `fill_absolute_floor` 0.12) are different
+questions, and the plan already keeps them separate. The defect is that 0.5 sits
+**above** 0.35, opening a `[0.35, 0.5)` band: a shoulder production accepts today
+at its nominal lag would be judged "needs rescue" by the new helper, and the
+envelope could relocate a lock that currently builds a fill. **Measured on
+`2026-08-23-complete-corpus`: 4 gaps have a shoulder in that band and 3 of them
+have `gate_pass` today** — 8/g4 (post 0.390), 20/g3 (post 0.443), 25/g11 (pre
+0.410). Tier 1.5's five movers did not include them (that query required a
+`lag_decision` rescue; these three were never asked), so this is a **fourth,
+separate** way step 4 could change production bytes.
+
+So `nominal_first_seam_locks` takes the triage threshold as an argument:
+
+- **fingerprint** passes `SEAM_LOCK_RECOVERABLE_R` (0.5) — `lag_decision` and
+  `is_recoverable` keep today's behavior exactly;
+- **patch path** passes `min_fill_correlation`, which makes the band empty *by
+  construction* and buys a much stronger invariant than §1 currently claims:
+  **a lock that passes the gate at its nominal lag is never relocated.** The
+  envelope is consulted only on shoulders that would fail the gate anyway, so
+  rescue can only ever *add* a fill that is declined today — it can never move or
+  alter an existing one. Byte-parity by construction, not by corpus luck.
+
+Retry acceptance uses the same passed threshold, symmetrically: keep the
+recentered lock only if it now clears it. For production that reads "rescue only
+if the rescued lock would actually pass the gate."
+
+31/g7 (post 0.123) and 31/g9 (0.143 / 0.128) are far below 0.35, so Tier 1.5's
+findings and §5 are unaffected by this correction.
 
 **2 — `domain::seam_locks` (the new shared unit).**
 
@@ -320,27 +412,95 @@ sites become this constructor. **Not** `border_templates_for_gap` (silence-skip
 
 ```text
 nominal_first_seam_locks(&templates, max_lag_frames, envelope: Option<EnvelopeCfg>,
-                         wide_a: Option<&WideA>, floors) -> Option<SeamLocks>
+                         wide_a: Option<&WideA>, floors, triage_r) -> Option<SeamLocks>
 ```
 
-Per shoulder: `seam_local_peak` at nominal → if `peak_r <
-SEAM_LOCK_RECOVERABLE_R` and envelope on, coarse envelope → `seam_local_peak`
-recentered → keep the retry only if it is now recoverable, else the honest
-nominal. Returns pre/post `(r, lag_frames, z)`, `b_pre_seam`, `b_post_seam`,
-`bridge_frames`, and `gate_pass` (`min(pre_r, post_r)` vs both floors, computed
-with `try_dual_fit`’s exact NaN polarity — `!(smin < floor)`, so NaN passes).
-`abut()` is `gate_pass && b_post_seam <= b_pre_seam`. `None` only when a seam
+Per shoulder: `seam_local_peak` at nominal → if `peak_r < triage_r` and envelope
+on, coarse envelope → `seam_local_peak` recentered → keep the retry only if it
+now clears `triage_r`, else the honest nominal. `triage_r` is
+`SEAM_LOCK_RECOVERABLE_R` for the fingerprint and `min_fill_correlation` for the
+patch path (step 1). Returns pre/post `(r, lag_frames, z)`, `b_pre_seam`, `b_post_seam`,
+`bridge_frames`, and `gate_pass` (`min(pre_r, post_r)` vs both floors).
+
+> **The NaN polarity this plan asked for does not exist (corrected 2026-08-28,
+> during implementation).** The plan specified `!(smin < floor)` "so NaN passes",
+> copying the shipped `try_dual_fit` / `probes.rs` form. But `seam_local_peak`
+> returns `finite(peak_r)` — **NaN → 0.0** — so `smin` is finite by construction
+> and a digital-silence shoulder arrives as `0.0`, which *fails* the gate. The
+> two forms are equivalent on finite input; `seam_locks` uses the plain
+> `smin >= floor`. Two shipped comments asserted the opposite and are now
+> corrected in place: `probes.rs`'s "Keep raw correlations — including NaN …
+> gate_pass would fail where `NaN < floor` does not", and F14's
+> "(NaN-aware: matches production's `smin < floor` form)" in `schema.rs`.
+> **The NaN caution on `post_seam_global_r` is real and unchanged** — that value
+> comes straight from `normalized_correlation`, which does not clamp. No behavior
+> changed; this was wrong reasoning reaching a right answer.
+`abut()` is `gate_pass && b_post_seam <= b_pre_seam`. Also carry, for the
+skip payload: `edge_pinned` (accepted peak on `±max_lag` of the producing
+search), whether each accepted lock came from envelope retry, and unclamped
+`nominal + lag` so characterize can set `clamped`. `None` only when a seam
 window is out of range.
 
 `wide_a`: on the patch path A is fully decoded in `a_pcm`, so the wider
 envelope window is a plain slice — no lazy-fetch closure needed. The parameter
 exists for the fingerprint’s `wide_a_border` closure, which cannot slice.
 
+**`SeamLockTemplates` enforces its own invariant (added during implementation).**
+`a_pre.len() == a_post.len() == seam_window_frames`, `gap_frames > 0`, checked in
+the only two constructors (`build` from interleaved A, `from_mono` for callers
+that already cut the borders); the fields are private with `pub` getters. Without
+this the struct is a live trap: the old `try_dual_fit` sliced `&a_pre[len-w..]`
+and `&a_post[..w]` from possibly-longer inputs, whereas the locks now measure
+whatever length they are handed — so an over-long template would have been
+measured at one length and spliced at another. `try_dual_fit` also now takes
+`w`/`gap_frames` **from the templates, not from `DualFitParams`**, and
+`debug_assert`s the two agree.
+
+### Step 5 is not a drop-in — three gaps found while implementing 1–3
+
+Reviewed `nominal_first_seam_locks` against the shipped `rescue_shoulder`
+(`measure/lag.rs:309`) it is meant to replace. Steps 1–3 do not touch the
+fingerprint, so none of these is a live defect — but step 5 cannot be a
+mechanical swap, and sizing them now is cheaper than discovering them mid-step.
+
+1. **`SeamLock` cannot carry the fingerprint's wire fields.** `rescue_shoulder`
+   stamps five diagnostics onto its `LagSummary` — `envelope_rescue`
+   (`NotConsulted` / `Declined` / `Rescued`), `envelope_window_ms`,
+   `envelope_lag_ms`, `envelope_peak_r`, `envelope_edge_pinned` — all of them
+   serialized. `SeamLock` has a single `rescued: bool`, which collapses
+   `NotConsulted` and `Declined` into the same value and drops the other four.
+   Step 5 must widen `SeamLock` (returning the `EnvelopePeak` and a three-state
+   outcome), or every corpus dump loses those columns.
+2. **The `gross_lag_shift` mismatch is real but benign.** `rescue_shoulder`
+   returns the retry's lag *relative to the recentered anchor* and adds
+   `env_frames` to `gross_lag_shift`, leaving the consumer to sum them;
+   `lock_shoulder` folds the shift in (`lag = shift + lag2`) so `b_*_seam`
+   arithmetic is placement-independent. Same B frame either way, different field
+   split — the adapter must not add the shift twice.
+3. **`envelope_window_ms` is a clamped, recorded value.** `rescue_shoulder`
+   records `env_cfg.window.min(a_border.len())` because `envelope_shoulder`
+   clamps internally and the recipe cannot express the adjustment.
+   `lock_shoulder` performs the same clamp (inside `envelope_shoulder`) but does
+   not surface it. Folded into gap 1.
+
+Also confirmed clean: the recenter arithmetic itself (`anchor + shift`, clamped
+at 0), the retry-acceptance predicate (`r2 >= triage_r` ≡ `is_recoverable`), and
+`envelope_shoulder`'s `anchor_frame` convention — it wants the **seam point**
+(end of the pre window), which is what `b_mapped_start` is.
+
 **3 — `try_dual_fit` consumes locks.** Delete its two `seam_local_peak` calls
 and its `gate_pass` / collapse blocks (`dual_fit.rs:106–160`); take `SeamLocks`
 instead. Keep the collapse test as a `debug_assert`-grade guard — the caller
 should never invoke it on an abut. Its remaining body (step-real, donor,
 trim, assemble) is unchanged, so in-reach fills stay byte-identical.
+
+**Where the two lock-level rejections went (implementation detail, 2026-08-28).**
+They are spelled out in exactly one place, `dual_fit::dual_fit_at_nominal`
+(locks → `gate_pass` → `bridge_frames > 0` → `try_dual_fit`), which the
+production caller and every fixture go through; `try_dual_fit` re-asserts both
+as `debug_assert`s. Step 4 replaces the production caller's use of that wrapper
+with the early, pre-gate-search form — at which point the wrapper's remaining
+users are the fixtures. Not two copies of the predicate, one.
 `build_dual_fit_input` keeps building `DualFitRepairInput` but sources its
 templates from `SeamLockTemplates`.
 
@@ -364,8 +524,10 @@ stays a single const.
 **5 — `characterize_region`.** After B extract and before
 `char_gate_search`, build `SeamLockTemplates` + `nominal_first_seam_locks` in
 a `char_seam_locks` span (Level-B parity with the neighbouring spans). If
-`locks.abut()` → `shoulders_abut` skip via `skip_region_spec`, capture, return
-— no `evaluate_seam_gate`, no `try_dual_fit`. Otherwise carry the locks into
+`locks.abut()` → `shoulders_abut` skip via `skip_region_spec`, stamp the §4
+tags (`clamped` from unclamped seams, `edge_pinned` from the producing
+search, `program_quiet_at_nominal` on `b_mono` already in hand), capture,
+return — no `evaluate_seam_gate`, no `try_dual_fit`. Otherwise carry the locks into
 `skip_or_dual_fit` → `try_dual_fit`. The locks are computed from the **baseline**
 `refined`, in the same place and for the same reason `dual_fit_input` already is
 (`characterize.rs:381`) — the gate may mutate `refined` afterwards.
@@ -381,10 +543,13 @@ keep the prominence measurements (`pre_seam_prom` / `post_seam_prom`) and
 census and now calls the moved envelope primitive.
 
 **7 — Wire the reason.** `GapPatchSkipReason::ShouldersAbut { … }`
-(`domain/patch_result.rs:127`), formatters, `cell_for_skip_reason` /
+(`domain/patch_result.rs:127`) carries lags, bridge, gap, and the §4
+lookalike tags (`pre_z` / `post_z`, envelope rescue, `clamped`,
+`edge_pinned`, `program_quiet`). Formatters, `cell_for_skip_reason` /
 `reason_admits_cell` / `skip_cell_from_tags`, JSON contract
 ([json-output.md](../json-output.md), [gap-repair-guide.md](../gap-repair-guide.md)),
 Hole 2 detection sentence in [gap-vocabulary.md](gap-vocabulary.md).
+Human line stays the four geometry numbers.
 Add `ShouldersAbut => false` to `is_retryable_patch_skip`
 (`anchor_retry.rs:88` selects retries by that predicate) — otherwise anchored
 retry re-characterizes every abut gap and re-abuts it, which is §3’s “does not
@@ -397,8 +562,199 @@ Stamp `PatchSummary.shoulders_abut`. Preview stamps the list, skips the visit.
 
 ---
 
-## 8. Checklist
+## 8. Verification and checklist
 
+### 8.1 Corpus verification (three tiers)
+
+**Tier 0 — offline, before writing any code. MEASURED 2026-08-28: n=1.**
+Reconstruct the bridge from **`lag_decision`**, the only field on the corpus wire
+whose search can reach a far post shoulder — it runs the shipped nominal-first
+ordering at the 2000 ms envelope, so a rescued lock is recorded in place with
+`envelope_rescue: "rescued"`. Per gap:
+
+```text
+bridge_ms  = gap_ms + post_anchor.frac_lag_ms − pre_anchor.frac_lag_ms
+candidate ⇔ min(pre_anchor.peak_r, post_anchor.peak_r) ≥ min_fill_correlation
+             ∧ bridge_ms ≤ 0
+```
+
+Over `gap-files/2026-08-23-complete-corpus` (51 pairs / 1073 gaps) — **971
+evaluated, exactly one candidate**; 102 gaps carry no `lag_decision` or only one
+shoulder:
+
+| pair/gap | gap_ms | `bridge_ms` | pre_r | post_r | post rescue |
+|---|---|---|---|---|---|
+| **31/g7** | 1118.8 | **−3.4** | 0.829 | 0.782 | `rescued` (envelope −1200 ms, env r 0.944) |
+
+**The `-3000` sibling arm returns the same single candidate** (971 evaluated,
+1 hit). So pair 50's +2.8 s cluster rescuing at the wider radius adds **nothing**
+— and structurally never could: `bridge = gap + step` with `gap > 0`, so a
+**positive** map step can never reach `≤ 0` at any duration
+([archive/TEMP-collapsed-bridge-census-2026-08-20.md](archive/TEMP-collapsed-bridge-census-2026-08-20.md)
+Result 7). This retires the earlier "expect 1, possibly 2–3 once pair 50
+rescues" guess: **it is 1, at both envelope radii, by measurement.**
+
+That also reproduces the collapsed-bridge census's n=1 from committed dump bytes
+with no media run, on the same 971-gap denominator that census used.
+
+**Do not run this split on `splice_dualfit.gate_pass ∧ bridge_frames ≤ 0`.** An
+earlier draft of this section did, and called the census "exact precedent" for
+it. It is neither. The census never reads those fields — `splice_dualfit`,
+`gate_pass` and `bridge_frames` appear nowhere in it; it found 31/g7 with the
+±2000 ms wide sweep plus `lag_decision`. And the predicate is **structurally
+blind** to this class: `splice_dualfit` searches ±600 ms with **no** envelope
+rescue, so 31/g7's post lock at −1160 ms is out of window and the dump records
+the nominal noise reading instead — `post_seam_r 0.123`, `gate_pass false`,
+`bridge_frames` **+57375** (byte-identical in the 08-19, 08-23 and 08-23-3000
+dumps). That split returns **0** corpus-wide and would return 0 however many
+abutting gaps existed, because an out-of-reach lock is the *defining property* of
+the class. Not a lower bound — a blind spot shaped like the thing being counted.
+
+**What Tier 0 is, and is not.** It shares production's *ordering* (nominal fine
+→ envelope → recentered fine) but not its *placement*: `lag_decision` is a 1 s
+template at `b_mapped`; `nominal_first_seam_locks` is a **250 ms** template at
+the seam (F14). A 1 s window straddling a seam can lock where a 250 ms one will
+not, and the reverse. So Tier 0 delivers a **bounded candidate list and a
+falsifier before any code is written** — not the ship set.
+
+There is **no candidate queue today**: Tier 0's only hit, 31/g7, was itself
+established by `shoulder-sweep` (`cargo run --features calibration --bin
+shoulder-sweep`) — the −1160.3 ms / r 0.782 lock, and the reclassification of
+31/g8 *out* of this population as `shared_far_offset`. It is already confirmed by
+the instrument, so nothing is pending arbitration.
+
+The instrument's remaining job is **prospective and narrow**: if Tier 1 surfaces
+a member Tier 0 did not have, `shoulder-sweep` is what decides whether it is a
+real abut or an artifact of the 1 s → 250 ms placement change. It needs listen
+WAVs (~38 gaps of 1073 have them), so it can arbitrate a *named* gap and can
+never produce a base rate — if a Tier 1 newcomer has no WAVs, this is not the
+tool that settles it, and §9's "unaccounted for" clause applies.
+
+One caveat still bounds the count from below: the delta population is sized in
+[archive/TEMP-envelope-3000-corpus-2026-08-24.md](archive/TEMP-envelope-3000-corpus-2026-08-24.md)
+— 24 of 2020 populated shoulders differ between the 2000 and 3000 arms, 22
+dead→rescued across 11 gaps (all pair 50), **zero outcome changes across all
+1073 gaps**. That is the entire set of gaps whose locks a wider envelope can
+move, and the run above already covers both arms.
+
+**Premise this Change ships on:** `shoulders_abut` fires on **one** corpus gap
+(31/g7). That is a stated premise, not a post-merge discovery — which was the
+point of running Tier 0 first.
+
+**Reproduction.** Both arms, ad hoc over `gap-files/`, no committed script:
+per gap take `lag_decision.pre_anchor[0]` / `post_anchor[0]`, `gap_frames` from
+`splice_dualfit.gap_frames` (falling back to `geometry.gap_frames`), and
+`sample_rate`; apply the two lines above. `jq` or a few lines of Python; the
+numbers in the table are the durable record if `gap-files/` is cleaned.
+
+Tooling gap: the harness reads `gate_pass`
+(`gap_fingerprint_corpus/analysis.rs:647`) but **never reads `bridge_frames`** —
+no roll-up prints either predicate today. Add a roll-up line to
+`gap-fingerprint-stats` only if Tier 0 and Tier 1 should be one command.
+
+**Tier 1 — re-fingerprint after implementing.** Step 6 routes `splice_dualfit`
+through `nominal_first_seam_locks`, so the new dump's `bridge_frames` /
+`gate_pass` *are* the production predicate, not a mirror of it. Re-run
+`--gap-fingerprints` over the 51 pairs (`--features calibration,he-aac`, one
+pair at a time, ~15 GB RSS) and diff the abut set against Tier 0. Only here does
+the exact set become knowable.
+
+**Tier 1.5 — step 4's blast radius, measured offline 2026-08-28.** Step 4 turns
+envelope rescue on in production for the first time, which touches far more than
+the abut gap. Sized from the same corpus — gaps with a **dead** seam lock
+(`splice_dualfit` r < `SEAM_LOCK_RECOVERABLE_R`, so the new helper *would*
+consult the envelope) **and** a `lag_decision` shoulder marked `rescued`:
+
+| | count |
+|---|---|
+| comparable gaps | 971 |
+| no dead seam lock — envelope never consulted, path provably unchanged | **948** |
+| ≥1 dead seam lock | 23 |
+| dead seam **and** a rescued shoulder — locks can move | **5** |
+
+All five are **pair 31**, and **none has `gate_pass` today** (0 of 5), so step 4
+cannot alter an existing dual-fit fill — it can only newly *admit* a gap that is
+declined today. Resolving the five:
+
+| pair/gap | today | rescued locks | effect of step 4 |
+|---|---|---|---|
+| 31/g7 | skip | post 0.939 @ −1137.7 (pre live) | **the abut skip** — this Change's target |
+| 31/g8 | patch | pre `declined` (+800 false peak) | inert — pre stays dead ⇒ no `gate_pass` |
+| 31/g10 | patch | 0.990 / 0.995 @ ≈−1153 | inert — gate keeps, `try_dual_fit` never reached |
+| 31/g11 | patch | 0.984 / 0.972 @ −1158.4 | inert — same |
+| **31/g9** | **skip** (`waveform_floor`) | **0.965 / 0.957 @ ≈−1144** | **NEW dual-fit fill** — locks clear `gate_pass` by ~3×, `bridge` ≈ +637 ms ≈ `gap_ms` (far-offset, so no abut), so `try_dual_fit` is reached with strong locks on a gap production declines today |
+
+**31/g9 is the one unintended outcome change this Change carries, and it is named
+in advance.** It is not a regression on its face — both shoulders agree within
+4.1 ms at pair 31's map step, the `shared_far_offset` signature, so B genuinely
+holds that material and the fill would be *correct* placement. But it is an
+unreviewed new fill in the same pair and same class as **31/g10, the census's one
+unexplained audible blip** (Question 11, no mechanism). Treat it as a required
+ear check, not a bonus.
+
+**Tier 2 — production truth.** `scripts/measure/measure-patch-outcomes.ps1`
+with `--patch-only`, diffed per gap against the `gap-files/2026-08-13-repeat-terms`
+baseline. Acceptance: exactly the Tier-1 abut set flips to `shoulders_abut`;
+**31/g9 may newly gain a dual-fit fill (Tier 1.5) and must be ear-checked before
+it is accepted**; every other gap's outcome unchanged. Two things only Tier 2 catches — the
+envelope knobs now firing on the production path can shift **non-abut** locks
+and change dual-fit placements (§7 step 4), and `is_retryable_patch_skip`
+changes the anchored-retry population (§7 step 7). It pays no anchor-oracle
+cost; that per-gap sweep is a Full-tier dump cost, not a production one.
+
+### 8.2 Test blast radius
+
+**Compile-forced (4 sites).** `cell_for_skip_reason`
+(`domain/gap_repair_spec.rs:300`), `reason_admits_cell` (`:320`),
+`skip_cell_from_tags` (`:344`) are wildcard-free by design (C4b — the
+compile-time vocabulary guarantee), plus `format_gap_patch_skip_reason`
+(`domain/patch_result.rs:205`). All four take `ShouldersAbut => SilenceSplice`.
+
+**Compile-silent — the real risk (2 sites).**
+
+* `is_retryable_patch_skip` (`domain/patch_anchor.rs:340`) is a `matches!`
+  allowlist, so a new variant silently defaults to `false`. That *is* what this
+  plan wants, but nothing enforces it: add an explicit assertion or the intent
+  is uncaptured.
+* `cell_for_skip_reason_is_exhaustive_and_correct`
+  (`domain/gap_repair_spec.rs:423`) iterates a **fixed 7-case array**. Despite
+  its name and its “C4b backstop” comment it cannot detect an unlisted variant —
+  the wildcard-free match is the only real guarantee. Add the 8th case; do not
+  rely on it to remind you.
+
+**Rewrites (~6 functions).** Step 3 changes `try_dual_fit`'s signature to take
+`SeamLocks`. Test callers: `domain/dual_fit.rs:304`, `:382`, `:483`, `:524`,
+and `application/patch_audio/region/dual_fit.rs:829`, `:995`
+(`dual_fit_registration_residual_derives_from_try_dual_fit_lags_only`). Each
+builds locks first — the largest mechanical edit in the test surface. Also
+re-read `gap_fingerprint/schema.rs:1760`
+(`dual_fit_rescue_requires_every_try_dual_fit_condition`): it documents the
+conjunction, and `gate_pass` just left `try_dual_fit`.
+
+**Fixtures and goldens — untouched as planned.**
+`tests/gap_cell_fixtures.rs:269` requires every fingerprint-representable cell
+to have a curated fixture; `SilenceSplice` already has
+`03_silence_splice_dualfit_target.json`, so no 13th fixture (a *new* cell would
+have demanded one — a further argument for §4's cell choice).
+`curated_fixtures_carry_derived_fields` (`tests/curated_fixture_backfill.rs:115`)
+fires only if step 6 adds a new derived `splice_dualfit` field; this plan adds
+none. If one is added: `CURATED_FIXTURE_BACKFILL=1`, then re-freeze
+`harness/golden/curated.golden.json` with `CURATED_GOLDEN_REGEN=1`.
+`GapPatchSkipReason` derives `Serialize` only — no in-repo deserializer breaks,
+so the JSON-contract docs are the only downstream consumer.
+
+**The refactor's own tripwire.** Every existing in-reach dual-fit numeric test
+must pass with *identical values* after steps 1–3, and `measure/lag.rs`'s
+envelope tests must compile and pass unedited through the re-exports. Steps 1
+and 3 both claim “move, no behavior change”; a shifted value falsifies that
+claim and is the signal to stop.
+
+### 8.3 Checklist
+
+- [x] **Tier 0 first** — **done 2026-08-28, n=1 (31/g7)**, from
+      `lag_decision` over `2026-08-23-complete-corpus` *and* its `-3000` arm
+      (971 evaluated each). Count, gap list and the refuted
+      `splice_dualfit` split are recorded in §8.1.
 - [ ] `domain::lag_envelope` move: fingerprint `rescue_shoulder` uses the moved
       primitive (no second envelope), `lag.rs` re-exports, existing lag tests
       pass unedited. One `SEAM_LOCK_RECOVERABLE_R`; one 100 ms bin const.
@@ -406,7 +762,9 @@ Stamp `PatchSummary.shoulders_abut`. Preview stamps the list, skips the visit.
       (both old copies deleted); `nominal_first_seam_locks` unit tests —
       `gate_pass` NaN polarity matches `try_dual_fit`, envelope not consulted
       when nominal is recoverable, rescued-but-unrecoverable falls back to the
-      honest nominal.
+      honest nominal, `edge_pinned` is true iff the accepted peak is on
+      `±max_lag` of the producing search, `clamped` is true iff unclamped
+      seams do not abut and `.max(0)` makes them abut.
 - [ ] **Unqualified locks decide nothing**: dead-shoulder fixture
       (`min(pre_r, post_r)` below floor) whose noise lags cross produces **no**
       abut skip and reaches `evaluate_seam_gate` — same outcome as today.
@@ -418,17 +776,31 @@ Stamp `PatchSummary.shoulders_abut`. Preview stamps the list, skips the visit.
       “production repair never reads it”.
 - [ ] `characterize_region` skip-before-keep; `--no-dual-fit` still abut-skips;
       `is_retryable_patch_skip(ShouldersAbut) == false` (anchored retry does not
-      re-characterize an abut gap).
+      re-characterize an abut gap). This one is **compile-silent** — the
+      `matches!` allowlist defaults a new variant to `false`, so the assertion
+      is the only thing that captures the intent (§8.2).
 - [ ] `splice_dualfit_at` + `dual_fit_rescue_flag` (already declines
       `bridge_frames <= 0`) on a rescued-but-abut fixture.
-- [ ] `ShouldersAbut` reason: serde, `cell_for_skip_reason` exhaustive tests,
-      human format, JSON + repair-guide tables, vocab Hole 2 “detection” line.
+- [ ] `ShouldersAbut` reason: serde, all four wildcard-free matches, human
+      format, JSON + repair-guide tables, vocab Hole 2 “detection” line. Add the
+      8th case to `cell_for_skip_reason_is_exhaustive_and_correct` by hand — its
+      fixed array cannot detect the new variant (§8.2). Payload stamps `pre_z` /
+      `post_z`, envelope rescue, `clamped`, `edge_pinned`, `program_quiet` —
+      still one variant; a clamp-only fixture is `shoulders_abut` with
+      `clamped: true`, not a new reason.
+- [ ] `try_dual_fit`'s six test callers rebuilt on `SeamLocks` (§8.2); every
+      in-reach numeric value unchanged.
 - [ ] Capture + post-splice visit: write-mode fixture with one abut skip and
       one real fill — visit runs **after** splice, A length unchanged, abut
       frames still in range, `patch.shoulders_abut` has that gap; preview has
       the list and never visits; visit is a named function
       [TEMP-post-splice-introduced-silence-collapse-plan.md](TEMP-post-splice-introduced-silence-collapse-plan.md)
       fills in.
+- [ ] **31/g9 ear check** — Tier 1.5 predicts step 4 gives it a *new* dual-fit
+      fill (skip → patch, rescued locks 0.965/0.957 at pair 31's map step). Not a
+      regression on its face, but same pair and class as 31/g10's unexplained
+      blip. Listen before accepting; if it is bad, step 4 needs a narrower gate,
+      not a waiver.
 - [ ] 31/g7 production: `shoulders_abut`, not High keep (licensed listen WAVs
       already on disk, 2026-08-18 post-sweep stem).
 
@@ -438,13 +810,20 @@ Stamp `PatchSummary.shoulders_abut`. Preview stamps the list, skips the visit.
 
 - Qualified abutting locks (`gate_pass ∧ bridge_frames ≤ 0`) →
   `shoulders_abut` skip, no fill-search; per-gap JSON payload
-  carries lags + `bridge_frames` + `gap_frames`; run-level
-  `patch.shoulders_abut` is the same set with `gap_index` + A frames.
+  carries lags + `bridge_frames` + `gap_frames` plus the §4 lookalike
+  tags (`z`, envelope rescue, `clamped`, `edge_pinned`, `program_quiet`).
+  Still one reason. Run-level `patch.shoulders_abut` is the same set with
+  `gap_index` + A frames.
 - Write / `--patch-only`: after splice, `visit_shoulders_abut` runs once per
   captured skip; A length unchanged. Preview: list present, visit not called.
 - In-reach two-lag fillable silence-splice still reaches `try_dual_fit` with
   the same seam locks it would have searched; fill bytes unchanged.
 - Nominal-recoverable shoulders never consult envelope.
+- **A lock that passes the gate at its nominal lag is never relocated.** The
+  patch path triages at `min_fill_correlation`, so the `[0.35, 0.5)` band is
+  empty by construction and the envelope can only add a declined fill, never move
+  an existing one (§7 step 1). Regression fixture: a shoulder at ~0.40 with a
+  live partner and a strong decoy elsewhere in B keeps its nominal lag.
 - `splice_dualfit` on an abutting gap reports the rescued locks and
   `dual_fit_rescue: false`.
 - `--no-dual-fit` still collapse-skips 31/g7.
@@ -456,3 +835,11 @@ Stamp `PatchSummary.shoulders_abut`. Preview stamps the list, skips the visit.
   config, not `--lag-envelope-max-lag-ms`.
 - A non-positive `lag_envelope_window_secs` in the config file is rejected at
   load, not silently rescue-free.
+- **Tier 2 clean**: the `--patch-only` diff against
+  `gap-files/2026-08-13-repeat-terms` shows the Tier-1 abut set flipped to
+  `shoulders_abut` and **zero outcome changes on every non-abut gap** (§8.1).
+- Tier 1's abut set contains Tier 0's `{31/g7}`, and any *additional* member is
+  explained by the placement change Tier 0 cannot model — 1 s template at
+  `b_mapped` → 250 ms template at the seam (F14, §8.1). A new member with no such
+  explanation is unaccounted for and blocks the merge. A Tier 1 run that **loses**
+  31/g7 falsifies §5 and blocks the merge outright.

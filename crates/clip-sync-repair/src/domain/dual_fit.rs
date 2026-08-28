@@ -10,7 +10,9 @@ use clip_sync::normalized_correlation;
 
 use crate::domain::donor::{donor_interior_at, program_quiet_at_nominal, DonorInterior};
 use crate::domain::gap_fill_fit::trim_at_lowest_energy_interior;
-use crate::domain::seam_local::seam_local_peak;
+use crate::domain::seam_locks::{
+    nominal_first_seam_locks, SeamGateFloors, SeamLockTemplates, SeamLocks,
+};
 
 /// The **step is real** margin: the post seam at its own lag must beat the post seam forced to the pre lag
 /// (step = 0) by at least this, else a single constant shift suffices and the reported step is a registration
@@ -65,103 +67,119 @@ pub struct DualFitResult {
     pub aligned_donor: DonorInterior,
 }
 
-/// Attempt a dual-fit fill. `a_pre_mono`/`a_post_mono` are A's mono seam borders (the `seam_window` frames
-/// **ending at** the gap start / **starting at** the gap end). `b_mono`/`b_samples` are the decoded B window
-/// (mono + interleaved); `b_mapped_start` is the nominal geometry `b_mapped` gap-start frame within it.
+/// Measure this gap's two seam locks with the same params the fit will use.
 ///
-/// Returns `None` unless the gap is a `dualfit_target`: seams pass the gate (`min ≥ floors`) at their
-/// seam-local lags, the step is real (`post_own − post@pre ≥ margin`), the aligned donor bridges (continuous),
-/// and it is not program-quiet (nominal silence `< frac`). On `Some`, the caller re-validates `fill` with the
-/// production gate before splicing.
-pub fn try_dual_fit(
-    a_pre_mono: &[f64],
-    a_post_mono: &[f64],
+/// The floors and the rescue-triage line both come from `p`: triage is `min_fill_correlation`, so a
+/// shoulder the gate would accept at its nominal lag is never a rescue candidate and can never be
+/// relocated (see `seam_locks::nominal_first_seam_locks`). `envelope`/`wide_a` are `None` here — the
+/// production patch path measures at nominal only, exactly as it did before the locks were hoisted;
+/// turning the envelope on is a separate, behavior-changing step.
+pub fn nominal_seam_locks(
+    templates: &SeamLockTemplates,
+    b_mono: &[f64],
+    p: &DualFitParams,
+) -> Option<SeamLocks> {
+    nominal_first_seam_locks(
+        templates,
+        b_mono,
+        p.max_lag_frames,
+        None,
+        None,
+        p.sample_rate,
+        SeamGateFloors {
+            min_fill_correlation: p.min_fill_correlation,
+            fill_absolute_floor: p.fill_absolute_floor,
+        },
+        p.min_fill_correlation,
+    )
+}
+
+/// Measure the seam locks at nominal and, if they justify it, attempt the fit.
+///
+/// The whole per-gap sequence in one call: locks → the two lock-level rejections the caller owns →
+/// [`try_dual_fit`]. This is the *only* place those two rejections are spelled out, so the callers
+/// cannot drift apart on them.
+pub fn dual_fit_at_nominal(
+    templates: &SeamLockTemplates,
     b_mono: &[f64],
     b_samples: &[f32],
-    b_mapped_start: usize,
     p: &DualFitParams,
 ) -> Option<DualFitResult> {
-    let ch = p.channels.max(1);
-    let w = p.seam_window_frames;
-    if a_pre_mono.len() < w || a_post_mono.len() < w || p.gap_frames == 0 {
+    let locks = nominal_seam_locks(templates, b_mono, p)?;
+    if !locks.gate_pass {
         tracing::debug!(
-            a_pre_len = a_pre_mono.len(),
-            a_post_len = a_post_mono.len(),
-            w,
-            gap_frames = p.gap_frames,
-            "dual_fit: declined — shoulder shorter than seam window or empty gap"
-        );
-        return None;
-    }
-    let a_pre = &a_pre_mono[a_pre_mono.len() - w..];
-    let a_post = &a_post_mono[..w];
-
-    // Fit each shoulder at its seam-local lag around the NOMINAL b_mapped.
-    let Some(pre_start) = b_mapped_start.checked_sub(w) else {
-        tracing::debug!(
-            b_mapped_start,
-            w,
-            "dual_fit: declined — pre seam window runs before B start"
-        );
-        return None;
-    };
-    let Some((pre_r, pre_lag, pre_z)) = seam_local_peak(a_pre, b_mono, pre_start, p.max_lag_frames)
-    else {
-        tracing::debug!(
-            pre_start,
-            max_lag_frames = p.max_lag_frames,
-            b_mono_len = b_mono.len(),
-            "dual_fit: declined — pre seam-local search out of range"
-        );
-        return None;
-    };
-    let b_post_nominal = b_mapped_start + p.gap_frames;
-    let Some((post_r, post_lag, post_z)) =
-        seam_local_peak(a_post, b_mono, b_post_nominal, p.max_lag_frames)
-    else {
-        tracing::debug!(
-            b_post_nominal,
-            max_lag_frames = p.max_lag_frames,
-            b_mono_len = b_mono.len(),
-            "dual_fit: declined — post seam-local search out of range"
-        );
-        return None;
-    };
-    tracing::debug!(
-        pre_r,
-        pre_lag,
-        ?pre_z,
-        post_r,
-        post_lag,
-        ?post_z,
-        "dual_fit: seam-local peaks"
-    );
-
-    // gate_pass.
-    let smin = pre_r.min(post_r);
-    if smin < p.min_fill_correlation || smin < p.fill_absolute_floor {
-        tracing::debug!(
-            smin,
-            pre_r,
-            post_r,
+            pre_r = locks.pre.r,
+            post_r = locks.post.r,
             min_fill_correlation = p.min_fill_correlation,
             fill_absolute_floor = p.fill_absolute_floor,
             "dual_fit: declined — gate_pass (seam-local correlation below floor)"
         );
         return None;
     }
-
-    // Seam-local shoulder placements → bridge span.
-    let b_pre_seam = (b_mapped_start as i64 + pre_lag).max(0) as usize;
-    let b_post_seam = (b_post_nominal as i64 + post_lag).max(0) as usize;
-    if b_post_seam <= b_pre_seam {
+    if locks.bridge_frames <= 0 {
         tracing::debug!(
-            b_pre_seam,
-            b_post_seam,
+            b_pre_seam = locks.b_pre_seam,
+            b_post_seam = locks.b_post_seam,
             "dual_fit: declined — seam-local shoulders cross/collapse"
         );
         return None;
     }
+    try_dual_fit(templates, &locks, b_mono, b_samples, p)
+}
+
+/// Attempt a dual-fit fill from **already-measured** seam locks.
+///
+/// `templates` carries A's two raw seam borders and the nominal B geometry; `locks` carries where
+/// each of them matched. Both come from [`crate::domain::seam_locks`] — this function no longer
+/// measures them, so the diagnostic `splice_dualfit` and the production repair cannot disagree about
+/// a lag, a `gate_pass`, or a bridge length.
+///
+/// **The caller owns the two lock-level rejections** (`locks.gate_pass` and the collapse test
+/// `b_post_seam > b_pre_seam`), because they are exactly the conditions that let it skip the
+/// expensive work ahead of this call. They are re-asserted here in debug builds so a caller that
+/// forgets cannot silently splice a crossed bridge.
+///
+/// Returns `None` unless the remaining `dualfit_target` conditions hold: the step is real
+/// (`post_own − post@pre ≥ margin`), the aligned donor bridges (continuous), and it is not
+/// program-quiet. On `Some`, the caller re-validates `fill` with the production gate before splicing.
+pub fn try_dual_fit(
+    templates: &SeamLockTemplates,
+    locks: &SeamLocks,
+    b_mono: &[f64],
+    b_samples: &[f32],
+    p: &DualFitParams,
+) -> Option<DualFitResult> {
+    debug_assert!(
+        locks.gate_pass,
+        "try_dual_fit called on locks the fill gate rejects — the caller must check gate_pass"
+    );
+    debug_assert!(
+        locks.b_post_seam > locks.b_pre_seam,
+        "try_dual_fit called on collapsed/crossed seam locks — the caller must check the bridge"
+    );
+    debug_assert_eq!(
+        (templates.seam_window_frames(), templates.gap_frames()),
+        (p.seam_window_frames, p.gap_frames),
+        "templates were cut against different geometry than the params being fit with"
+    );
+    let ch = p.channels.max(1);
+    // Geometry comes from the templates, not `p`: they are the windows the locks were actually
+    // measured with, and every length below (step-real window, bridge, trim guard) must match them.
+    let w = templates.seam_window_frames();
+    let a_post = templates.a_post();
+    let b_mapped_start = templates.b_mapped_start();
+    let (pre_r, pre_lag) = (locks.pre.r, locks.pre.lag);
+    let (post_r, post_lag) = (locks.post.r, locks.post.lag);
+    let (b_pre_seam, b_post_seam) = (locks.b_pre_seam, locks.b_post_seam);
+    tracing::debug!(
+        pre_r,
+        pre_lag,
+        post_r,
+        post_lag,
+        b_pre_seam,
+        b_post_seam,
+        "dual_fit: seam locks (measured by the caller)"
+    );
 
     // step-real: post seam at the PRE lag (step forced 0) must be materially worse than at its own lag.
     let b_post_global = b_pre_seam + p.gap_frames;
@@ -253,6 +271,24 @@ pub fn try_dual_fit(
 mod tests {
     use super::*;
 
+    /// The raw `mono(refined ± w)` seam borders these fixtures already build by hand, packaged as
+    /// the templates the production path cuts with `SeamLockTemplates::build`.
+    fn templates(
+        a_pre_mono: &[f64],
+        a_post_mono: &[f64],
+        b_mapped_start: usize,
+        p: &DualFitParams,
+    ) -> SeamLockTemplates {
+        SeamLockTemplates::from_mono(
+            a_pre_mono.to_vec(),
+            a_post_mono.to_vec(),
+            p.gap_frames,
+            b_mapped_start,
+            p.seam_window_frames,
+        )
+        .expect("fixture borders are exactly one seam window")
+    }
+
     fn mono_to_interleaved(m: &[f64], ch: usize) -> Vec<f32> {
         m.iter()
             .flat_map(|&x| std::iter::repeat_n(x as f32, ch))
@@ -301,14 +337,7 @@ mod tests {
             a_gap_floor_db: -60.0,
         };
 
-        let r = try_dual_fit(
-            &a_pre_mono,
-            &a_post_mono,
-            &b_mono,
-            &b_samples,
-            b_mapped_start,
-            &p,
-        )
+        let r = dual_fit_at_nominal(&templates(&a_pre_mono, &a_post_mono, b_mapped_start, &p), &b_mono, &b_samples, &p)
         .expect("dual-fit target");
         assert!(
             r.pre_seam_r > 0.9 && r.post_seam_r > 0.9,
@@ -379,14 +408,7 @@ mod tests {
             step_real_margin: 0.15,
             a_gap_floor_db: -60.0,
         };
-        let r = try_dual_fit(
-            &a_pre_mono,
-            &a_post_mono,
-            &b_mono,
-            &b_samples,
-            b_mapped_start,
-            &p,
-        )
+        let r = dual_fit_at_nominal(&templates(&a_pre_mono, &a_post_mono, b_mapped_start, &p), &b_mono, &b_samples, &p)
         .expect("dual-fit target");
 
         // The fix: production classifies confidence from these — the correct assembled-seam scores.
@@ -480,7 +502,7 @@ mod tests {
         };
 
         assert!(
-            try_dual_fit(&a_pre_mono, &a_post_mono, &b_mono, &b_samples, b_mapped_start, &p).is_none(),
+            dual_fit_at_nominal(&templates(&a_pre_mono, &a_post_mono, b_mapped_start, &p), &b_mono, &b_samples, &p).is_none(),
             "internally-broken donor bridge is declined despite high seam correlation and a real step"
         );
     }
@@ -521,12 +543,10 @@ mod tests {
             a_gap_floor_db: -60.0,
         };
         assert!(
-            try_dual_fit(
-                &a_pre_mono,
-                &a_post_mono,
+            dual_fit_at_nominal(
+                &templates(&a_pre_mono, &a_post_mono, b_mapped_start, &p),
                 &b_mono,
                 &b_samples,
-                b_mapped_start,
                 &p
             )
             .is_none(),

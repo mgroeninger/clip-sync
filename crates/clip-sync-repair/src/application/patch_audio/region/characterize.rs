@@ -410,7 +410,7 @@ pub(in crate::application::patch_audio) fn characterize_region(
         end_frame: b_extract_end_frame,
         b_mapped_start_frame: dual_fit_input
             .as_ref()
-            .map(|d| d.b_mapped_start)
+            .map(|d| d.templates.b_mapped_start())
             .unwrap_or(0),
     };
 

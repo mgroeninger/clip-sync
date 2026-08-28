@@ -293,15 +293,19 @@ pub(in crate::application::gap_fingerprint::measure) fn splice_dualfit_at(
     let (post_seam_r, post_lag, post_seam_z) =
         seam_local_peak(&a_post, b_mono, b_post_nominal, max_lag)?;
 
-    // Keep raw correlations — including NaN from zero-variance (digital silence) windows. Do **not**
-    // `finite_corr` here: mapping NaN→0.0 inverts both of production's NaN decisions (gate_pass would
-    // fail where `NaN < floor` does not; step-real would pass where `partial_cmp(NaN)` declines). F14.
+    // Seam correlations arrive already finite: `seam_local_peak` returns `finite(peak_r)`, so a
+    // zero-variance (digital-silence) shoulder reads **0.0, not NaN** — and production reads the same
+    // 0.0, because it calls the same function. (Corrected 2026-08-28: this comment used to claim raw
+    // NaN was preserved here and that mapping it would invert `gate_pass`. It was never preserved.
+    // The NaN caution below on `post_seam_global_r` IS real — that one comes straight from
+    // `normalized_correlation`, which does not clamp.) F14.
     // The seam-local shoulder placements (nominal ± the per-seam search) define the bridge + step.
     let b_pre_seam = (b_pre_nominal as i64 + pre_lag).max(0) as usize;
     let b_post_seam = (b_post_nominal as i64 + post_lag).max(0) as usize;
     let bridge_frames = b_post_seam as i64 - b_pre_seam as i64;
     let smin = pre_seam_r.min(post_seam_r);
-    // Same form as `try_dual_fit`: decline only when `smin < floor` (NaN < x is false ⇒ gate passes).
+    // Same gate production applies (`domain::seam_locks::SeamGateFloors::passes`). `smin` is finite
+    // by construction, so this and `smin >= floor` agree.
     let gate_pass =
         !(smin < f64::from(cfg.min_fill_correlation) || smin < f64::from(cfg.fill_absolute_floor));
 

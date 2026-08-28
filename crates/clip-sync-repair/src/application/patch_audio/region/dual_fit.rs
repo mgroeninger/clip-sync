@@ -28,11 +28,13 @@ use super::types::{seam_failure_outcome, skip_region_spec, RegionPatchOutcome};
 /// is on (so the off path pays nothing). `None` when the gap is too near a window edge for the seam borders.
 pub(in crate::application::patch_audio::region) struct DualFitRepairInput<'a> {
     pub(in crate::application::patch_audio::region) params: crate::domain::dual_fit::DualFitParams,
-    pub(in crate::application::patch_audio::region) a_pre_mono: Vec<f64>,
-    pub(in crate::application::patch_audio::region) a_post_mono: Vec<f64>,
+    /// A's two raw seam borders + the nominal B geometry, cut once by
+    /// [`crate::domain::seam_locks::SeamLockTemplates::build`] (which also carries the range guard
+    /// this constructor used to spell out itself).
+    pub(in crate::application::patch_audio::region) templates:
+        crate::domain::seam_locks::SeamLockTemplates,
     pub(in crate::application::patch_audio::region) b_mono: Vec<f64>,
     pub(in crate::application::patch_audio::region) b_samples: &'a [f32],
-    pub(in crate::application::patch_audio::region) b_mapped_start: usize,
     pub(in crate::application::patch_audio::region) a_start_frame: usize,
     pub(in crate::application::patch_audio::region) a_end_frame: usize,
     pub(in crate::application::patch_audio::region) crossfade_secs: f64,
@@ -83,27 +85,18 @@ pub(in crate::application::patch_audio::region) fn build_dual_fit_input<'a>(
     } = spec;
     let ch = channels.max(1);
     let w = ((fill_seam_search_secs * sample_rate as f64).round() as usize).max(8);
-    let a_frames = a_samples.len() / ch;
-    if refined.start_frame < w || refined.end_frame + w > a_frames || gap_frames == 0 {
-        return None;
-    }
-    let mono = |lo: usize, hi: usize| -> Vec<f64> {
-        (lo..hi)
-            .map(|f| {
-                let base = f * ch;
-                a_samples[base..base + ch]
-                    .iter()
-                    .map(|&x| x as f64)
-                    .sum::<f64>()
-                    / ch as f64
-            })
-            .collect()
-    };
-    let a_pre_mono = mono(refined.start_frame - w, refined.start_frame);
-    let a_post_mono = mono(refined.end_frame, refined.end_frame + w);
-    let b_mono: Vec<f64> = crate::domain::pcm::interleaved_to_mono(b_samples, ch);
     let b_mapped_start =
         b_mapped_start_frame(refined_b_start_secs, b_extract_start_secs, sample_rate);
+    // Range guard + raw `mono(refined ± w)` borders, both now owned by `SeamLockTemplates::build`.
+    let templates = crate::domain::seam_locks::SeamLockTemplates::build(
+        a_samples,
+        ch,
+        refined.start_frame,
+        refined.end_frame,
+        b_mapped_start,
+        w,
+    )?;
+    let b_mono: Vec<f64> = crate::domain::pcm::interleaved_to_mono(b_samples, ch);
     let a_gap_floor_db =
         a_gap_floor_db(a_samples, channels, refined.start_frame, refined.end_frame);
 
@@ -119,11 +112,9 @@ pub(in crate::application::patch_audio::region) fn build_dual_fit_input<'a>(
             step_real_margin: 0.15,
             a_gap_floor_db,
         },
-        a_pre_mono,
-        a_post_mono,
+        templates,
         b_mono,
         b_samples,
-        b_mapped_start,
         a_start_frame: refined.start_frame,
         a_end_frame: refined.end_frame,
         crossfade_secs,
@@ -172,7 +163,7 @@ fn measure_dual_fit_residual_verdict(
     {
         return None;
     }
-    let nominal_delta = df.b_mapped_start as i64 - df.a_start_frame as i64;
+    let nominal_delta = df.templates.b_mapped_start() as i64 - df.a_start_frame as i64;
     let max_lag_frames =
         crate::domain::residual_max_lag_frames(df.params.sample_rate, request.residual_lag_secs);
     let floor_common = |window: usize| policies::SeamFloorParams {
@@ -258,12 +249,10 @@ pub(in crate::application::patch_audio::region) fn skip_or_dual_fit(
     let mut dual_fit_attempt: Option<crate::domain::patch_result::SeamScoreAttempt> = None;
     if dual_fit_eligible(request.dual_fit, fail) {
         if let Some(df) = dual_fit {
-            if let Some(r) = crate::domain::dual_fit::try_dual_fit(
-                &df.a_pre_mono,
-                &df.a_post_mono,
+            if let Some(r) = crate::domain::dual_fit::dual_fit_at_nominal(
+                &df.templates,
                 &df.b_mono,
                 df.b_samples,
-                df.b_mapped_start,
                 &df.params,
             ) {
                 // Re-validate the assembled seams. The seam scores are the ones `try_dual_fit`'s own
@@ -826,14 +815,15 @@ mod tests {
             step_real_margin: 0.15,
             a_gap_floor_db: -60.0,
         };
-        let r = crate::domain::dual_fit::try_dual_fit(
-            &a_pre_mono,
-            &a_post_mono,
-            &b_mono,
-            &b_samples,
+        let templates = crate::domain::seam_locks::SeamLockTemplates::from_mono(
+            a_pre_mono.clone(),
+            a_post_mono.clone(),
+            gap,
             b_mapped_start,
-            &params,
+            w,
         )
+        .expect("fixture borders are exactly one seam window");
+        let r = crate::domain::dual_fit::dual_fit_at_nominal(&templates, &b_mono, &b_samples, &params)
         .expect("dual-fit target");
         assert_eq!(
             r.pre_lag, 0,
@@ -858,11 +848,9 @@ mod tests {
 
         let df = DualFitRepairInput {
             params,
-            a_pre_mono,
-            a_post_mono,
+            templates,
             b_mono,
             b_samples: &b_samples,
-            b_mapped_start,
             a_start_frame,
             a_end_frame,
             crossfade_secs: 0.02,
@@ -992,14 +980,15 @@ mod tests {
             step_real_margin: 0.15,
             a_gap_floor_db: -60.0,
         };
-        let r = crate::domain::dual_fit::try_dual_fit(
-            &a_pre_mono,
-            &a_post_mono,
-            &b_mono,
-            &b_samples,
+        let templates = crate::domain::seam_locks::SeamLockTemplates::from_mono(
+            a_pre_mono.clone(),
+            a_post_mono.clone(),
+            gap,
             b_mapped_start,
-            &params,
+            w,
         )
+        .expect("fixture borders are exactly one seam window");
+        let r = crate::domain::dual_fit::dual_fit_at_nominal(&templates, &b_mono, &b_samples, &params)
         .expect("dual-fit target");
 
         let confident_floor = params.min_fill_correlation.max(params.fill_absolute_floor);

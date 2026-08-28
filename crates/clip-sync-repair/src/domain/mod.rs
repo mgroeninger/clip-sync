@@ -17,6 +17,7 @@ pub mod gap_seam_extend;
 pub mod gap_signature;
 pub mod gap_structure;
 pub mod gap_tags;
+pub mod lag_envelope;
 pub mod level_stats;
 pub mod metrics;
 pub mod patch_anchor;
@@ -29,6 +30,7 @@ pub mod program_levels;
 pub mod repair_profile;
 pub mod residual_gate;
 pub mod seam_local;
+pub mod seam_locks;
 pub mod seam_robust;
 pub mod track_match;
 

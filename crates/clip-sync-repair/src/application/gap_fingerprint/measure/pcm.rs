@@ -258,16 +258,9 @@ pub(in crate::application::gap_fingerprint::measure) const WIDE_ENV_BIN_MS: f64 
 pub(in crate::application::gap_fingerprint::measure) const WIDE_ENV_WINDOW_SECS: f64 = 2.0;
 pub(in crate::application::gap_fingerprint::measure) const WIDE_ENV_MAX_LAG_MS: f64 = 400.0;
 
-/// `~10 ms`-bin RMS envelope — the encoding-/small-shift-robust representation for the seam probe.
-pub(in crate::application::gap_fingerprint::measure) fn fine_rms_envelope(
-    x: &[f64],
-    bin: usize,
-) -> Vec<f64> {
-    let bin = bin.max(1);
-    x.chunks(bin)
-        .map(|c| (c.iter().map(|v| v * v).sum::<f64>() / c.len() as f64).sqrt())
-        .collect()
-}
+/// `~10 ms`-bin RMS envelope — moved to [`crate::domain::lag_envelope`] with the rest of the coarse
+/// envelope primitives; re-exported here so existing call sites keep their paths.
+pub(in crate::application::gap_fingerprint::measure) use crate::domain::lag_envelope::fine_rms_envelope;
 pub(in crate::application::gap_fingerprint::measure) fn structure_params_for(
     cfg: &FingerprintConfig,
     gap_frames: usize,
