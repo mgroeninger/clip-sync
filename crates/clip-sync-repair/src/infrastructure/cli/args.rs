@@ -61,10 +61,11 @@ pub struct Args {
     #[arg(long)]
     pub fingerprint_diagnostics: bool,
 
-    /// Coarse envelope half-width (ms) that recenters `lag_decision`'s ±600 ms sweep.
-    /// Default 2000. `0` disables recenter (nominal `b_mapped`, no `envelope_*` on the wire).
-    /// Probe-only — not Apply's `max_lag_blocks`. Requires `--gap-fingerprints`.
-    #[cfg(feature = "calibration")]
+    /// Coarse envelope half-width (ms) for the nominal-first shoulder rescue: it recenters
+    /// `lag_decision`'s ±600 ms sweep in a fingerprint dump, and the seam locks on a production
+    /// repair. Default 2000. `0` disables recenter (nominal `b_mapped`, no `envelope_*` on the
+    /// wire). Not Apply's `max_lag_blocks`. Available on every build and on any run mode — a
+    /// dump dir is *not* required, because production reads this too.
     #[arg(long, value_name = "MS")]
     pub lag_envelope_max_lag_ms: Option<u32>,
 
@@ -77,7 +78,8 @@ pub struct Args {
     #[arg(long, value_enum, value_name = "MODE")]
     pub border_capture: Option<BorderCaptureArg>,
 
-    /// Coarse envelope window (seconds) the `lag_decision` recenter correlates. Default 2.0.
+    /// Coarse envelope window (seconds) the recenter correlates (`lag_decision` in a dump, the
+    /// seam locks on a repair). Default 2.0.
     /// Widens the rescue branch's A-side template — and with it `wide_need`, so it interacts with
     /// `--border-capture`. The A window is clamped to the shoulder, so widening is not refused for
     /// lack of A material; what it costs is **B lead-in**. The recenter needs `window +
@@ -86,8 +88,8 @@ pub struct Args {
     /// **Rescue path only**: the Tier-3 `wide_envelope` diagnostic keeps its own pinned
     /// window, so a raised value puts two non-comparable lags in one dump (the value is recorded in
     /// `probe_recipe.lag_envelope_window_secs`). No effect with `--lag-envelope-max-lag-ms 0`.
-    /// Requires `--gap-fingerprints`.
-    #[cfg(feature = "calibration")]
+    /// Available on every build and on any run mode — like `--lag-envelope-max-lag-ms`, production
+    /// repair reads it. Must be positive and finite; `0` is not a disable here.
     #[arg(long, value_name = "SECS")]
     pub lag_envelope_window_secs: Option<f64>,
 

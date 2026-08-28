@@ -418,8 +418,11 @@ They carry **no verdict token** — one was dropped 2026-08-12 because it named 
 bracket gate, which production routinely overrides (a `skip` fingerprint is often a patched gap);
 read `outcome.tier` in the JSON or `manifest.json` instead. Ignored when
 `--mux` is set (warning). `--fingerprint-gap` / `--fingerprint-diagnostics` /
-`--lag-envelope-max-lag-ms` / `--border-capture` / `--lag-envelope-window-secs` without
-`--gap-fingerprints` are rejected at startup. Schema:
+`--border-capture` without `--gap-fingerprints` are rejected at startup. The two
+`--lag-envelope-*` flags are **not** in that set and are not calibration-only: production's seam-lock
+rescue reads the same two knobs, so they apply on any run mode and on every build (a non-positive or
+non-finite `--lag-envelope-window-secs` is still rejected at startup; `0` is a documented disable
+only for `--lag-envelope-max-lag-ms`). Schema:
 [gap-fingerprint.md](dev/gap-fingerprint.md).
 
 **Listen clips (`--gap-listen`, calibration builds):** alongside the dump, writes `<stem>_a_surround.wav`,

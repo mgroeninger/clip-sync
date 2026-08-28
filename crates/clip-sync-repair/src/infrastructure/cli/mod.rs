@@ -76,7 +76,6 @@ pub fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     if args.fingerprint_diagnostics {
         config.repair.fingerprint_diagnostics = true;
     }
-    #[cfg(feature = "calibration")]
     if let Some(ms) = args.lag_envelope_max_lag_ms {
         config.repair.lag_envelope_max_lag_ms = ms;
     }
@@ -84,7 +83,6 @@ pub fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     if let Some(mode) = args.border_capture {
         config.repair.border_capture = mode.into();
     }
-    #[cfg(feature = "calibration")]
     if let Some(secs) = args.lag_envelope_window_secs {
         config.repair.lag_envelope_window_secs = secs;
     }
@@ -300,29 +298,34 @@ pub(crate) fn validate_repair_profile_flags(args: &Args) -> Result<(), String> {
     Ok(())
 }
 
-/// `--fingerprint-gap`, `--fingerprint-diagnostics`, `--lag-envelope-max-lag-ms` and `--gap-listen`
-/// only apply when dumping a corpus; `--gap-listen` additionally rejects the run modes that cannot
-/// produce a patched WAV.
-/// The flags exist only under the `calibration` feature, so this is a no-op otherwise.
+/// `--fingerprint-gap`, `--fingerprint-diagnostics`, `--border-capture` and `--gap-listen` only
+/// apply when dumping a corpus; `--gap-listen` additionally rejects the run modes that cannot
+/// produce a patched WAV. Those flags exist only under the `calibration` feature, so that half is a
+/// no-op otherwise.
+///
+/// The two `--lag-envelope-*` flags are **not** in that set. They were, until the seam locks started
+/// reading the same two knobs on the production repair path — gating them on `--gap-fingerprints`
+/// would now make a production-relevant knob settable from TOML but not from the command line. They
+/// are ungated here and in `Args`; only their value check remains.
 pub(crate) fn validate_fingerprint_flags(args: &Args) -> Result<(), String> {
+    if let Some(secs) = args.lag_envelope_window_secs {
+        // `(secs * rate) as usize` saturates to 0 for non-finite and negative values, and the
+        // `.max(8)` behind it lands below the 100 ms envelope bin, so `envelope_shoulder` refuses on
+        // every shoulder of every gap. That is a silently rescue-free run whose recipe stamps the
+        // requested value as if it were deliberate — reject it up front. Unlike
+        // `--lag-envelope-max-lag-ms`, `0` is not a documented disable here. `RepairConfig::validate`
+        // repeats this for the TOML path; this copy exists to name the flag in the message.
+        if !secs.is_finite() || secs <= 0.0 {
+            return Err(format!(
+                "--lag-envelope-window-secs must be a positive, finite number of seconds (got {secs})"
+            ));
+        }
+    }
+
     #[cfg(feature = "calibration")]
     {
         if args.gap_listen.is_some() {
             validate_gap_listen_run_mode(args)?;
-        }
-        // Value checks run before the "flag needs a dump dir" checks below, because those return
-        // early on a dump run — the exact runs these values reach.
-        if let Some(secs) = args.lag_envelope_window_secs {
-            // `(secs * rate) as usize` saturates to 0 for non-finite and negative values, and the
-            // `.max(8)` behind it lands below the 100 ms envelope bin, so `envelope_shoulder`
-            // refuses on every shoulder of every gap. That is a silently rescue-free corpus whose
-            // recipe stamps the requested value as if it were deliberate — reject it up front.
-            // Unlike `--lag-envelope-max-lag-ms`, `0` is not a documented disable here.
-            if !secs.is_finite() || secs <= 0.0 {
-                return Err(format!(
-                    "--lag-envelope-window-secs must be a positive, finite number of seconds (got {secs})"
-                ));
-            }
         }
         if args.gap_fingerprints.is_some() {
             return Ok(());
@@ -333,14 +336,8 @@ pub(crate) fn validate_fingerprint_flags(args: &Args) -> Result<(), String> {
         if args.fingerprint_diagnostics {
             return Err("--fingerprint-diagnostics requires --gap-fingerprints DIR".into());
         }
-        if args.lag_envelope_max_lag_ms.is_some() {
-            return Err("--lag-envelope-max-lag-ms requires --gap-fingerprints DIR".into());
-        }
         if args.border_capture.is_some() {
             return Err("--border-capture requires --gap-fingerprints DIR".into());
-        }
-        if args.lag_envelope_window_secs.is_some() {
-            return Err("--lag-envelope-window-secs requires --gap-fingerprints DIR".into());
         }
         if args.gap_listen.is_some() {
             return Err("--gap-listen requires --gap-fingerprints DIR".into());
@@ -841,27 +838,10 @@ mod cli_override_tests {
         assert!(err.contains("--gap-fingerprints"));
     }
 
-    #[cfg(feature = "calibration")]
-    #[test]
-    fn lag_envelope_max_lag_ms_without_dump_dir_is_rejected() {
-        use clap::Parser;
-
-        let args = Args::parse_from([
-            "clip-sync-repair",
-            "a.wav",
-            "b.wav",
-            "--lag-envelope-max-lag-ms",
-            "0",
-        ]);
-        let err = validate_fingerprint_flags(&args).unwrap_err();
-        assert!(err.contains("--gap-fingerprints"));
-    }
-
     /// A window that rounds to fewer frames than the 100 ms envelope bin refuses on every shoulder
     /// of every gap, and the recipe stamps the requested value as if that were deliberate. `0`,
     /// negatives and non-finite values are rejected at startup rather than producing a silently
     /// rescue-free corpus. Unlike `--lag-envelope-max-lag-ms`, `0` is not a documented disable.
-    #[cfg(feature = "calibration")]
     #[test]
     fn non_positive_lag_envelope_window_secs_is_rejected() {
         use clap::Parser;
@@ -872,16 +852,9 @@ mod cli_override_tests {
             "--lag-envelope-window-secs=-1.5",
             "--lag-envelope-window-secs=nan",
         ] {
-            let args = Args::parse_from([
-                "clip-sync-repair",
-                "a.wav",
-                "b.wav",
-                "--gap-fingerprints",
-                "gap-files/out",
-                bad,
-            ]);
+            let args = Args::parse_from(["clip-sync-repair", "a.wav", "b.wav", bad]);
             let err = validate_fingerprint_flags(&args)
-                .expect_err("must be rejected before the dump-dir early return");
+                .expect_err("must be rejected before the calibration-only block");
             assert!(err.contains("positive, finite"), "{bad}: got {err}");
         }
 
@@ -889,8 +862,6 @@ mod cli_override_tests {
             "clip-sync-repair",
             "a.wav",
             "b.wav",
-            "--gap-fingerprints",
-            "gap-files/out",
             "--lag-envelope-window-secs",
             "4.0",
         ]);
@@ -949,20 +920,36 @@ mod cli_override_tests {
         assert_eq!(config.repair.border_capture, BorderCapture::Wide);
     }
 
-    #[cfg(feature = "calibration")]
+    /// The replacement for the two `..._without_dump_dir_is_rejected` tests deleted when the seam
+    /// locks started reading these knobs: a plain repair run must be able to set both, on a build
+    /// with no `calibration` feature, and the values must reach `RepairConfig`. Gating them on
+    /// `--gap-fingerprints` would leave a production knob reachable from TOML but not the CLI.
     #[test]
-    fn lag_envelope_window_secs_without_dump_dir_is_rejected() {
+    fn lag_envelope_flags_apply_without_a_dump_dir() {
         use clap::Parser;
 
         let args = Args::parse_from([
             "clip-sync-repair",
             "a.wav",
             "b.wav",
+            "--lag-envelope-max-lag-ms",
+            "1500",
             "--lag-envelope-window-secs",
-            "4.0",
+            "3.0",
         ]);
-        let err = validate_fingerprint_flags(&args).unwrap_err();
-        assert!(err.contains("--gap-fingerprints"), "got {err}");
+        validate_fingerprint_flags(&args).expect("envelope knobs no longer need a dump dir");
+        let mut config = RepairAppConfig::default();
+        apply_cli_overrides(&mut config, &args);
+        assert_eq!(config.repair.lag_envelope_max_lag_ms, 1500);
+        assert!(
+            (config.repair.lag_envelope_window_secs - 3.0).abs() < f64::EPSILON,
+            "got {}",
+            config.repair.lag_envelope_window_secs
+        );
+        config
+            .repair
+            .validate()
+            .expect("ungated envelope knobs still pass config validation");
     }
 
     /// The default must survive the override path unchanged. It is not a free knob: the Tier-3

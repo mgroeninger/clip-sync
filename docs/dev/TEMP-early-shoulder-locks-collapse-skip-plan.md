@@ -114,12 +114,16 @@ reads them on the patch path; they stop being fingerprint-only. Default
 Three things follow from those fields being fingerprint-only **today**, and
 each is a step in §7, not an assumption:
 
-- They are **config-file settable but CLI-unreachable on a repair run**:
-  `--lag-envelope-max-lag-ms` / `--lag-envelope-window-secs` exist only under
-  the `calibration` feature and are rejected without `--gap-fingerprints DIR`
-  (`cli/mod.rs:336`, `:342`). This Change does **not** relax that (§6) — the
-  production knob is the config file, and every exit criterion below is written
-  against a config value, not a flag.
+- They **were** config-file settable but CLI-unreachable on a repair run:
+  `--lag-envelope-max-lag-ms` / `--lag-envelope-window-secs` existed only under
+  the `calibration` feature and were rejected without `--gap-fingerprints DIR`.
+  ~~This Change does **not** relax that (§6)~~ — **relaxed 2026-08-28, on
+  request, in step 4.** Both flags are now on every build and on every run mode;
+  only the window's positivity check remains in `validate_fingerprint_flags`, and
+  the calibration-gated set is `--gap-fingerprints` / `--fingerprint-gap` /
+  `--fingerprint-diagnostics` / `--border-capture` / `--gap-listen`. The exit
+  criteria below are still written against config values, which is unaffected —
+  a flag is now just a second way to set the same field.
 - `RepairConfig::validate` has **no arm** for `lag_envelope_window_secs`; the
   positivity guard lives only in the CLI path a config-file run never reaches.
   Once production reads the field, a non-positive value silently disables every
@@ -469,12 +473,20 @@ measured at one length and spliced at another. `try_dual_fit` also now takes
 > `rejects_non_positive_lag_envelope_window`, `patch_settings_carries_lag_envelope_knobs`.
 > **Nothing reads the new settings fields yet** — that is step 5.
 >
-> **Open, not changed:** the CLI still rejects `--lag-envelope-max-lag-ms` and
-> `--lag-envelope-window-secs` unless `--gap-fingerprints DIR` is given
-> (`cli/mod.rs:336–344`, calibration-gated). Once step 5 lands, a production repair
-> run can only set these from TOML or the default, never from the command line. The
-> `RepairConfig` fields are not feature-gated, so this is a flag-surface gap, not a
-> correctness one; ungating it is a separate decision this plan does not make.
+> **CLI gating relaxed (2026-08-28, on request — §6's non-goal is retired).** Both
+> `--lag-envelope-*` flags lost their `#[cfg(feature = "calibration")]` and their
+> "requires `--gap-fingerprints DIR`" rejection; `apply_cli_overrides` applies them
+> unconditionally. `validate_fingerprint_flags` keeps only the window's
+> positive-and-finite check, hoisted above the calibration block (it used to sit
+> inside, ahead of the dump-dir early return). Tests
+> `lag_envelope_max_lag_ms_without_dump_dir_is_rejected` and
+> `lag_envelope_window_secs_without_dump_dir_is_rejected` are deleted and replaced by
+> `lag_envelope_flags_apply_without_a_dump_dir`, which is itself ungated;
+> `non_positive_lag_envelope_window_secs_is_rejected` is ungated too and no longer
+> passes a dump dir. `--border-capture` stays gated — production does not read it.
+> `docs/dev/development.md`'s feature table is corrected. Verified: lib suite green
+> both with `--features calibration,he-aac` (718) and with no features (686), clippy
+> clean on both.
 
 ### Step 5 is not a drop-in — three gaps found while implementing 1–3
 

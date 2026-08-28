@@ -201,8 +201,8 @@ pub struct RepairConfig {
     /// `max_lag_blocks`. Must match
     /// [`crate::application::gap_fingerprint::DEFAULT_LAG_ENVELOPE_MAX_LAG_MS`].
     ///
-    /// Note the CLI flag `--lag-envelope-max-lag-ms` still requires `--gap-fingerprints DIR`, so a
-    /// production repair run takes this from TOML or the default, never from the command line.
+    /// Settable from TOML or from `--lag-envelope-max-lag-ms`, which is ungated: it is on every
+    /// build and needs no `--gap-fingerprints DIR`, unlike the flags that really are dump-only.
     #[serde(default = "default_lag_envelope_max_lag_ms")]
     pub lag_envelope_max_lag_ms: u32,
     /// Fingerprint-only: which arm sizes the **shared** A border capture behind `lag_decision`.
