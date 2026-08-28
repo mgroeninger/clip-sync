@@ -368,6 +368,7 @@ Legacy mode: set `--fill-mode gate` or `fill_mode = "gate"`. Patching uses two i
 | `skipped: boundary alignment failed` | Structure bracket failed on B |
 | `skipped: structure below threshold` | Structure scores below `min_structure_match_score` |
 | `skipped: program-quiet in both masters (B silent at nominal span; nothing to fill)` | **Reserved** — `GapPatchSkipReason::ProgramQuiet`; not emitted by production patch (D11 is analyzer/plan-time). Shared pauses → `unfillable`; gate skips use correlation/structure reasons. |
+| `skipped: shoulders abut (bridge=… frames, gap=…, pre=… ms, post=… ms)` | `GapPatchSkipReason::ShouldersAbut` (2026-08-28) — both A edges locked onto the same B instant, so the donor bridge is zero-length or inverted: A's gap is introduced silence, not missing content. Decided from the seam locks *before* the fill search, so these gaps cost no gate search. The line carries the four geometry numbers only; the lookalike tags (`clamped`, `edge_pinned`, `program_quiet`, envelope rescue) ride on the JSON object. |
 | `skipped: …` (other) | B extract failed, zero-length gap, out of range, etc. |
 
 **stderr (default):** `tracing::warn` — `gap N/M (range): …` when a fill is skipped mid-run. **`--verbose`:** indented `skipped: …` via `phase_verbose` (same text as stdout status column); no `tracing::warn` for per-gap skips. `tracing::debug` when a boundary extension succeeds (`gap end extended…` / `gap start extended…`).

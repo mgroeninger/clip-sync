@@ -10,7 +10,7 @@ use crate::domain::{
     gap_tags::{FillTierThresholds, GapTags, GapTagsPatchContext},
     inactive_repair_flag_notes,
     patch_anchor::{format_patch_anchor_table_summary, PatchAnchorTable},
-    patch_result::{GapPatchNotAppliedReason, PatchSummary},
+    patch_result::{GapPatchNotAppliedReason, GapPatchSkipReason, PatchSummary, ShouldersAbutSkip},
     policies,
 };
 
@@ -44,6 +44,56 @@ use region::{
 enum PatchRunKind {
     Write,
     Preview,
+}
+
+/// The `shoulders_abut` row for a characterized region, or `None` when the region was not refused
+/// as an abut.
+///
+/// The A frames come from the **spec** (`refined`, on A's PCM timeline), never from the outcome:
+/// `GapPatchOutcome` carries `a_start_secs` / `a_end_secs` in seconds and no gap identity, and the
+/// successor collapse Change cuts frames. `splice_into_a` is length-preserving, so a spec's frames
+/// still name the hole after every neighbouring fill is spliced in.
+fn shoulders_abut_row(spec: &GapRepairSpec, gap_index: usize) -> Option<ShouldersAbutSkip> {
+    let GapRepairVerdict::Skip {
+        reason: GapPatchSkipReason::ShouldersAbut(locks),
+        ..
+    } = &spec.verdict
+    else {
+        return None;
+    };
+    Some(ShouldersAbutSkip {
+        gap_index,
+        a_start_frame: spec.refined.start_frame,
+        a_end_frame: spec.refined.end_frame,
+        locks: *locks,
+    })
+}
+
+/// Post-splice visit for one `shoulders_abut` refusal — **record-only in this Change**.
+///
+/// It confirms the row's destination frames still name real A samples and nothing more; A is not
+/// shortened here. The successor
+/// (`docs/dev/TEMP-post-splice-introduced-silence-collapse-plan.md`) puts the concat-confirm and
+/// the optional drain in this body, which is why it runs after the splice loop — by then every
+/// neighbouring fill is in, so a drain would be cutting from the timeline the user will hear.
+/// Takes A by shared reference for the same reason the visit is record-only: nothing here writes.
+///
+/// Returns `false` for a row whose frames fell outside A, which is a bug in the geometry upstream,
+/// not a routine outcome — hence the warn. The row is still reported either way: the summary lists
+/// what the run refused, and dropping the evidence of a defect is the wrong repair for it.
+fn visit_shoulders_abut(skip: &ShouldersAbutSkip, a_pcm: &clip_sync::MultiChannelPcm) -> bool {
+    let a_frames = a_pcm.frames();
+    let in_range = skip.a_start_frame <= skip.a_end_frame && skip.a_end_frame <= a_frames;
+    if !in_range {
+        tracing::warn!(
+            gap_index = skip.gap_index,
+            a_start_frame = skip.a_start_frame,
+            a_end_frame = skip.a_end_frame,
+            a_frames,
+            "shoulders_abut span is outside patched A; reported but not visitable"
+        );
+    }
+    in_range
 }
 
 /// How far gap edges may be adjusted against A's decoded PCM (seconds).
@@ -365,8 +415,10 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         if kind == PatchRunKind::Preview {
             let mut region_results: Vec<(usize, RegionPatchOutcome, GapTags)> =
                 Vec::with_capacity(plan.regions.len());
+            let mut shoulders_abut: Vec<ShouldersAbutSkip> = Vec::new();
             for ((spec, tag_ctx), region) in characterizations.into_iter().zip(plan.regions.iter())
             {
+                shoulders_abut.extend(shoulders_abut_row(&spec, region.gap_index));
                 let outcome = outcome_from_spec(&spec, region_ctx.sample_rate);
                 let tags = region_outcome_gap_tags(&outcome, tag_ctx);
                 log_gap_tags_verbose(self.progress, &tags);
@@ -385,7 +437,10 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                 request.program_gain.gain(),
             ))
             .with_fill_geometry(fill_geometry_for(&request))
-            .with_program_gain(program_gain_report(&request));
+            .with_program_gain(program_gain_report(&request))
+            // Preview stamps the list and runs no visit: nothing was spliced, so there is no
+            // post-splice A to visit (plan §3).
+            .with_shoulders_abut(shoulders_abut);
             return Ok(PatchAudioResult {
                 pcm: None,
                 summary,
@@ -401,6 +456,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         // Parallel to `plan.regions` (one entry pushed per region below), *not* to gap indices.
         let mut patch_slot_by_region: Vec<Option<usize>> = Vec::new();
         let mut region_results: Vec<(usize, RegionPatchOutcome, GapTags)> = Vec::new();
+        let mut shoulders_abut: Vec<ShouldersAbutSkip> = Vec::new();
         for ((spec, tag_ctx), (index, region)) in characterizations
             .into_iter()
             .zip(plan.regions.iter().enumerate())
@@ -411,6 +467,8 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             let gap_span =
                 new_patch_gap_span(region_num, region_count, region, request.fill_mode, false);
             let _gap_enter = gap_span.enter();
+
+            shoulders_abut.extend(shoulders_abut_row(&spec, region.gap_index));
 
             let media = RegionPatchMedia {
                 b_samples_full: &b_samples_full,
@@ -481,6 +539,24 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         } else {
             None
         };
+
+        // Final dispositions, after the anchored-retry pass: keep only rows whose settled outcome is
+        // still an abut. Today that discards nothing — `is_retryable_patch_skip` excludes
+        // `ShouldersAbut`, so an abut is never retried, and `should_apply_anchored_retry_outcome`
+        // never installs a *new* skip. Both are decisions that could be revisited, and this list
+        // must describe what the run did, not what pass 1 thought.
+        shoulders_abut.retain(|skip| {
+            region_results.iter().any(|(gap_index, outcome, _)| {
+                *gap_index == skip.gap_index
+                    && matches!(
+                        outcome,
+                        RegionPatchOutcome::Skipped {
+                            reason: GapPatchSkipReason::ShouldersAbut(_),
+                            ..
+                        }
+                    )
+            })
+        });
 
         // Step 9: Apply patches to A samples.
         let patch_count = patches.len() as u64;
@@ -556,6 +632,12 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             }
         }
 
+        // A is spliced and still its original length; the abut spans name the same frames they did
+        // at characterize (plan §4).
+        for skip in &shoulders_abut {
+            visit_shoulders_abut(skip, &a_pcm);
+        }
+
         let fill_level = fill_level_by_gap(&fill_level_by_slot, &gap_index_by_slot, &not_applied);
 
         let mut summary = PatchSummary::from_outcomes(outcomes_in_report_order(
@@ -569,7 +651,8 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             request.program_gain.gain(),
         ))
         .with_fill_geometry(fill_geometry_for(&request))
-        .with_program_gain(program_gain_report(&request));
+        .with_program_gain(program_gain_report(&request))
+        .with_shoulders_abut(shoulders_abut);
         if let Some(anchors) = patch_anchors_used {
             summary = summary.with_patch_anchors(anchors);
         }

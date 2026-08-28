@@ -293,7 +293,7 @@ Prefer **facts** in automation. Treat **hints** as shorthand for the C-layer sha
 | `residual_uninformative` | `beyond_lag_reach`, `no_reference_window`, `probe_non_finite`, `floor_above_ok_db` (omitted when the residual is usable) | Why there is no usable headroom reading — read **with** `residual_band`, which says `no_floor` for all four | `-v` `residual_reason=`; JSON `tags` |
 | `anchor_seam_used` | `true` (omitted when false) | Fit mode: winning placement used an editorial anchor bracket, not scan throat alone | `-v` `anchor_seam=true`; JSON `status.patched` + `tags` |
 | `anchor_bracket_move_frames` | integer (omitted when 0) | Total frame displacement of anchor bracket from scan-refined baseline | `-v` `anchor_move_frames=`; JSON `status.patched` + `tags` |
-| `patch_skip_reason` | `boundary_alignment_failed`, `correlation_below_threshold`, `b_extract_failed`, `aligned_segment_out_of_range`, `zero_length_gap`, `residual_headroom_exceeded` | Patch skip enum | JSON `reason`; verbose skip line |
+| `patch_skip_reason` | `boundary_alignment_failed`, `correlation_below_threshold`, `b_extract_failed`, `aligned_segment_out_of_range`, `zero_length_gap`, `residual_headroom_exceeded`, `shoulders_abut` | Patch skip enum | JSON `reason`; verbose skip line |
 
 `patch_tier` and `seam_shape` apply only when the gap reached patch with `fill_mode = fit`. Plan-only gaps use `patch_tier = not_applicable`.
 

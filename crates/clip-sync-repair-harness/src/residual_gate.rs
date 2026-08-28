@@ -104,6 +104,9 @@ pub fn skip_reason_label(reason: &GapPatchSkipReason) -> String {
         GapPatchSkipReason::AlignedSegmentOutOfRange => "aligned_segment_out_of_range".into(),
         GapPatchSkipReason::ZeroLengthGap => "zero_length_gap".into(),
         GapPatchSkipReason::ProgramQuiet => "program_quiet".into(),
+        GapPatchSkipReason::ShouldersAbut(locks) => {
+            format!("shoulders_abut(bridge={})", locks.bridge_frames)
+        }
     }
 }
 

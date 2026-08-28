@@ -95,6 +95,10 @@ name = "scan_gaps_integration"
 path = "tests/scan_gaps_integration.rs"
 
 [[test]]
+name = "abut_skip_integration"
+path = "tests/abut_skip_integration.rs"
+
+[[test]]
 name = "patch_audio_integration"
 path = "tests/patch_audio_integration.rs"
 

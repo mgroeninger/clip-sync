@@ -595,6 +595,11 @@ mod tests {
                 post_seam_prom: None,
                 pre_seam_z: None,
                 post_seam_z: None,
+                pre_seam_rescued: None,
+                post_seam_rescued: None,
+                pre_seam_edge_pinned: None,
+                post_seam_edge_pinned: None,
+                seams_clamped: None,
             }),
             wide_envelope: None,
             residual: Some(ResidualInfo {

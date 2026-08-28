@@ -106,6 +106,23 @@ pub fn dual_fit_at_nominal(
     p: &DualFitParams,
 ) -> Option<DualFitResult> {
     let locks = nominal_seam_locks(templates, b_mono, p)?;
+    dual_fit_from_locks(templates, &locks, b_mono, b_samples, p)
+}
+
+/// The two lock-level rejections, then the fit — from locks the caller **already measured**.
+///
+/// This is the body [`dual_fit_at_nominal`] delegates to, split out for the one caller that has to
+/// measure the locks itself: `characterize_region` needs them *before* the gate search so it can
+/// skip on `abut()`, and re-measuring them here would be both a duplicate ±600 ms search per gap
+/// and a chance for the skip decision and the fit to disagree about a lag. The rejections stay
+/// spelled out in exactly one place either way.
+pub fn dual_fit_from_locks(
+    templates: &SeamLockTemplates,
+    locks: &SeamLocks,
+    b_mono: &[f64],
+    b_samples: &[f32],
+    p: &DualFitParams,
+) -> Option<DualFitResult> {
     if !locks.gate_pass {
         tracing::debug!(
             pre_r = locks.pre.r,
@@ -124,7 +141,7 @@ pub fn dual_fit_at_nominal(
         );
         return None;
     }
-    try_dual_fit(templates, &locks, b_mono, b_samples, p)
+    try_dual_fit(templates, locks, b_mono, b_samples, p)
 }
 
 /// Attempt a dual-fit fill from **already-measured** seam locks.

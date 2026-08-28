@@ -193,10 +193,38 @@ impl SeamGateFloors {
 
 /// Lazily-supplied wider A border for the coarse envelope search only.
 ///
-/// On the patch path A is fully decoded, so the wider window is a plain slice and this is `None`.
-/// The fingerprint's B-side capture cannot slice, so it passes a closure — and it is called only
-/// once a shoulder is confirmed untrustworthy at nominal, never up front.
+/// Lazy because it is called only once a shoulder is confirmed untrustworthy at nominal, never up
+/// front. `None` disables the widening: the envelope then correlates the seam template itself, which
+/// is a *narrower* search than the recipe asks for — so a caller that can produce the wider border
+/// should, and both callers that decode A whole use [`wide_a_slicer`].
 pub type WideA<'a> = dyn Fn(bool) -> Option<Vec<f64>> + 'a;
+
+/// The wider A border as a plain slice of already-decoded interleaved A.
+///
+/// Both `characterize_region` (production) and `splice_dualfit_at` (fingerprint) hold all of A, so
+/// their "lazy fetch" is a slice plus a downmix. Shared rather than written twice because the two
+/// are compared axis-by-axis: a fingerprint that widened its border differently from production
+/// would mispredict exactly the shoulders the envelope exists to rescue. `wide_window` of 0 (envelope
+/// off) yields `None` on both sides, and so does a window that runs off either end of A.
+pub fn wide_a_slicer(
+    a_samples: &[f32],
+    channels: usize,
+    gap_start_frame: usize,
+    gap_end_frame: usize,
+    wide_window: usize,
+) -> impl Fn(bool) -> Option<Vec<f64>> + '_ {
+    let ch = channels.max(1);
+    let a_frames = a_samples.len() / ch;
+    move |pre_shoulder: bool| {
+        let (lo, hi) = if pre_shoulder {
+            (gap_start_frame.checked_sub(wide_window)?, gap_start_frame)
+        } else {
+            (gap_end_frame, gap_end_frame.checked_add(wide_window)?)
+        };
+        (hi <= a_frames && hi > lo)
+            .then(|| interleaved_to_mono(&a_samples[lo * ch..hi * ch], ch))
+    }
+}
 
 /// Measure one shoulder, nominal first.
 ///
@@ -399,5 +427,112 @@ mod tests {
     fn unqualified_locks_never_abut() {
         assert!(!locks(10_000, 9_800, false).abut());
         assert!(locks(10_000, 9_800, true).abut());
+    }
+
+    /// Deterministic broadband noise — a periodic signal would lock equally well at every period and
+    /// prove nothing about *where* a search landed.
+    fn noise(len: usize, seed: u32) -> Vec<f64> {
+        let mut state = seed;
+        (0..len)
+            .map(|_| {
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                f64::from((state >> 16) as i16) / 32_768.0
+            })
+            .collect()
+    }
+
+    /// **The invariant that lets the envelope run in production** (§7 step 1, §9): the patch path
+    /// passes `min_fill_correlation` as `triage_r`, so a lock that would pass the gate at its nominal
+    /// lag is never a rescue candidate — the envelope is not even consulted — and therefore can never
+    /// be relocated onto a decoy. Rescue can only ever *add* a fill that is declined today.
+    ///
+    /// The fixture is the one §9 names: a partly-degraded shoulder that still reads above the gate
+    /// floor at nominal, with a verbatim copy of A's border planted elsewhere in B as a decoy that
+    /// correlates far better. With triage at the gate floor the nominal lag survives; with the
+    /// fingerprint's 0.5 line it would not — that arm is asserted too, so the two callers cannot
+    /// quietly converge on one number.
+    #[test]
+    fn a_gate_passing_nominal_lock_is_never_relocated() {
+        let sr = 48_000u32;
+        let w = sr as usize / 4; // 250 ms seam window, as the gate uses
+        let gap_frames = sr as usize / 2;
+
+        // B: noise, with A's exact pre-border planted 3 s later as a strong decoy.
+        let mut b = noise(sr as usize * 8, 0x5eed_1234);
+        let nominal_pre_start = sr as usize * 2;
+        let template: Vec<f64> = b[nominal_pre_start..nominal_pre_start + w].to_vec();
+        let decoy_at = nominal_pre_start + sr as usize * 3;
+        b[decoy_at..decoy_at + w].copy_from_slice(&template);
+
+        // A's pre border is that template half-degraded — still well above the 0.35 gate floor at
+        // nominal, but below the fingerprint's 0.5 triage line.
+        let dirt = noise(w, 0xabcd_0001);
+        let a_pre: Vec<f64> = template
+            .iter()
+            .zip(&dirt)
+            .map(|(t, d)| 0.30 * t + 0.70 * d)
+            .collect();
+        let a_post: Vec<f64> = b[nominal_pre_start + w + gap_frames
+            ..nominal_pre_start + w + gap_frames + w]
+            .to_vec();
+
+        let templates = SeamLockTemplates::from_mono(
+            a_pre.clone(),
+            a_post,
+            gap_frames,
+            nominal_pre_start + w,
+            w,
+        )
+        .expect("templates");
+        let floors = SeamGateFloors {
+            min_fill_correlation: 0.35,
+            fill_absolute_floor: 0.12,
+        };
+        // Wide enough to reach the decoy, so the envelope genuinely could move this lock.
+        let envelope = EnvelopeCfg::from_knobs(4_000, 1.0, sr);
+        let wide: Box<WideA<'_>> = Box::new(|pre: bool| pre.then(|| a_pre.clone()));
+
+        let at_gate_floor = nominal_first_seam_locks(
+            &templates,
+            &b,
+            (0.6 * f64::from(sr)) as usize,
+            envelope,
+            Some(wide.as_ref()),
+            sr,
+            floors,
+            0.35,
+        )
+        .expect("locks");
+        assert!(
+            at_gate_floor.pre.r >= 0.35,
+            "fixture premise: the nominal read must clear the gate floor, got {}",
+            at_gate_floor.pre.r
+        );
+        assert!(
+            !at_gate_floor.pre.rescued && at_gate_floor.pre.lag.abs() < w as i64,
+            "a gate-passing nominal lock must keep its lag, got rescued={} lag={}",
+            at_gate_floor.pre.rescued,
+            at_gate_floor.pre.lag
+        );
+
+        // Same measurement at the fingerprint's triage line: now the shoulder IS a rescue candidate.
+        // Whether the envelope actually moves it is the envelope's business — what this pins is that
+        // `triage_r` is a live parameter, not decoration.
+        let at_recoverable_line = nominal_first_seam_locks(
+            &templates,
+            &b,
+            (0.6 * f64::from(sr)) as usize,
+            envelope,
+            Some(wide.as_ref()),
+            sr,
+            floors,
+            crate::domain::lag_envelope::SEAM_LOCK_RECOVERABLE_R,
+        )
+        .expect("locks");
+        assert!(
+            at_recoverable_line.pre.r < crate::domain::lag_envelope::SEAM_LOCK_RECOVERABLE_R,
+            "fixture premise: the nominal read must sit in the [0.35, 0.5) band, got {}",
+            at_recoverable_line.pre.r
+        );
     }
 }

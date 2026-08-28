@@ -460,6 +460,12 @@ pub fn derive_gap_tags_from_patch_outcome(
             GapPatchSkipReason::ProgramQuiet => {
                 (PatchTier::NotApplicable, SeamShape::NotApplicable)
             }
+            // Decided, not defaulted: an abut skip has no tier and no seam shape, because no seam was
+            // ever assembled — the locks abutted before the fill search ran. (This arm is `_`, so a new
+            // variant lands here silently; that is why `ShouldersAbut` is named rather than left to it.)
+            GapPatchSkipReason::ShouldersAbut(_) => {
+                (PatchTier::NotApplicable, SeamShape::NotApplicable)
+            }
             _ => (PatchTier::NotApplicable, SeamShape::NotApplicable),
         },
     };

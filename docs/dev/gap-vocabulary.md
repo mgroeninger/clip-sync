@@ -148,8 +148,18 @@ reaches this table ([pipeline.md](../pipeline.md) phases 2–3; § Silence-chara
 > No donor fill can serve such a gap — any fill duplicates adjacent program; the shipped −977 ms
 > stutter is `min`'s best compromise between the two true lags (0.437/0.437). The honest action
 > is a **reasoned skip / explicit step verdict**, predicate `|gap + post_lag − pre_lag| ≈ 0`.
-> What remains is **detection, not vocabulary**: no production instrument searches beyond
-> ±600 ms or measures bridge length, so the step gap read `High`/`balanced` end to end.
+> What remained was **detection, not vocabulary** — and as of **2026-08-28 that is closed too**.
+> Production now fits each shoulder independently *before* the fill search, consulting the coarse
+> lag envelope (default ±2000 ms) when a shoulder is dead at its nominal lag, and measures the
+> donor bridge between the two locks. A gap whose locks both clear the fill gate and whose bridge is
+> non-positive is refused as `shoulders_abut` (cell **Silence-splice**), with the two lags, the
+> bridge, and the lookalike tags on the skip payload and on run-level `patch.shoulders_abut`
+> ([json-output.md](../json-output.md)). The sentence this replaces — "no production instrument
+> searches beyond ±600 ms or measures bridge length" — was true when written and is why the step gap
+> read `High`/`balanced` end to end; it is false now, and a reader who acts on it will look for a
+> detector that already exists. What is *still* undone is the cut: the refusal leaves A's silence in
+> place, and draining it is the successor Change
+> ([TEMP-post-splice-introduced-silence-collapse-plan.md](TEMP-post-splice-introduced-silence-collapse-plan.md)).
 > Derivation, probe numbers, and resolution:
 > [archive/TEMP-31g7-gap-shape-vocabulary.md](archive/TEMP-31g7-gap-shape-vocabulary.md) §9; work items:
 > BACKLOG § *Fill placement*.

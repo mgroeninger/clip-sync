@@ -1,6 +1,6 @@
 # JSON output contract — v1
 
-Authoritative field-by-field contract for `--format json` output of both CLIs. **Frozen as v1 (2026-06-10).** Additive revisions: optional `end_clip_anchor` on analyzer/repair alignment reports (2026-06-17); optional `video_b_window_*` on clip entries when B differs from A; optional `audio_timeline_skew` on repair `GapReport` (2026-06-19); additive scan-recipe echo keys `min_gap_ms`, `silence_hold_ms` (effective), and `absolute_silence_rms` (normalized) on repair `GapReport` (2026-07-31); optional `fill_geometry` on repair `PatchSummary` (2026-08-17); optional `program_levels` on repair `GapReport` (2026-08-26); optional per-gap `collar_level` on repair `Gap`, with `map_lag_ms` recording the map each collar was read through (2026-08-27); optional `local_pair_collar_secs` knob echo on repair `GapReport` (2026-08-27).
+Authoritative field-by-field contract for `--format json` output of both CLIs. **Frozen as v1 (2026-06-10).** Additive revisions: optional `end_clip_anchor` on analyzer/repair alignment reports (2026-06-17); optional `video_b_window_*` on clip entries when B differs from A; optional `audio_timeline_skew` on repair `GapReport` (2026-06-19); additive scan-recipe echo keys `min_gap_ms`, `silence_hold_ms` (effective), and `absolute_silence_rms` (normalized) on repair `GapReport` (2026-07-31); optional `fill_geometry` on repair `PatchSummary` (2026-08-17); optional `program_levels` on repair `GapReport` (2026-08-26); optional per-gap `collar_level` on repair `Gap`, with `map_lag_ms` recording the map each collar was read through (2026-08-27); optional `local_pair_collar_secs` knob echo on repair `GapReport` (2026-08-27); new `shoulders_abut` skip reason and optional `shoulders_abut` list on repair `PatchSummary` (2026-08-28).
 
 Any change to field names, types, optionality, or nesting is a contract revision: update this document, regenerate the golden fixtures, and call the revision out explicitly in the changelog/commit.
 
@@ -326,6 +326,7 @@ Gap positions in `gaps[]` use the **decoded-sample clock**. When `delta_secs` is
 | `patch_anchors_used` | array of PatchAnchorReport | when non-empty | Offset anchors built from pass-1 successes and reused by the anchored retry |
 | `fill_geometry` | object | since 2026-08-17, when patched from a request | Border-geometry **settings** this run patched with: `border_standoff_secs`, `fill_border_search_secs`, `min_border_discovery_secs`, `fill_seam_search_secs`. Settings, not per-gap effective widths — each is clamped against the material available at a given gap. Exists so a two-arm differential is attributable to the flag that changed rather than to the output directory |
 | `program_gain` | object | since 2026-08-26, when patched from a request | The run's whole-program fill gain and why it took the value it did — see [ProgramGainReport](#programgainreport) |
+| `shoulders_abut` | array of [ShouldersAbutSkip](#shouldersabutskip) | since 2026-08-28, when ≥1 gap was refused as `shoulders_abut` | Every gap this run refused because both A edges locked onto the same B instant, with the **frames** its silence occupies on A. Omitted when empty |
 | `gaps` | array of [GapPatchOutcome](#gappatchoutcome) | always | Per-gap outcomes in scan order |
 
 > **`donor_relation` claims more than it measures.** It is derived purely from the fraction of gaps
@@ -621,7 +622,31 @@ not classify the gap ([gap-vocabulary.md](dev/gap-vocabulary.md) § *Known holes
 
 `not_applied` is categorically different from `skipped`: `skipped` is the seam gate *declining* a gap, which is a routine, expected outcome. `not_applied` is the gate having **approved** the gap and the splice then failing to write it — A is byte-identical across the gap while a repair was reported as planned. Every arm is a geometry defect upstream of the splice, so any occurrence is a bug to file, with the frame counts in the reason identifying which invariant broke. `--gap-listen` writes no `_a_patched.wav` for these gaps, and `patched_count` excludes them.
 
-**GapPatchSkipReason** — string `"b_extract_failed"` | `"boundary_alignment_failed"` | `"aligned_segment_out_of_range"` | `"zero_length_gap"` | `"program_quiet"` (reserved — not emitted by production patch; D11 program-quiet is an analyzer/plan-time label, see [gap-fill-modes.md](gap-fill-modes.md) § Program-quiet (D11)), or object forms `{"correlation_below_threshold": {"pre_correlation", "post_correlation", "min_correlation", "best_attempt"?}}` (`best_attempt`: `{pre_correlation, post_correlation, source}` when a later placement beat the reported scores) | `{"residual_headroom_exceeded": {"pre_correlation", "post_correlation", "headroom_db", "floor_pre_db", "floor_post_db", "margin_db"}}`.
+**GapPatchSkipReason** — string `"b_extract_failed"` | `"boundary_alignment_failed"` | `"aligned_segment_out_of_range"` | `"zero_length_gap"` | `"program_quiet"` (reserved — not emitted by production patch; D11 program-quiet is an analyzer/plan-time label, see [gap-fill-modes.md](gap-fill-modes.md) § Program-quiet (D11)), or object forms `{"correlation_below_threshold": {"pre_correlation", "post_correlation", "min_correlation", "best_attempt"?}}` (`best_attempt`: `{pre_correlation, post_correlation, source}` when a later placement beat the reported scores) | `{"residual_headroom_exceeded": {"pre_correlation", "post_correlation", "headroom_db", "floor_pre_db", "floor_post_db", "margin_db"}}` | `{"shoulders_abut": {"pre_lag_ms", "post_lag_ms", "bridge_frames", "gap_frames", "pre_z"?, "post_z"?, "pre_envelope_rescued"?, "post_envelope_rescued"?, "clamped"?, "edge_pinned"?, "program_quiet"?}}` (since 2026-08-28).
+
+`shoulders_abut` is the **introduced-silence** refusal: both of A's gap edges fitted onto the same (or a
+crossed) point in B, so the donor bridge between the two seam locks is zero-length or inverted — `B` holds
+nothing for this gap because nothing was ever missing from it. `bridge_frames <= 0` is the decision; the
+rest is evidence. It is measured from the seam locks *before* the fill search runs, so a gap refused this
+way costs no gate search, and it does not depend on `--dual-fit`. Cell is `silence_splice`.
+
+The optional keys are lookalike tags, omitted when false, stamped rather than split into separate reasons:
+`clamped` (the abut exists only because both seams clamped to B frame 0 — near B's start, not a join),
+`edge_pinned` (a lock's peak sat on the boundary of the lags actually searched — **not** "the true peak is
+out of reach", which produces a flat curve that peaks mid-sweep; read `pre_z` / `post_z` for reach),
+`program_quiet` (B is quiet at the nominal mapping — the shared-pause lookalike), and
+`pre_envelope_rescued` / `post_envelope_rescued` (the coarse envelope relocated that shoulder before it
+locked; `false` covers both "never consulted" and "consulted and declined"). `pre_z` / `post_z` are the
+whole-curve z-scores of each lock's peak — recorded, never gated on. The same payload is republished at
+run level on [`patch.shoulders_abut`](#shouldersabutskip) with the A frames added.
+
+**ShouldersAbutSkip** — `{"gap_index", "a_start_frame", "a_end_frame", …}` plus the `shoulders_abut`
+payload flattened in alongside them. The payload keys are exactly those of the per-gap `{"shoulders_abut": {…}}` skip reason above; the three
+extra keys are the gap's identity and its refined throat on **A's PCM timeline**, in frames. Frames rather
+than seconds because this list exists for a consumer that cuts samples: `splice_into_a` is
+length-preserving, so these frames still name the same silence after every other gap in the run has been
+filled. A run-level list rather than a per-gap field because it is a work list, and because the per-gap
+status carries seconds only. Nothing in this Change acts on it — the post-splice visit is record-only.
 
 **GapFillSkipReason** — string `"not_fillable"` | `"track_layout_mismatch"` | `"track_compatibility_unavailable"` | `"outside_reference_coverage"` | `"already_matches_reference"` (the `skip_equivalent_gaps` equivalence drop — mutual/ambient silence, nothing to repair) | `"gap_not_selected"` (`--only-gaps` / `--skip-gaps` subset filter).
 

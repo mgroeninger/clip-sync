@@ -237,6 +237,18 @@ pub(in crate::application::patch_audio::region) fn select_registration_residual_
     }
 }
 
+/// A dual-fit attempt's two halves, which are only ever available together.
+///
+/// The locks are the ones `characterize_region` measured before the gate search — it needs them
+/// there to decide `shoulders_abut` — so the skip decision and the fit read one set of lags, and the
+/// gap pays one ±600 ms per-shoulder search rather than two. Bundled because there is no meaningful
+/// state where one is present and the other is not: both are built from the same
+/// [`build_dual_fit_input`] result.
+pub(in crate::application::patch_audio::region) struct DualFitAttempt<'a> {
+    pub(in crate::application::patch_audio::region) input: &'a DualFitRepairInput<'a>,
+    pub(in crate::application::patch_audio::region) locks: &'a crate::domain::seam_locks::SeamLocks,
+}
+
 pub(in crate::application::patch_audio::region) fn skip_or_dual_fit(
     progress: &dyn ProgressReporter,
     request: &PatchAudioRequest,
@@ -244,13 +256,14 @@ pub(in crate::application::patch_audio::region) fn skip_or_dual_fit(
     fail: SeamGateFailure,
     min_structure_match_score: f32,
     tag_ctx: GapTagsPatchContext,
-    dual_fit: Option<&DualFitRepairInput<'_>>,
+    attempt: Option<DualFitAttempt<'_>>,
 ) -> (DualFitDecision, GapTagsPatchContext) {
     let mut dual_fit_attempt: Option<crate::domain::patch_result::SeamScoreAttempt> = None;
     if dual_fit_eligible(request.dual_fit, fail) {
-        if let Some(df) = dual_fit {
-            if let Some(r) = crate::domain::dual_fit::dual_fit_at_nominal(
+        if let Some(DualFitAttempt { input: df, locks }) = attempt {
+            if let Some(r) = crate::domain::dual_fit::dual_fit_from_locks(
                 &df.templates,
+                locks,
                 &df.b_mono,
                 df.b_samples,
                 &df.params,

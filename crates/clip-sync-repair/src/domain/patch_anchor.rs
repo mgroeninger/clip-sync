@@ -337,6 +337,10 @@ fn format_anchor_source(source: AnchorPointSource) -> String {
 }
 
 /// Whether a skipped gap may be retried in pass 2 of `anchored_retry`.
+///
+/// An **allowlist**, so a new [`GapPatchSkipReason`] variant defaults to `false` silently. That default is
+/// right for `ShouldersAbut` — a re-anchored retry would re-measure the same two locks and abut again — but
+/// it is a default, not a decision, so `is_retryable_patch_skip_excludes_shoulders_abut` pins it.
 pub fn is_retryable_patch_skip(reason: &GapPatchSkipReason) -> bool {
     matches!(
         reason,
@@ -351,6 +355,29 @@ mod tests {
     use crate::domain::align::{test_empty_alignment, test_two_clip_alignment};
 
     use super::*;
+
+    /// The allowlist in `is_retryable_patch_skip` defaults every new variant to non-retryable.
+    /// For `ShouldersAbut` that default is also the decision: the skip says the two shoulders
+    /// already meet at their own fitted lags, so re-anchoring elsewhere cannot change it.
+    #[test]
+    fn is_retryable_patch_skip_excludes_shoulders_abut() {
+        let abut = GapPatchSkipReason::ShouldersAbut(crate::domain::ShouldersAbutLocks {
+            pre_lag_ms: -38.0,
+            post_lag_ms: -1160.3,
+            bridge_frames: -48,
+            gap_frames: 53_702,
+            pre_z: Some(14.1),
+            post_z: Some(8.2),
+            pre_envelope_rescued: false,
+            post_envelope_rescued: true,
+            clamped: false,
+            edge_pinned: false,
+            program_quiet: true,
+        });
+        assert!(!is_retryable_patch_skip(&abut));
+        // …and the lookalike tag it carries does not drag it back onto the retry path.
+        assert!(is_retryable_patch_skip(&GapPatchSkipReason::ProgramQuiet));
+    }
 
     fn patch_only_alignment() -> ScanAlignment {
         test_empty_alignment(0.0)

@@ -361,6 +361,15 @@ pub fn run_patch(request: PatchAudioRequest, crossfade_ms: u64) -> PatchAudioRes
         .expect("patch should succeed")
 }
 
+/// `run_patch`'s preview twin — characterize only, no splice, no PCM.
+pub fn run_patch_preview(request: PatchAudioRequest, crossfade_ms: u64) -> PatchAudioResult {
+    let progress = FakeProgressReporter;
+    let media_reader = SymphoniaMediaReader;
+    PatchAudio::new(&media_reader, &progress)
+        .preview(request, crossfade_ms)
+        .expect("preview should succeed")
+}
+
 /// Validation smoke: production-default fit patches a clean stereo sine gap.
 pub fn run_fit_production_defaults_smoke() {
     let temp = tempfile::tempdir().expect("tempdir");

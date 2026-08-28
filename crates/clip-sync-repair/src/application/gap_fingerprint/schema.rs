@@ -1459,6 +1459,28 @@ pub struct SpliceDualfit {
     pub pre_seam_z: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub post_seam_z: Option<f64>,
+    /// **Envelope rescue** — the coarse wide-lag envelope moved this shoulder off its nominal center
+    /// before the fine search re-ran there. A shoulder only becomes a candidate when it reads below
+    /// `min_fill_correlation` at nominal, so `true` means "this seam's `r` was earned somewhere the
+    /// ±600 ms sweep alone could not reach". `None` on dumps written before 2026-08-28, when this
+    /// probe had no envelope at all — not the same thing as `Some(false)`.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub pre_seam_rescued: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub post_seam_rescued: Option<bool>,
+    /// The **accepted** search's peak sat on the boundary of the lags actually scored, so a larger lag
+    /// was never tried. Read as "these lags are a floor, not a measurement" — **not** as "the true peak
+    /// lies beyond reach": a flat noise curve peaks mid-sweep and reads `false`. For reach, read
+    /// `*_seam_z`. `None` on pre-2026-08-28 dumps.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub pre_seam_edge_pinned: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub post_seam_edge_pinned: Option<bool>,
+    /// A non-positive `bridge_frames` exists only because both seams clamped at B frame 0; unclamped
+    /// they still leave donor material. Distinguishes a manufactured abut from a real one, which is why
+    /// production's `shoulders_abut` skip carries the same tag. `None` on pre-2026-08-28 dumps.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub seams_clamped: Option<bool>,
 }
 
 /// One side of the wide-envelope confirmer: the 100 ms-bin RMS-envelope lag peak. Its `peak_lag_ms` should
@@ -1689,6 +1711,11 @@ mod tests {
             post_seam_prom: None,
             pre_seam_z: None,
             post_seam_z: None,
+            pre_seam_rescued: None,
+            post_seam_rescued: None,
+            pre_seam_edge_pinned: None,
+            post_seam_edge_pinned: None,
+            seams_clamped: None,
         }
     }
 

@@ -193,6 +193,15 @@ pub fn spec_to_fingerprint_summary(
         post_seam_prom: sl.post_seam_prom,
         pre_seam_z: sl.pre_seam_z,
         post_seam_z: sl.post_seam_z,
+        // `None`, not `Some(false)`: envelope provenance is a property of the *search*, and this path
+        // never ran one — it reconstructs from production's `SeamLocalTags`, which record the accepted
+        // lags but not how they were found. Fabricating `false` here would let a reader conclude "no
+        // shoulder was rescued" from a dump that simply cannot say. See `SpliceDualfit`'s field docs.
+        pre_seam_rescued: None,
+        post_seam_rescued: None,
+        pre_seam_edge_pinned: None,
+        post_seam_edge_pinned: None,
+        seams_clamped: None,
     });
     // F14: same predicate the from-decode dump applies, over the projection's own brackets (real when
     // characterize supplied them, else `synth_brackets`' reconstruction — see `brackets_dual_fit_eligible`

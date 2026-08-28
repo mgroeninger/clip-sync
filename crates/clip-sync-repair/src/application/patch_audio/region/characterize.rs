@@ -25,7 +25,7 @@ use crate::domain::{
         format_anchored_offset_verbose_line, interpolate_anchored_offset_secs, AnchorSearchPrior,
         PatchAnchorTable,
     },
-    patch_result::GapPatchSkipReason,
+    patch_result::{GapPatchSkipReason, ShouldersAbutLocks},
     policies::{self, GapBorderSpec, RefinedGapFrames},
 };
 
@@ -42,7 +42,7 @@ use super::bracket::{
 };
 use super::dual_fit::{
     build_dual_fit_input, finalize_dual_fit, registration_shoulder_residual_ms,
-    select_registration_residual_ms, skip_or_dual_fit, DualFitInputSpec,
+    select_registration_residual_ms, skip_or_dual_fit, DualFitAttempt, DualFitInputSpec,
 };
 use super::execute::execute_region_spec;
 use super::pcm::{b_extract_frames, b_mapped_start_frame, compute_a_border_rms, slice_b_extract};
@@ -378,29 +378,33 @@ pub(in crate::application::patch_audio) fn characterize_region(
         geom,
     };
 
-    // A3: build the dual-fit fallback input once (only when `--dual-fit` is on), before the gate can mutate
-    // `refined` via boundary-extension retry — dual-fit works on the base gap geometry.
-    let dual_fit_input = request
-        .dual_fit
-        .then(|| {
-            let _s = tracing::info_span!("char_dual_fit_input").entered();
-            build_dual_fit_input(DualFitInputSpec {
-                a_samples: &a_pcm.samples,
-                b_samples,
-                channels,
-                sample_rate,
-                refined,
-                refined_b_start_secs,
-                b_extract_start_secs,
-                gap_frames,
-                fill_seam_search_secs,
-                min_fill_correlation,
-                fill_absolute_floor: request.fill_absolute_floor,
-                crossfade_secs: region.crossfade_secs,
-                border_standoff_frames: derived.border_standoff_frames,
-            })
+    // A3: build the dual-fit fallback input once, before the gate can mutate `refined` via
+    // boundary-extension retry — dual-fit works on the base gap geometry.
+    //
+    // Built on EVERY run, not just `--dual-fit` ones: the seam locks below, their `clamped` tag and
+    // `program_quiet_at_nominal` all read `templates` / `b_mono` / `a_gap_floor_db`, and the abut
+    // skip is not a dual-fit feature. Consumption is still flag-gated (`dual_fit_eligible`), and
+    // `BExtractWindow` is not serialized, so populating `b_mapped_start_frame` under `--no-dual-fit`
+    // is internal-only. Cost of the change on that path: one B mono conversion plus the two ±600 ms
+    // shoulder searches per gap.
+    let dual_fit_input = {
+        let _s = tracing::info_span!("char_dual_fit_input").entered();
+        build_dual_fit_input(DualFitInputSpec {
+            a_samples: &a_pcm.samples,
+            b_samples,
+            channels,
+            sample_rate,
+            refined,
+            refined_b_start_secs,
+            b_extract_start_secs,
+            gap_frames,
+            fill_seam_search_secs,
+            min_fill_correlation,
+            fill_absolute_floor: request.fill_absolute_floor,
+            crossfade_secs: region.crossfade_secs,
+            border_standoff_frames: derived.border_standoff_frames,
         })
-        .flatten();
+    };
 
     // 8c: the B extract window for a dual-fit rescue spec — real geometry (`b_mapped_start` is the extract-
     // relative nominal gap start the dual-fit input already computed). Built here so `finalize_dual_fit` can
@@ -412,6 +416,91 @@ pub(in crate::application::patch_audio) fn characterize_region(
             .as_ref()
             .map(|d| d.templates.b_mapped_start())
             .unwrap_or(0),
+    };
+
+    // Early shoulder locks: measure both seams at (or, for an untrustworthy one, near) the nominal
+    // `b_mapped` BEFORE the gate search, so a gap whose shoulders already abut is skipped without
+    // paying for a fill search that cannot help it. Measured from the baseline `refined` for the
+    // same reason `dual_fit_input` is — the gate may extend the boundaries afterwards.
+    let seam_locks = dual_fit_input.as_ref().and_then(|df| {
+        let _s = tracing::info_span!("char_seam_locks").entered();
+        // A is fully decoded here, so the envelope's wider border is a plain slice; the closure form
+        // exists for the fingerprint's B-side capture, which cannot slice.
+        let env_cfg = crate::domain::lag_envelope::EnvelopeCfg::from_knobs(
+            request.lag_envelope_max_lag_ms,
+            request.lag_envelope_window_secs,
+            sample_rate,
+        );
+        let wide_a = crate::domain::seam_locks::wide_a_slicer(
+            &a_pcm.samples,
+            channels,
+            refined.start_frame,
+            refined.end_frame,
+            env_cfg.map(|c| c.window).unwrap_or(0),
+        );
+        crate::domain::seam_locks::nominal_first_seam_locks(
+            &df.templates,
+            &df.b_mono,
+            df.params.max_lag_frames,
+            env_cfg,
+            Some(&wide_a),
+            sample_rate,
+            crate::domain::seam_locks::SeamGateFloors {
+                min_fill_correlation: df.params.min_fill_correlation,
+                fill_absolute_floor: df.params.fill_absolute_floor,
+            },
+            // Triage at the gate floor, never at the fingerprint's 0.5: a shoulder the gate would
+            // accept at its nominal lag is then never a rescue candidate, so the envelope can only
+            // ever add a fill that is declined today — it can never move an existing one.
+            df.params.min_fill_correlation,
+        )
+    });
+
+    if let (Some(df), Some(locks)) = (dual_fit_input.as_ref(), seam_locks.as_ref()) {
+        if locks.abut() {
+            // Both shoulders lock confidently (`gate_pass`) and land on top of each other or crossed:
+            // there is no donor bridge between them, so A's gap is introduced silence, not missing
+            // content. Skip before `evaluate_seam_gate` — the fill search has nothing to find.
+            let reason = GapPatchSkipReason::ShouldersAbut(ShouldersAbutLocks {
+                pre_lag_ms: locks.pre.lag as f64 * 1000.0 / f64::from(sample_rate),
+                post_lag_ms: locks.post.lag as f64 * 1000.0 / f64::from(sample_rate),
+                bridge_frames: locks.bridge_frames,
+                gap_frames,
+                pre_z: locks.pre.z,
+                post_z: locks.post.z,
+                pre_envelope_rescued: locks.pre.rescued,
+                post_envelope_rescued: locks.post.rescued,
+                clamped: locks.clamped(),
+                edge_pinned: locks.pre.edge_pinned || locks.post.edge_pinned,
+                program_quiet: crate::domain::donor::program_quiet_at_nominal(
+                    &df.b_mono,
+                    df.templates.b_mapped_start(),
+                    gap_frames,
+                    df.params.a_gap_floor_db,
+                    sample_rate,
+                ),
+            });
+            log_skip_gap_fill(progress, region, &reason);
+            return (
+                skip_region_spec(
+                    reason,
+                    None,
+                    region,
+                    gap_offset_secs,
+                    refined,
+                    silence_splice_b_extract,
+                ),
+                tag_ctx,
+            );
+        }
+    }
+
+    // Both halves or neither — `skip_or_dual_fit` has no use for one without the other.
+    let dual_fit_attempt = || {
+        dual_fit_input
+            .as_ref()
+            .zip(seam_locks.as_ref())
+            .map(|(input, locks)| DualFitAttempt { input, locks })
     };
 
     let gate_result = {
@@ -447,7 +536,7 @@ pub(in crate::application::patch_audio) fn characterize_region(
                                 retry_fail,
                                 min_structure_match_score,
                                 tag_ctx,
-                                dual_fit_input.as_ref(),
+                                dual_fit_attempt(),
                             );
                             return (
                                 finalize_dual_fit(
@@ -470,7 +559,7 @@ pub(in crate::application::patch_audio) fn characterize_region(
                         other,
                         min_structure_match_score,
                         tag_ctx,
-                        dual_fit_input.as_ref(),
+                        dual_fit_attempt(),
                     );
                     return (
                         finalize_dual_fit(
@@ -493,7 +582,7 @@ pub(in crate::application::patch_audio) fn characterize_region(
                 other,
                 min_structure_match_score,
                 tag_ctx,
-                dual_fit_input.as_ref(),
+                dual_fit_attempt(),
             );
             return (
                 finalize_dual_fit(

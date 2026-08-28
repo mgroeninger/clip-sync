@@ -4,8 +4,11 @@ use crate::application::gap_fingerprint::schema::*;
 
 use clip_sync::normalized_correlation;
 
-use crate::domain::pcm::interleaved_to_mono;
+use crate::domain::lag_envelope::EnvelopeCfg;
 use crate::domain::policies::{border_templates_for_gap, RefinedGapFrames};
+use crate::domain::seam_locks::{
+    nominal_first_seam_locks, wide_a_slicer, SeamGateFloors, SeamLockTemplates,
+};
 
 use super::config::*;
 use super::lag::*;
@@ -240,10 +243,21 @@ pub(in crate::application::gap_fingerprint::measure) struct SpliceDualfitInput<'
 /// `fill_seam_search_secs` window, and gate on `min(pre, post)`. Mirrors production `try_dual_fit`'s
 /// shoulder search so [`dual_fit_rescue_flag`] can predict rescue from dump measurements (F14).
 ///
+/// **The locks come from [`nominal_first_seam_locks`], the same call production makes** — templates,
+/// range guard, nominal centers, envelope rescue, gate, bridge and trim are all its arithmetic rather
+/// than a parallel copy here. Before 2026-08-28 this ran its own ±600 ms search with **no envelope**,
+/// so a shoulder production rescued (and therefore gated, and possibly skipped as `shoulders_abut`)
+/// still read ungated in the dump — the fingerprint contradicted the repair it exists to predict.
+/// `triage_r` is `min_fill_correlation` for the same reason, not the 1 s census's
+/// `SEAM_LOCK_RECOVERABLE_R`: production's triage line is its gate floor.
+///
 /// **A borders are raw `mono(refined ± w)`** — the same construction `build_dual_fit_input` /
-/// `try_dual_fit` use. Do **not** route through [`border_templates_for_gap`]: silence-skip + energy
-/// trim moves the pre template, which moves `pre_lag` and therefore `post_seam_global_r`, flipping
-/// the step-real term on gaps production rescues.
+/// `try_dual_fit` use, now via `SeamLockTemplates::build`. Do **not** route through
+/// [`border_templates_for_gap`]: silence-skip + energy trim moves the pre template, which moves
+/// `pre_lag` and therefore `post_seam_global_r`, flipping the step-real term on gaps production rescues.
+///
+/// Fingerprint-only, and staying here: `post_seam_global_r` (is the step necessary?) and the two
+/// `*_seam_prom` uniqueness measurements. Production computes neither.
 ///
 /// `None` when either seam window falls out of range.
 pub(in crate::application::gap_fingerprint::measure) fn splice_dualfit_at(
@@ -259,24 +273,22 @@ pub(in crate::application::gap_fingerprint::measure) fn splice_dualfit_at(
         sample_rate,
     } = *input;
     let ch = channels.max(1);
-    let gap_frames = refined.end_frame.saturating_sub(refined.start_frame);
     let rate = f64::from(sample_rate).max(1.0);
     let window = ((cfg.fill_seam_search_secs * rate).round() as usize).max(8);
-    let a_frames = a_samples.len() / ch;
-    // Same range guard as `build_dual_fit_input` — insufficient shoulder ⇒ no dual-fit claim.
-    if refined.start_frame < window || refined.end_frame + window > a_frames || gap_frames == 0 {
-        return None;
-    }
-    let a_pre = interleaved_to_mono(
-        &a_samples[(refined.start_frame - window) * ch..refined.start_frame * ch],
+    // Carries the range guard this function and `build_dual_fit_input` each used to spell out.
+    let templates = SeamLockTemplates::build(
+        a_samples,
         ch,
-    );
-    let a_post = interleaved_to_mono(
-        &a_samples[refined.end_frame * ch..(refined.end_frame + window) * ch],
-        ch,
-    );
-    debug_assert_eq!(a_pre.len(), window);
-    debug_assert_eq!(a_post.len(), window);
+        refined.start_frame,
+        refined.end_frame,
+        b_mapped_start,
+        window,
+    )?;
+    let gap_frames = templates.gap_frames();
+    // The two validators below correlate the borders against slices of `b_mono` at their own offsets,
+    // which the templates cannot hand out by reference while `nominal_first_seam_locks` borrows them.
+    let a_pre = templates.a_pre().to_vec();
+    let a_post = templates.a_post().to_vec();
 
     let max_lag = (((SEAM_LOCAL_SEARCH_MS / 1000.0) * rate).round() as usize).max(1);
 
@@ -285,14 +297,36 @@ pub(in crate::application::gap_fingerprint::measure) fn splice_dualfit_at(
     // `b_mapped_start`, post at `b_mapped_start + gap_frames`) and take the peak. Anchoring on the gross 1 s
     // `lag_decision` (the prior behavior) clipped seams whose lag diverges far from the 1 s peak — e.g. 7·g3,
     // pre 1 s lag −319 ms but the seam is at +18 ms, outside any narrow window around the gross placement.
-    // Production `try_dual_fit` uses the same nominal centers (`dual_fit.rs`).
-    let b_pre_nominal = b_mapped_start;
-    let b_post_nominal = b_mapped_start + gap_frames;
-    let pre_start = b_pre_nominal.checked_sub(window)?;
-    let pre_peak = seam_local_peak(&a_pre, b_mono, pre_start, max_lag)?;
-    let (pre_seam_r, pre_lag, pre_seam_z) = (pre_peak.r, pre_peak.lag, pre_peak.z);
-    let post_peak = seam_local_peak(&a_post, b_mono, b_post_nominal, max_lag)?;
-    let (post_seam_r, post_lag, post_seam_z) = (post_peak.r, post_peak.lag, post_peak.z);
+    // Production `try_dual_fit` uses the same nominal centers (`dual_fit.rs`) — and now the same code.
+    let env_cfg = EnvelopeCfg::from_knobs(
+        cfg.lag_envelope_max_lag_ms,
+        cfg.lag_envelope_window_secs,
+        sample_rate,
+    );
+    // A is decoded whole here, exactly as on the patch path, so the envelope's wider border is the
+    // same slice production takes — same helper, so the two cannot widen differently.
+    let wide_a = wide_a_slicer(
+        a_samples,
+        ch,
+        refined.start_frame,
+        refined.end_frame,
+        env_cfg.map(|c| c.window).unwrap_or(0),
+    );
+    let locks = nominal_first_seam_locks(
+        &templates,
+        b_mono,
+        max_lag,
+        env_cfg,
+        Some(&wide_a),
+        sample_rate,
+        SeamGateFloors {
+            min_fill_correlation: f64::from(cfg.min_fill_correlation),
+            fill_absolute_floor: f64::from(cfg.fill_absolute_floor),
+        },
+        f64::from(cfg.min_fill_correlation),
+    )?;
+    let (pre_seam_r, pre_seam_z) = (locks.pre.r, locks.pre.z);
+    let (post_seam_r, post_seam_z) = (locks.post.r, locks.post.z);
 
     // Seam correlations arrive already finite: `seam_local_peak` returns `finite(peak_r)`, so a
     // zero-variance (digital-silence) shoulder reads **0.0, not NaN** — and production reads the same
@@ -300,15 +334,11 @@ pub(in crate::application::gap_fingerprint::measure) fn splice_dualfit_at(
     // NaN was preserved here and that mapping it would invert `gate_pass`. It was never preserved.
     // The NaN caution below on `post_seam_global_r` IS real — that one comes straight from
     // `normalized_correlation`, which does not clamp.) F14.
-    // The seam-local shoulder placements (nominal ± the per-seam search) define the bridge + step.
-    let b_pre_seam = (b_pre_nominal as i64 + pre_lag).max(0) as usize;
-    let b_post_seam = (b_post_nominal as i64 + post_lag).max(0) as usize;
-    let bridge_frames = b_post_seam as i64 - b_pre_seam as i64;
-    let smin = pre_seam_r.min(post_seam_r);
-    // Same gate production applies (`domain::seam_locks::SeamGateFloors::passes`). `smin` is finite
-    // by construction, so this and `smin >= floor` agree.
-    let gate_pass =
-        !(smin < f64::from(cfg.min_fill_correlation) || smin < f64::from(cfg.fill_absolute_floor));
+    // The seam-local shoulder placements (nominal ± the per-seam search) define the bridge + step, and
+    // the gate is `SeamGateFloors::passes` — literally production's, not a restatement of it.
+    let (b_pre_seam, b_post_seam) = (locks.b_pre_seam, locks.b_post_seam);
+    let bridge_frames = locks.bridge_frames;
+    let gate_pass = locks.gate_pass;
 
     // Validator 1 — is the step necessary? Post seam at the PRE shoulder's seam-local lag (step forced 0):
     // if the post seam also clears there, one constant shift fixes both ⇒ registration artifact, not a splice.
@@ -358,6 +388,11 @@ pub(in crate::application::gap_fingerprint::measure) fn splice_dualfit_at(
         post_seam_prom,
         pre_seam_z,
         post_seam_z,
+        pre_seam_rescued: Some(locks.pre.rescued),
+        post_seam_rescued: Some(locks.post.rescued),
+        pre_seam_edge_pinned: Some(locks.pre.edge_pinned),
+        post_seam_edge_pinned: Some(locks.post.edge_pinned),
+        seams_clamped: Some(locks.clamped()),
     })
 }
 /// Mono [`LagSummary`] for one side of a [`LagFingerprint`].
@@ -534,6 +569,22 @@ mod tests {
         (0..len).map(|i| noise(seed, i)).collect()
     }
 
+    /// Noise under a linear amplitude ramp. Flat noise has a flat RMS envelope, which the coarse
+    /// envelope search cannot register against — the ramp is what gives it something to lock onto,
+    /// and it is the same shaping `lag.rs`'s envelope-rescue fixtures use.
+    fn write_shaped_noise(buf: &mut [f32], start: usize, end: usize, seed: u64, rising: bool) {
+        let span = (end - start).max(1) as f64;
+        for (f, slot) in buf.iter_mut().enumerate().take(end).skip(start) {
+            let t = (f - start) as f64 / span;
+            let env = if rising { t } else { 1.0 - t };
+            *slot = (noise(seed, f) * 0.5 * (0.2 + 0.8 * env)) as f32;
+        }
+    }
+
+    fn frames_at_ms(rate: u32, ms: u64) -> usize {
+        (ms as f64 / 1000.0 * f64::from(rate)).round() as usize
+    }
+
     fn lerp(base: &[f64], x: f64) -> f64 {
         if x <= 0.0 {
             return base[0];
@@ -592,6 +643,102 @@ mod tests {
         assert_eq!(
             weighted_downmix_rms(&s, ch, n - 5, n + 100),
             weighted_downmix_rms(&s, ch, n - 5, n)
+        );
+    }
+
+    /// **Step 6's whole point** (31/g7 class): a post shoulder whose true lag is −1200 ms, i.e. twice
+    /// outside the ±600 ms seam sweep. Production reaches it through the coarse envelope and then skips
+    /// the gap as `shoulders_abut`; before 2026-08-28 this probe ran its own sweep with **no envelope**,
+    /// read the shoulder dead, and wrote `gate_pass: false` — the dump flatly contradicted the repair it
+    /// exists to predict. Both arms are asserted, so the old reading is pinned as the *envelope-off*
+    /// reading rather than left as a thing that might come back.
+    ///
+    /// The fixture is introduced silence: B runs continuously, A has 1.2 s of digital silence spliced
+    /// into it, so the post border matches B exactly one gap-length early and the two locks land on the
+    /// same B frame — `bridge_frames == 0`, no donor material between them.
+    #[test]
+    fn splice_dualfit_rescues_a_far_post_shoulder_and_reads_the_abut() {
+        const RATE: u32 = 48_000;
+        let pre_len = frames_at_ms(RATE, 4000);
+        let gap = frames_at_ms(RATE, 1200);
+        let post_len = frames_at_ms(RATE, 3000);
+        let gap_start = pre_len;
+        let gap_end = pre_len + gap;
+        let total = gap_end + post_len + frames_at_ms(RATE, 500);
+
+        let mut a = vec![0.0f32; total];
+        write_shaped_noise(&mut a, 0, gap_start, 11, true);
+        write_shaped_noise(&mut a, gap_end, gap_end + post_len, 23, false);
+
+        // B: the same two runs of content, butted together with nothing between them.
+        let mut b_mono = vec![0.0f64; gap_start + post_len + frames_at_ms(RATE, 500)];
+        for (i, &v) in a.iter().take(gap_start).enumerate() {
+            b_mono[i] = f64::from(v);
+        }
+        for j in 0..post_len {
+            b_mono[gap_start + j] = f64::from(a[gap_end + j]);
+        }
+
+        let refined = RefinedGapFrames {
+            start_frame: gap_start,
+            end_frame: gap_end,
+        };
+        let measure = |cfg: &FingerprintConfig| {
+            splice_dualfit_at(&SpliceDualfitInput {
+                a_samples: &a,
+                channels: 1,
+                refined,
+                b_mono: &b_mono,
+                b_mapped_start: gap_start,
+                cfg,
+                sample_rate: RATE,
+            })
+            .expect("seam windows in range")
+        };
+
+        let on = measure(&FingerprintConfig::default());
+        assert!(
+            on.pre_seam_r > 0.8 && on.post_seam_r > 0.8,
+            "both shoulders should lock: pre={} post={}",
+            on.pre_seam_r,
+            on.post_seam_r
+        );
+        assert_eq!(on.pre_seam_rescued, Some(false), "pre is true at nominal");
+        assert_eq!(
+            on.post_seam_rescued,
+            Some(true),
+            "post is only reachable through the envelope"
+        );
+        assert!(on.gate_pass, "gate_pass must agree with production");
+        assert!(
+            on.bridge_frames.abs() <= frames_at_ms(RATE, 25) as i64,
+            "the shoulders should land on the same B frame, got bridge={}",
+            on.bridge_frames
+        );
+        assert!(
+            on.bridge_frames <= 0 && on.gate_pass,
+            "this is the `SeamLocks::abut` shape production skips on"
+        );
+        assert_eq!(
+            on.seams_clamped,
+            Some(false),
+            "a real abut, not two seams collapsing onto B frame 0"
+        );
+
+        // Envelope off: the pre-2026-08-28 reading, and the reason the fingerprint disagreed.
+        let off = measure(&FingerprintConfig {
+            lag_envelope_max_lag_ms: 0,
+            ..FingerprintConfig::default()
+        });
+        assert!(
+            !off.gate_pass && off.post_seam_r < 0.35,
+            "without the envelope the post shoulder is out of reach: r={} gate_pass={}",
+            off.post_seam_r,
+            off.gate_pass
+        );
+        assert_eq!(
+            off.pre_seam_r, on.pre_seam_r,
+            "the envelope must not touch a shoulder that already reads well"
         );
     }
 

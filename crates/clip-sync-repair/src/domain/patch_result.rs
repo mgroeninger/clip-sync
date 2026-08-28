@@ -146,6 +146,72 @@ pub enum GapPatchSkipReason {
     },
     /// B is silent at the nominal program-time span (D11/G5) — quiet in both masters, nothing to fill.
     ProgramQuiet,
+    /// Both A edges locked onto the same (or overlapping) B instant: the donor bridge between the two
+    /// seam locks is zero-length or inverted, so B holds nothing for this gap. Measured **before** the
+    /// fill search (the locks are the cheap sensor), and only on locks that clear the fill gate —
+    /// unqualified locks decide nothing, because two dead shoulders produce noise lags that cross about
+    /// half the time.
+    ///
+    /// Cell is SilenceSplice (gap-vocabulary Hole 2: degenerate splice, zero-length donor bridge). The
+    /// lookalike flags are stamped, not split into separate reasons — the successor collapse Change
+    /// reads them before it drains anything.
+    ShouldersAbut(ShouldersAbutLocks),
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
+/// The lock geometry behind a [`GapPatchSkipReason::ShouldersAbut`] decision.
+///
+/// A named struct rather than inline variant fields because the identical payload is republished at
+/// run level on [`ShouldersAbutSkip`] (plan §4's capture, which the successor collapse Change reads).
+/// One definition, so the per-gap reason and the run-level row cannot drift apart. The wire shape is
+/// unchanged by the extraction: a newtype variant still serializes as `{"shoulders_abut": {…}}`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct ShouldersAbutLocks {
+    pub pre_lag_ms: f64,
+    pub post_lag_ms: f64,
+    pub bridge_frames: i64,
+    pub gap_frames: usize,
+    /// Whole-curve z-score of each lock's peak — uniqueness of *this* placement. Recorded, never
+    /// gated on (settled § B).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pre_z: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_z: Option<f64>,
+    /// The coarse envelope relocated this shoulder before it locked. Boolean until the three-state
+    /// `EnvelopeRescue` reaches the domain (plan step 6) — `false` here means "not rescued", which
+    /// covers both "never consulted" and "consulted and declined".
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub pre_envelope_rescued: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub post_envelope_rescued: bool,
+    /// The abut exists only because both seams clamped to frame 0 — near B's start, not a join.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub clamped: bool,
+    /// Either lock's peak sat on the boundary of the lags actually searched (search exhausted).
+    /// Note this does **not** mean "the true peak is out of reach" — a flat curve peaks mid-sweep.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub edge_pinned: bool,
+    /// B is quiet at the nominal mapping — the shared-pause lookalike.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub program_quiet: bool,
+}
+
+/// One `shoulders_abut` refusal, carried from characterize through the splice loop and republished
+/// on [`PatchSummary::shoulders_abut`].
+///
+/// The frames are the gap's refined throat on **A's PCM timeline**, sourced from the repair spec —
+/// not from [`GapPatchOutcome`], which carries seconds and no gap identity. `splice_into_a` is
+/// length-preserving, so they still name the hole after every neighbouring fill is in.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct ShouldersAbutSkip {
+    pub gap_index: usize,
+    pub a_start_frame: usize,
+    pub a_end_frame: usize,
+    #[serde(flatten)]
+    pub locks: ShouldersAbutLocks,
 }
 
 /// Why an approved patch never reached A's PCM.
@@ -221,6 +287,12 @@ pub fn format_gap_patch_skip_reason(reason: &GapPatchSkipReason) -> String {
         GapPatchSkipReason::ProgramQuiet => {
             "program-quiet in both masters (B silent at nominal span; nothing to fill)".into()
         }
+        // The four geometry numbers only — the lookalike tags live on the serialized object, not in the
+        // human line (plan §4).
+        GapPatchSkipReason::ShouldersAbut(locks) => format!(
+            "shoulders abut (bridge={} frames, gap={}, pre={:.1} ms, post={:.1} ms)",
+            locks.bridge_frames, locks.gap_frames, locks.pre_lag_ms, locks.post_lag_ms
+        ),
         GapPatchSkipReason::ResidualHeadroomExceeded {
             pre_correlation,
             post_correlation,
@@ -543,6 +615,13 @@ pub struct PatchSummary {
     /// tests), and absent from pre-2026-08-26 reports.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub program_gain: Option<crate::domain::ProgramGainReport>,
+    /// Every gap refused as `shoulders_abut`, with the A frames its silence occupies — the run-level
+    /// half of plan §4's capture. Omitted when empty, so a run without an abut is byte-identical to
+    /// one written before this field existed. Recorded here (rather than left to be re-derived from
+    /// `gaps`) because the successor collapse Change needs the A frames, which the per-gap status
+    /// does not carry.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shoulders_abut: Option<Vec<ShouldersAbutSkip>>,
 }
 
 impl PatchSummary {
@@ -582,6 +661,7 @@ impl PatchSummary {
             patch_anchors_used: None,
             fill_geometry: None,
             program_gain: None,
+            shoulders_abut: None,
         }
     }
 
@@ -594,6 +674,12 @@ impl PatchSummary {
     /// Stamp the run's program-gain decision. See [`Self::program_gain`].
     pub fn with_program_gain(mut self, report: crate::domain::ProgramGainReport) -> Self {
         self.program_gain = Some(report);
+        self
+    }
+
+    /// Stamp the run's `shoulders_abut` refusals. See [`Self::shoulders_abut`]; empty stays `None`.
+    pub fn with_shoulders_abut(mut self, skips: Vec<ShouldersAbutSkip>) -> Self {
+        self.shoulders_abut = (!skips.is_empty()).then_some(skips);
         self
     }
 

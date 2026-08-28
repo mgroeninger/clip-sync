@@ -301,6 +301,9 @@ pub fn cell_for_skip_reason(reason: &GapPatchSkipReason) -> GapRepairCell {
     match reason {
         GapPatchSkipReason::BoundaryAlignmentFailed => GapRepairCell::NoPlacement,
         GapPatchSkipReason::ProgramQuiet => GapRepairCell::ProgramQuiet,
+        // Hole 2: a degenerate splice with a zero-length donor bridge. Not sub-classified — the
+        // lookalike tags ride on the reason object, they do not move the cell.
+        GapPatchSkipReason::ShouldersAbut(_) => GapRepairCell::SilenceSplice,
         GapPatchSkipReason::CorrelationBelowThreshold { .. } => GapRepairCell::Decorrelated,
         GapPatchSkipReason::ResidualHeadroomExceeded { .. } => GapRepairCell::ResidualVeto,
         GapPatchSkipReason::BExtractFailed
@@ -320,6 +323,9 @@ pub fn reason_admits_cell(reason: &GapPatchSkipReason, cell: GapRepairCell) -> b
     match reason {
         GapPatchSkipReason::BoundaryAlignmentFailed => cell == C::NoPlacement,
         GapPatchSkipReason::ProgramQuiet => cell == C::ProgramQuiet,
+        // Exactly one admissible cell: `program_quiet: true` on this reason is still a SilenceSplice,
+        // because the decision that produced it was the bridge, not the donor level (plan §4).
+        GapPatchSkipReason::ShouldersAbut(_) => cell == C::SilenceSplice,
         // The one sub-classified reason: bare = Decorrelated, or characterize's donor/seam axes narrow it.
         GapPatchSkipReason::CorrelationBelowThreshold { .. } => {
             matches!(cell, C::Decorrelated | C::SilenceSplice | C::ProgramQuiet)
@@ -344,6 +350,7 @@ pub fn skip_cell_from_tags(reason: &GapPatchSkipReason, tags: &GapRepairTags) ->
     match reason {
         GapPatchSkipReason::BoundaryAlignmentFailed => GapRepairCell::NoPlacement,
         GapPatchSkipReason::ProgramQuiet => GapRepairCell::ProgramQuiet,
+        GapPatchSkipReason::ShouldersAbut(_) => GapRepairCell::SilenceSplice,
         GapPatchSkipReason::ResidualHeadroomExceeded { .. } => GapRepairCell::ResidualVeto,
         GapPatchSkipReason::BExtractFailed
         | GapPatchSkipReason::AlignedSegmentOutOfRange
@@ -435,6 +442,21 @@ mod tests {
             floor_post_db: 0.0,
             margin_db: 0.0,
         };
+        // Hand-added: `cases` is a fixed array, so despite this test's name it cannot detect an
+        // unlisted variant — the wildcard-free match in `cell_for_skip_reason` is the real guarantee.
+        let abut = GapPatchSkipReason::ShouldersAbut(crate::domain::ShouldersAbutLocks {
+            pre_lag_ms: -38.0,
+            post_lag_ms: -1160.3,
+            bridge_frames: -48,
+            gap_frames: 53_702,
+            pre_z: Some(14.1),
+            post_z: Some(8.2),
+            pre_envelope_rescued: false,
+            post_envelope_rescued: true,
+            clamped: false,
+            edge_pinned: false,
+            program_quiet: true,
+        });
         let cases = [
             (
                 GapPatchSkipReason::BoundaryAlignmentFailed,
@@ -455,10 +477,29 @@ mod tests {
                 GapRepairCell::Unfillable,
             ),
             (GapPatchSkipReason::ZeroLengthGap, GapRepairCell::Unfillable),
+            (abut.clone(), GapRepairCell::SilenceSplice),
         ];
         for (reason, want) in cases {
             assert_eq!(cell_for_skip_reason(&reason), want, "reason {reason:?}");
         }
+
+        // The abut skip admits exactly one cell — the lookalike tags never move it, `program_quiet`
+        // included (plan §4).
+        assert!(reason_admits_cell(&abut, GapRepairCell::SilenceSplice));
+        for other in [
+            GapRepairCell::ProgramQuiet,
+            GapRepairCell::Decorrelated,
+            GapRepairCell::Unfillable,
+            GapRepairCell::NoPlacement,
+            GapRepairCell::ResidualVeto,
+        ] {
+            assert!(!reason_admits_cell(&abut, other), "abut admits {other:?}");
+        }
+        assert_eq!(
+            skip_cell_from_tags(&abut, &GapRepairTags::default()),
+            GapRepairCell::SilenceSplice,
+            "the tags path agrees with the reason path"
+        );
     }
 
     fn spec_with(verdict: GapRepairVerdict) -> GapRepairSpec {
