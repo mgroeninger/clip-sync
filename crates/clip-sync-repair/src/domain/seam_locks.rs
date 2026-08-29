@@ -545,4 +545,138 @@ mod tests {
             at_recoverable_line.pre.r
         );
     }
+
+    /// Per-100 ms-bin gain profile — the *energy* contour the coarse envelope locks onto.
+    /// Deterministic and non-repeating, so the envelope has one unambiguous peak rather than a comb.
+    fn bin_gains(bins: usize, seed: u32) -> Vec<f64> {
+        let mut state = seed;
+        (0..bins)
+            .map(|_| {
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                0.05 + f64::from((state >> 24) as u8) / 255.0
+            })
+            .collect()
+    }
+
+    /// **The fallback branch**: a rescue that lands somewhere no better is *discarded*, not reported.
+    ///
+    /// The envelope is a coarse **energy** instrument, so it can confidently align two shoulders that
+    /// share a loudness contour and no waveform at all. On such a reading the recentered fine retry is
+    /// exactly as untrustworthy as the nominal one — keeping it would hand `try_dual_fit` a second
+    /// guess dressed as a measurement, and would tell the dump `rescued: true` when nothing was
+    /// recovered. The honest nominal is the only defensible answer, and it must come back
+    /// *bit-identical* to the pre-envelope reading.
+    ///
+    /// Fixture: A's pre border and B are independent noise (so no lag correlates), but A's border
+    /// carries B's bin energy contour displaced by 400 ms — the envelope therefore proposes a large
+    /// recenter and the retry there still reads ~0. All three premises are asserted, because a fixture
+    /// that never consulted the envelope, or that drew `shift == 0`, would pass this test through an
+    /// early return without ever reaching the branch under test.
+    #[test]
+    fn a_rescue_that_lands_no_better_keeps_the_honest_nominal() {
+        let sr = 48_000u32;
+        let rate = sr as usize;
+        let w = rate / 4; // 250 ms seam template
+        let bin = rate / 10; // 100 ms, the envelope's bin
+        let gap_frames = rate / 2;
+        let wide_len = rate * 2; // 2 s border, of which the envelope reads the last 1 s
+        let n = rate * 5; // nominal pre-seam end in B
+        let d = bin * 4; // 400 ms: the planted energy displacement
+        let seam_max_lag = (0.6 * f64::from(sr)) as usize;
+        let floor = 0.35; // the recipe's `min_fill_correlation`, as both callers pass
+
+        // B: one noise realization, shaped by a per-bin energy contour.
+        let gains = bin_gains(rate * 10 / bin + 2, 0x60ad_1111);
+        let b: Vec<f64> = noise(rate * 10, 0xb00b_2222)
+            .iter()
+            .enumerate()
+            .map(|(i, x)| x * gains[i / bin])
+            .collect();
+
+        // A's pre border: an *independent* noise realization wearing B's contour from `d` later, so
+        // the envelope has a strong, correct-looking peak and the waveform has none anywhere.
+        let x = noise(wide_len, 0x0a0a_3333);
+        let a_wide: Vec<f64> = (0..wide_len)
+            .map(|j| x[j] * gains[(n - wide_len + j + d) / bin])
+            .collect();
+        let a_pre: Vec<f64> = a_wide[wide_len - w..].to_vec();
+        // The post shoulder is verbatim B, so it locks at nominal and contributes nothing to read.
+        let a_post: Vec<f64> = b[n + gap_frames..n + gap_frames + w].to_vec();
+
+        let templates = SeamLockTemplates::from_mono(a_pre.clone(), a_post, gap_frames, n, w)
+            .expect("templates");
+        let cfg = EnvelopeCfg::from_knobs(1_000, 1.0, sr).expect("envelope enabled");
+        let wide: Box<WideA<'_>> = Box::new(move |pre: bool| pre.then(|| a_wide.clone()));
+
+        // Premise 1: the nominal read is below the gate floor, so the envelope IS consulted.
+        let anchor_start = n - w;
+        let nominal = seam_local_peak(&a_pre, &b, anchor_start, seam_max_lag).expect("nominal peak");
+        assert!(
+            nominal.r < floor,
+            "fixture premise: nominal must be a rescue candidate, got r={}",
+            nominal.r
+        );
+
+        // Premise 2: the envelope proposes a real recenter — `shift == 0` returns early and would
+        // never reach the branch. It should land on the planted displacement, not on noise.
+        let shift = envelope_recenter_frames(
+            envelope_shoulder(
+                EnvelopeSide {
+                    a_border: &wide(true).expect("wide border"),
+                    b_signal: &b,
+                    anchor_frame: n,
+                    pre_shoulder: true,
+                },
+                cfg,
+                sr,
+            ),
+            sr,
+        );
+        assert_ne!(shift, 0, "fixture premise: the envelope must want to move this lock");
+        assert!(
+            (shift.abs() - d as i64).abs() <= bin as i64,
+            "fixture premise: the envelope should find the planted {d}-frame contour, got {shift}"
+        );
+
+        // Premise 3: and the retry there is no better — this is what makes the rescue unrecoverable.
+        let retry_at = (anchor_start as i64 + shift).max(0) as usize;
+        let retry = seam_local_peak(&a_pre, &b, retry_at, seam_max_lag).expect("retry peak");
+        assert!(
+            retry.r < floor,
+            "fixture premise: the recentered retry must still fail triage, got r={}",
+            retry.r
+        );
+
+        let locks = nominal_first_seam_locks(
+            &templates,
+            &b,
+            seam_max_lag,
+            Some(cfg),
+            Some(wide.as_ref()),
+            sr,
+            SeamGateFloors {
+                min_fill_correlation: floor,
+                fill_absolute_floor: 0.12,
+            },
+            floor,
+        )
+        .expect("locks");
+
+        assert!(
+            !locks.pre.rescued,
+            "an unrecoverable rescue must not be reported as one"
+        );
+        assert_eq!(
+            locks.pre.r, nominal.r,
+            "the fallback must return the nominal reading itself, not the retry's"
+        );
+        assert_eq!(
+            locks.pre.lag, nominal.lag,
+            "the fallback must keep the nominal lag, not the recentered one"
+        );
+        assert!(
+            !locks.gate_pass,
+            "and a shoulder this dead must not qualify the pair to abut"
+        );
+    }
 }

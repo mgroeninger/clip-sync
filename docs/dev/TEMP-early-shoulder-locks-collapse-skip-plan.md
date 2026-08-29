@@ -1250,7 +1250,11 @@ claim and is the signal to stop.
       falls back to the honest nominal**, `edge_pinned` is true iff the accepted peak
       is on `±max_lag` of the producing search, `clamped` is true iff unclamped
       seams do not abut and `.max(0)` makes them abut.
-      **Audited 2026-08-29 — four of five landed, one is missing.** `seam_locks.rs`
+      **Audited 2026-08-29 — the range guard is confirmed sole; four of five tests
+      landed, one is missing.** `SeamLockTemplates::build` (`seam_locks.rs:92`) holds
+      the only seam-window range check; grepping `region/` for the old guards' text
+      leaves just `pcm.rs:186` (`splice_into_a: region out of range`), which guards the
+      **write** offset, not a shoulder window, and must stay. `seam_locks.rs`
       holds exactly three tests: `a_gate_passing_nominal_lock_is_never_relocated`
       (envelope not consulted), `clamped_marks_an_abut_the_clamp_manufactured`
       (clamped), `unqualified_locks_never_abut`; `edge_pinned` is covered in
