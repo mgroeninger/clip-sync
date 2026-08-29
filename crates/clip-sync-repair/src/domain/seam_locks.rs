@@ -610,7 +610,8 @@ mod tests {
 
         // Premise 1: the nominal read is below the gate floor, so the envelope IS consulted.
         let anchor_start = n - w;
-        let nominal = seam_local_peak(&a_pre, &b, anchor_start, seam_max_lag).expect("nominal peak");
+        let nominal =
+            seam_local_peak(&a_pre, &b, anchor_start, seam_max_lag).expect("nominal peak");
         assert!(
             nominal.r < floor,
             "fixture premise: nominal must be a rescue candidate, got r={}",
@@ -632,7 +633,10 @@ mod tests {
             ),
             sr,
         );
-        assert_ne!(shift, 0, "fixture premise: the envelope must want to move this lock");
+        assert_ne!(
+            shift, 0,
+            "fixture premise: the envelope must want to move this lock"
+        );
         assert!(
             (shift.abs() - d as i64).abs() <= bin as i64,
             "fixture premise: the envelope should find the planted {d}-frame contour, got {shift}"

@@ -1242,7 +1242,7 @@ claim and is the signal to stop.
       **Verified 2026-08-29** — `lag_envelope.rs:28` and `:50` (`ENVELOPE_BIN_MS`)
       are the only definitions; `measure/lag.rs:72,78` re-export from
       `domain::seam_local` and `domain::lag_envelope`.
-- [ ] `domain::seam_locks`: `SeamLockTemplates::build` is the only range guard
+- [x] `domain::seam_locks`: `SeamLockTemplates::build` is the only range guard
       (both old copies deleted); `nominal_first_seam_locks` unit tests —
       ~~`gate_pass` NaN polarity matches `try_dual_fit`~~ (**superseded** — §7 step 2's
       NaN was refuted; there is none to test, see [settled.md](settled.md) § A),
@@ -1261,8 +1261,19 @@ claim and is the signal to stop.
       `domain/seam_local.rs` (`…_flags_a_peak_on_the_search_boundary`,
       `…_reports_the_clamped_search_bounds`). **No test covers the fallback branch at
       `seam_locks.rs:298`** — `retry.r < triage_r ⇒ keep the honest nominal` — which is
-      live behavior on the production path and reachable with a synthetic fixture (no
-      media). Write it before the merge.
+      live behavior on the production path.
+      **Closed 2026-08-29** by `a_rescue_that_lands_no_better_keeps_the_honest_nominal`.
+      The fixture separates the envelope's axis from the fine sweep's: A's pre border and B
+      are independent noise (no lag correlates) while A's border wears B's 100 ms-bin energy
+      contour displaced 400 ms, so the **coarse envelope locks confidently and the fine retry
+      there still reads ~0** — the exact shape of an unrecoverable rescue. All three premises
+      are asserted (nominal below floor ⇒ envelope consulted; `shift != 0` and within one bin
+      of the planted displacement; retry still below floor), because a fixture that missed any
+      of them would pass through an early return without reaching the branch. The lock is then
+      required to come back **bit-identical** to the pre-envelope nominal (`r` and `lag` by
+      `assert_eq!`), not merely `rescued == false`.
+      **Mutation-checked**: replacing the guard with `if false` fails this test and *only* this
+      test — direct evidence the other three never covered the branch.
 - [x] `seam_local_peak` widening (step 2a): returns `SeamPeak` with the
       post-clamp `lag_lo` / `lag_hi`; one `LAG_EDGE_TOL_MS`, in `domain`,
       re-exported from `measure/lag.rs`; all six call sites updated; **every
