@@ -412,9 +412,13 @@ b_signal, anchor_frame, pre_shoulder }` and let `lag.rs` build it from its
 paths and tests are untouched.
 
 Also move the `0.5` triage line to a domain const
-`SEAM_LOCK_RECOVERABLE_R` and have `is_recoverable(&LagSummary)`
-(`lag.rs:275`) read it. That const is the **fingerprint's** recoverable line and
-the helper's *default* — **not** a number the patch path may inherit; see step 2.
+`LAG_DECISION_RECOVERABLE_R` (named `SEAM_LOCK_RECOVERABLE_R` when this step was
+written; **renamed 2026-08-29** once it became clear the seam locks are the one
+caller that does *not* use it) and have `is_recoverable(&LagSummary)`
+(`lag.rs:275`) read it. That const is the **1 s `lag_decision` census's**
+recoverable line and the helper's *default* — **not** a number either seam-lock
+caller inherits; see step 2. (As written this said "the fingerprint's" line;
+corrected 2026-08-29 — see the note under step 2.)
 
 **The triage threshold is a parameter, not a shared const (corrected
 2026-08-28).** Triage (`is this reading trustworthy enough not to need help?`,
@@ -432,8 +436,9 @@ separate** way step 4 could change production bytes.
 
 So `nominal_first_seam_locks` takes the triage threshold as an argument:
 
-- **fingerprint** passes `SEAM_LOCK_RECOVERABLE_R` (0.5) — `lag_decision` and
+- **fingerprint** passes `LAG_DECISION_RECOVERABLE_R` (0.5) — `lag_decision` and
   `is_recoverable` keep today's behavior exactly;
+  **⚠ superseded — see the correction below;**
 - **patch path** passes `min_fill_correlation`, which makes the band empty *by
   construction* and buys a much stronger invariant than §1 currently claims:
   **a lock that passes the gate at its nominal lag is never relocated.** The
@@ -461,6 +466,21 @@ today duplicated verbatim at `dual_fit.rs:88` and `probes.rs:267`. Both call
 sites become this constructor. **Not** `border_templates_for_gap` (silence-skip
 + energy trim moves the pre template — `probes.rs` documents why).
 
+> **Both callers pass `min_fill_correlation` (corrected 2026-08-29).** The split above
+> — fingerprint at 0.5, patch path at the gate floor — is **not what was built**. `probes.rs`
+> passes `cfg.min_fill_correlation` and `characterize.rs` passes `df.params.min_fill_correlation`;
+> the fingerprint was moved onto production's line during step 6 so the dump would predict the
+> repair (recorded in the step-6 "as built" note), and this design text was never updated to match.
+> It is corrected here because reading it the other way makes Tier 1 look like an over-estimate of
+> the production abut set on the triage axis, which it is not — the two paths triage identically.
+>
+> `triage_r` nonetheless stays an **argument**, and for a stronger reason than the one given above:
+> the correct value is not a literal. `min_fill_correlation` is a recipe field, so hardcoding `0.35`
+> would hold the invariant *a lock that passes the gate at its nominal lag is never relocated* only
+> at the default recipe. Tying triage to whatever the gate floor is makes it hold at every recipe.
+> `LAG_DECISION_RECOVERABLE_R` keeps exactly one live consumer — `is_recoverable` on the 1 s census,
+> a different instrument — plus the unit test that pins the parameter as a parameter.
+
 ```text
 nominal_first_seam_locks(&templates, max_lag_frames, envelope: Option<EnvelopeCfg>,
                          wide_a: Option<&WideA>, floors, triage_r) -> Option<SeamLocks>
@@ -469,8 +489,7 @@ nominal_first_seam_locks(&templates, max_lag_frames, envelope: Option<EnvelopeCf
 Per shoulder: `seam_local_peak` at nominal → if `peak_r < triage_r` and envelope
 on, coarse envelope → `seam_local_peak` recentered → keep the retry only if it
 now clears `triage_r`, else the honest nominal. `triage_r` is
-`SEAM_LOCK_RECOVERABLE_R` for the fingerprint and `min_fill_correlation` for the
-patch path (step 1). Returns pre/post `(r, lag_frames, z)`, `b_pre_seam`, `b_post_seam`,
+`min_fill_correlation` on **both** paths (step 1, as corrected). Returns pre/post `(r, lag_frames, z)`, `b_pre_seam`, `b_post_seam`,
 `bridge_frames`, and `gate_pass` (`min(pre_r, post_r)` vs both floors).
 
 > **The NaN polarity this plan asked for does not exist (corrected 2026-08-28,
@@ -563,7 +582,7 @@ reads them off the curve's first/last entries. Add
 and promote `LAG_EDGE_TOL_MS` (`lag.rs:15`, today
 `pub(in crate::application::gap_fingerprint::measure)`) into
 `domain::seam_local`, re-exported from `lag.rs` — the same move step 1 made for
-`SEAM_LOCK_RECOVERABLE_R`, and for the same reason: one definition of "pinned",
+`LAG_DECISION_RECOVERABLE_R`, and for the same reason: one definition of "pinned",
 not two.
 
 Six call sites: `probes.rs:292`, `:294`, `characterize.rs:637`, `:644` (plus the
@@ -724,7 +743,7 @@ census and now calls the moved envelope primitive.
 > - **What `splice_dualfit_at` lost**: its own range guard, its own `interleaved_to_mono` border cuts,
 >   both `seam_local_peak` calls, its own `b_*_seam` arithmetic and its own restatement of the gate.
 >   All of it is now `SeamLockTemplates::build` + `nominal_first_seam_locks` — production's call, with
->   `triage_r = min_fill_correlation` (production's line), not the census's `SEAM_LOCK_RECOVERABLE_R`.
+>   `triage_r = min_fill_correlation` (production's line), not the census's `LAG_DECISION_RECOVERABLE_R`.
 >   Kept, because production computes neither: `post_seam_global_r` and the two `*_seam_prom`.
 > - **The envelope is on here too**, from `cfg.lag_envelope_*` (default 2000 ms / 2.0 s). This is the
 >   fix the divergence demanded: a dump previously read 31/g7's post shoulder dead at ±600 ms and wrote
@@ -845,6 +864,16 @@ successor collapse plan still needs to cite.
 > **Left open deliberately**: the BACKLOG close and this document's deletion. Both assert validation
 > that has not run — §8.1's Tier 1 re-fingerprint, 31/g7's production confirmation, and the 31/g9 ear
 > check all need licensed media.
+>
+> **Status 2026-08-29.** Tier 1 has since **run** (n = 2, `{11/g9, 31/g7}`) and the provenance the
+> dump was silently dropping is now on the wire; both are recorded in §8.1. What still gates the
+> close is **Tier 2** — its outcome differ is unbuilt, the two-arm run has not happened, and two ear
+> checks remain (31/g7's *current* fill, which this Change removes, and 31/g9's new one). The
+> `[0.35, 0.5)` verdict filed under **E** was itself corrected on 2026-08-29: both callers pass
+> `min_fill_correlation`, there is no fingerprint/patch divergence, and the row now turns on the
+> recipe-field rationale instead. `SEAM_LOCK_RECOVERABLE_R` was renamed
+> `LAG_DECISION_RECOVERABLE_R` the same day — the seam locks are the one caller that does not use
+> it, and the old prefix is how the wrong belief spread.
 
 ---
 
@@ -963,11 +992,85 @@ through `nominal_first_seam_locks`, so the new dump's `bridge_frames` /
 pair at a time, ~15 GB RSS) and diff the abut set against Tier 0. Only here does
 the exact set become knowable.
 
+> **Tier 1 RUN 2026-08-29 — n = 2, `{11/g9, 31/g7}`.** Corpus
+> `2026-08-28-complete-corpus`: 51 pairs, 1073 gaps, 1175 JSON files, every pair's parsed
+> gap total equal to its `corpus.json` `source.gap_count`, zero unparseable files. Roll-up
+> (`gap-fingerprint-stats`, one command):
+>
+> ```
+> measurable: 971/997 matched gaps carry both gate_pass and bridge_frames
+> abutting: 2
+>   11·g9 |  -205 f / -4.3 ms |  599.5 ms gap | 0.989 / 0.500
+>   31·g7 |  -153 f / -3.2 ms | 1118.8 ms gap | 0.966 / 0.874
+> ```
+>
+> **Tier 0's 31/g7 survives** (§5 not falsified; pre-step-6 the same gap dumped
+> `gate_pass false`, `bridge_frames +57375`). **11/g9 is the one newcomer**, and §8.2's rule
+> requires it be explained by the placement change Tier 0 cannot model — it is: its
+> `lag_decision` shoulders sit at ≈ −72/−68 ms with `step_ms +4.24` (⇒ a *positive* bridge),
+> while the seam locks are 603.75 ms apart. A 1 s template at `b_mapped` and a 250 ms one at
+> the seam are not looking at the same thing here, which is exactly the modelled gap. Nothing
+> is unaccounted for; the merge is not blocked on this.
+>
+> **The predicate is not knife-edge.** Across all 957 `gate_pass` gaps the bridge distribution
+> is −205, −153, then **+17851 f (+371.9 ms)** and a bulk at ≥ +24247 f where bridge ≈ gap
+> (step ≈ 0). A 372 ms void separates the abut set from everything else, so `bridge ≤ 0` could
+> be `bridge ≤ 300 ms` without moving the ship set. Bridge measurement noise is **not** the
+> risk here; wrong lock *placement* is.
+>
+> **Weak locks are rare and already catalogued.** Only 6 of 957 `gate_pass` gaps have
+> `min(pre_r, post_r) < 0.60` (p05 = 0.902, p50 = 0.982). The four weakest are 8/g4 (0.390),
+> 25/g11 (0.410), 20/g3 (0.443) — the three band gaps §7 step 1 measured — and 11/g9 (0.500).
+>
+> **Two false leads, so they are not re-derived.** Low seam prominence and negative
+> `post_seam_global_r` are *not* false-peak signatures: 95 of 957 `gate_pass` gaps have
+> `post_seam_prom < 0.10` (down to 0.0004) and 164 have negative `post_seam_global_r` (down to
+> −0.837), and they fill normally. Do not build a drain gate on either.
+
+> **Provenance was missing from the wire, and is now fixed (2026-08-29).** `probes.rs` populated
+> the five lookalike tags, but the from-decode fingerprint path rebuilds `splice_dualfit` from
+> `SeamLocalTags`, which did not carry them — so **zero of the corpus's dumped gaps recorded
+> `rescued` / `edge_pinned` / `clamped`**, and the roll-up prints `provenance UNRECORDED` for
+> that corpus. Fixed by carrying the tags on `SeamLocalTags` and populating them from the locks
+> on the production dual-fit path. Pairs 11 and 31 were re-fingerprinted at the fixed binary
+> (`gap-files/2026-08-29-early-shoulder-tier-1-repop`, 17/17 and 13/13 gaps, complete):
+>
+> | | 11·g9 | 31·g7 |
+> |---|---|---|
+> | `pre_seam_rescued` / `post_seam_rescued` | false / **true** | false / **true** |
+> | `pre_seam_edge_pinned` / `post_seam_edge_pinned` | false / false | false / false |
+> | `seams_clamped` | false | false |
+> | retry `r`, `prom`, `z`, `global_r` | 0.500, 0.0716, 10.96, −0.084 | 0.874, 0.4252, 25.96, +0.006 |
+> | step (`trim_frames`) | −28980 f = −603.75 ms | −53857 f = −1122 ms |
+>
+> Every number else is bit-identical to the 2026-08-28 corpus, so the fix moved no measurement.
+>
+> **Both abuts are envelope rescues** — so a drain gated on `!rescued` would drain nothing, and
+> that idea is dead. 31/g7's rescue is independently corroborated (the 2026-08-18 wide sweep put
+> its post shoulder at −1160 ms, beyond ±600 ms reach; the step here is −1122 ms) and is exactly
+> the case step 6 exists to catch. The discriminator between the two is **rescue quality**, not
+> rescue existence, and it separates them on every column above.
+>
+> **`edge_pinned` fires 0 times on 0 of 52 locks** across all 26 gaps of both pairs — the first
+> measurement of this tag that has ever existed, since no dump predating the fix carried it. It
+> would have vetoed neither abut, and in particular does not flag 11/g9, whose weak lock is a
+> **mid-sweep false peak** rather than a boundary artifact. That is the "not-pinned ⇏ trustworthy"
+> asymmetry landing on the one gap it mattered for. Treat `edge_pinned` as a veto with a
+> so-far-empty positive set; **do not** promote it to a corrector on this evidence. Should a later
+> corpus show it firing on weak locks, the correct form is not a second mechanism but a narrower
+> trigger on the existing one — rescue on `r < triage_r || edge_pinned`, keeping the retry only
+> if `retry.r > r` (**strictly better**), so a trustworthy lock can still move but only onto a
+> more trustworthy reading. Two pairs is a small sample; the base rate over the full corpus is
+> unmeasured and needs the next full re-fingerprint, not a dedicated run.
+
 **Tier 1.5 — step 4's blast radius, measured offline 2026-08-28.** Step 4 turns
 envelope rescue on in production for the first time, which touches far more than
 the abut gap. Sized from the same corpus — gaps with a **dead** seam lock
-(`splice_dualfit` r < `SEAM_LOCK_RECOVERABLE_R`, so the new helper *would*
-consult the envelope) **and** a `lag_decision` shoulder marked `rescued`:
+(`splice_dualfit` r < `LAG_DECISION_RECOVERABLE_R`) **and** a `lag_decision` shoulder
+marked `rescued`. Note (2026-08-29) that 0.5 is **not** the line the shipped helper
+consults the envelope at — that is `min_fill_correlation` (0.35) — so this filter is
+looser than the real trigger and the counts below are an **upper bound** on the blast
+radius, not an estimate of it:
 
 | | count |
 |---|---|
@@ -997,14 +1100,65 @@ unexplained audible blip** (Question 11, no mechanism). Treat it as a required
 ear check, not a bonus.
 
 **Tier 2 — production truth.** `scripts/measure/measure-patch-outcomes.ps1`
-with `--patch-only`, diffed per gap against the `gap-files/2026-08-13-repeat-terms`
-baseline. Acceptance: exactly the Tier-1 abut set flips to `shoulders_abut`;
-**31/g9 may newly gain a dual-fit fill (Tier 1.5) and must be ear-checked before
-it is accepted**; every other gap's outcome unchanged. Two things only Tier 2 catches — the
-envelope knobs now firing on the production path can shift **non-abut** locks
-and change dual-fit placements (§7 step 4), and `is_retryable_patch_skip`
-changes the anchored-retry population (§7 step 7). It pays no anchor-oracle
-cost; that per-gap sweep is a Full-tier dump cost, not a production one.
+with `--patch-only` over the 51 pairs (`gap-files/extended-pairs.csv`). Two things only
+Tier 2 catches — the envelope knobs now firing on the production path can shift **non-abut**
+locks and change dual-fit placements (§7 step 4), and `is_retryable_patch_skip` changes the
+anchored-retry population (§7 step 7). It pays no anchor-oracle cost; that per-gap sweep is a
+Full-tier dump cost, not a production one. **Not yet run** (2026-08-29).
+
+> **What the existing baseline already settles (2026-08-29, no new run).** Both Tier-1 abut gaps
+> were looked up in `gap-files/2026-08-13-repeat-terms`:
+>
+> | gap | outcome today | after this Change |
+> |---|---|---|
+> | **11·g9** (`a_start` 3788.963, dur 0.599) | **skipped** — `correlation_below_threshold`, pre 0.043 / post 0.043, best anchor attempt 0.268 / 0.213 | `shoulders_abut` |
+> | **31·g7** (`a_start` 1725.697, dur 1.119) | **patched** — pre 0.437 / post 0.437, `align_adjustment_secs` −0.977, confidence **high**, `normalize_gain` **2.128**, `dual_fit_used` false | `shoulders_abut` |
+>
+> **11/g9 cannot cost a fill** — it is already refused, so the Change alters only the *reason*.
+> Whatever its rescue is worth (retry `r` 0.500, `prom` 0.0716), it has no production
+> consequence, and it needs **no ear check**.
+>
+> **31/g7 is the entire substance of Tier 2.** Production patches it today at
+> `confidence: high` with a **2.13× gain**; this Change refuses it. If the silence-splice
+> reading is right, today's fill fabricates 1.12 s of amplified content over silence that was
+> never missing from B. That **inverts the ear-check priority below**: the listen that carries
+> the most information is 31/g7 *as it sounds today*, because a confirmed artifact there is
+> positive evidence the refusal is correct — 31/g9's new fill is the secondary check.
+
+> **Use a same-binary two-arm control, not the 2026-08-13 baseline as primary (2026-08-29).**
+> That baseline is two weeks and several merges old (`program_gain` landed 2026-08-26 among
+> others), so a diff against it mixes this Change with everything since — and the acceptance
+> bar is *zero* outcome changes on non-abut gaps, which such confounds would trip constantly.
+> Run both arms from the same HEAD binary:
+>
+> - **arm A** — default, `-OutDir gap-files/<date>-tier-2-on`
+> - **arm B** — `-RepairArgs "--lag-envelope-max-lag-ms 0"`, `-OutDir …-tier-2-off`
+>
+> `0` is a documented disable and the two `--lag-envelope-*` flags are deliberately **ungated on
+> production runs** (`cli/mod.rs:306`, from step 4). With the envelope off the seam locks never
+> relocate, so arm B reproduces pre-Change placement and the A↔B diff isolates steps 4 + 6. Arm B
+> is a control only — never a shipping configuration. Keep the 2026-08-13 diff as a **secondary**
+> check for the one thing arm B cannot neutralize: step 7's change to the anchored-retry
+> population.
+
+> **Tooling gap — the outcome differ does not exist (open 2026-08-29).** Nothing in
+> `scripts/measure/` diffs two `measure-patch-outcomes` runs per gap.
+> `diff-patch-adjustments.ps1` answers a different question (the `border_standoff_secs` sweep),
+> but it donates the rule that matters: **join arm × arm on `patch.gaps[*].a_start_secs`,
+> rounded to 1 ms, within a pair label — NEVER on gap index**, because the arms do not agree on
+> which gaps get patched, so index *i* is not the same gap in two arms. A Tier 2 diff joined on
+> index is garbage. What is needed: classify each joined gap as unchanged / status flip /
+> skip-reason change / patched-with-different-numbers, and report unjoined gaps on **both**
+> sides rather than dropping them. This is the same shape of gap as the Tier 1 roll-up
+> (closed 2026-08-28) and, like it, needs no media to build.
+
+**Tier 2 acceptance (revised 2026-08-29):**
+
+- 31/g7 `patched` → `shoulders_abut`, and 11/g9 `correlation_below_threshold` → `shoulders_abut`
+- 31/g9 may newly gain a dual-fit fill (Tier 1.5) → ear check before accepting
+- **31/g7's current fill** → ear check (new; the strongest confirmation available)
+- zero outcome changes on every other gap
+- a run that does **not** flip 31/g7 falsifies §5 and blocks the merge
 
 ### 8.2 Test blast radius
 
@@ -1082,34 +1236,58 @@ claim and is the signal to stop.
       `lag_decision` over `2026-08-23-complete-corpus` *and* its `-3000` arm
       (971 evaluated each). Count, gap list and the refuted
       `splice_dualfit` split are recorded in §8.1.
-- [ ] `domain::lag_envelope` move: fingerprint `rescue_shoulder` uses the moved
+- [x] `domain::lag_envelope` move: fingerprint `rescue_shoulder` uses the moved
       primitive (no second envelope), `lag.rs` re-exports, existing lag tests
-      pass unedited. One `SEAM_LOCK_RECOVERABLE_R`; one 100 ms bin const.
+      pass unedited. One `LAG_DECISION_RECOVERABLE_R`; one 100 ms bin const.
+      **Verified 2026-08-29** — `lag_envelope.rs:28` and `:50` (`ENVELOPE_BIN_MS`)
+      are the only definitions; `measure/lag.rs:72,78` re-export from
+      `domain::seam_local` and `domain::lag_envelope`.
 - [ ] `domain::seam_locks`: `SeamLockTemplates::build` is the only range guard
       (both old copies deleted); `nominal_first_seam_locks` unit tests —
-      `gate_pass` NaN polarity matches `try_dual_fit`, envelope not consulted
-      when nominal is recoverable, rescued-but-unrecoverable falls back to the
-      honest nominal, `edge_pinned` is true iff the accepted peak is on
-      `±max_lag` of the producing search, `clamped` is true iff unclamped
+      ~~`gate_pass` NaN polarity matches `try_dual_fit`~~ (**superseded** — §7 step 2's
+      NaN was refuted; there is none to test, see [settled.md](settled.md) § A),
+      envelope not consulted when nominal is recoverable, **rescued-but-unrecoverable
+      falls back to the honest nominal**, `edge_pinned` is true iff the accepted peak
+      is on `±max_lag` of the producing search, `clamped` is true iff unclamped
       seams do not abut and `.max(0)` makes them abut.
-- [ ] `seam_local_peak` widening (step 2a): returns `SeamPeak` with the
+      **Audited 2026-08-29 — four of five landed, one is missing.** `seam_locks.rs`
+      holds exactly three tests: `a_gate_passing_nominal_lock_is_never_relocated`
+      (envelope not consulted), `clamped_marks_an_abut_the_clamp_manufactured`
+      (clamped), `unqualified_locks_never_abut`; `edge_pinned` is covered in
+      `domain/seam_local.rs` (`…_flags_a_peak_on_the_search_boundary`,
+      `…_reports_the_clamped_search_bounds`). **No test covers the fallback branch at
+      `seam_locks.rs:298`** — `retry.r < triage_r ⇒ keep the honest nominal` — which is
+      live behavior on the production path and reachable with a synthetic fixture (no
+      media). Write it before the merge.
+- [x] `seam_local_peak` widening (step 2a): returns `SeamPeak` with the
       post-clamp `lag_lo` / `lag_hi`; one `LAG_EDGE_TOL_MS`, in `domain`,
       re-exported from `measure/lag.rs`; all six call sites updated; **every
       existing value unchanged**. Unit tests: edge peak pinned, interior peak
       not, and a B-edge-clamped search reports the *clamped* bound (the case
-      `lag.abs() == max_lag` gets wrong).
-- [ ] Step 2's deferred payload: `SeamLock.edge_pinned` from the accepted
+      `lag.abs() == max_lag` gets wrong). **Verified 2026-08-29** —
+      `seam_local_peak_recovers_offset_seam`, `…_flags_a_peak_on_the_search_boundary`,
+      `…_reports_the_clamped_search_bounds` in `domain/seam_local.rs`; `LAG_EDGE_TOL_MS`
+      lives in `domain::seam_local` and `measure/lag.rs:70` documents the move.
+- [x] Step 2's deferred payload: `SeamLock.edge_pinned` from the accepted
       search, `SeamLocks.b_*_seam_unclamped` retained rather than discarded at
-      `seam_locks.rs:305–306`.
-- [ ] **Unqualified locks decide nothing**: dead-shoulder fixture
+      `seam_locks.rs:305–306`. **Verified 2026-08-29** — `seam_locks.rs:133`,
+      `:153–154`, and `clamped()` at `:170` reads the unclamped pair.
+- [x] **Unqualified locks decide nothing** (`unqualified_locks_never_abut`,
+      verified 2026-08-29): dead-shoulder fixture
       (`min(pre_r, post_r)` below floor) whose noise lags cross produces **no**
       abut skip and reaches `evaluate_seam_gate` — same outcome as today.
-- [ ] `try_dual_fit` consumes locks; unit tests: abut never assembles; in-reach
-      two-lag fixture matches today’s fill bytes.
-- [ ] Plumbing: `patch_settings()` carries both knobs; `characterize_region`
+- [x] `try_dual_fit` consumes locks; unit tests: abut never assembles; in-reach
+      two-lag fixture matches today’s fill bytes. **Verified 2026-08-29** —
+      `dual_fit.rs:162` takes `locks: &SeamLocks`; the in-reach fixture asserts
+      `trim_frames == step`, exact fill length, and interior (non-pinned) locks.
+- [x] Plumbing: `patch_settings()` carries both knobs; `characterize_region`
       reads them through `Deref`; `RepairConfig::validate` rejects a
       non-positive `lag_envelope_window_secs`; both doc comments no longer say
-      “production repair never reads it”.
+      “production repair never reads it”. **Verified 2026-08-29** —
+      `patch_audio/request.rs:72,75`, read at `characterize.rs:430–431`;
+      `config.rs:971` mirrors the CLI's message. The phrase survives only on
+      `border_capture` (`measure/config.rs:75`, `infrastructure/config.rs:211`),
+      where it is **true** — that field really is probe-only. Do not "fix" those.
 - [x] `characterize_region` skip-before-keep; `--no-dual-fit` still abut-skips;
       `is_retryable_patch_skip(ShouldersAbut) == false` (anchored retry does not
       re-characterize an abut gap). This one is **compile-silent** — the
@@ -1158,6 +1336,21 @@ claim and is the signal to stop.
       `preview_reports_the_abut_without_pcm` in
       `tests/abut_skip_integration.rs`; the named function is
       `patch_audio::visit_shoulders_abut`.
+- [x] **Tier 1 re-fingerprint** — **done 2026-08-29**, n = 2 `{11/g9, 31/g7}` over 51
+      pairs / 1073 gaps; Tier 0's 31/g7 survives and 11/g9 is explained by the
+      1 s → 250 ms placement change. Numbers and the two false leads in §8.1.
+- [x] **Provenance on the wire** — **done 2026-08-29**; `SeamLocalTags` carries
+      `rescued` / `edge_pinned` / `clamped`, populated from the locks on the production
+      dual-fit path. Pairs 11 + 31 re-fingerprinted at the fixed binary: both abuts are
+      **post-rescued**, `edge_pinned` is **0 of 52 locks**, no measurement moved.
+- [ ] **Tier 2 outcome differ** — build it (join on `a_start_secs` at 1 ms within a pair
+      label, never on index; report unjoined gaps both sides). Needs no media. §8.1.
+- [ ] **Tier 2 run, two arms** — arm A default, arm B `--lag-envelope-max-lag-ms 0`, same
+      HEAD binary, 51 pairs; then the secondary diff against `2026-08-13-repeat-terms` for
+      step 7's retry population. §8.1 acceptance.
+- [ ] **31/g7 ear check on the CURRENT fill** — production patches it today at
+      `confidence: high` with a 2.13× gain. Listen to what the Change removes; an audible
+      artifact is positive evidence the refusal is right. Higher information than 31/g9.
 - [ ] **31/g9 ear check** — Tier 1.5 predicts step 4 gives it a *new* dual-fit
       fill (skip → patch, rescued locks 0.965/0.957 at pair 31's map step). Not a
       regression on its face, but same pair and class as 31/g10's unexplained
@@ -1191,8 +1384,13 @@ claim and is the signal to stop.
   `[0.35, 0.5)` band §7 step 1 measured 3 corpus gaps in — with a verbatim copy of
   A's border planted 3 s away in B and an envelope wide enough to reach it. At
   `triage_r = min_fill_correlation` the lock is not rescued and keeps its lag; the
-  test also asserts the same reading falls below `SEAM_LOCK_RECOVERABLE_R`, so the
-  fingerprint's line and the patch path's cannot quietly converge on one number.
+  test also asserts the same reading falls below a **local** `0.5` — deliberately not any
+  shipped constant, so the fixture does not couple itself to an unrelated instrument's
+  line. That second arm is what makes it a real test of the parameter: at a triage line
+  above the gate floor this same shoulder *would* be a rescue candidate, so the assertion
+  pins the behavior to the argument rather than to a constant. (Until 2026-08-29 this read
+  "so the fingerprint's line and the patch path's cannot quietly converge on one number" —
+  wrong: they are both `min_fill_correlation`.)
   This is the test that must fail before the envelope may be pointed at production.
 - `splice_dualfit` on an abutting gap reports the rescued locks and
   `dual_fit_rescue: false`.
@@ -1208,11 +1406,14 @@ claim and is the signal to stop.
   production run uses.
 - A non-positive `lag_envelope_window_secs` in the config file is rejected at
   load, not silently rescue-free.
-- **Tier 2 clean**: the `--patch-only` diff against
-  `gap-files/2026-08-13-repeat-terms` shows the Tier-1 abut set flipped to
-  `shoulders_abut` and **zero outcome changes on every non-abut gap** (§8.1).
+- **Tier 2 clean**: the two-arm `--patch-only` diff (arm A default vs arm B
+  `--lag-envelope-max-lag-ms 0`, same HEAD binary) shows the Tier-1 abut set
+  `{11/g9, 31/g7}` flipped to `shoulders_abut` and **zero outcome changes on every
+  non-abut gap**, with the secondary diff against `gap-files/2026-08-13-repeat-terms`
+  covering step 7's retry population (§8.1). **Open.**
 - Tier 1's abut set contains Tier 0's `{31/g7}`, and any *additional* member is
   explained by the placement change Tier 0 cannot model — 1 s template at
   `b_mapped` → 250 ms template at the seam (F14, §8.1). A new member with no such
   explanation is unaccounted for and blocks the merge. A Tier 1 run that **loses**
-  31/g7 falsifies §5 and blocks the merge outright.
+  31/g7 falsifies §5 and blocks the merge outright. **Met 2026-08-29**: the run kept
+  31/g7 and added exactly one member, 11/g9, which carries that explanation.

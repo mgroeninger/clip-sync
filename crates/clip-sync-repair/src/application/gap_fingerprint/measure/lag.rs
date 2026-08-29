@@ -77,7 +77,7 @@ pub use crate::domain::seam_local::{
 /// (no drift). Re-exported here so the existing call sites / tests keep their paths.
 pub use crate::domain::lag_envelope::{
     envelope_recenter_frames, envelope_shoulder, EnvelopeCfg, EnvelopePeak, EnvelopeSide,
-    SEAM_LOCK_RECOVERABLE_R,
+    LAG_DECISION_RECOVERABLE_R,
 };
 /// Summarize a lag curve: lag-0 value, integer peak, parabolic-interpolated (fractional) peak, and a
 /// [`LagVerdict`]. `None` for an empty curve.
@@ -271,7 +271,7 @@ pub(in crate::application::gap_fingerprint::measure) fn lag_side_sweep(
 /// nominal-first plan's triage predicate, **not** `LagSummary::is_landmark` — see "The
 /// `is_landmark` trap", `docs/dev/archive/TEMP-lag-nominal-first-plan.md`).
 pub(in crate::application::gap_fingerprint::measure) fn is_recoverable(s: &LagSummary) -> bool {
-    s.peak_r >= SEAM_LOCK_RECOVERABLE_R
+    s.peak_r >= LAG_DECISION_RECOVERABLE_R
 }
 pub(in crate::application::gap_fingerprint::measure) fn stamp_rescue(
     mut s: LagSummary,

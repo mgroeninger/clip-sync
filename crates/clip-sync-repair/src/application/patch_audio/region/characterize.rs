@@ -449,9 +449,10 @@ pub(in crate::application::patch_audio) fn characterize_region(
                 min_fill_correlation: df.params.min_fill_correlation,
                 fill_absolute_floor: df.params.fill_absolute_floor,
             },
-            // Triage at the gate floor, never at the fingerprint's 0.5: a shoulder the gate would
-            // accept at its nominal lag is then never a rescue candidate, so the envelope can only
-            // ever add a fill that is declined today — it can never move an existing one.
+            // Triage at the gate floor: a shoulder the gate would accept at its nominal lag is
+            // then never a rescue candidate, so the envelope can only ever add a fill that is
+            // declined today — it can never move an existing one. The fingerprint passes this same
+            // value from its recipe, so the dump predicts the repair on this axis.
             df.params.min_fill_correlation,
         )
     });

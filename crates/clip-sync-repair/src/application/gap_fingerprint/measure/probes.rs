@@ -249,7 +249,7 @@ pub(in crate::application::gap_fingerprint::measure) struct SpliceDualfitInput<'
 /// so a shoulder production rescued (and therefore gated, and possibly skipped as `shoulders_abut`)
 /// still read ungated in the dump — the fingerprint contradicted the repair it exists to predict.
 /// `triage_r` is `min_fill_correlation` for the same reason, not the 1 s census's
-/// `SEAM_LOCK_RECOVERABLE_R`: production's triage line is its gate floor.
+/// `LAG_DECISION_RECOVERABLE_R`: production's triage line is its gate floor.
 ///
 /// **A borders are raw `mono(refined ± w)`** — the same construction `build_dual_fit_input` /
 /// `try_dual_fit` use, now via `SeamLockTemplates::build`. Do **not** route through

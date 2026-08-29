@@ -233,10 +233,16 @@ pub fn wide_a_slicer(
 /// envelope proposes a recenter and the fine search re-runs there — and that retry is kept only if
 /// it clears `triage_r` itself. Otherwise the honest nominal reading stands.
 ///
-/// Callers pass different values on purpose: the fingerprint passes
-/// [`crate::domain::lag_envelope::SEAM_LOCK_RECOVERABLE_R`] (0.5) to preserve `lag_decision`'s
-/// behavior; the patch path passes `min_fill_correlation`, so that a lock the gate would accept at
-/// nominal is never a rescue candidate and can never be relocated.
+/// Both callers pass `min_fill_correlation` — the fingerprint from its recipe
+/// (`measure/probes.rs`), the patch path from `df.params` (`region/characterize.rs`) — so the
+/// dump predicts the repair on this axis. It stays an **argument** rather than a constant because
+/// the correct value is not a literal: it is whatever the recipe's fill gate is. Tying triage to
+/// the gate floor is what buys the invariant *a lock the gate would accept at its nominal lag is
+/// never a rescue candidate, so the envelope can only add a fill that is declined today — it can
+/// never move an existing one*, and that holds at any configured `min_fill_correlation` only if
+/// the two track each other. (The 1 s `lag_decision` census keeps its own
+/// [`crate::domain::lag_envelope::LAG_DECISION_RECOVERABLE_R`] = 0.5; that is a different instrument
+/// — a 1 s template at `b_mapped` rather than a 250 ms one at the seam — not this line.)
 #[allow(clippy::too_many_arguments)]
 fn lock_shoulder(
     a_seam: &[f64],
@@ -270,7 +276,8 @@ fn lock_shoulder(
     };
     if r >= triage_r {
         // Trustworthy at nominal — the envelope is never consulted, so this lock cannot be moved.
-        // Same predicate as the fingerprint's `is_recoverable` (`peak_r >= SEAM_LOCK_RECOVERABLE_R`).
+        // Same *shape* as the 1 s census's `is_recoverable`, but not the same line: that one tests
+        // `peak_r >= LAG_DECISION_RECOVERABLE_R`, this one tests the caller's gate floor.
         return Some(nominal);
     }
 
@@ -442,15 +449,16 @@ mod tests {
     }
 
     /// **The invariant that lets the envelope run in production** (§7 step 1, §9): the patch path
-    /// passes `min_fill_correlation` as `triage_r`, so a lock that would pass the gate at its nominal
+    /// passes `min_fill_correlation` as `triage_r` (as does the fingerprint), so a lock that would pass the gate at its nominal
     /// lag is never a rescue candidate — the envelope is not even consulted — and therefore can never
     /// be relocated onto a decoy. Rescue can only ever *add* a fill that is declined today.
     ///
     /// The fixture is the one §9 names: a partly-degraded shoulder that still reads above the gate
     /// floor at nominal, with a verbatim copy of A's border planted elsewhere in B as a decoy that
-    /// correlates far better. With triage at the gate floor the nominal lag survives; with the
-    /// fingerprint's 0.5 line it would not — that arm is asserted too, so the two callers cannot
-    /// quietly converge on one number.
+    /// correlates far better. With triage at the gate floor the nominal lag survives; at a triage
+    /// line above that floor it would not — that arm is asserted too, with a **local** literal
+    /// rather than any shipped constant, so the behavior is pinned to the *argument* and the test
+    /// does not couple itself to an unrelated instrument's line.
     #[test]
     fn a_gate_passing_nominal_lock_is_never_relocated() {
         let sr = 48_000u32;
@@ -465,7 +473,7 @@ mod tests {
         b[decoy_at..decoy_at + w].copy_from_slice(&template);
 
         // A's pre border is that template half-degraded — still well above the 0.35 gate floor at
-        // nominal, but below the fingerprint's 0.5 triage line.
+        // nominal, but below the 0.5 used by the second arm, so that arm has something to move.
         let dirt = noise(w, 0xabcd_0001);
         let a_pre: Vec<f64> = template
             .iter()
@@ -515,7 +523,9 @@ mod tests {
             at_gate_floor.pre.lag
         );
 
-        // Same measurement at the fingerprint's triage line: now the shoulder IS a rescue candidate.
+        // Same measurement at a triage line above the gate floor — a value no caller passes, held
+        // locally on purpose — which makes the shoulder a rescue candidate.
+        let above_floor = 0.5;
         // Whether the envelope actually moves it is the envelope's business — what this pins is that
         // `triage_r` is a live parameter, not decoration.
         let at_recoverable_line = nominal_first_seam_locks(
@@ -526,11 +536,11 @@ mod tests {
             Some(wide.as_ref()),
             sr,
             floors,
-            crate::domain::lag_envelope::SEAM_LOCK_RECOVERABLE_R,
+            above_floor,
         )
         .expect("locks");
         assert!(
-            at_recoverable_line.pre.r < crate::domain::lag_envelope::SEAM_LOCK_RECOVERABLE_R,
+            at_recoverable_line.pre.r < above_floor,
             "fixture premise: the nominal read must sit in the [0.35, 0.5) band, got {}",
             at_recoverable_line.pre.r
         );

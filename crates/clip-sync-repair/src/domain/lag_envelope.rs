@@ -20,9 +20,12 @@ use crate::domain::seam_local::lag_correlation_curve;
 /// predicate, **not** `LagSummary::is_landmark` — see "The `is_landmark` trap",
 /// `docs/dev/archive/TEMP-lag-nominal-first-plan.md`).
 ///
-/// One number, two callers: the fingerprint's `is_recoverable` and the patch path's seam-lock
-/// triage.
-pub const SEAM_LOCK_RECOVERABLE_R: f64 = 0.5;
+/// **One consumer: `is_recoverable` on the 1 s `lag_decision` census.** It is *not* the seam-lock
+/// triage line — `nominal_first_seam_locks` takes that as an argument and both callers pass the
+/// recipe's `min_fill_correlation`, so that a lock the fill gate would accept at its nominal lag is
+/// never a rescue candidate. The two are different instruments (1 s template at `b_mapped` vs
+/// 250 ms at the seam) and must not be pointed at one number.
+pub const LAG_DECISION_RECOVERABLE_R: f64 = 0.5;
 
 /// Non-finite → 0.0 (a silent gap can cancel to `inf`/`NaN`).
 fn finite_corr(x: f64) -> f64 {
