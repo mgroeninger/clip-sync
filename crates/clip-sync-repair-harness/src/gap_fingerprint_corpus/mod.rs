@@ -443,4 +443,75 @@ mod tests {
             "already-patched gap excluded (bracket-exhausted skips only)"
         );
     }
+
+    /// The Tier-1 roll-up: `gate_pass ∧ bridge_frames ≤ 0`, and — the point of the section — a
+    /// denominator that excludes the gaps whose dump cannot answer. Each row flips one thing.
+    #[test]
+    fn shoulders_abut_rollup_counts_only_gaps_whose_dump_can_answer() {
+        let gap = |index: usize, gate_pass: bool, dualfit_extra: &str| {
+            format!(
+                r#"{{"index":{index},"tier":"full","sample_rate":48000,"channels":2,
+                "geometry":{{"duration_secs":1.8,"a_refined_start_secs":0}},
+                "lag_decision":{{"pre_anchor":[{{"peak_r":0.95,"frac_lag_ms":-16.0,"verdict":"timing_offset"}}],
+                        "post_anchor":[{{"peak_r":0.95,"frac_lag_ms":-8.0,"verdict":"timing_offset"}}]}},
+                "donor_interior_nominal":{{"rms_db":-40.0,"silence_fraction":0.02,"continuous":true}},
+                "splice_dualfit":{{"pre_seam_r":0.83,"post_seam_r":0.78,"trim_frames":-86500,"gate_pass":{gate_pass},"post_seam_global_r":0.05{dualfit_extra}}},
+                "brackets":[{{"failure_stage":"waveform_floor"}}],
+                "outcome":{{"tier":"skip"}}}}"#
+            )
+        };
+        // 86 400 frames = the 1.8 s gap at 48 kHz, so the printed bridge ms is derived, not assumed.
+        let abut = r#","gap_frames":86400,"bridge_frames":-100,"post_seam_rescued":true"#;
+        let root = tempfile::tempdir().unwrap();
+        write_corpus(
+            &root.path().join("1"),
+            "aaaa",
+            "bbbb",
+            &format!(
+                "[{},{},{},{}]",
+                gap(0, true, abut), // the abut: locks pass the gate and the bridge is crossed
+                gap(1, false, abut), // two dead shoulders that happen to cross — gate refuses first
+                gap(2, true, r#","gap_frames":86400,"bridge_frames":5000"#), // donor material exists
+                gap(3, true, ""),   // older dump: no bridge at all — unmeasurable, not "no"
+            ),
+        );
+        let report = analyze_dirs(&[root.path().to_path_buf()], 1.0, 30.0);
+        let rows = &report.rows;
+        assert!(rows[0].shoulders_abut(), "gate_pass + crossed bridge");
+        assert!(!rows[1].shoulders_abut(), "gate is checked first");
+        assert!(!rows[2].shoulders_abut(), "positive bridge = donor exists");
+        assert!(!rows[3].shoulders_abut(), "no bridge cannot be an abut");
+        assert!(
+            !rows[3].abut_measurable(),
+            "and it must leave the denominator rather than count as a non-abut"
+        );
+        assert_eq!(
+            rows[0].dualfit_bridge_ms().map(|v| (v * 10.0).round()),
+            Some(-21.0),
+            "bridge ms is derived from the row's own gap_frames vs duration_secs"
+        );
+
+        let text = report.shoulders_abut_text();
+        assert!(
+            text.contains("measurable: 3/4"),
+            "the bridgeless gap is outside the denominator: {text}"
+        );
+        assert!(text.contains("abutting: 1"), "{text}");
+        assert!(
+            text.contains("post-rescued"),
+            "the lookalike tags travel with the row: {text}"
+        );
+
+        // A dump that recorded no provenance must say so. Blank tags on a crossed bridge would read
+        // as "not pinned, not clamped" — the reading that turns a boundary-pinned search into an abut.
+        let bare = tempfile::tempdir().unwrap();
+        write_corpus(
+            &bare.path().join("1"),
+            "aaaa",
+            "bbbb",
+            &format!("[{}]", gap(0, true, r#","gap_frames":86400,"bridge_frames":-100"#)),
+        );
+        let text = analyze_dirs(&[bare.path().to_path_buf()], 1.0, 30.0).shoulders_abut_text();
+        assert!(text.contains("provenance UNRECORDED"), "{text}");
+    }
 }

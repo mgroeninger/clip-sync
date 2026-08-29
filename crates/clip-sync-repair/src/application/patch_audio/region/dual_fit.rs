@@ -377,6 +377,14 @@ pub(in crate::application::patch_audio::region) fn skip_or_dual_fit(
                             post_seam_prom: None,
                             pre_seam_z: None,
                             post_seam_z: None,
+                            // Provenance IS available on this path — the locks the fit was built from.
+                            // Recording it here is what lets a projected dump answer "was this shoulder
+                            // rescued / pinned at the search boundary?" without a decode.
+                            pre_seam_rescued: Some(locks.pre.rescued),
+                            post_seam_rescued: Some(locks.post.rescued),
+                            pre_seam_edge_pinned: Some(locks.pre.edge_pinned),
+                            post_seam_edge_pinned: Some(locks.post.edge_pinned),
+                            seams_clamped: Some(locks.clamped()),
                         };
                         // Single-source invariant (§2.5.7 #2): the tag seams equal the strategy seams because
                         // both are `r.{pre,post}_seam_r` (splice_pre/splice_post are those same values, L1654).

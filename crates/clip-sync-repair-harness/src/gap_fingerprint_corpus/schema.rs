@@ -267,6 +267,24 @@ pub struct GapRow {
     pub dualfit_post_global_r: Option<f64>,
     /// Min of the two seam-peak prominences (±30 ms): low ⇒ periodic/alias match, PASS not trustworthy.
     pub dualfit_seam_prom: Option<f64>,
+    /// **The donor bridge between the two seam locks**, and the hole it covers, in frames. With
+    /// `dualfit_pass` these are production's `shoulders_abut` predicate verbatim — see
+    /// [`Self::shoulders_abut`]. `None` on dumps written before the fields existed *and* on dumps
+    /// written before 2026-08-28, when `splice_dualfit` searched ±600 ms with no envelope rescue and
+    /// so recorded a nominal noise reading for any shoulder out of that window: on those, a `Some`
+    /// bridge is real but the predicate is structurally blind to the far-lock class it is meant to
+    /// count. Only a post-2026-08-28 dump answers the question.
+    pub dualfit_bridge_frames: Option<i64>,
+    pub dualfit_gap_frames: Option<usize>,
+    /// Lookalike tags on the same measurement, mirroring production's skip payload: the bridge is
+    /// non-positive only because both seams clamped at B frame 0 (near B's start, not a join); the
+    /// coarse envelope relocated that shoulder before it locked; the accepted peak sat on the boundary
+    /// of the lags actually scored (**not** "the true peak is out of reach" — a flat noise curve peaks
+    /// mid-sweep and reads `false`).
+    pub dualfit_seams_clamped: Option<bool>,
+    pub dualfit_pre_rescued: Option<bool>,
+    pub dualfit_post_rescued: Option<bool>,
+    pub dualfit_seam_edge_pinned: Option<bool>,
     /// D11 — registration-independent B occupancy at the nominal geometry span. `silence ≈ 1` ⇒ B is quiet
     /// at the same program time as A's gap ⇒ program-quiet, not a fillable dropout.
     pub donor_nominal_silence: Option<f64>,
@@ -430,6 +448,49 @@ impl GapRow {
             && self.step_is_real()
             && self.donor_continuous == Some(true)
             && self.program_quiet() != Some(true)
+    }
+
+    /// **Production's `shoulders_abut` predicate**, read off the dump: both seam locks clear the fill
+    /// gate (`dualfit_pass`) *and* the donor bridge between them is zero-length or crossed
+    /// (`bridge_frames <= 0`) — B holds nothing for this gap because nothing was ever missing from it.
+    /// This is the Tier-1 roll-up of
+    /// `docs/dev/TEMP-early-shoulder-locks-collapse-skip-plan.md` §8.1, and it is the *same* two
+    /// fields production decides on, not a mirror of them: since 2026-08-28 the probe and the patch
+    /// path share `nominal_first_seam_locks`.
+    ///
+    /// `false` when the bridge is unmeasured — a dump that cannot answer is not a "no". Use
+    /// [`Self::abut_measurable`] for the denominator rather than counting all matched gaps.
+    pub fn shoulders_abut(&self) -> bool {
+        self.dualfit_pass == Some(true) && self.dualfit_bridge_frames.is_some_and(|b| b <= 0)
+    }
+
+    /// Can this row answer [`Self::shoulders_abut`] at all? Both halves of the predicate must be
+    /// present; an older dump carries neither and belongs outside the denominator.
+    pub fn abut_measurable(&self) -> bool {
+        self.dualfit_pass.is_some() && self.dualfit_bridge_frames.is_some()
+    }
+
+    /// Did the dump record *any* lock provenance for this gap? Dumps written before 2026-08-28 —
+    /// and, until the `SeamLocalTags` hop carried them, every from-decode dump regardless of binary —
+    /// have all five tags absent, which is not the same as all five being false. The roll-up prints
+    /// the distinction rather than letting a blank tag column read as "nothing flagged".
+    pub fn abut_tags_recorded(&self) -> bool {
+        self.dualfit_seams_clamped.is_some()
+            || self.dualfit_pre_rescued.is_some()
+            || self.dualfit_post_rescued.is_some()
+            || self.dualfit_seam_edge_pinned.is_some()
+    }
+
+    /// Bridge length in ms, derived from the row's own two measurements (`bridge_frames` against
+    /// `gap_frames` / `duration_secs`) rather than from a sample rate the row does not carry. `None`
+    /// when either is missing or degenerate.
+    pub fn dualfit_bridge_ms(&self) -> Option<f64> {
+        let (bridge, frames, secs) = (
+            self.dualfit_bridge_frames?,
+            self.dualfit_gap_frames?,
+            self.duration_secs?,
+        );
+        (frames > 0 && secs > 0.0).then(|| bridge as f64 * secs * 1000.0 / frames as f64)
     }
 
     /// The registration **step is real** (necessary), not a constant-offset artifact: placing the post seam

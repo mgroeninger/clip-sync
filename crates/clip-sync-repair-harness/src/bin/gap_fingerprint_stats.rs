@@ -103,6 +103,7 @@ fn main() -> ExitCode {
     print!("{}", report.splice_text());
     print!("{}", report.occupancy_text());
     print!("{}", report.dualfit_viability_text());
+    print!("{}", report.shoulders_abut_text());
     print!("{}", report.dualfit_scope_text());
     print!("{}", report.mechanism_text());
     print!("{}", report.trustworthy_text());

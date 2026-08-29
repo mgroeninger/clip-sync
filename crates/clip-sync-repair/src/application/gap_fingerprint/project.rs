@@ -193,15 +193,14 @@ pub fn spec_to_fingerprint_summary(
         post_seam_prom: sl.post_seam_prom,
         pre_seam_z: sl.pre_seam_z,
         post_seam_z: sl.post_seam_z,
-        // `None`, not `Some(false)`: envelope provenance is a property of the *search*, and this path
-        // never ran one — it reconstructs from production's `SeamLocalTags`, which record the accepted
-        // lags but not how they were found. Fabricating `false` here would let a reader conclude "no
-        // shoulder was rescued" from a dump that simply cannot say. See `SpliceDualfit`'s field docs.
-        pre_seam_rescued: None,
-        post_seam_rescued: None,
-        pre_seam_edge_pinned: None,
-        post_seam_edge_pinned: None,
-        seams_clamped: None,
+        // Passed through, not fabricated: `SeamLocalTags` carries the writer's provenance or `None`,
+        // and `None` still means "this path cannot say" — never `false`. (Before 2026-08-28 the tags
+        // stopped here, so a from-decode dump lost the probe's own flags on the way to the wire.)
+        pre_seam_rescued: sl.pre_seam_rescued,
+        post_seam_rescued: sl.post_seam_rescued,
+        pre_seam_edge_pinned: sl.pre_seam_edge_pinned,
+        post_seam_edge_pinned: sl.post_seam_edge_pinned,
+        seams_clamped: sl.seams_clamped,
     });
     // F14: same predicate the from-decode dump applies, over the projection's own brackets (real when
     // characterize supplied them, else `synth_brackets`' reconstruction — see `brackets_dual_fit_eligible`
@@ -475,6 +474,11 @@ pub(crate) fn tags_from_fields(
         post_seam_prom: d.post_seam_prom,
         pre_seam_z: d.pre_seam_z,
         post_seam_z: d.post_seam_z,
+        pre_seam_rescued: d.pre_seam_rescued,
+        post_seam_rescued: d.post_seam_rescued,
+        pre_seam_edge_pinned: d.pre_seam_edge_pinned,
+        post_seam_edge_pinned: d.post_seam_edge_pinned,
+        seams_clamped: d.seams_clamped,
     });
 
     let min_seam = |b: &BracketInfo| match (b.seam_pre, b.seam_post) {
@@ -729,6 +733,13 @@ mod tests {
                 post_seam_prom: None,
                 pre_seam_z: None,
                 post_seam_z: None,
+                // A projected skip whose writer recorded provenance: the pinned post shoulder is the
+                // tag that separates a real abut from a search that ran out of lags.
+                pre_seam_rescued: Some(false),
+                post_seam_rescued: Some(true),
+                pre_seam_edge_pinned: Some(false),
+                post_seam_edge_pinned: Some(true),
+                seams_clamped: Some(false),
             }),
             donor_aligned: Some(crate::domain::donor::DonorInterior {
                 rms_db: -22.0,
@@ -785,6 +796,29 @@ mod tests {
         assert!(
             fp.silence.is_none() && fp.contour.is_none() && fp.anchors.is_none(),
             "the spec projector stays lossy; overlay is the caller's job"
+        );
+
+        // Search provenance survives the tags → wire hop. It used to stop at `SeamLocalTags`, so
+        // every from-decode dump reached the corpus with its `splice_dualfit` flags erased — and an
+        // erased `edge_pinned` reads as "not pinned", which is the wrong answer to the one question a
+        // non-positive bridge raises.
+        let df = fp.splice_dualfit.expect("seam_local projects a splice_dualfit");
+        assert_eq!(
+            (
+                df.pre_seam_rescued,
+                df.post_seam_rescued,
+                df.pre_seam_edge_pinned,
+                df.post_seam_edge_pinned,
+                df.seams_clamped
+            ),
+            (
+                Some(false),
+                Some(true),
+                Some(false),
+                Some(true),
+                Some(false)
+            ),
+            "provenance is carried, not re-derived and not dropped"
         );
 
         // outcome: skip tier; skip_reason is the closest FailureStage (here from gate tags → synth).

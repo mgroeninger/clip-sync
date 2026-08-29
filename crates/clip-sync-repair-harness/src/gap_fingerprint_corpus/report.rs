@@ -949,6 +949,100 @@ impl CorpusReport {
         s
     }
 
+    /// **Shoulders abut (`gate_pass ∧ bridge_frames ≤ 0`).** The Tier-1 roll-up of
+    /// `docs/dev/TEMP-early-shoulder-locks-collapse-skip-plan.md` §8.1: how many corpus gaps
+    /// production now refuses as `shoulders_abut` — both A edges locked onto the same (or a crossed)
+    /// point in B, so there is no donor material to fill with because nothing was ever missing.
+    ///
+    /// Reports its own denominator. A dump written before 2026-08-28 carries no bridge at all, and
+    /// one written before that date *with* a bridge measured it on a ±600 ms search with no envelope
+    /// rescue — blind, by construction, to the far-lock class this predicate is counting (31/g7's post
+    /// shoulder sits at −1160 ms). Both cases print as unmeasured rather than as zero abuts: "0 of a
+    /// corpus that cannot answer" is the error this section exists to make impossible.
+    pub fn shoulders_abut_text(&self) -> String {
+        use std::fmt::Write;
+        let mut s = String::new();
+        let _ = writeln!(
+            s,
+            "=== shoulders abut (production predicate: dual-fit gate_pass ∧ bridge_frames ≤ 0) ==="
+        );
+        let matched = self.matched();
+        let measurable: Vec<&&GapRow> = matched.iter().filter(|r| r.abut_measurable()).collect();
+        if measurable.is_empty() {
+            let _ = writeln!(
+                s,
+                "  (no splice_dualfit bridge in corpus — re-scan with a post-2026-08-28 binary to populate)"
+            );
+            return s;
+        }
+        let _ = writeln!(
+            s,
+            "  measurable: {}/{} matched gaps carry both gate_pass and bridge_frames",
+            measurable.len(),
+            matched.len()
+        );
+        let abut: Vec<&&&GapRow> = measurable.iter().filter(|r| r.shoulders_abut()).collect();
+        let _ = writeln!(
+            s,
+            "  abutting: {} — production skips these as `shoulders_abut` (silence-splice cell)",
+            abut.len()
+        );
+        if abut.is_empty() {
+            return s;
+        }
+        let _ = writeln!(
+            s,
+            "  pair·gap | bridge (frames / ms) | gap_ms | pre_r / post_r | tags"
+        );
+        for r in &abut {
+            let ms = r
+                .dualfit_bridge_ms()
+                .map(|v| format!("{v:>8.1}"))
+                .unwrap_or_else(|| "     —  ".into());
+            let gap_ms = r
+                .duration_secs
+                .map(|v| format!("{:>7.1}", v * 1000.0))
+                .unwrap_or_else(|| "    —  ".into());
+            // A row whose dump recorded no provenance at all says so, rather than printing an empty
+            // tag list that reads as "nothing flagged" — on a non-positive bridge the difference
+            // between an unrecorded `edge_pinned` and a false one is the whole verdict.
+            let mut tags: Vec<&str> = Vec::new();
+            if !r.abut_tags_recorded() {
+                tags.push("provenance UNRECORDED");
+            }
+            if r.dualfit_seams_clamped == Some(true) {
+                tags.push("clamped");
+            }
+            if r.dualfit_pre_rescued == Some(true) {
+                tags.push("pre-rescued");
+            }
+            if r.dualfit_post_rescued == Some(true) {
+                tags.push("post-rescued");
+            }
+            if r.dualfit_seam_edge_pinned == Some(true) {
+                tags.push("edge-pinned");
+            }
+            if r.program_quiet() == Some(true) {
+                tags.push("program-quiet");
+            }
+            let _ = writeln!(
+                s,
+                "  {}·g{} | {:>7} / {ms} | {gap_ms} | {:>5.3} / {:>5.3} | {}",
+                r.pair,
+                r.index,
+                r.dualfit_bridge_frames.unwrap_or_default(),
+                r.dualfit_pre_r.unwrap_or(f64::NAN),
+                r.dualfit_post_r.unwrap_or(f64::NAN),
+                if tags.is_empty() {
+                    "—".into()
+                } else {
+                    tags.join(", ")
+                }
+            );
+        }
+        s
+    }
+
     /// **Dual-fit viability (scan-native `splice_dualfit`; C3/C7).** The offline `diag_splice_dualfit`
     /// simulation promoted into the scan: each shoulder placed at its own baseline lag, seams scored at
     /// lag 0 vs the gate thresholds — "would a length-reconciled fill pass?" — on the scan's own decode

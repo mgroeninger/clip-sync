@@ -943,10 +943,18 @@ per gap take `lag_decision.pre_anchor[0]` / `post_anchor[0]`, `gap_frames` from
 `sample_rate`; apply the two lines above. `jq` or a few lines of Python; the
 numbers in the table are the durable record if `gap-files/` is cleaned.
 
-Tooling gap: the harness reads `gate_pass`
-(`gap_fingerprint_corpus/analysis.rs:647`) but **never reads `bridge_frames`** —
-no roll-up prints either predicate today. Add a roll-up line to
-`gap-fingerprint-stats` only if Tier 0 and Tier 1 should be one command.
+~~Tooling gap: the harness reads `gate_pass` but **never reads
+`bridge_frames`** — no roll-up prints either predicate today.~~ **Closed
+2026-08-28**: `gap-fingerprint-stats` now prints a `=== shoulders abut ===`
+section (`report.rs::shoulders_abut_text`, predicate
+`GapRow::shoulders_abut`), so Tier 1 is one command. It reports its **own
+denominator** — a dump with no `bridge_frames`, and equally a pre-step-6 dump
+whose bridge was measured on the blind ±600 ms search, prints as *unmeasurable*
+rather than as zero abuts, which is the one misreading this section exists to
+prevent. Each abutting gap prints bridge frames and ms (ms derived from the
+row's own `gap_frames` vs `duration_secs`), gap length, both seam `r`s, and the
+lookalike tags (`clamped`, `pre`/`post-rescued`, `edge-pinned`,
+`program-quiet`).
 
 **Tier 1 — re-fingerprint after implementing.** Step 6 routes `splice_dualfit`
 through `nominal_first_seam_locks`, so the new dump's `bridge_frames` /

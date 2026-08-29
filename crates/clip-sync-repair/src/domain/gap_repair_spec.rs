@@ -102,6 +102,19 @@ pub struct SeamLocalTags {
     pub post_seam_prom: Option<f64>,
     pub pre_seam_z: Option<f64>,
     pub post_seam_z: Option<f64>,
+    /// **Search provenance** for the two locks, carried because the fingerprint's `splice_dualfit` is
+    /// rebuilt *from these tags* — anything not stored here never reaches the wire, however carefully
+    /// the probe measured it. `None` means "this writer did not record it", never `false`: on a dump
+    /// whose bridge is non-positive, `edge_pinned` is the difference between a real abut and a search
+    /// that ran out of lags at the boundary, and reading an absent tag as "not pinned" would settle
+    /// that question the wrong way.
+    pub pre_seam_rescued: Option<bool>,
+    pub post_seam_rescued: Option<bool>,
+    pub pre_seam_edge_pinned: Option<bool>,
+    pub post_seam_edge_pinned: Option<bool>,
+    /// The non-positive bridge exists only because both seams clamped at B frame 0
+    /// ([`crate::domain::seam_locks::SeamLocks::clamped`]).
+    pub seams_clamped: Option<bool>,
 }
 
 /// Placement = [`Placement::GateThroat`].
@@ -729,6 +742,11 @@ mod tests {
             post_seam_prom: None,
             pre_seam_z: None,
             post_seam_z: None,
+            pre_seam_rescued: None,
+            post_seam_rescued: None,
+            pre_seam_edge_pinned: None,
+            post_seam_edge_pinned: None,
+            seams_clamped: None,
         }
     }
 

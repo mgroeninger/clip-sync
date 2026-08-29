@@ -137,6 +137,26 @@ struct SpliceDualfit {
     pre_seam_prom: Option<f64>,
     #[serde(default)]
     post_seam_prom: Option<f64>,
+    /// The donor bridge between the two seam locks (`gap + step`), and the hole it has to cover.
+    /// `Option` only because dumps predating these fields exist: a missing bridge reads as
+    /// *unmeasured*, never as "not an abut" — the abut roll-up counts it out of its denominator.
+    #[serde(default)]
+    bridge_frames: Option<i64>,
+    #[serde(default)]
+    gap_frames: Option<usize>,
+    /// Lookalike tags carried alongside the bridge, mirroring production's `shoulders_abut` payload:
+    /// a bridge that is non-positive only because both seams clamped at B frame 0, a shoulder the
+    /// coarse envelope relocated, and a peak that sat on the boundary of the lags actually scored.
+    #[serde(default)]
+    seams_clamped: Option<bool>,
+    #[serde(default)]
+    pre_seam_rescued: Option<bool>,
+    #[serde(default)]
+    post_seam_rescued: Option<bool>,
+    #[serde(default)]
+    pre_seam_edge_pinned: Option<bool>,
+    #[serde(default)]
+    post_seam_edge_pinned: Option<bool>,
 }
 
 #[derive(Deserialize, Clone, Copy)]
@@ -646,6 +666,18 @@ fn gap_row(pair: &str, source: &SourceMeta, gap: &GapEntry, eps: f64, tail_secs:
         dualfit_post_r: gap.splice_dualfit.as_ref().map(|d| d.post_seam_r),
         dualfit_pass: gap.splice_dualfit.as_ref().map(|d| d.gate_pass),
         dualfit_post_global_r: gap.splice_dualfit.as_ref().map(|d| d.post_seam_global_r),
+        dualfit_bridge_frames: gap.splice_dualfit.as_ref().and_then(|d| d.bridge_frames),
+        dualfit_gap_frames: gap.splice_dualfit.as_ref().and_then(|d| d.gap_frames),
+        dualfit_seams_clamped: gap.splice_dualfit.as_ref().and_then(|d| d.seams_clamped),
+        dualfit_pre_rescued: gap.splice_dualfit.as_ref().and_then(|d| d.pre_seam_rescued),
+        dualfit_post_rescued: gap.splice_dualfit.as_ref().and_then(|d| d.post_seam_rescued),
+        // Either side pinned is enough to caveat the pair of lags; which side is in the dump.
+        dualfit_seam_edge_pinned: gap.splice_dualfit.as_ref().and_then(|d| {
+            match (d.pre_seam_edge_pinned, d.post_seam_edge_pinned) {
+                (None, None) => None,
+                (a, b) => Some(a == Some(true) || b == Some(true)),
+            }
+        }),
         dualfit_seam_prom: gap.splice_dualfit.as_ref().and_then(|d| {
             match (d.pre_seam_prom, d.post_seam_prom) {
                 (Some(a), Some(b)) => Some(a.min(b)),
