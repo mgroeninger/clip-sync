@@ -377,6 +377,8 @@ pub(in crate::application::patch_audio::region) fn seam_failure_outcome(
 
 /// Build a `Skip`-verdict [`GapRepairSpec`] (8d). Carries the `reason` (in the verdict) and `residual` (in
 /// `tags_ctx.gate.residual`) so [`skip_outcome_from_fields`] reproduces the identical [`RegionPatchOutcome`].
+/// `gap_index` is `region.gap_index` — the same copy the bracket spec and dual-fit finalize make, so a skip
+/// spec is a complete region identity.
 /// The cell is derived from the reason + whatever tags are available (`skip_cell_from_tags`); on the decline
 /// path tags are partial (no `seam_local`) until 8f, so a class-3/4 decline reports as `Decorrelated` for now
 /// — cell correctness is a projection (8f) concern, not an outcome one (§8b guard).
@@ -392,7 +394,7 @@ pub(in crate::application::patch_audio::region) fn skip_region_spec(
     tags_ctx.gate.residual = residual;
     let cell = crate::domain::gap_repair_spec::skip_cell_from_tags(&reason, &tags_ctx);
     GapRepairSpec {
-        gap_index: 0,
+        gap_index: region.gap_index,
         a_start_secs: region.a_start_secs,
         a_end_secs: region.a_end_secs,
         gap_offset_secs,
@@ -500,6 +502,37 @@ pub(in crate::application::patch_audio) fn outcome_from_spec(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Production skip specs copy `FillRegion.gap_index`. A leftover `0` here is the 6b stub that
+    /// made capture take the index as a second argument from the loop.
+    #[test]
+    fn skip_region_spec_copies_the_region_gap_index() {
+        let region = FillRegion {
+            gap_index: 7,
+            a_start_secs: 1.0,
+            a_end_secs: 2.0,
+            b_start_secs: 1.0,
+            b_end_secs: 2.0,
+            gain: 1.0,
+            crossfade_secs: 0.01,
+        };
+        let spec = skip_region_spec(
+            GapPatchSkipReason::ZeroLengthGap,
+            None,
+            &region,
+            0.0,
+            RefinedGapFrames {
+                start_frame: 0,
+                end_frame: 0,
+            },
+            BExtractWindow {
+                start_frame: 0,
+                end_frame: 0,
+                b_mapped_start_frame: 0,
+            },
+        );
+        assert_eq!(spec.gap_index, 7);
+    }
 
     /// The dual-fit / silence-splice path takes the **program** half of the gain (never the local
     /// residual), and it takes it off the strategy rather than the request — so this preview read

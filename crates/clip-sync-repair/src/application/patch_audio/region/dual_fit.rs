@@ -480,10 +480,11 @@ pub(in crate::application::patch_audio::region) fn skip_or_dual_fit(
 }
 
 /// What `skip_or_dual_fit` decided, **before** the region geometry is attached (8c). The dual-fit call site
-/// lacks `b_extract` / `gap_offset` / `gap_index`, so on a rescue it returns the SilenceSplice *strategy* plus
-/// the base geometry it does own (from the dual-fit input); [`finalize_dual_fit`] — called from
-/// `characterize_region`, which holds the region geometry — wraps it into a full [`GapRepairSpec`]. This keeps
-/// geometry ownership in one place (the decided 8c approach) instead of stamping inert placeholders.
+/// lacks `b_extract` / `gap_offset`, so on a rescue it returns the SilenceSplice *strategy* plus the base
+/// geometry it does own (from the dual-fit input); [`finalize_dual_fit`] — called from `characterize_region`,
+/// which holds the region — wraps it into a full [`GapRepairSpec`]. This keeps geometry ownership in one
+/// place (the decided 8c approach) instead of stamping inert placeholders. `gap_index` is copied from
+/// `region` there, same as the bracket and skip constructors, not carried on this enum.
 pub(in crate::application::patch_audio::region) enum DualFitDecision {
     /// Dual-fit rescued the gap: the SilenceSplice strategy + its D/R tags + the base A geometry
     /// (`refined`/`crossfade` from the pre-gate dual-fit input). Boxed — the payload is large relative to
@@ -507,8 +508,8 @@ pub(in crate::application::patch_audio::region) struct DualFitRescue {
 }
 
 /// Wrap a [`DualFitDecision`] into a [`GapRepairSpec`], attaching the region geometry the dual-fit call site
-/// lacked (`gap_offset`, `b_extract`). `gap_index` stays `0` — assigned at the fingerprint projection
-/// (8e/8f), same as the bracket path — so it is not SilenceSplice-specific inert geometry.
+/// lacked (`gap_offset`, `b_extract`, `gap_index`). Index comes from `region`, same as the bracket spec and
+/// [`skip_region_spec`] — not a SilenceSplice-only field and not deferred to fingerprint projection.
 pub(in crate::application::patch_audio::region) fn finalize_dual_fit(
     decision: DualFitDecision,
     region: &FillRegion,
@@ -525,7 +526,7 @@ pub(in crate::application::patch_audio::region) fn finalize_dual_fit(
                 crossfade_secs,
             } = *rescue;
             GapRepairSpec {
-                gap_index: 0,
+                gap_index: region.gap_index,
                 a_start_secs: region.a_start_secs,
                 a_end_secs: region.a_end_secs,
                 gap_offset_secs,

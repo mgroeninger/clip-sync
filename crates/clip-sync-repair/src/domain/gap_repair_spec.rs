@@ -264,7 +264,9 @@ pub enum GapRepairVerdict {
 /// One entry per `FillRegion` after characterization (fix-list + repair-params).
 #[derive(Debug, Clone)]
 pub struct GapRepairSpec {
-    /// Index into `GapReport.gaps` (stable within one scan recipe).
+    /// Index into `GapReport.gaps` (stable within one scan recipe). Copied from
+    /// [`FillRegion::gap_index`](crate::domain::gap_fill::FillRegion::gap_index) at characterize.
+    /// Fixture specs that are not tied to a report leave this `0`.
     pub gap_index: usize,
     pub a_start_secs: f64,
     pub a_end_secs: f64,

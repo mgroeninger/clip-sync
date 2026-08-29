@@ -52,8 +52,9 @@ enum PatchRunKind {
 /// The A frames come from the **spec** (`refined`, on A's PCM timeline), never from the outcome:
 /// `GapPatchOutcome` carries `a_start_secs` / `a_end_secs` in seconds and no gap identity, and the
 /// successor collapse Change cuts frames. `splice_into_a` is length-preserving, so a spec's frames
-/// still name the hole after every neighbouring fill is spliced in.
-fn shoulders_abut_row(spec: &GapRepairSpec, gap_index: usize) -> Option<ShouldersAbutSkip> {
+/// still name the hole after every neighbouring fill is spliced in. `gap_index` is the spec's own
+/// report index, copied from `FillRegion` at characterize — not a second argument from the loop.
+fn shoulders_abut_row(spec: &GapRepairSpec) -> Option<ShouldersAbutSkip> {
     let GapRepairVerdict::Skip {
         reason: GapPatchSkipReason::ShouldersAbut(locks),
         ..
@@ -62,7 +63,7 @@ fn shoulders_abut_row(spec: &GapRepairSpec, gap_index: usize) -> Option<Shoulder
         return None;
     };
     Some(ShouldersAbutSkip {
-        gap_index,
+        gap_index: spec.gap_index,
         a_start_frame: spec.refined.start_frame,
         a_end_frame: spec.refined.end_frame,
         locks: *locks,
@@ -418,7 +419,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             let mut shoulders_abut: Vec<ShouldersAbutSkip> = Vec::new();
             for ((spec, tag_ctx), region) in characterizations.into_iter().zip(plan.regions.iter())
             {
-                shoulders_abut.extend(shoulders_abut_row(&spec, region.gap_index));
+                shoulders_abut.extend(shoulders_abut_row(&spec));
                 let outcome = outcome_from_spec(&spec, region_ctx.sample_rate);
                 let tags = region_outcome_gap_tags(&outcome, tag_ctx);
                 log_gap_tags_verbose(self.progress, &tags);
@@ -468,7 +469,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                 new_patch_gap_span(region_num, region_count, region, request.fill_mode, false);
             let _gap_enter = gap_span.enter();
 
-            shoulders_abut.extend(shoulders_abut_row(&spec, region.gap_index));
+            shoulders_abut.extend(shoulders_abut_row(&spec));
 
             let media = RegionPatchMedia {
                 b_samples_full: &b_samples_full,

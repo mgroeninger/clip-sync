@@ -953,7 +953,7 @@ pub(in crate::application::patch_audio) fn characterize_region(
     // it. `tags_ctx` is PARTIAL in 6b (the executor ignores it; step 8 populates the D/R payload). `b_fill`
     // is handed over for now — 6c re-derives it from `FillAlignment` when the passes split.
     let spec = GapRepairSpec {
-        gap_index: 0, // not projected in 6b; the fingerprint index is assigned at step 8
+        gap_index: region.gap_index,
         a_start_secs: region.a_start_secs,
         a_end_secs: region.a_end_secs,
         gap_offset_secs,
@@ -1156,7 +1156,9 @@ mod tests {
             .expect("default All gap selection");
 
         let regions = vec![FillRegion {
-            gap_index: 0,
+            // Distinct from the hardcoded-0 stub this field used to carry: a leftover `gap_index: 0`
+            // on the spec would still match a region at report index 0.
+            gap_index: 7,
             a_start_secs: g0 as f64 / f64::from(rate),
             a_end_secs: g1 as f64 / f64::from(rate),
             b_start_secs: g0 as f64 / f64::from(rate),
@@ -1183,8 +1185,13 @@ mod tests {
             regions.len(),
             "one spec per region (region-infallible)"
         );
+        assert_eq!(
+            specs[0].gap_index, regions[0].gap_index,
+            "the spec carries the region's report index, not the leftover 6b zero"
+        );
 
         for (spec, region) in specs.iter().zip(regions.iter()) {
+            assert_eq!(spec.gap_index, region.gap_index);
             let (patch, outcome, _tags) = prepare_region_patch(
                 &progress,
                 &media,
