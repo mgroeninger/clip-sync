@@ -427,10 +427,14 @@ corrected 2026-08-29 — see the note under step 2.)
 questions, and the plan already keeps them separate. The defect is that 0.5 sits
 **above** 0.35, opening a `[0.35, 0.5)` band: a shoulder production accepts today
 at its nominal lag would be judged "needs rescue" by the new helper, and the
-envelope could relocate a lock that currently builds a fill. **Measured on
-`2026-08-23-complete-corpus`: 4 gaps have a shoulder in that band and 3 of them
-have `gate_pass` today** — 8/g4 (post 0.390), 20/g3 (post 0.443), 25/g11 (pre
-0.410). Tier 1.5's five movers did not include them (that query required a
+envelope could relocate a lock that currently builds a fill. **Measured over the
+full 51-pair / 1073-gap corpus (971 gaps reaching `splice_dualfit`): 4 gaps have a
+shoulder in that band and 3 of them have `gate_pass` today** — 8/g4 (post 0.390),
+20/g3 (post 0.443), 25/g11 (pre 0.410). The fourth is 50/g10 (pre 0.445), the one
+that does *not* `gate_pass`. Those are all four; the band holds no unnamed member,
+and re-measuring on the post-step-6 corpus returns the same four at the same values
+— step 6's six corrected gaps all read below 0.35 before the rescue and at or above
+0.5 after, so none of them enters or leaves this band. Tier 1.5's five movers did not include them (that query required a
 `lag_decision` rescue; these three were never asked), so this is a **fourth,
 separate** way step 4 could change production bytes.
 
@@ -748,6 +752,31 @@ census and now calls the moved envelope primitive.
 > - **The envelope is on here too**, from `cfg.lag_envelope_*` (default 2000 ms / 2.0 s). This is the
 >   fix the divergence demanded: a dump previously read 31/g7's post shoulder dead at ±600 ms and wrote
 >   `gate_pass: false` while production rescued it, gated it, and skipped the gap as `shoulders_abut`.
+>
+>   **The divergence, measured (2026-08-29).** Full field-level diff of the pre-step-6 corpus against
+>   the post-step-6 one — same 51 pairs, same 1073 gaps, same recipe and tier, **no field added or
+>   removed**. **1067 of 1073 gaps are bit-identical.** Every difference is a shoulder the old dump read
+>   dead at ±600 ms and the envelope now rescues; there is no third category:
+>
+>   | gap | `pre_seam_r` | `post_seam_r` | `gate_pass` | `bridge_frames` |
+>   |---|---|---|---|---|
+>   | 11/g9 | — | 0.318 → **0.500** | F → T | 28979 → **−205** |
+>   | 31/g7 | — | 0.124 → **0.874** | F → T | 57375 → **−153** |
+>   | 31/g8 | 0.307 → **0.980** | 0.293 → **0.898** | F → T | −417 → 30348 |
+>   | 31/g9 | 0.143 → **0.972** | 0.128 → **0.904** | F → T | −20981 → 30597 |
+>   | 31/g10 | 0.323 → **0.976** | 0.182 → **0.987** | F → T | 86070 → 89356 |
+>   | 31/g11 | 0.138 → **0.986** | 0.165 → **0.983** | F → T | −8367 → 28831 |
+>
+>   A dash is a shoulder that did not move: on 11/g9 and 31/g7 only the post shoulder was dead, and the
+>   pre lock reads the same in both corpora. The two abuts are 11/g9 and 31/g7 — the only rows whose
+>   `bridge_frames` crosses to ≤ 0, and exactly Tier 1's set. `post_seam_z` moves with `post_seam_r` on all six (31/g7: 3.73 → 25.96), and one
+>   `outcome` field changes: 31/g9's `dual_fit_rescue` false → true. `lag_decision` is untouched — **0 of
+>   1049 gaps differ** — which is why Tier 0's census re-derives bit-identically from either corpus.
+>
+>   **This table is the record; the dumps behind it are not durable.** The left-hand column cannot be
+>   regenerated from media, or from any binary — the code that produced those readings is gone. Both
+>   corpora are media-derived and live only under gitignored `gap-files/`, so the numbers were moved here
+>   before the dirs were retired. Do not replace this table with a path to either run.
 > - **`wide_a_slicer` is now shared** (`domain::seam_locks`). Both callers decode A whole, so both
 >   widen by slicing; written once because the two paths are compared axis-by-axis and a fingerprint
 >   that widened differently would mispredict exactly the shoulders the envelope exists to rescue.
@@ -893,9 +922,10 @@ candidate ⇔ min(pre_anchor.peak_r, post_anchor.peak_r) ≥ min_fill_correlatio
              ∧ bridge_ms ≤ 0
 ```
 
-Over `gap-files/2026-08-23-complete-corpus` (51 pairs / 1073 gaps) — **971
-evaluated, exactly one candidate**; 102 gaps carry no `lag_decision` or only one
-shoulder:
+Over the pre-step-6 complete corpus (51 pairs / 1073 gaps) — **971 evaluated,
+exactly one candidate**; 102 gaps carry no `lag_decision` or only one shoulder.
+`lag_decision` is byte-identical in the post-step-6 corpus (0 of 1049 gaps differ),
+so this census re-derives unchanged from either run:
 
 | pair/gap | gap_ms | `bridge_ms` | pre_r | post_r | post rescue |
 |---|---|---|---|---|---|
@@ -1233,8 +1263,9 @@ claim and is the signal to stop.
 ### 8.3 Checklist
 
 - [x] **Tier 0 first** — **done 2026-08-28, n=1 (31/g7)**, from
-      `lag_decision` over `2026-08-23-complete-corpus` *and* its `-3000` arm
-      (971 evaluated each). Count, gap list and the refuted
+      `lag_decision` over the pre-step-6 complete corpus *and* its 3000 ms
+      envelope arm (971 evaluated each; the arm's own verdict — 51 pairs, zero
+      outcome changes — is [settled.md](settled.md) § E). Count, gap list and the refuted
       `splice_dualfit` split are recorded in §8.1.
 - [x] `domain::lag_envelope` move: fingerprint `rescue_shoulder` uses the moved
       primitive (no second envelope), `lag.rs` re-exports, existing lag tests
