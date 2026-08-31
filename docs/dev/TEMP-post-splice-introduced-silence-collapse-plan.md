@@ -1,7 +1,7 @@
 # TEMP — Post-splice check: collapse introduced silence on skip gaps
 
 **Status:** draft, 2026-08-27. One Change. **Startable the day**
-[TEMP-early-shoulder-locks-collapse-skip-plan.md](TEMP-early-shoulder-locks-collapse-skip-plan.md)
+[TEMP-early-shoulder-locks-collapse-skip-plan.md](archive/TEMP-early-shoulder-locks-collapse-skip-plan.md)
 ships capture + `visit_shoulders_abut` (this Change fills that visit; it does
 not re-search and does not invent a second skip walk).
 
@@ -10,7 +10,7 @@ introduced-silence collapse*.
 
 **Companions:** skip identity, capture, lookalike tags, and the post-splice
 visit hook
-[TEMP-early-shoulder-locks-collapse-skip-plan.md](TEMP-early-shoulder-locks-collapse-skip-plan.md)
+[TEMP-early-shoulder-locks-collapse-skip-plan.md](archive/TEMP-early-shoulder-locks-collapse-skip-plan.md)
 § 0 / § 4; Hole 2 [gap-vocabulary.md](gap-vocabulary.md) § *Known holes*;
 pipeline splice [pipeline.md](../pipeline.md) § 4 step 5; mux duration
 [cli-output.md](../cli-output.md) § Timeline / duration warnings.
@@ -89,7 +89,7 @@ B’s continuity **and** A’s own video. That is the intended action.
 
 The visit list is the captured abut skips, **minus rows the skip-gate tagged
 as exact lookalikes** (`clamped`, `edge_pinned`, `program_quiet` —
-[skip-gate §4](TEMP-early-shoulder-locks-collapse-skip-plan.md)). Those still
+[skip-gate §4](archive/TEMP-early-shoulder-locks-collapse-skip-plan.md)). Those still
 skip as `shoulders_abut`; they are not introduced-silence drain candidates.
 Envelope-at-`−gap` and same-B-event share `bridge ≤ 0` with Hole 2 and are
 **not** excluded by tag — concat-confirm is their check. Other skip reasons
@@ -119,7 +119,7 @@ fires on **two** gaps in 51 pairs, and **one of them is not an insertion**.
 | **11/g9** | **false positive** | no trail (g10-g15 lock at nominal, envelope never consulted); the -603.8 ms post lock reads r 0.500 / prom 0.072; its 1 s probe locks **both** shoulders at nominal (0.9992 / 0.9878) |
 
 Full derivation:
-[TEMP-early-shoulder-locks-collapse-skip-plan.md](TEMP-early-shoulder-locks-collapse-skip-plan.md)
+[TEMP-early-shoulder-locks-collapse-skip-plan.md](archive/TEMP-early-shoulder-locks-collapse-skip-plan.md)
 §8.1 *Injection vs overwrite* and §4 *The predicate is wider than "added silence"*.
 
 **This is a drain hazard, and it is this Change's to carry.** The skip-gate is

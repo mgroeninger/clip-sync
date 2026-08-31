@@ -24,13 +24,13 @@ false positive the *successor* must not drain (§4, §8.1, and that plan's §1 +
 corpus gaps are skipped at a rigid shoulder offset the bracket sweep cannot reach (BACKLOG
 § *Fill placement*). 31/g10's blip is untouched by either listen and stays open.
 
-**Tracked as:** [BACKLOG.md](../../BACKLOG.md) § *Fill placement* → *Early shoulder locks / collapse skip*.
+**Tracked as:** [BACKLOG.md](../../../BACKLOG.md) § *Fill placement* → *Early shoulder locks / collapse skip*.
 
-**Companions:** [gap-fingerprint.md](gap-fingerprint.md) § *`lag_decision`* / § *`splice_dualfit`*;
-Hole 2 [gap-vocabulary.md](gap-vocabulary.md) § *Known holes*;
+**Companions:** [gap-fingerprint.md](../gap-fingerprint.md) § *`lag_decision`* / § *`splice_dualfit`*;
+Hole 2 [gap-vocabulary.md](../gap-vocabulary.md) § *Known holes*;
 shipped rescue ordering
-[archive/TEMP-lag-nominal-first-plan.md](archive/TEMP-lag-nominal-first-plan.md);
-pair-sequence skip classifier remains [settled.md](settled.md) § D (not this Change).
+[archive/TEMP-lag-nominal-first-plan.md](TEMP-lag-nominal-first-plan.md);
+pair-sequence skip classifier remains [settled.md](../settled.md) § D (not this Change).
 
 **Media hygiene:** pair index + gap index only.
 
@@ -80,7 +80,7 @@ wrong on three counts, all readable in `region/characterize.rs`:
   same locks; post-gate locks are a new sensor, and §1's byte-parity claim dies
   with them.
 - **Cost.** `char_gate_search` is the dominant per-gap cost (see
-  [repair-perf.md](repair-perf.md)). Hoisting it makes every abut gap pay the
+  [repair-perf.md](../repair-perf.md)). Hoisting it makes every abut gap pay the
   bracket search this Change exists to skip.
 - **Nothing flows the other way.** The lock scan reads only `a_pcm`,
   `b_samples`, and nominal `b_mapped`; it consumes no gate output. There is no
@@ -97,7 +97,7 @@ you never call it.
 **After splice** (length-preserving fills are in; A still original clock): loop
 the captured list and `visit_shoulders_abut`. This Change’s visit is
 record-only.
-[TEMP-post-splice-introduced-silence-collapse-plan.md](TEMP-post-splice-introduced-silence-collapse-plan.md)
+[TEMP-post-splice-introduced-silence-collapse-plan.md](../TEMP-post-splice-introduced-silence-collapse-plan.md)
 warns in that same loop (drain only under `--collapse-introduced-silence`).
 
 Cheap search lives in **one** place. Dual-fit stays “accept and build a fill
@@ -265,7 +265,7 @@ does not gate on `peak_z` (settled § B: do not wire `dualfit_confident` into
 production dual-fit — stamping `z` on a skip already decided is a different
 use). It does not withhold capture. The collapse Change filters drain from
 these tags
-([TEMP-post-splice-introduced-silence-collapse-plan.md](TEMP-post-splice-introduced-silence-collapse-plan.md)
+([TEMP-post-splice-introduced-silence-collapse-plan.md](../TEMP-post-splice-introduced-silence-collapse-plan.md)
 § 1).
 
 | Path | vs Hole 2 | Stamp |
@@ -282,7 +282,7 @@ these tags
 > out-of-reach content produces a flat noise curve that peaks somewhere in the middle, so the guard reads
 > `false`. That is already on the record — pair 50 reads `edge_pinned: false` on all four shoulders with the
 > content ~2.8 s away
-> ([archive/TEMP-31g7-model-vs-findings.md](archive/TEMP-31g7-model-vs-findings.md) §7.2). So the tag's
+> ([archive/TEMP-31g7-model-vs-findings.md](TEMP-31g7-model-vs-findings.md) §7.2). So the tag's
 > "Exact" rating above is exact **for the pin**, and a `false` on an abut row certifies nothing about reach.
 > On the patch path this is narrow — the abut only fires on `gate_pass`, so a flat noise curve is not in
 > play — but the successor must not read `!edge_pinned` as "in reach".
@@ -308,7 +308,7 @@ these tags
 >   reported without a gate, and narrow-to-empty here.
 > - **A "not found within reach" verdict is a vocabulary change, not a field.** It belongs with the
 >   gap-vocabulary redesign's re-rooting on registration, alongside the definitional fix already filed
->   in [archive/TEMP-31g7-model-vs-findings.md](archive/TEMP-31g7-model-vs-findings.md) §7.2. Inventing
+>   in [archive/TEMP-31g7-model-vs-findings.md](TEMP-31g7-model-vs-findings.md) §7.2. Inventing
 >   a second, differently-defined `edge_pinned`-shaped boolean here would give the successor two
 >   almost-synonyms to reconcile.
 >
@@ -345,7 +345,7 @@ post-splice A window (neighbours filled, hole still silent) as the review WAV;
 pre-splice `_a_surround` stays the before.
 
 The successor
-[TEMP-post-splice-introduced-silence-collapse-plan.md](TEMP-post-splice-introduced-silence-collapse-plan.md)
+[TEMP-post-splice-introduced-silence-collapse-plan.md](../TEMP-post-splice-introduced-silence-collapse-plan.md)
 puts the concat-confirm in that loop body: **warn by default**, drain A
 PCM only under `--collapse-introduced-silence` **and** only for rows that
 are not `clamped` / `edge_pinned` / `program_quiet`; mux is the current path
@@ -379,7 +379,7 @@ census already reports **−1160 ms** with envelope on. Fine retry is the 250 ms
 post seam recentered there.
 
 **It clears the §0 qualification with room.** At each shoulder's own lag the
-seams read **0.83 / 0.78** ([archive/TEMP-31g7-gap-shape-vocabulary.md](archive/TEMP-31g7-gap-shape-vocabulary.md)
+seams read **0.83 / 0.78** ([archive/TEMP-31g7-gap-shape-vocabulary.md](TEMP-31g7-gap-shape-vocabulary.md)
 §9.2; post 0.7820 at −1160.25 confirmed by the 2026-08-24 corpus run), against
 `min_fill_correlation` 0.35 and `fill_absolute_floor` 0.12. `gate_pass` is true
 by ~2×, so the qualification does not cost us the motivating case — it only
@@ -403,7 +403,7 @@ The listen on **arm B's** fill (`--lag-envelope-max-lag-ms 0`, i.e. what this Ch
 binary*. That was the open question: the only prior clip was 2026-08-18 vintage, a different fill.
 And the artifact's **character** is the corroboration of §5 — a stutter is what Hole 2 predicts
 here, because any donor fill duplicates adjacent program.
-[gap-vocabulary.md](gap-vocabulary.md) named it in advance: *"the shipped −977 ms **stutter** is
+[gap-vocabulary.md](../gap-vocabulary.md) named it in advance: *"the shipped −977 ms **stutter** is
 `min`'s best compromise between the two true lags (0.437/0.437)"*. Predicted artifact, heard at
 the predicted place.
 
@@ -429,7 +429,7 @@ deletes an audibly damaged fill.
 ## 6. Non-goals
 
 - Closing A’s timeline (cut/concatenate). This Change captures and visits;
-  [TEMP-post-splice-introduced-silence-collapse-plan.md](TEMP-post-splice-introduced-silence-collapse-plan.md)
+  [TEMP-post-splice-introduced-silence-collapse-plan.md](../TEMP-post-splice-introduced-silence-collapse-plan.md)
   warns in that visit and drains only under `--collapse-introduced-silence`.
 - Settled § D pair staircase / `--steps`.
 - Lowering `SPLICE_MIN_PEAK_R`.
@@ -869,8 +869,8 @@ census and now calls the moved envelope primitive.
 lookalike tags (`pre_z` / `post_z`, envelope rescue, `clamped`,
 `edge_pinned`, `program_quiet`). Formatters, `cell_for_skip_reason` /
 `reason_admits_cell` / `skip_cell_from_tags`, JSON contract
-([json-output.md](../json-output.md), [gap-repair-guide.md](../gap-repair-guide.md)),
-Hole 2 detection sentence in [gap-vocabulary.md](gap-vocabulary.md).
+([json-output.md](../../json-output.md), [gap-repair-guide.md](../../gap-repair-guide.md)),
+Hole 2 detection sentence in [gap-vocabulary.md](../gap-vocabulary.md).
 Human line stays the four geometry numbers.
 Add `ShouldersAbut => false` to `is_retryable_patch_skip`
 (`anchor_retry.rs:88` selects retries by that predicate) — otherwise anchored
@@ -928,32 +928,32 @@ Stamp `PatchSummary.shoulders_abut`. Preview stamps the list, skips the visit.
 > - `run_patch_preview` was added to the harness beside `run_patch`.
 
 **9 — Close out.** Docs first: the skip reason's row in
-[json-output.md](../json-output.md) and
-[gap-repair-guide.md](../gap-repair-guide.md), the run-level
+[json-output.md](../../json-output.md) and
+[gap-repair-guide.md](../../gap-repair-guide.md), the run-level
 `patch.shoulders_abut` shape, and Hole 2's detection sentence in
-[gap-vocabulary.md](gap-vocabulary.md) (§7 step 7 lists these; they are not
+[gap-vocabulary.md](../gap-vocabulary.md) (§7 step 7 lists these; they are not
 optional trailing work). Then the three-step BACKLOG move: (1) mark the
-[BACKLOG.md](../../BACKLOG.md) entry done, (2) file the verdicts this plan
+[BACKLOG.md](../../../BACKLOG.md) entry done, (2) file the verdicts this plan
 settled — the `[0.35, 0.5)` band correction, the refuted NaN polarity, Tier 0's
-n=1 — into [settled.md](settled.md) under their letters, (3) **delete the
+n=1 — into [settled.md](../settled.md) under their letters, (3) **delete the
 BACKLOG text**. Step 3 is the one that gets skipped. Finally delete this
 `TEMP-` document or archive it under `docs/dev/archive/`, per whichever the
 successor collapse plan still needs to cite.
 
-> **Step 9 as built (2026-08-28), docs half.** [json-output.md](../json-output.md) gained the
+> **Step 9 as built (2026-08-28), docs half.** [json-output.md](../../json-output.md) gained the
 > `{"shoulders_abut": {…}}` skip-reason form with its eleven keys, two paragraphs on what the refusal
 > means (`bridge_frames <= 0` is the decision, it costs no gate search, it does not depend on
 > `--dual-fit`, cell `silence_splice`) and on the lookalike tags — including the `edge_pinned` caveat
 > that it means *the peak sat on a searched boundary*, not *the true peak is out of reach*, for which
 > the reader is pointed at `pre_z` / `post_z`; a `PatchSummary` row; a **ShouldersAbutSkip** section
 > saying why it is frames and not seconds, and that nothing acts on it yet; and the v1
-> additive-revisions line. [gap-repair-guide.md](../gap-repair-guide.md) lists `shoulders_abut` in the
-> `patch_skip_reason` tag row, and [cli-output.md](../cli-output.md) carries the human skip string.
-> [gap-vocabulary.md](gap-vocabulary.md) Hole 2's detection sentence is replaced and the superseded
+> additive-revisions line. [gap-repair-guide.md](../../gap-repair-guide.md) lists `shoulders_abut` in the
+> `patch_skip_reason` tag row, and [cli-output.md](../../cli-output.md) carries the human skip string.
+> [gap-vocabulary.md](../gap-vocabulary.md) Hole 2's detection sentence is replaced and the superseded
 > sentence quoted in place, marked true-when-written — a reader who acts on it would hunt for a
 > detector that now exists.
 >
-> Three verdicts filed in [settled.md](settled.md): the NaN polarity under **A** (there is no NaN —
+> Three verdicts filed in [settled.md](../settled.md): the NaN polarity under **A** (there is no NaN —
 > `seam_local_peak` clamps to finite, so a dead shoulder arrives as 0.0; the caution on
 > `post_seam_global_r` is a different value and still real), and under **E** both the `[0.35, 0.5)`
 > band (why `triage_r` is an argument and must not be collapsed back to one const) and Tier 0's n=1
@@ -988,7 +988,7 @@ successor collapse plan still needs to cite.
 > listen was re-run on the current binary rather than taken from disk.
 >
 > **What is left is the close itself**, which is a three-step move
-> ([settled.md](settled.md) routing): mark the BACKLOG item done, file the verdicts — including the
+> ([settled.md](../settled.md) routing): mark the BACKLOG item done, file the verdicts — including the
 > two findings this Change carried forward but did not fix — in `settled.md`, then delete the
 > BACKLOG text and retire this document.
 
@@ -1023,7 +1023,7 @@ so this census re-derives unchanged from either run:
 1 hit). So pair 50's +2.8 s cluster rescuing at the wider radius adds **nothing**
 — and structurally never could: `bridge = gap + step` with `gap > 0`, so a
 **positive** map step can never reach `≤ 0` at any duration
-([archive/TEMP-collapsed-bridge-census-2026-08-20.md](archive/TEMP-collapsed-bridge-census-2026-08-20.md)
+([archive/TEMP-collapsed-bridge-census-2026-08-20.md](TEMP-collapsed-bridge-census-2026-08-20.md)
 Result 7). This retires the earlier "expect 1, possibly 2–3 once pair 50
 rescues" guess: **it is 1, at both envelope radii, by measurement.**
 
@@ -1074,7 +1074,7 @@ never produce a base rate — if a Tier 1 newcomer has no WAVs, this is not the
 tool that settles it, and §9's "unaccounted for" clause applies.
 
 One caveat still bounds the count from below: the delta population is sized in
-[archive/TEMP-envelope-3000-corpus-2026-08-24.md](archive/TEMP-envelope-3000-corpus-2026-08-24.md)
+[archive/TEMP-envelope-3000-corpus-2026-08-24.md](TEMP-envelope-3000-corpus-2026-08-24.md)
 — 24 of 2020 populated shoulders differ between the 2000 and 3000 arms, 22
 dead→rescued across 11 gaps (all pair 50), **zero outcome changes across all
 1073 gaps**. That is the entire set of gaps whose locks a wider envelope can
@@ -1281,7 +1281,7 @@ By mechanism it is 1 real (31/g7) + 1 false positive (11/g9). Consequences:
 - **Nothing changes for this Change.** 11/g9 is already skipped, so only its *reason* moves; the
   merge and the Tier 2 acceptance below stand as written, and 31/g7 remains the whole substance.
 - **The successor inherits the false positive.**
-  [TEMP-post-splice-introduced-silence-collapse-plan.md](TEMP-post-splice-introduced-silence-collapse-plan.md)
+  [TEMP-post-splice-introduced-silence-collapse-plan.md](../TEMP-post-splice-introduced-silence-collapse-plan.md)
   drains on this reason; draining 11/g9 would remove 599 ms of A that was never introduced
   silence. This Change's visit is record-only, so it is safe here — but the successor needs a
   guard, and the weak-lock catalogue (6 of 957 below r 0.60, 11/g9 among them) is the first place
@@ -1641,7 +1641,7 @@ claim and is the signal to stop.
 - [x] **Tier 0 first** — **done 2026-08-28, n=1 (31/g7)**, from
       `lag_decision` over the pre-step-6 complete corpus *and* its 3000 ms
       envelope arm (971 evaluated each; the arm's own verdict — 51 pairs, zero
-      outcome changes — is [settled.md](settled.md) § E). Count, gap list and the refuted
+      outcome changes — is [settled.md](../settled.md) § E). Count, gap list and the refuted
       `splice_dualfit` split are recorded in §8.1.
 - [x] `domain::lag_envelope` move: fingerprint `rescue_shoulder` uses the moved
       primitive (no second envelope), `lag.rs` re-exports, existing lag tests
@@ -1652,7 +1652,7 @@ claim and is the signal to stop.
 - [x] `domain::seam_locks`: `SeamLockTemplates::build` is the only range guard
       (both old copies deleted); `nominal_first_seam_locks` unit tests —
       ~~`gate_pass` NaN polarity matches `try_dual_fit`~~ (**superseded** — §7 step 2's
-      NaN was refuted; there is none to test, see [settled.md](settled.md) § A),
+      NaN was refuted; there is none to test, see [settled.md](../settled.md) § A),
       envelope not consulted when nominal is recoverable, **rescued-but-unrecoverable
       falls back to the honest nominal**, `edge_pinned` is true iff the accepted peak
       is on `±max_lag` of the producing search, `clamped` is true iff unclamped
@@ -1743,11 +1743,11 @@ claim and is the signal to stop.
       six wildcard-free matches, not four (§8.2), and the 8th test case is in.
       ~~The **JSON + repair-guide tables and the vocab Hole 2 line are still open**;
       they are step 9's docs pass, not this entry's.~~ **All four landed — verified 2026-08-31**:
-      [json-output.md](../json-output.md) (additive-revisions line, `PatchSummary.shoulders_abut`
+      [json-output.md](../../json-output.md) (additive-revisions line, `PatchSummary.shoulders_abut`
       row :329, the `GapPatchSkipReason` object form :625, `ShouldersAbutSkip` :643),
-      [gap-repair-guide.md](../gap-repair-guide.md):296 `patch_skip_reason` row,
-      [gap-vocabulary.md](gap-vocabulary.md):155 Hole 2 detection sentence, and
-      [cli-output.md](../cli-output.md):371 the human skip string. Step 9's docs pass is **done**.
+      [gap-repair-guide.md](../../gap-repair-guide.md):296 `patch_skip_reason` row,
+      [gap-vocabulary.md](../gap-vocabulary.md):155 Hole 2 detection sentence, and
+      [cli-output.md](../../cli-output.md):371 the human skip string. Step 9's docs pass is **done**.
 - [x] `try_dual_fit`'s six test callers rebuilt on `SeamLocks` (§8.2); every
       in-reach numeric value unchanged. **Done 2026-08-28** — `try_dual_fit`
       and `dual_fit_at_nominal` both take `&SeamLocks`; the six callers
@@ -1757,7 +1757,7 @@ claim and is the signal to stop.
       one real fill — visit runs **after** splice, A length unchanged, abut
       frames still in range, `patch.shoulders_abut` has that gap; preview has
       the list and never visits; visit is a named function
-      [TEMP-post-splice-introduced-silence-collapse-plan.md](TEMP-post-splice-introduced-silence-collapse-plan.md)
+      [TEMP-post-splice-introduced-silence-collapse-plan.md](../TEMP-post-splice-introduced-silence-collapse-plan.md)
       fills in. **Done 2026-08-28** —
       `abut_capture_survives_splice_and_reaches_the_summary` +
       `preview_reports_the_abut_without_pcm` in

@@ -950,7 +950,7 @@ impl CorpusReport {
     }
 
     /// **Shoulders abut (`gate_pass ∧ bridge_frames ≤ 0`).** The Tier-1 roll-up of
-    /// `docs/dev/TEMP-early-shoulder-locks-collapse-skip-plan.md` §8.1: how many corpus gaps
+    /// `docs/dev/archive/TEMP-early-shoulder-locks-collapse-skip-plan.md` §8.1: how many corpus gaps
     /// production now refuses as `shoulders_abut` — both A edges locked onto the same (or a crossed)
     /// point in B, so there is no donor material to fill with because nothing was ever missing.
     ///

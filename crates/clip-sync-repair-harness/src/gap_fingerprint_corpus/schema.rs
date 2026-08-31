@@ -454,7 +454,7 @@ impl GapRow {
     /// gate (`dualfit_pass`) *and* the donor bridge between them is zero-length or crossed
     /// (`bridge_frames <= 0`) — B holds nothing for this gap because nothing was ever missing from it.
     /// This is the Tier-1 roll-up of
-    /// `docs/dev/TEMP-early-shoulder-locks-collapse-skip-plan.md` §8.1, and it is the *same* two
+    /// `docs/dev/archive/TEMP-early-shoulder-locks-collapse-skip-plan.md` §8.1, and it is the *same* two
     /// fields production decides on, not a mirror of them: since 2026-08-28 the probe and the patch
     /// path share `nominal_first_seam_locks`.
     ///
