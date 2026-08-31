@@ -4,7 +4,9 @@
 BACKLOG class "95 skips at a rigid shoulder offset the bracket sweep never reaches."
 **This note proposes no production change.** It answers the row's next action (name 38/g1's
 other mechanism, then a conversion fraction) and is the place results are recorded. A
-register-before-sweep Change is in scope only after Question 2 states a fraction.
+register-before-sweep Change is in scope only after Question 2 states that fraction — and
+Phase 1 states it **over a ~20-gap stratified sample, not over the 90** (§ *Minimum set*
+→ *Scope*; § *Exit*). A class-wide fraction needs every stratum represented and agreeing.
 
 **Tracked as:** [BACKLOG.md](../../BACKLOG.md) § *Fill placement* → *95 skips at a rigid
 shoulder offset the bracket sweep never reaches*.
@@ -46,15 +48,21 @@ build that fix, refute the class, or split it.
   [TEMP-post-splice-introduced-silence-collapse-plan.md](TEMP-post-splice-introduced-silence-collapse-plan.md),
   not a side effect of this probe.
 - Not a 1 s `peak_r` census of "would convert." The class is *defined* by 1 s `peak_r ≥ 0.94`
-  at the agreed lag, so that number converting 90/90 is a tautology. Conversion is a
-  **250 ms production-seam** (or bracket-seam) score at `b_mapped + mid_lag`.
+  at the agreed lag, so that number converting 90/90 is a tautology. Conversion is the
+  **250 ms production seam** scored at `b_mapped + mid_lag`. (Not "or bracket-seam": the
+  dump brackets are already that same scorer — just at the gate's own placement, never at
+  `b_mapped`. § Method 1.)
+- Not a class-wide census of conversion. Phase 1 measures a ~20-gap stratified sample and
+  says so; the 90 are the *population*, not the denominator of Result 4.
 
 ## Open questions
 
 1. **Why do 38/g1's brackets fail?** Offset ≈ 0, so map-lag cannot be the reason.
    **Answered, Result 2.**
 2. **What fraction of the class would convert** if the keep path scored 250 ms seams at
-   the 1 s mid-lag? State n / N. **Open — Phase 1.**
+   the 1 s mid-lag? Phase 1 states `n / N` **over the ~20-gap stratified sample, by
+   stratum** (§ *Minimum set* → *Scope*); the class-wide fraction over the 90 is claimed
+   only if every stratum is sampled and they agree. **Open — Phase 1.**
 3. **Is the class one mechanism?** Split by `|mid_lag|` and by `dual_fit_rescue`. If the
    far-offset members convert and the near-zero members do not, do not ship one fix.
    **Partially answered, Result 1 / 3; conversion still open.**
@@ -114,12 +122,24 @@ live/rigid, via an ad hoc script that is not in the repo. **Do not hunt the five
 
 `|mid_lag|` is bimodal, not a single −70 ms story.
 
-| `|mid_lag|` | n | Reading |
+**Cumulative** cuts (these overlap — `< 5 ⊂ < 25`, `> 200 ⊂ > 50`):
+
+| `|mid_lag|` | n (cumulative) | Reading |
 |---|---:|---|
 | < 5 ms | 14 | Already at nominal. Map-lag registration has nothing to apply. Includes **38/g1**. |
 | < 25 ms | 34 | Inside a 50 ms bin; likely the same as < 5 for a 100 ms envelope. |
 | > 50 ms | 49 | Offset large enough that `lag0_r` is typically dead. Includes **11/g9** (−70 ms). |
 | > 200 ms | 20 | Far. Includes pair-31/g9 at **−1145 ms** (envelope dual-fit already fills this on the patch path). |
+
+**Disjoint strata** — the partition `census-skip-buckets.ps1` prints and the one Phase 1
+samples from. Quote these when stating a fraction; do not read 34 against 27.
+
+| stratum | n |
+|---|---:|
+| `|mid| < 5 ms` | 14 |
+| 5–50 ms | 27 |
+| 50–200 ms | 29 |
+| > 200 ms | 20 |
 
 p50 `|mid_lag|` = 57 ms. Full membership: **Appendix**.
 
@@ -248,9 +268,15 @@ Four constraints, each of which the obvious wiring gets wrong:
    - **S1 — in-run identity (use this; no schema change, no recorded start).** In the probe
      process, at the same failing bracket, call `fill_seam_correlations` at
      `unified.alignment.start_frame` with the gate's own templates and
-     `waveform_gate_frames` / `post_gate_frames`. It must equal the dump's `seam_pre` /
-     `seam_post` **exactly**, on the class's own gaps. That is the wiring proof; Q2 is then
-     the identical call with only `start` changed to `b_mapped + mid_lag`.
+     `waveform_gate_frames` / `post_gate_frames`. It must equal that bracket's dumped
+     `seam_pre` / `seam_post` **exactly**, on the class's own gaps. That is the wiring proof;
+     Q2 is then the identical call with only `start` changed to `b_mapped + mid_lag`.
+
+     **Pin both to the throat bracket** (`move_frames == 0`, span = the nominal gap). "Only
+     `start` changed" holds *only* there: templates come from `gap_border_spec(params,
+     refined)` (`patch_region.rs:448`), so a moved bracket borders a different A window and
+     its seams are a different instrument, not a shifted one. `move_frames` is in the dump
+     (`schema.rs:824`), so the throat bracket is selectable in both directions.
    - **S2 — dump-side cross-check.** Replay on a *patched* gap's bracket that does carry
      `start_frame` (3,212 available). Same scorer, same templates, must match. Cheap, and
      it checks the dump-reading half that S1 does not.
@@ -295,14 +321,23 @@ Four constraints, each of which the obvious wiring gets wrong:
 No need to media-run all 90 first (they span ~30 pairs; each pair is its own run):
 
 1. The **seven** `dual_fit_rescue == false` (the production remainder).
-2. **38/g1** as negative control — `mid_lag` is already ~0, so the two scores should
-   coincide and both should land near its recorded bracket seam. (This is a *consistency*
-   check, not the wiring check; the wiring check is § Method 1 **S1**, which runs on every
-   probed gap.)
+2. **38/g1** as negative control — `mid_lag` ≈ 0, so the two probe scores (at `mid_lag` and
+   at 0) must **coincide with each other**. That is all it proves: a ~0 shift is a no-op.
+   They need **not** land near the recorded 0.130, which is scored at
+   `alignment.start_frame`, not at `b_mapped` — expecting 0.130 back is the refuted
+   self-check in milder words. The wiring check is § Method 1 **S1**, which runs on every
+   probed gap.
 3. **Three per `|mid_lag|` stratum**, drawn before the run from the census strata
    (`|mid| < 5 ms` / 5–50 / 50–200 / > 200 → 14 / 27 / 29 / 20, as `census-skip-buckets.ps1` prints them), `dual_fit_rescue == true`,
    preferring members with dead `lag0_r` — asks whether the keep path would have filled
-   them *without* dual-fit, which is the BACKLOG candidate's claim.
+   them *without* dual-fit, which is the BACKLOG candidate's claim. **Draw only
+   `waveform_floor` members**: the two `structure_floor` skips (2/g20, 36/g8) carry no
+   `seam_pre` / `seam_post` at all (`stage_of` leaves them `None` on
+   `StructureBelowThreshold`), so S1 would have nothing to match against.
+
+**Indices when invoking.** This note is 0-based; `--fingerprint-gap` is **1-based** and
+rejects 0 (`composition.rs:111`, `resolve_fingerprint_gap_select`). 38/g1 is
+`--fingerprint-gap 2`.
 
 **Scope — fixed here, not after the run.** The sample is the seven + 38/g1 + 3 per
 stratum ≈ 20 gaps. Result 4 states `n / N` **over that sample, by stratum**, and says so;
