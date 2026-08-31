@@ -61,9 +61,10 @@ build that fix, refute the class, or split it.
 
 ## Class predicate
 
-Over the `gap-files/2026-08-29-complete-corpus/<pair>/…_gNNN_full.json` dumps
-(51 pairs / **1049** fingerprinted gaps; 1073 is the *scan* gap count from
-`gap-files/2026-08-30-tier-2-on/*.json` `scan.gaps`, not this corpus):
+Over `gap-files/2026-08-29-complete-corpus/<pair>/corpus.json` (51 pairs / 1073 gaps —
+**1049** `full`-tier plus 24 `summary`-tier. A `summary` gap carries no `outcome` at all, so
+it is neither skip nor patch: the 644 skips are drawn from the 1049, and the skip rate must
+not be read against the 1073):
 
 ```text
 skip                       outcome.tier == "skip"          # 644
@@ -274,17 +275,20 @@ Do not bundle those three.
 
 ## Data sources
 
-- **`gap-files/2026-08-29-complete-corpus/`** — 51 pairs, 1049 fingerprinted gaps
-  (per-gap `…_gNNN_full.json`; this directory has **no** `corpus.json`). Class
-  membership, 38/g1, `dual_fit_rescue`.
+- **`gap-files/2026-08-29-complete-corpus/`** — 51 pairs, 1073 gaps (1049 `full`-tier).
+  One `corpus.json` **per pair directory**, with per-gap `…_gNNN_full.json` /
+  `…_summary.json` siblings repeating the same gaps. Class membership, 38/g1,
+  `dual_fit_rescue`.
 - **`gap-files/2026-08-23-` and `-08-28-complete-corpus/`** — same-predicate controls for
   the 95-vs-90 delta; both give 90.
 - **`gap-files/2026-08-30-tier-2-on/38.json`** — 38/g1 production patched via dual-fit.
 
 ## Reproduction
 
-Ad hoc over the per-gap `…_gNNN_full.json` dumps (pair index = the containing
-directory name). Per gap: `lag_decision.pre_anchor[0]` / `post_anchor[0]`,
+`scripts/measure/census-skip-buckets.ps1 -DumpDir <corpus> -CsvOut <path>` — dump-only,
+no media, one row per skipped gap with every predicate leg's raw input beside its
+`bucket`. Prefers each pair's `corpus.json`; pair index = the containing directory name.
+Per gap: `lag_decision.pre_anchor[0]` / `post_anchor[0]`,
 `donor_interior_nominal`, `outcome.tier`. Predicate in § *Class predicate*. 38/g1
 bracket maxima from `brackets[].seam_pre` / `seam_post`. Production join on
 `a_start_secs` rounded to 1 ms within a pair label.
