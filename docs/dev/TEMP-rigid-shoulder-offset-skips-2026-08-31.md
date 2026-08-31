@@ -242,12 +242,12 @@ map-lag candidate there — and it cannot run in production while the gap is
 
 Join the 90 to `gap-files/2026-08-31-local-gain-acceptance/` (repair `--patch-only`,
 `--normalize` on; gain is after keep/skip, so **disposition** is the join). Array index =
-this note's 0-based gap index. Measured 2026-08-31 while pairs 39–51 were still running:
+this note's 0-based gap index. Full 51-pair dump, 2026-08-31:
 
 | | n |
 |---|---:|
-| Class members on disk | **69** / 90 |
-| **patched**, all `dual_fit_used` | **62** |
+| Class members | **90** / 90 |
+| **patched**, all `dual_fit_used` | **83** |
 | patched, keep path (`dual_fit_used` false) | **0** |
 | **skipped** | **7** |
 
@@ -258,9 +258,16 @@ The seven skipped are exactly Result 3's remainder:
 | 11/g9 | `shoulders_abut` (pre −72 ms, post −676 ms, `bridge_frames` −205) | never reached |
 | 1/g1, 1/g15, 20/g1, 22/g5, 22/g13, 30/g43 | `correlation_below_threshold` | ~0.02–0.18 |
 
-38/g1 is patched dual-fit on this dump, matching Result 2. 31/g9 is patched dual-fit
-(0.972 / 0.904). Re-join the last 21 class members when the acceptance run finishes;
-they cannot add to the remainder (the seven pairs are already on disk).
+38/g1 is patched dual-fit, matching Result 2. 31/g9 is patched dual-fit (0.972 / 0.904).
+
+Over every fingerprint skip (644), not just the class: `dual_fit_rescue == true` is
+**105 / 105** production dual-fit patches (zero skipped). The 83 were not a special
+case. One fingerprint `rescue == false` still dual-fit patched (49/g3: no fingerprint
+brackets, so the flag is inapplicable). Production skipped **20** gaps in all: the
+seven remainder, 31/g7 (`shoulders_abut`, the real introduced-silence case; fingerprint
+still `tier: patch` because the 08-29 dump does not run that skip), and **12** others
+that fail the class predicate (donor silent/discontinuous, or 1 s shoulders weak —
+20/g3 post `peak_r` 0.856 — or pair-50 dead seams). Those 12 are not this row's object.
 
 `--patch-only` cannot name the dual-fit conjunct (no `post_seam_global_r`). Result 4
 is the 08-29 fingerprint corpus.
@@ -406,8 +413,7 @@ Do not bundle those three.
   the 95-vs-90 delta; both give 90.
 - **`gap-files/2026-08-30-tier-2-on/38.json`** — 38/g1 production patched via dual-fit.
 - **`gap-files/2026-08-31-local-gain-acceptance/`** — Result 5 production join
-  (`--normalize` on; read disposition only). Incomplete on pairs 39–51 as of the
-  measurement; the seven remainder pairs are complete.
+  (`--normalize` on; read disposition only). Complete 51-pair dump.
 
 ## Reproduction
 
