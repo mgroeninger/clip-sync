@@ -133,6 +133,8 @@ Controls:
 ## Result 2 — 38/g1 is named, and it is not an unrepaired hole
 
 38/g1 fails the **bracket** seams at 0.130 while the 1 s pre lock at lag 0 reads 0.985.
+(0.130 is a production keep-path number: bracket seams are `evaluate_seam_gate` at the
+gate's own structure-chosen placement — see § Method 1 — not a probe-window score.)
 `splice_dualfit` at the 250 ms seam **passes** (0.995 / 0.982, `gate_pass` true,
 `dual_fit_rescue` true). On `gap-files/2026-08-30-tier-2-on` the gap is **patched**,
 `dual_fit_used` true, align 0.0, r 0.995 / 0.982.
@@ -140,8 +142,9 @@ Controls:
 So:
 
 - Map-lag is **not** why the brackets fail. There is no lag to apply.
-- The keep-path sweep and the dual-fit 250 ms seam are different instruments
-  (span/`move_frames` vs `seam_local_peak`). That is the other mechanism.
+- The keep-path sweep and the dual-fit seam are different instruments — same 250 ms
+  scorer, different *placements* (sweep span/`move_frames` vs `seam_local_peak`). That
+  is the other mechanism.
 - 38/g1 does **not** show the class stays skipped in production. Dual-fit already
   fills it. It shows only that **register-before-sweep cannot be why this gap was
   a fingerprint skip**, and cannot be the fix for near-zero members.
@@ -204,21 +207,78 @@ window and is what produced the A7 false-skips.
 
 Four constraints, each of which the obvious wiring gets wrong:
 
-1. **Emit four scores per gap, not two: {bracket windows, production windows} ×
-   {`mid_lag`, 0}.** The two window sets are *different instruments* and Result 2 turns
-   on that. Fingerprint bracket templates are `bin_frames * 3` = **150 ms** at
-   `PROBE_BORDER_STANDOFF_FRAMES` (`measure/placement.rs:107`; dumps echo
-   `probe_recipe.border_standoff_secs: 0.0`); production's keep path is
-   `fill_seam_search_secs` = **250 ms** at `border_standoff_secs` 0.35. 38/g1's **0.130
-   is the 150 ms / standoff-0 bracket number**, so a 250 ms probe at shift 0 returns
-   some other value and the control proves nothing. With all four: bracket-windows-at-0
-   must reproduce **0.130 exactly** (hard self-check that the probe is wired to the
-   right `start`), and production-windows-at-`mid_lag` is Q2's answer.
+1. **Two scores per gap, both on production windows: `mid_lag` and 0.** The dump's
+   `brackets[].seam_pre` / `seam_post` are **not** probe-window numbers.
+   `measure/overlay.rs:200–291` builds `SeamGateParams` from `gate_settings` +
+   `derive_seam_gate_geometry` and calls `oracle_score_fit_candidate` → production
+   `evaluate_seam_gate` → `fill_seam_correlations`: `fill_seam_search_secs` templates
+   (250 ms — `seam_gate_frames_for` caps `correlate_frames`, whose own floor is 0.25 s,
+   so the cap binds in practice) at production `border_standoff_secs` **0.35**, evaluated
+   at the gate's structure-chosen `alignment.start_frame`, not at `b_mapped`. The 150 ms
+   (`bin_frames * 3`) / `PROBE_BORDER_STANDOFF_FRAMES = 0` templates belong to `place_on_b`
+   alone and score nothing in that table. So 38/g1's **0.130 is already the production
+   keep-path Pearson** — it is *why* the gap skipped at `waveform_floor`. A 150 ms
+   at-`b_mapped` score would not reproduce it, and failing to reproduce it would prove
+   nothing about the wiring. Emit production windows at `mid_lag` (Q2's answer) and at
+   `0` (the at-rest control); nothing else.
+
+   **Wiring self-check — the recorded-`start_frame` version does not run on this class.**
+   `start_frame: placement.map(|a| a.start_frame)` is `Some` only on the `Ok` arm; a
+   *failing* bracket keeps its `seam_pre`/`seam_post` (from `stage_of` at `WaveformFloor` /
+   `Residual`) but loses the placement that produced them. Measured over every per-pair
+   `corpus.json`: **10,098 skip-gap brackets carry no `start_frame`** (zero do); only 3,212
+   of 7,538 patch-gap brackets do. So "replay at the dump bracket's recorded `start_frame`
+   and match its `seam_pre`/`seam_post`" is unrunnable on the 90.
+
+   It does not need to be. The provenance is exact and traced end to end:
+   `evaluate_seam_gate_fit_candidate` returns `waveform_below_threshold(alignment
+   .pre_correlation, alignment.post_correlation, …)` (`patch_region.rs:1670`, `:1695`,
+   `:1704`), and those two numbers are
+   `waveform_seams_at_start(input.waveform, best_start, &score_channels)`
+   (`gap_fill_fit.rs:922`, `:1018`) = `fill_seam_correlations_with_channels(templates,
+   SeamPlacement { start: alignment.start_frame, gap_frames, pre_window:
+   waveform_gate_frames, post_window: post_gate_frames }, seam_score_channels(templates))`.
+   `snap_fill_to_gap` never touches `start_frame` or either correlation, so a re-measure at
+   that start is **bit-identical by construction** (the comment at `gap_fill_fit.rs:951–962`
+   says so and an earlier revision paid for the redundant call). `fill_seam_correlations`
+   computes the same `score_channels` internally, so the plain entry point is equivalent.
+
+   Three checks, in order of what they buy:
+
+   - **S1 — in-run identity (use this; no schema change, no recorded start).** In the probe
+     process, at the same failing bracket, call `fill_seam_correlations` at
+     `unified.alignment.start_frame` with the gate's own templates and
+     `waveform_gate_frames` / `post_gate_frames`. It must equal the dump's `seam_pre` /
+     `seam_post` **exactly**, on the class's own gaps. That is the wiring proof; Q2 is then
+     the identical call with only `start` changed to `b_mapped + mid_lag`.
+   - **S2 — dump-side cross-check.** Replay on a *patched* gap's bracket that does carry
+     `start_frame` (3,212 available). Same scorer, same templates, must match. Cheap, and
+     it checks the dump-reading half that S1 does not.
+   - **S3 — zero-code fallback if the probe is not wired inside the gate.** The DEBUG
+     diagnostic at `patch_region.rs:1549–1572` already logs `start_frame`, `seam_pre`,
+     `seam_post` at the structure-chosen placement for every gate bracket. With
+     `--fingerprint-gap` narrowing the corpus to ~20 gaps, `RUST_LOG=debug` yields the start
+     the dump omits.
+
+   **Durable fix (separate, optional).** If the class should be self-checkable from dumps
+   alone, thread the placement through the failure: add `start_frame` to
+   `SeamGateFailure::WaveformBelowThreshold` / `ResidualHeadroomExceeded`, carry it in
+   `BracketStageDetail`, and record it on the `Err` arm in `overlay.rs`. Watch the two
+   re-construction sites that today rebuild the failure from its fields
+   (`patch_region.rs:427–431`, `:648–651`, and the extend loops at `:1968` / `:2031`) — they
+   must carry the start too or the field is silently lost. Record-only, no behaviour change;
+   it is the generalized failing-bracket instrumentation this line of work has wanted twice.
+   Not a Phase 1 blocker: S1 does not need it.
 2. **Record `score_pre` / `score_post` and the resolved `start`.** An unscoreable side
    returns **`0.0`, not NaN** (`seam_scoring.rs:784–804`: the bounds guards fall through
    to `0.0`). A shifted start makes that reachable — 31/g9 at −1145 ms, and anything near
    the B-haystack edge. Without the two booleans, "never scored" is indistinguishable
    from "dead seam" and the conversion fraction silently collects false negatives.
+   Note the two paths disagree on the sentinel: the search calls
+   `waveform_seams_at_start`, which returns **`−∞`** when `placement_in_bounds` fails
+   (`gap_fill_fit.rs:1023–1031`), while a direct `fill_seam_correlations` returns `0.0` for
+   the same placement. Call `placement_in_bounds` explicitly and record it as its own
+   column rather than inferring bounds from either sentinel.
 3. **Read the thresholds from the recipe, never as literals.** `min_fill_correlation`
    and `fill_absolute_floor` are already in the dump
    (`source.gate_recipe`; 0.35 / 0.12 today) and are recipe knobs — hardcoding 0.35 is
@@ -235,20 +295,29 @@ Four constraints, each of which the obvious wiring gets wrong:
 No need to media-run all 90 first (they span ~30 pairs; each pair is its own run):
 
 1. The **seven** `dual_fit_rescue == false` (the production remainder).
-2. **38/g1** as negative control — expect no movement; already at 0. Its
-   bracket-windows-at-0 score is the probe's wiring check (§ Method 1).
-3. A handful of `|mid| > 50` members with dead `lag0_r` and `dual_fit_rescue == true`
-   (e.g. 20/g2, 24/g5) — asks whether the keep path would have filled them *without*
-   dual-fit, which is the BACKLOG candidate's claim.
+2. **38/g1** as negative control — `mid_lag` is already ~0, so the two scores should
+   coincide and both should land near its recorded bracket seam. (This is a *consistency*
+   check, not the wiring check; the wiring check is § Method 1 **S1**, which runs on every
+   probed gap.)
+3. **Three per `|mid_lag|` stratum**, drawn before the run from the census strata
+   (`|mid| < 5 ms` / 5–50 / 50–200 / > 200 → 14 / 27 / 29 / 20, as `census-skip-buckets.ps1` prints them), `dual_fit_rescue == true`,
+   preferring members with dead `lag0_r` — asks whether the keep path would have filled
+   them *without* dual-fit, which is the BACKLOG candidate's claim.
 
-**Scope caveat — settle before the run, not after.** Ten gaps validate the probe; they
-cannot state `n / N` over 90 the way § *Exit* words it. Either Exit is rewritten to
-"n/N on the seven plus controls, remainder estimated by stratum", or the near-zero and
-far buckets each need a real sample. Decide first; a sample sized after seeing its own
-result is not a fraction.
+**Scope — fixed here, not after the run.** The sample is the seven + 38/g1 + 3 per
+stratum ≈ 20 gaps. Result 4 states `n / N` **over that sample, by stratum**, and says so;
+it does not state a fraction over the 90. Extrapolation to the 90 is allowed only if
+every stratum is represented (≥3) and the strata agree; otherwise Result 4 reports the
+strata separately and the class-wide fraction stays open. § *Exit* is worded to match.
 
 Write the fraction here as Result 4. Licensed media required for the PCM score;
 the dump cannot answer it.
+
+**Limit on Result 4 — a null is not a full refute.** The probe scores one constant
+shift; it does **not** re-run the bracket sweep. If the shifted seams fail, that refutes
+"a constant shift alone converts them", not "register, then sweep" — structure alignment
+could still move `start` after the shift and land somewhere the probe never scored.
+Record that limit beside the number; only the pass direction is decisive.
 
 If the seven-minus-11/g9 still fail at `mid_lag`, the candidate fix is the wrong
 shape for the unrepaired remainder. If they convert, a **separate** Change plan
@@ -296,9 +365,12 @@ bracket maxima from `brackets[].seam_pre` / `seam_post`. Production join on
 ## Exit
 
 - Q1 named (this note, Result 2) → keep.
-- Q2 states n / N on the 250 ms-at-mid_lag instrument → either promote a Change
-  plan (one deliverable: register-before-sweep on the keep path) or file a
-  `settled.md` refute and delete the BACKLOG row.
+- Q2 states n / N on the production-windows-at-`mid_lag` instrument, **over the ~20-gap
+  sample of § Minimum set, by stratum** (not over the 90) → convert ⇒ promote a Change
+  plan (one deliverable: register-before-sweep on the keep path); null ⇒ file a
+  `settled.md` entry that refutes *the constant-shift* form only, per § *Limit on
+  Result 4*, and rewrite (not delete) the BACKLOG row unless the sweep question is also
+  closed.
 - This note archives when every question is promoted or closed.
 
 ---
