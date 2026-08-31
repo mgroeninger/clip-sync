@@ -19,7 +19,10 @@
 # index i is not the same gap in two arms. A gap with no 1 ms partner is reported UNJOINED per
 # side and never silently dropped; unjoined gaps are the loudest possible signal (the arms
 # disagree about the gap set itself) and they count into the verdict rather than being excluded
-# from it.
+# from it. Gaps left over on BOTH sides get a second pass, matched closest-pair-first by time
+# within -JoinToleranceMs (default 1.0, the key's own resolution): a gap whose time moved by a hair
+# can straddle a rounding boundary and split into two spurious unjoined findings. Every rescued
+# join is listed under NEAR-MISS JOINS with its delta, so no join is silently fuzzy.
 #
 # CLASSIFICATION, most severe first. Each joined gap lands in exactly one class:
 #   status_flip    the externally tagged `status` variant differs (patched <-> skipped <->
@@ -430,19 +433,20 @@ foreach ($label in $labels) {
     $candLeft = @($c.Keys | Where-Object { -not $b.ContainsKey($_) })
     if ($baseLeft.Count -gt 0 -and $candLeft.Count -gt 0 -and $JoinToleranceMs -gt 0) {
         $tol = $JoinToleranceMs / 1000.0
+        # Closest pair first, globally - not first-in-time-wins. Taking them in time order lets an
+        # early gap claim a candidate 0.9 ms away that a later gap matches to 0.3 ms, leaving the
+        # better match unjoined. Leftovers are few, so the full sort costs nothing.
+        $cands = [System.Collections.Generic.List[object]]::new()
         foreach ($bk in $baseLeft) {
-            $bt = $b[$bk].Secs
-            $best = $null
-            $bestD = [double]::MaxValue
             foreach ($ck in $candLeft) {
-                if ($takenCand.ContainsKey($ck)) { continue }
-                $d = [math]::Abs($c[$ck].Secs - $bt)
-                if ($d -lt $bestD) { $bestD = $d; $best = $ck }
+                $d = [math]::Abs($c[$ck].Secs - $b[$bk].Secs)
+                if ($d -le $tol) { $cands.Add([pscustomobject]@{ B = $bk; C = $ck; D = $d }) }
             }
-            if ($null -ne $best -and $bestD -le $tol) {
-                $rescue[$bk] = $best
-                $takenCand[$best] = $bk
-            }
+        }
+        foreach ($m in ($cands | Sort-Object D)) {
+            if ($rescue.ContainsKey($m.B) -or $takenCand.ContainsKey($m.C)) { continue }
+            $rescue[$m.B] = $m.C
+            $takenCand[$m.C] = $m.B
         }
     }
 

@@ -146,7 +146,9 @@ reaches this table ([pipeline.md](../pipeline.md) phases 2–3; § Silence-chara
 > precision). B is continuous where A holds 1.12 s; the gap *is* pair 31's map step. The causal
 > story (A-inserted dead time / B-side cut / break padding) is undetermined — do not assert one.
 > No donor fill can serve such a gap — any fill duplicates adjacent program; the shipped −977 ms
-> stutter is `min`'s best compromise between the two true lags (0.437/0.437). The honest action
+> stutter is `min`'s best compromise between the two true lags (0.437/0.437). **Ear-confirmed
+> 2026-08-31**: listened at `program_gain` 0.9986 (the level fix shipped 2026-08-26), the fill is
+> level-correct and **still a stutter** — the predicted artifact, heard at the predicted place. The honest action
 > is a **reasoned skip / explicit step verdict**, predicate `|gap + post_lag − pre_lag| ≈ 0`.
 > What remained was **detection, not vocabulary** — and as of **2026-08-28 that is closed too**.
 > Production now fits each shoulder independently *before* the fill search, consulting the coarse

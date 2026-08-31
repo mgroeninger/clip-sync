@@ -1,6 +1,28 @@
 # TEMP — Early shoulder locks on the patch path (collapse → skip, before keep)
 
-**Status:** draft, 2026-08-27. One Change. **Startable.**
+**Status:** implemented; **validation COMPLETE 2026-08-31**. Last updated 2026-08-31.
+(Was "draft, 2026-08-27. One Change. **Startable.**")
+
+**Where this stands — every check has run and every one passed.** Tier 0, Tier 1, Tier 1.5, Tier 2
+(both arms), the secondary diff, and **both ear checks** are done and agree; §8.1 and §8.3 carry
+the numbers. Tier 2 A↔B: **1070 of 1073 gaps unchanged**, the 3 changes all predicted in advance.
+The two listens (2026-08-31) settle the substance:
+
+- **31/g7 — the fill this Change removes: level near perfect, still a stutter.** A stutter is the
+  artifact Hole 2 predicts here (any fill duplicates adjacent program), heard on the *current*
+  binary's fill. The refusal deletes an audibly damaged fill. (§5 — do **not** read the surviving
+  stutter as proof the defect is placement-not-gain; gain is applied downstream of placement and
+  could never have caused it.)
+- **31/g9 — the fill step 4 newly admits: excellent, gain and placement both smooth.** Step 4
+  needs no narrower gate.
+
+**Nothing is outstanding for this Change.** What remains is the close itself: the three-step
+BACKLOG move and this document's retirement.
+
+Two findings came out of validation and are **not** this Change's to fix: 11/g9 is a predicate
+false positive the *successor* must not drain (§4, §8.1, and that plan's §1 + checklist), and 95
+corpus gaps are skipped at a rigid shoulder offset the bracket sweep cannot reach (BACKLOG
+§ *Fill placement*). 31/g10's blip is untouched by either listen and stays open.
 
 **Tracked as:** [BACKLOG.md](../../BACKLOG.md) § *Fill placement* → *Early shoulder locks / collapse skip*.
 
@@ -330,6 +352,23 @@ are not `clamped` / `edge_pinned` / `program_quiet`; mux is the current path
 (video was not padded). This Change ships the capture, the post-splice
 visit, and the summary list. It does not shorten A.
 
+### The predicate is wider than "added silence" (2026-08-30)
+
+`bridge ~ 0` is necessary for an injection but not sufficient: a false seam peak
+one gap-length away produces the same arithmetic. Corpus-wide the predicate is
+right once out of twice — 31/g7 is a real injection, **11/g9 is a false
+positive** (§8.1, three independent lines: no downstream trail, weak seam-local
+readings, and a 1 s probe that locks *both* shoulders at nominal).
+
+The narrowing is known and cheap: **require the 250 ms seam step and the 1 s
+`lag_decision` step to agree**, because an injection is a rigid clock shift and
+must read the same at any window length. Corpus agreement is p50 0.01 ms; 31/g7
+agrees to 0.17 ms, 11/g9 disagrees by 608 ms. Both inputs already exist before
+the abut decision. §8.1 has the derivation, the thresholds, and the limits.
+
+**Not wired here** — it moves a decision, and this Change's acceptance bar is
+that none moves. It belongs to the successor, which is what acts on the reason.
+
 ---
 
 ## 5. 31/g7 under this plan
@@ -353,6 +392,37 @@ After this Change: early locks → `gate_pass` ∧ `bridge_frames` ≤ 0 →
 `shoulders_abut`, captured. Unified-fit ±10 s never runs. No −977 keep. After
 splice, the visit sees the still-silent hole on original-clock A (other gaps
 already filled).
+
+### Confirmed by ear, 2026-08-31
+
+The listen on **arm B's** fill (`--lag-envelope-max-lag-ms 0`, i.e. what this Change removes,
+`normalize_gain` = `program_gain` 0.9986, `align_adjustment_secs` −0.977, r 0.437):
+**level is right — "near perfect" — and it is still a stutter.**
+
+**What this establishes.** The fill this Change removes is audibly damaged *on the current
+binary*. That was the open question: the only prior clip was 2026-08-18 vintage, a different fill.
+And the artifact's **character** is the corroboration of §5 — a stutter is what Hole 2 predicts
+here, because any donor fill duplicates adjacent program.
+[gap-vocabulary.md](gap-vocabulary.md) named it in advance: *"the shipped −977 ms **stutter** is
+`min`'s best compromise between the two true lags (0.437/0.437)"*. Predicted artifact, heard at
+the predicted place.
+
+**What it does NOT establish — corrected 2026-08-31.** This subsection first argued that the
+stutter *surviving the gain fix* proved the defect is placement rather than gain. **That
+inference is void.** `normalize_gain` is applied to an already-chosen fill: `execute.rs:59`
+destructures it off the decided `GapRepairVerdict::Patch(…)` beside `alignment` / `seam_pre` /
+`seam_post`, and it lands as a scalar `RegionPatch.gain` on the assembled samples. It cannot
+influence which donor content is picked or where it goes — arm B's placement (−0.977, r 0.437) is
+identical to the 2026-08-13 run's. A scalar can neither create nor remove a temporal repetition,
+so gain was never a candidate cause of a stutter and eliminating it cost nothing. Do not cite the
+gain fix as evidence for the placement reading.
+
+The gain change does rule out one **perceptual** confound, which is worth exactly that much: the
+2026-08-18 clip could have sounded bad merely because it was 2.128× too loud. It does not. That is
+about audibility, not mechanism.
+
+**§5 is confirmed on the artifact's character and its audibility on the shipped fill.** The Change
+deletes an audibly damaged fill.
 
 ---
 
@@ -903,6 +973,24 @@ successor collapse plan still needs to cite.
 > recipe-field rationale instead. `SEAM_LOCK_RECOVERABLE_R` was renamed
 > `LAG_DECISION_RECOVERABLE_R` the same day — the seam locks are the one caller that does not use
 > it, and the old prefix is how the wrong belief spread.
+>
+> **Status 2026-08-31 — the "left open" note above is now stale in three places, corrected here
+> rather than rewritten, since it is what a reader hits first.** (1) The Tier 1 re-fingerprint
+> **ran** 2026-08-29, so it is no longer outstanding. (2) *31/g7's production confirmation* is
+> **done**: arm A of the Tier 2 run flips it to `shoulders_abut` with the §4 payload. What remains
+> under that heading is the *ear check*, which is a different thing. (3) The 2026-08-29 status is
+> itself superseded — the outcome differ was built (2026-08-29), **both Tier 2 arms ran and the
+> secondary diff ran** (2026-08-30 / 08-31), all recorded in §8.1.
+>
+> **Nothing measurable remains (2026-08-31).** Tiers 0, 1, 1.5, 2, the secondary diff, step 9's
+> docs pass, and both ear checks have all run; no checklist item below is unchecked. 31/g7's
+> 2026-08-18 WAVs turned out to be pre-`program_gain` vintage (`ab1de2a`, 2026-08-26), so that
+> listen was re-run on the current binary rather than taken from disk.
+>
+> **What is left is the close itself**, which is a three-step move
+> ([settled.md](settled.md) routing): mark the BACKLOG item done, file the verdicts — including the
+> two findings this Change carried forward but did not fix — in `settled.md`, then delete the
+> BACKLOG text and retire this document.
 
 ---
 
@@ -994,7 +1082,10 @@ move, and the run above already covers both arms.
 
 **Premise this Change ships on:** `shoulders_abut` fires on **one** corpus gap
 (31/g7). That is a stated premise, not a post-merge discovery — which was the
-point of running Tier 0 first.
+point of running Tier 0 first. **Updated by Tier 1:** the predicate fires on **two**
+(31/g7, 11/g9), of which 11/g9 is a false positive — its post lock is a false peak and A's
+clock is unchanged across it (§ *Injection vs overwrite*). One real silence splice, as
+premised; one gap whose *reason* changes without any production consequence.
 
 **Reproduction.** Both arms, ad hoc over `gap-files/`, no committed script:
 per gap take `lag_decision.pre_anchor[0]` / `post_anchor[0]`, `gap_frames` from
@@ -1040,7 +1131,9 @@ the exact set become knowable.
 > `lag_decision` shoulders sit at ≈ −72/−68 ms with `step_ms +4.24` (⇒ a *positive* bridge),
 > while the seam locks are 603.75 ms apart. A 1 s template at `b_mapped` and a 250 ms one at
 > the seam are not looking at the same thing here, which is exactly the modelled gap. Nothing
-> is unaccounted for; the merge is not blocked on this.
+> is unaccounted for; the merge is not blocked on this. **Followed up 2026-08-29:** the placement
+> change explains why the predicate *fires* on 11/g9; § *Injection vs overwrite* below then shows
+> what it fired on — a false peak, not a silence splice.
 >
 > **The predicate is not knife-edge.** Across all 957 `gate_pass` gaps the bridge distribution
 > is −205, −153, then **+17851 f (+371.9 ms)** and a bulk at ≥ +24247 f where bridge ≈ gap
@@ -1090,8 +1183,153 @@ the exact set become knowable.
 > corpus show it firing on weak locks, the correct form is not a second mechanism but a narrower
 > trigger on the existing one — rescue on `r < triage_r || edge_pinned`, keeping the retry only
 > if `retry.r > r` (**strictly better**), so a trustworthy lock can still move but only onto a
-> more trustworthy reading. Two pairs is a small sample; the base rate over the full corpus is
-> unmeasured and needs the next full re-fingerprint, not a dedicated run.
+> more trustworthy reading. Two pairs is a small sample; ~~the base rate over the full corpus is
+> unmeasured and needs the next full re-fingerprint, not a dedicated run~~ — **measured 2026-08-29,
+> see the next block: zero, corpus-wide.**
+
+> **Tier 1 RE-RUN at the fixed binary, full corpus 2026-08-29** (`2026-08-29-complete-corpus`,
+> 51 pairs / 1049 dumped gaps / 971 carrying `splice_dualfit`). Key-level diff against
+> `2026-08-28-complete-corpus`, both directions, every gap:
+>
+> ```
+> NEW keys:        splice_dualfit.{pre,post}_seam_rescued
+>                  splice_dualfit.{pre,post}_seam_edge_pinned
+>                  splice_dualfit.seams_clamped
+> CHANGED values:  0
+> gaps added/dropped: 0
+> ```
+>
+> The previous block's "the fix moved no measurement" was verified on pairs 11 and 31 only; it now
+> holds **corpus-wide**. Tier 0 therefore re-derives from this corpus unchanged, and every 08-28
+> number quoted above stands without restatement.
+>
+> **The abut set is unchanged: n = 2, `{11/g9, 31/g7}`**, same frames, same `r`s (971 measurable,
+> 957 `gate_pass`). The 372 ms void is intact — the next bridge up is still 8/g4 at +371.9 ms.
+>
+> **`edge_pinned` and `seams_clamped` fire ZERO times across 971 gaps / 1942 locks**, with
+> provenance present on every lock (0 absent). This closes the open question above at corpus
+> scale, not on two pairs: `edge_pinned`'s positive set is empty over the whole corpus, so it
+> remains a veto that has never vetoed, and `clamped` has never fired on anything and is not worth
+> reading. Neither may be promoted to a corrector.
+>
+> **The `[0.35, 0.50)` band re-derives unchanged at exactly three gaps** — 8/g4 (0.390),
+> 25/g11 (0.410), 20/g3 (0.443) — with 11/g9 (0.500) just above it. Over the 957 `gate_pass` gaps,
+> p05 = 0.902, p50 = 0.982, and 6 sit below 0.60.
+>
+> **Abut coincides with ASYMMETRIC rescue — and the mechanism says why.** Both abuts have one live
+> shoulder and one rescued one, hence a large step; all four non-abut rescued gaps have *both*
+> shoulders rescued, which moves them together and leaves step ~ 0 and `bridge` ~ `gap`. That is
+> not a coincidence of this corpus; it is what the two splice modes must do. See the next block.
+
+#### Injection vs overwrite — the mechanism behind `bridge`, and a corroborator for it (2026-08-29)
+
+**Two splice modes, two bridges.** If silence is *injected* at program time t, everything after t
+in A is delayed by the injected length L and **nothing is removed from B**, so the offset steps by
+exactly −L at that gap. The gap *is* the injected silence, so `gap_ms = L` and
+`bridge = gap + step = 0`. The donor bridge is empty because nothing was ever missing. If silence
+*overwrites* L seconds, the offset does not move (`step ~ 0`) and the replaced material still sits
+in B between the locks, so `bridge ~ gap`. **`bridge` ∈ {0, gap} is the inject/overwrite
+dichotomy**, and §8.1's 372 ms void is that dichotomy appearing as bimodality — not a threshold
+that happens to separate cleanly.
+
+The background map is rigid, which is why the two events stand out. Over the 957 `gate_pass`
+gaps: p50 `|step|` = 0.0 ms, p90 = 8.0 ms, **6 exceed 50 ms and only 2 exceed 600 ms** — the two
+abuts, at `|step|/gap` = 1.00 and 1.01. The next-largest steps (25/g11 +599.9 ms on a 1557.9 ms
+gap, 8/g4 −286.2 ms on a 658.1 ms gap) sit at ratios 0.39 and 0.43. There is no continuum of
+partial injections.
+
+**Rescue asymmetry is a consequence of gap DURATION, not of abutment.** Under injection the
+displaced shoulder is displaced by exactly `L = gap_ms`, so it leaves the ±600 ms fine window
+**iff the gap is longer than ~600 ms**. 11/g9 cleared it by 3.8 ms (603.8 vs 600). **An injected
+gap shorter than ~600 ms would abut with both shoulders live and zero rescues** — the fine search
+alone would find it. This corpus has 103 `gate_pass` gaps at ≤ 600 ms and none abuts, so it simply
+contains no short injections; that is not evidence they cannot occur. **Anything gated on
+`rescued` would silently drop exactly the easy cases.** This is the mechanism-level form of the
+"do not gate on rescue existence" caution above. Likewise, *which* shoulder is rescued reports
+where the nominal map was fitted (pre-side, in both cases here), not anything about the gap.
+
+**Corroborator: an injection must leave a downstream trail.** `fill_offset_secs` is a **single
+constant per pair** (2184.2 ms for pair 11, 1362.7 ms for pair 31, flat to 0.1 ms across every
+gap), so an injection of L at gap *i* displaces **every** later gap by L against that fixed
+offset — permanently. A false peak displaces nothing. Pair 31 is the positive control and shows
+the trail; pair 11 does not:
+
+| | before | the gap | after |
+|---|---|---|---|
+| **pair 31** | g1–g6: step ~0, no rescue | **g7: step −1122.0, pre live / post rescued** | g8–g11 (2852 s → 6400 s): step ~0 but **both shoulders rescued at ~−1.15 s** |
+| **pair 11** | g1–g8: step ~0, no rescue | **g9: step −603.8, pre live / post rescued** | g10–g15 (3831 s → 6081 s): step ~0, **no rescue**, r 0.92–0.997 — locks back at nominal |
+
+**31/g7 is a genuine injection.** Its downstream gaps are still displaced thousands of seconds
+later, which is the only thing an inserted block can do to A's clock.
+
+**11/g9 is a predicate FALSE POSITIVE — A's clock is unchanged across it.** Had 604 ms been
+inserted, g10–g15 would sit 604 ms off nominal, outside the fine window, dead and demanding
+rescue exactly as pair 31's do. All six lock strongly at nominal with the envelope never
+consulted, and they cannot be silently sitting at −604 ms either: that is past the fine reach and
+`edge_pinned` fires **zero** times corpus-wide, so nothing is pinned at the window boundary. The
+−603.8 ms post lock is a false peak, consistent with its own numbers (`r` 0.500, prom 0.072; at
+nominal it read 0.318 — both weak). The true post shoulder is at nominal, where `bridge ~ gap ~
+599 ms`: an ordinary gap with a decorrelated post shoulder, which is also how production reads it
+today (pre 0.043 / post 0.043, `correlation_below_threshold`). One loophole, recorded and not
+believed: a compensating ~604 ms **cut** in the 42 s between g9 and g10 would restore the clock
+and rescue the injection reading. Nothing supports one.
+
+**So the premise is: `shoulders_abut` fires on two corpus gaps, of which ONE is a real silence
+splice.** By decision count it is 2 (§8.1 Tier 1, unchanged — Tier 2 still expects both flips).
+By mechanism it is 1 real (31/g7) + 1 false positive (11/g9). Consequences:
+
+- **Nothing changes for this Change.** 11/g9 is already skipped, so only its *reason* moves; the
+  merge and the Tier 2 acceptance below stand as written, and 31/g7 remains the whole substance.
+- **The successor inherits the false positive.**
+  [TEMP-post-splice-introduced-silence-collapse-plan.md](TEMP-post-splice-introduced-silence-collapse-plan.md)
+  drains on this reason; draining 11/g9 would remove 599 ms of A that was never introduced
+  silence. This Change's visit is record-only, so it is safe here — but the successor needs a
+  guard, and the weak-lock catalogue (6 of 957 below r 0.60, 11/g9 among them) is the first place
+  to look.
+- **The trail test cannot be a runtime gate** — it needs cross-gap context the per-gap sensor does
+  not have — but it is the right offline corroborator for any future abut candidate, it runs on
+  committed dump bytes alone, and it carries its own positive control.
+
+**The runtime form of the trail test: the two probes must agree on the step (2026-08-30).** The
+trail test needs cross-gap context the sensor does not have, but its *physics* does not: an
+injection is a **rigid** clock shift, so every probe of the step must return the same number
+whatever its window length, while a false peak is fragile to window length. Two independent step
+measurements already exist per gap, and both are on the wire before the abut decision:
+
+| probe | window | step |
+|---|---|---|
+| `splice_dualfit` | 250 ms seam-local templates | `(bridge_frames - gap_frames) / sample_rate` |
+| `splice.step_ms` | 1 s `lag_decision` shoulders | `post.frac_lag_ms - pre.frac_lag_ms` |
+
+Over the 971 corpus gaps carrying both, they agree to **p50 0.01 ms, p90 0.02 ms**; only 18 gaps
+disagree by more than 5 ms (11 of them pair 50, which is misregistered throughout). On the two
+abut candidates the split is three orders of magnitude wide:
+
+| gap | step (seam, 250 ms) | step (1 s) | disagreement | verdict |
+|---|---|---|---|---|
+| **31/g7** | -1122.02 ms | -1122.19 ms | **0.17 ms** | rigid shift - real injection, accept |
+| **11/g9** | -603.75 ms | +4.24 ms | **607.99 ms** | window-fragile - false peak, reject |
+
+This reproduces the trail verdict from **per-gap data alone**, and it is a third independent line
+on 11/g9: its 1 s probe locks *both* shoulders at r 0.9992 / 0.9878 with the envelope
+`not_consulted` on either, i.e. at the 1 s scale that post shoulder is not decorrelated at all -
+only the 250 ms seam-local template fails on it. A threshold anywhere in 1-100 ms separates the
+two cases, so the number is not tuned.
+
+It also stays clear of every refuted signal: it does not read seam prominence, the sign of
+`post_seam_global_r`, or `rescued` - the last of which would drop exactly the sub-600 ms
+injections the paragraph above says the fine search would otherwise find on its own.
+
+Limits, stated so they are not rediscovered: it still cannot distinguish injection from
+overwrite-with-a-compensating-cut (the loophole above), and it only narrows candidates that
+already have `bridge ~ 0` - 31/g8's 1697 ms disagreement is irrelevant because its 632 ms bridge
+never reaches the abut test.
+
+**Deferred, not done here.** Wiring this as a predicate guard is a change to *which* gaps are
+called abut, i.e. it moves a decision; this Change's premise is that it moves none (§8.1 Tier 0/2
+acceptance: unexplained changes = 0). The narrowing belongs to the successor, which is the plan
+that actually acts on the reason - see the "successor inherits the false positive" bullet above,
+and §4's note. Doing it here would invalidate the Tier 2 bar mid-run.
 
 **Tier 1.5 — step 4's blast radius, measured offline 2026-08-28.** Step 4 turns
 envelope rescue on in production for the first time, which touches far more than
@@ -1121,6 +1359,48 @@ declined today. Resolving the five:
 | 31/g11 | patch | 0.984 / 0.972 @ −1158.4 | inert — same |
 | **31/g9** | **skip** (`waveform_floor`) | **0.965 / 0.957 @ ≈−1144** | **NEW dual-fit fill** — locks clear `gate_pass` by ~3×, `bridge` ≈ +637 ms ≈ `gap_ms` (far-offset, so no abut), so `try_dual_fit` is reached with strong locks on a gap production declines today |
 
+> **Prediction CONFIRMED 2026-08-30.** 31/g9 is the only forward prediction this plan made that a
+> later run could falsify, and Tier 2 arm A produced exactly it: `skipped` → `patched`,
+> `dual_fit_used` **true**, pre **0.972** / post **0.904**, `align_adjustment_secs` 0.0. No other
+> gap in the table moved, so the "inert" verdicts on 31/g8, g10 and g11 held as well. Tier 1.5's
+> method — read the movers off the rescue tags rather than re-running — is therefore validated,
+> not just unfalsified.
+
+> **Measured against the rescue tags, 2026-08-29 — the population is SIX, and the 31/g8 row's
+> reason is wrong.** The table above was inferred from `lag_decision`; the 08-29 corpus records
+> which locks the envelope actually moved, so the movers can now be read off directly instead of
+> predicted. Six gaps carry a rescued lock — the five above plus **11/g9** — and **all six
+> `gate_pass`**:
+>
+> | gap | pre_r | post_r | gate | `bridge` | step (`trim`) |
+> |---|---|---|---|---|---|
+> | 11/g9 | 0.989 | **0.500\*** | pass | −4.3 ms | −603.8 ms |
+> | 31/g7 | 0.966 | **0.874\*** | pass | −3.2 ms | −1122.0 ms |
+> | 31/g8 | **0.980\*** | **0.898\*** | pass | +632.2 ms | +8.5 ms |
+> | 31/g9 | **0.972\*** | **0.904\*** | pass | +637.4 ms | −4.1 ms |
+> | 31/g10 | **0.976\*** | **0.987\*** | pass | +1861.6 ms | −3.8 ms |
+> | 31/g11 | **0.986\*** | **0.983\*** | pass | +600.6 ms | 0.0 ms |
+>
+> (\* = envelope-rescued.) Nothing outside these six has a lock the envelope moved. A further 14
+> gaps read `min(seam r) < 0.35` — consulted and not usable — so the envelope is *touched* on at
+> most ~20 of 971 gaps and *changes* 6. That replaces the 23 / ≤5 upper bound above with a named
+> set.
+>
+> **Two corrections to the table, neither of which moves a conclusion:**
+>
+> - **31/g8 "inert — pre stays dead ⇒ no `gate_pass`" is refuted.** Its pre lock *is* rescued, at
+>   r 0.980, and it *does* `gate_pass`. `lag_decision`'s 1 s template declined that rescue (the
+>   +800 ms false peak); the 250 ms seam-local template accepted it — the same placement
+>   difference that produced 11/g9. 31/g8 is still inert, but by the g10/g11 route (the gate keeps
+>   it, so `try_dual_fit` is never reached), not the reason given.
+> - **"none has `gate_pass` today (0 of 5)" was a pre-step-6 reading**, taken when the ±600 ms
+>   search returned noise. Post-step-6 all six pass, which is what step 6 exists to do. The
+>   inference it supported — step 4 cannot alter an *existing* dual-fit fill — survives on the
+>   outcomes, not on `gate_pass`.
+>
+> **31/g9's prediction lands exactly** (`gate_pass`, `bridge` +637.4 ms), so its ear check below
+> stands as written.
+
 **31/g9 is the one unintended outcome change this Change carries, and it is named
 in advance.** It is not a regression on its face — both shoulders agree within
 4.1 ms at pair 31's map step, the `shared_far_offset` signature, so B genuinely
@@ -1134,7 +1414,73 @@ with `--patch-only` over the 51 pairs (`gap-files/extended-pairs.csv`). Two thin
 Tier 2 catches — the envelope knobs now firing on the production path can shift **non-abut**
 locks and change dual-fit placements (§7 step 4), and `is_retryable_patch_skip` changes the
 anchored-retry population (§7 step 7). It pays no anchor-oracle cost; that per-gap sweep is a
-Full-tier dump cost, not a production one. **Not yet run** (2026-08-29).
+Full-tier dump cost, not a production one. **Arm A started 2026-08-29** on the HEAD binary
+(`-SkipBuild` on both arms, so the fingerprint corpus and both arms come off one build).
+
+> **RUN 2026-08-30 — both arms complete, and the result is the predicted one.**
+> `gap-files/2026-08-30-tier-2-on` (default) vs `gap-files/2026-08-30-tier-2-off`
+> (`--lag-envelope-max-lag-ms 0`), 51 pairs, **1073 joined gaps**, diffed with
+> `scripts/measure/diff-patch-outcomes.ps1`:
+>
+> | class | gaps |
+> |---|---|
+> | `unchanged` | **1070** |
+> | `status_flip` | 2 |
+> | `reason_change` | 1 |
+>
+> | gap | arm B (off) | arm A (on) |
+> |---|---|---|
+> | **31/g7** | `patched` — pre 0.437 / post 0.437, `align_adjustment_secs` **-0.977**, confidence high, `dual_fit_used` false | **`shoulders_abut`** — `bridge_frames` -153, `gap_frames` 53704, pre -38.23 ms / post -1160.25 ms, `pre_z` 14.14 / `post_z` 25.96, `post_envelope_rescued` true |
+> | **31/g9** | `skipped` — `correlation_below_threshold`, 0.046 / 0.044 | **`patched`** — pre **0.972** / post **0.904**, `dual_fit_used` **true**, `align_adjustment_secs` 0.0, `normalize_gain` 0.9986, confidence high |
+> | **11/g9** | `skipped` — `correlation_below_threshold` | `skipped` — **`shoulders_abut`** |
+>
+> **Run-level derived fields moved on 20 rows and the differ scored them 0** (counts and the
+> `shoulders_abut` republish are functions of the gap list, not of a gap). The verdict line reads
+> `unexplained gaps 1, run-level 0`: the one "unexplained" row is **31/g9**, which the differ can
+> only score as unexplained because its rule is *candidate skips with reason `shoulders_abut`* and
+> 31/g9 is a candidate **patch**. It is not an unpredicted change - Tier 1.5 named it by pair/gap
+> in advance, from the rescue tags, as the single gap step 4 could newly admit. **Every predicted
+> change happened and no unpredicted one did.**
+>
+> One independent reading arrives with it: 31/g7's removed fill was placed **977 ms off** at
+> correlation **0.437**, so the refusal deletes a weak, far-displaced fill. That is positive
+> evidence for §5, not merely "31/g7 still abuts" - but it does not replace the listen, because a
+> fill can be bad for more than one reason.
+>
+> **Gain is not a discriminator on this control, and never was 31/g9's reason.** Both arms give
+> **both** fills `normalize_gain` = `program_gain` = **0.9986**. The 2.128 in the box above belongs
+> to 31/g7's **2026-08-13-vintage** fill; `program_gain` has shipped since. So the gain gap is
+> binary vintage, not a property separating these two fills, and the reason to listen to 31/g7 is
+> the 977 ms displacement at r 0.437. 31/g9's listen is required because it is an **unreviewed new
+> fill in the same pair and class as 31/g10's unexplained blip** (BACKLOG, *Post-join defects*).
+> Strong locks and a zero adjustment make it the **cheaper** listen, not an unnecessary one.
+>
+> **SECONDARY DIFF 2026-08-31 — arm A vs `gap-files/2026-08-13-repeat-terms`.** Runs on committed
+> dump bytes; it needs **no licensed media**. Heavily confounded, as designed to be: 53 baseline
+> pairs vs 51 (labels 6 and 16 baseline-only, reported and skipped), **510 run-level** field moves,
+> and the differ raises its own *"the arms ran DIFFERENT fill geometry (255 fields)"* warning -
+> `program_gain` and `fill_geometry` both landed in the two weeks between. That is why it is
+> *secondary*, not why it is unmeasurable.
+>
+> It still answers its question, because the confound is entirely in **field** values:
+>
+> | class | gaps |
+> |---|---|
+> | `unchanged` | 763 |
+> | `field_change:patched` | 307 |
+> | `status_flip` | **2** |
+> | `reason_change` | **1** |
+>
+> The three decision changes are **the same three** A↔B found - 31/g7 `patched -> skipped`, 31/g9
+> `skipped -> patched`, 11/g9's reason. Across two weeks of merges *and* this Change, **no other
+> gap's patched/skipped decision moved at all**. Step 7's `is_retryable_patch_skip` change
+> therefore admitted nothing and lost nothing; the 307 field rows are the confound and carry no
+> decision. This is the coarse result the diff can support - it cannot attribute any single field
+> move to step 7 - and it is the result the checklist item asked for.
+>
+> **The bar is met on the numbers, and both ear checks have since PASSED (2026-08-31)** - 31/g7's
+> removed fill is level-correct and still a stutter, the artifact Hole 2 predicts (§5), and
+> 31/g9's new fill is clean in both gain and placement. Tier 2 is complete.
 
 > **What the existing baseline already settles (2026-08-29, no new run).** Both Tier-1 abut gaps
 > were looked up in `gap-files/2026-08-13-repeat-terms`:
@@ -1144,16 +1490,26 @@ Full-tier dump cost, not a production one. **Not yet run** (2026-08-29).
 > | **11·g9** (`a_start` 3788.963, dur 0.599) | **skipped** — `correlation_below_threshold`, pre 0.043 / post 0.043, best anchor attempt 0.268 / 0.213 | `shoulders_abut` |
 > | **31·g7** (`a_start` 1725.697, dur 1.119) | **patched** — pre 0.437 / post 0.437, `align_adjustment_secs` −0.977, confidence **high**, `normalize_gain` **2.128**, `dual_fit_used` false | `shoulders_abut` |
 >
+> **The 2.128 is 2026-08-13 vintage — do not read it as current.** `program_gain` landed
+> 2026-08-26 (`ab1de2a`); on the same-binary Tier 2 control the *same* 31/g7 fill reads
+> `normalize_gain` = `program_gain` = **0.9986**, identical to 31/g9's. Placement is what makes
+> this fill worth refusing (−977 ms at r 0.437), not gain. See the run box below.
+>
 > **11/g9 cannot cost a fill** — it is already refused, so the Change alters only the *reason*.
 > Whatever its rescue is worth (retry `r` 0.500, `prom` 0.0716), it has no production
 > consequence, and it needs **no ear check**.
 >
-> **31/g7 is the entire substance of Tier 2.** Production patches it today at
-> `confidence: high` with a **2.13× gain**; this Change refuses it. If the silence-splice
-> reading is right, today's fill fabricates 1.12 s of amplified content over silence that was
-> never missing from B. That **inverts the ear-check priority below**: the listen that carries
-> the most information is 31/g7 *as it sounds today*, because a confirmed artifact there is
-> positive evidence the refusal is correct — 31/g9's new fill is the secondary check.
+> **31/g7 is the entire substance of Tier 2.** Production patches it at `confidence: high` and
+> this Change refuses it. If the silence-splice reading is right, that fill fabricates 1.12 s of
+> content over silence that was never missing from B. That **inverts the ear-check priority
+> below**: the listen that carries the most information is 31/g7 *as production plays it*, because
+> a confirmed artifact there is positive evidence the refusal is correct — 31/g9's new fill is the
+> secondary check.
+>
+> **Corrected 2026-08-31.** This paragraph read "with a **2.13× gain** … 1.12 s of *amplified*
+> content", which made the gain part of the argument. It is not: on the same-binary control both
+> 31/g7 and 31/g9 read 0.9986 (caveat above). The argument stands on placement alone — −977 ms at
+> r 0.437 — and the priority inversion is unaffected.
 
 > **Use a same-binary two-arm control, not the 2026-08-13 baseline as primary (2026-08-29).**
 > That baseline is two weeks and several merges old (`program_gain` landed 2026-08-26 among
@@ -1171,7 +1527,21 @@ Full-tier dump cost, not a production one. **Not yet run** (2026-08-29).
 > check for the one thing arm B cannot neutralize: step 7's change to the anchored-retry
 > population.
 
-> **Tooling gap — the outcome differ does not exist (open 2026-08-29).** Nothing in
+> **Tooling gap CLOSED 2026-08-29 — `scripts/measure/diff-patch-outcomes.ps1`.** It implements
+> exactly the shape described below, plus what testing turned up: a second join pass that matches
+> leftovers by nearest time within `-JoinToleranceMs` (default 1.0), because two times a fraction
+> of a microsecond apart can straddle the 1 ms rounding boundary and split one gap into two
+> spurious unjoined findings — harmless between arms off one binary, but live for the secondary
+> diff against an older run. Every such rescue is listed with its delta; none is silent. Run-level
+> fields are compared too, split into *derived* (the four counts and the `shoulders_abut`
+> republish, which move mechanically with the gap verdicts) and *independent* (`patch_anchors_used`,
+> `fill_geometry`), and only the independent ones count toward the verdict. Verdict is
+> `expected` (candidate skips with `shoulders_abut`) vs `unexplained`; exit 1 unless both
+> unexplained and run-level-independent are zero. Null-tested at 53 pairs / 1116 gaps (0 changed)
+> and against injected fixtures for every class, both load-bearing calculations, and the
+> acceptance rule itself. The original statement of the gap follows.
+>
+> ~~**the outcome differ does not exist (open 2026-08-29).**~~ Nothing in
 > `scripts/measure/` diffs two `measure-patch-outcomes` runs per gap.
 > `diff-patch-adjustments.ps1` answers a different question (the `border_standoff_secs` sweep),
 > but it donates the rule that matters: **join arm × arm on `patch.gaps[*].a_start_secs`,
@@ -1185,10 +1555,16 @@ Full-tier dump cost, not a production one. **Not yet run** (2026-08-29).
 **Tier 2 acceptance (revised 2026-08-29):**
 
 - 31/g7 `patched` → `shoulders_abut`, and 11/g9 `correlation_below_threshold` → `shoulders_abut`
+  (11/g9 is a predicate false positive — see § *Injection vs overwrite* — but the flip is still
+  what an accepting run must show, and it costs no fill either way)
 - 31/g9 may newly gain a dual-fit fill (Tier 1.5) → ear check before accepting
 - **31/g7's current fill** → ear check (new; the strongest confirmation available)
 - zero outcome changes on every other gap
 - a run that does **not** flip 31/g7 falsifies §5 and blocks the merge
+
+**Met 2026-08-30 on the numbers** (see the run box above): both flips present, 31/g9's fill
+appeared as Tier 1.5 predicted, 1070 / 1073 gaps unchanged, run-level 0. Outstanding: the two ear
+checks.
 
 ### 8.2 Test blast radius
 
@@ -1365,8 +1741,13 @@ claim and is the signal to stop.
       still one variant; a clamp-only fixture is `shoulders_abut` with
       `clamped: true`, not a new reason. **Done 2026-08-28** for the code half —
       six wildcard-free matches, not four (§8.2), and the 8th test case is in.
-      The **JSON + repair-guide tables and the vocab Hole 2 line are still open**;
-      they are step 9's docs pass, not this entry's.
+      ~~The **JSON + repair-guide tables and the vocab Hole 2 line are still open**;
+      they are step 9's docs pass, not this entry's.~~ **All four landed — verified 2026-08-31**:
+      [json-output.md](../json-output.md) (additive-revisions line, `PatchSummary.shoulders_abut`
+      row :329, the `GapPatchSkipReason` object form :625, `ShouldersAbutSkip` :643),
+      [gap-repair-guide.md](../gap-repair-guide.md):296 `patch_skip_reason` row,
+      [gap-vocabulary.md](gap-vocabulary.md):155 Hole 2 detection sentence, and
+      [cli-output.md](../cli-output.md):371 the human skip string. Step 9's docs pass is **done**.
 - [x] `try_dual_fit`'s six test callers rebuilt on `SeamLocks` (§8.2); every
       in-reach numeric value unchanged. **Done 2026-08-28** — `try_dual_fit`
       and `dual_fit_at_nominal` both take `&SeamLocks`; the six callers
@@ -1389,21 +1770,41 @@ claim and is the signal to stop.
       `rescued` / `edge_pinned` / `clamped`, populated from the locks on the production
       dual-fit path. Pairs 11 + 31 re-fingerprinted at the fixed binary: both abuts are
       **post-rescued**, `edge_pinned` is **0 of 52 locks**, no measurement moved.
-- [ ] **Tier 2 outcome differ** — build it (join on `a_start_secs` at 1 ms within a pair
-      label, never on index; report unjoined gaps both sides). Needs no media. §8.1.
-- [ ] **Tier 2 run, two arms** — arm A default, arm B `--lag-envelope-max-lag-ms 0`, same
-      HEAD binary, 51 pairs; then the secondary diff against `2026-08-13-repeat-terms` for
-      step 7's retry population. §8.1 acceptance.
-- [ ] **31/g7 ear check on the CURRENT fill** — production patches it today at
-      `confidence: high` with a 2.13× gain. Listen to what the Change removes; an audible
-      artifact is positive evidence the refusal is right. Higher information than 31/g9.
-- [ ] **31/g9 ear check** — Tier 1.5 predicts step 4 gives it a *new* dual-fit
-      fill (skip → patch, rescued locks 0.965/0.957 at pair 31's map step). Not a
-      regression on its face, but same pair and class as 31/g10's unexplained
-      blip. Listen before accepting; if it is bad, step 4 needs a narrower gate,
-      not a waiver.
-- [ ] 31/g7 production: `shoulders_abut`, not High keep (licensed listen WAVs
-      already on disk, 2026-08-18 post-sweep stem).
+- [x] **Tier 2 outcome differ** — `scripts/measure/diff-patch-outcomes.ps1` (2026-08-29).
+      Joins on `a_start_secs` at 1 ms within a pair label, never on index; reports unjoined
+      gaps both sides, near-miss joins with their delta, and run-level fields split
+      derived / independent. §8.1.
+- [x] **Tier 2 run, two arms** — arm A default, arm B `--lag-envelope-max-lag-ms 0`, same
+      HEAD binary, 51 pairs. **Done 2026-08-30**: `gap-files/2026-08-30-tier-2-{on,off}`,
+      3 changed of 1073 joined, all three predicted in advance (§8.1 run box). Acceptance met
+      on the numbers.
+- [x] **Tier 2 secondary diff** — arm A vs `gap-files/2026-08-13-repeat-terms`, for step 7's
+      anchored-retry population. Not covered by the A↔B diff, which holds step 7 fixed (both arms
+      are the same HEAD binary; only the envelope flag differs). **Done 2026-08-31** — needed no
+      media. Confounded by two weeks of merges (`program_gain`, `fill_geometry`), but decision-level
+      it is clean: the only three status/reason changes in 1073 joined gaps are the three A↔B
+      already found. Retry population admitted and lost nothing (§8.1 run box).
+- [x] **31/g9 ear check** — Tier 1.5 predicted step 4 gives it a *new* dual-fit fill (skip →
+      patch, rescued locks 0.965/0.957 at pair 31's map step); arm A produced exactly that
+      (0.972/0.904, adjust 0.0). Not a regression on its face, but same pair and class as 31/g10's
+      unexplained blip, so it was listened to before accepting. **PASSED 2026-08-31: excellent —
+      gain and placement both smooth.** Step 4 needs no narrower gate. Note this does **not**
+      resolve 31/g10's blip, which is a different gap and stays open in BACKLOG § *Post-join
+      defects*.
+- [x] 31/g7 production: `shoulders_abut`, not High keep. **Done 2026-08-30** by Tier 2 arm A —
+      the flip and the §4 payload are in the run box (§8.1). This was the *production
+      confirmation*; the ear check below is a separate item.
+- [x] **31/g7 ear check on the fill this Change removes** — the higher-information listen of the
+      two. Arm B patches it at `confidence: high`, `align_adjustment_secs` **-0.977**, r **0.437**.
+      **PASSED 2026-08-31: level near perfect, still a stutter** — Hole 2's predicted artifact on
+      the current binary's fill, so the refusal removes an audibly damaged fill (§5). (Until 2026-08-31 this item read "with a 2.13× gain" — that gain belongs to the
+      **2026-08-13** fill, not to the one being removed; see §8.1.) The on-disk WAVs
+      (`gap-files/2026-08-18-post-sweep`, stem `..._g007_full`, all three clips incl.
+      `_a_patched.wav`) **do not discharge it**: `program_gain` landed **2026-08-26**
+      (`ab1de2a`), *after* that sweep, so the patched clip is pre-`program_gain` vintage while the
+      fill actually being removed is arm B's (`normalize_gain` = `program_gain` = 0.9986,
+      `align_adjustment_secs` -0.977, r 0.437). Re-export against arm B's flags. The old clip is a
+      useful A/B on what the gain change did, not a substitute.
 
 ---
 
@@ -1454,9 +1855,24 @@ claim and is the signal to stop.
   load, not silently rescue-free.
 - **Tier 2 clean**: the two-arm `--patch-only` diff (arm A default vs arm B
   `--lag-envelope-max-lag-ms 0`, same HEAD binary) shows the Tier-1 abut set
-  `{11/g9, 31/g7}` flipped to `shoulders_abut` and **zero outcome changes on every
-  non-abut gap**, with the secondary diff against `gap-files/2026-08-13-repeat-terms`
-  covering step 7's retry population (§8.1). **Open.**
+  `{11/g9, 31/g7}` flipped to `shoulders_abut`, and every other outcome change is one
+  §8.1 named in advance, with the secondary diff against `gap-files/2026-08-13-repeat-terms`
+  covering step 7's retry population (§8.1).
+  **Ran 2026-08-30 — met, after correcting this criterion.** As written until that day it
+  read "**zero** outcome changes on every non-abut gap", which is **stricter than §8.1's own
+  revised acceptance** and was written before Tier 1.5 existed: 31/g9 is a non-abut gap and
+  it flips `skip` → `patch`. §8.1 predicted that flip by pair/gap in advance and made it an
+  acceptance line ("31/g9 may newly gain a dual-fit fill → ear check"), so the run satisfies
+  the intent and violated only the stale letter. The letter is now "predicted-in-advance",
+  which is the property that actually protects the merge; an *unpredicted* non-abut change
+  still blocks it. Result: 1070 / 1073 unchanged, 3 changed, all three predicted, run-level 0.
+  The secondary diff ran 2026-08-31 (no media needed) and is decision-clean: same three changes,
+  nothing else flipped. **This bullet is met.**
+- **Both ear checks passed 2026-08-31.** 31/g7's removed fill: level near perfect, still a
+  stutter - the artifact Hole 2 predicts, on the current binary's fill, so the refusal deletes an
+  audibly damaged fill (§5; the surviving stutter is *not* evidence about gain vs placement).
+  31/g9's new fill: excellent, gain and placement smooth - step 4 needs no narrower gate.
+  **This was the last gate on the close.**
 - Tier 1's abut set contains Tier 0's `{31/g7}`, and any *additional* member is
   explained by the placement change Tier 0 cannot model — 1 s template at
   `b_mapped` → 250 ms template at the seam (F14, §8.1). A new member with no such

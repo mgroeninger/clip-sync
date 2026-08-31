@@ -108,6 +108,55 @@ is settled-dead ([settled.md](settled.md) § A). Admission is the skip-gate
 capture **minus the exact lookalike tags**. This Change does not walk
 `outcomes` looking for a second class.
 
+### The captured list contains a known false positive (2026-08-30)
+
+The skip-gate's corpus run settles the admission population: `shoulders_abut`
+fires on **two** gaps in 51 pairs, and **one of them is not an insertion**.
+
+| gap | verdict | why |
+|---|---|---|
+| **31/g7** | real injection | downstream trail — g8-g11 stay displaced at ~-1.15 s thousands of seconds later, which only an inserted block can do to A's clock |
+| **11/g9** | **false positive** | no trail (g10-g15 lock at nominal, envelope never consulted); the -603.8 ms post lock reads r 0.500 / prom 0.072; its 1 s probe locks **both** shoulders at nominal (0.9992 / 0.9878) |
+
+Full derivation:
+[TEMP-early-shoulder-locks-collapse-skip-plan.md](TEMP-early-shoulder-locks-collapse-skip-plan.md)
+§8.1 *Injection vs overwrite* and §4 *The predicate is wider than "added silence"*.
+
+**This is a drain hazard, and it is this Change's to carry.** The skip-gate is
+record-only, so a wrong reason costs nothing there. Here it costs 599 ms of A
+that was never introduced silence — deleted, with picture then out of sync
+after it. 11/g9 is not excluded by any lookalike tag: it is not `clamped`, not
+`edge_pinned`, not `program_quiet` (all three are **zero** across the corpus's
+1942 locks), so it arrives in the visit list looking exactly like 31/g7.
+
+**The concat-confirm (§2) is the presumed catcher, and that is a hypothesis,
+not a result.** The join it scores is built at the abutting lock, and for 11/g9
+that lock is the false peak — so the confirm ought to fail `join_dead`. Nobody
+has run it. Until someone has, do not treat §2 as covering this.
+
+**A second, independent guard is available and cheap.** An injection is a rigid
+clock shift, so the step must read the same at any window length. Two step
+measurements already exist per gap before the abut decision:
+`(bridge_frames - gap_frames) / sample_rate` from the 250 ms seam templates, and
+`post.frac_lag_ms - pre.frac_lag_ms` from the 1 s `lag_decision` shoulders.
+Corpus agreement is **p50 0.01 ms, p90 0.02 ms** over 971 gaps. On the two
+candidates: **31/g7 agrees to 0.17 ms; 11/g9 disagrees by 608 ms.** Any
+threshold in 1-100 ms separates them, so the number is not tuned. It reads no
+refuted signal — not prominence, not the sign of `post_seam_global_r`, and not
+`rescued` (which would drop exactly the sub-600 ms injections the fine search
+would otherwise find unaided).
+
+**Decide between them; do not ship both silently.** Either the concat-confirm
+declines 11/g9 on a fixture — in which case record that and add no gate — or it
+does not, and the step-agreement guard goes in as an admission filter ahead of
+the visit. What is not acceptable is draining under `--collapse-introduced-silence`
+without one of the two demonstrated on 11/g9 specifically.
+
+Limits, so they are not rediscovered: neither test distinguishes an injection
+from an overwrite paired with a compensating cut elsewhere (nothing supports
+one), and step agreement only narrows candidates that already have
+`bridge ~ 0`.
+
 ---
 
 ## 2. The check (inside the visit, after splice, no re-search)
@@ -244,6 +293,14 @@ shorter, mux is still today’s argv, audio after the hole sits on picture.
 The stutter cannot exist under the flag — there is no fill and no residual
 silence.
 
+**The stutter is confirmed by ear, 2026-08-31.** Listened on the skip-gate's arm B (the fill the
+predecessor removes) at `program_gain` 0.9986: **level near perfect, still a stutter** — a donor
+fill duplicating adjacent program, which is Hole 2's signature. That makes the premise of this
+Change ear-backed, not inferred: there is a real artifact to remove, and no fill can serve this
+gap. (The stutter *surviving* the 2026-08-26 gain fix proves nothing on its own — gain is applied
+downstream of placement selection and could not have caused a temporal repetition. The evidence is
+the artifact's character, plus its audibility on the current binary's fill.)
+
 In-reach dual-fit fillable silence-splices never reach this visit (they
 were patched). A `ProgramQuiet` skip reason is never captured. A
 `shoulders_abut` row with `program_quiet: true` is captured and this visit
@@ -295,6 +352,11 @@ refuses it (tag decline, no warn, no cut).
 
 - [ ] `introduced_silence_join` unit tests: abut fixture passes; a dead
       A-A join declines; out-of-range collar is `None` (no panic).
+- [ ] **11/g9 does not drain.** The one corpus false positive (§1) must be
+      refused, and the refusal must be attributable: either `join_dead` from
+      the concat-confirm on an 11/g9-shaped fixture (-603.8 ms post lock at
+      r 0.500, both shoulders live at nominal), or an explicit step-agreement
+      admission filter. Blocks `--collapse-introduced-silence` shipping.
 - [ ] Lookalike tags on the skip-gate fixture: `clamped` / `edge_pinned` /
       `program_quiet` → no warning, no drain (flag on or off), skip stays
       `shoulders_abut` with `collapse_declined` set to that tag.
