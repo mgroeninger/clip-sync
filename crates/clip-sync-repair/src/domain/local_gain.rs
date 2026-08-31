@@ -1,6 +1,6 @@
 //! Hole-local fill gain from the paired collar either side of a gap.
 //!
-//! The apply half of `docs/dev/TEMP-local-paired-gain-plan.md`. Measurement lives in
+//! The apply half of `docs/dev/archive/TEMP-local-paired-gain-plan.md`. Measurement lives in
 //! [`program_levels`](crate::domain::program_levels), which stamps a
 //! [`CollarLevelOffset`] on every gap at scan time; this module is the one place that turns one
 //! into a multiplier, and the split is deliberate — a floor inside the estimator would have

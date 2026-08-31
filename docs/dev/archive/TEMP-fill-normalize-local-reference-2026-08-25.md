@@ -204,7 +204,7 @@ Written on archiving. The measurements are durable; the design half is not.
 | Result 3's instrument | **Stands, and was confirmed.** `edge_delta_db − 20·log10(normalize_gain)` predicted 5/g6 at **−1.39** dB and 2/g6 at **+3.02**; the program-gain census measured **−1.40** and **+2.97** with local off. But `normalize_gain` is now the product `g_program * g_local`, so "the excess is our gain" no longer localizes blame — attributing it to the **local** reference needs `normalize_gain / program_gain` |
 | Result 6, and the second headline | **Void.** Both argue that a cap must reach every boost, over a ~4.5 dB corridor between 15/g6 (+1.14 dB) and 45/g5 (+5.61 dB). That corridor was derived from whole-fill RMS against a wide A window, which is the estimator being replaced. No cap is being built |
 | **Q1** — are 5/g6 and 15/g3 audible? | **Answered 2026-08-27, both audible** (Result 4). 15/g3 is the discriminator: a large boost is audible even when the seams are not hot, so the axis is the gain, not `edge_delta_db`. Evidence for the collar-residual `--normalize` must-not-revive test (now n = 5); not a gate on shipping and not a revival of the three RMS-window candidates |
-| **Q2** — which fix? | **Closed.** All three candidates (narrow `normalize_window_secs`, quieter-of-wide-vs-local, cap by the local shoulder ratio) are withdrawn at [BACKLOG.md](../../../BACKLOG.md) § *Fill normalize*, superseded by [../TEMP-local-paired-gain-plan.md](../TEMP-local-paired-gain-plan.md) — a paired B−A collar residual around the hole, not an RMS-window choice |
+| **Q2** — which fix? | **Closed.** All three candidates (narrow `normalize_window_secs`, quieter-of-wide-vs-local, cap by the local shoulder ratio) are withdrawn at [BACKLOG.md](../../../BACKLOG.md) § *Fill normalize*, superseded by [../TEMP-local-paired-gain-plan.md](TEMP-local-paired-gain-plan.md) — a paired B−A collar residual around the hole, not an RMS-window choice |
 | **Q3** — default `normalize_fill` false? | **Answered yes**, shipped 2026-08-26 ([TEMP-program-gain-plan.md](TEMP-program-gain-plan.md)). This note argued *against* it, on the ground that 15/g6 (+1.14 dB) and 2/g6 (+0.25 dB) are genuine quiet-donor boosts that turning the policy off gives up. That cost is **accepted, not refuted**: both are under 1.2 dB and both are recoverable with `--normalize` |
 | **Q4** — the acceptance test | **Split.** "The six 'ours' gaps fall to approximately unity" and "24/g46 stays at 0.00 dB" survive verbatim as [TEMP-program-gain-plan.md](TEMP-program-gain-plan.md) § 11 rows 1–2. "15/g6 and 2/g6 must keep their boosts" is **withdrawn** — § 11 replaces it with *may lose under the default, must regain under `--normalize`* |
 
@@ -212,7 +212,7 @@ What replaced the fix this note was sizing: a whole-program A↔B scalar
 (`g_program = 10^(−offset_db/20)`) on every B-derived fill with the hole-local knob defaulted off
 ([TEMP-program-gain-plan.md](TEMP-program-gain-plan.md)), and a paired collar residual to
 replace `compute_fill_gain` when the local knob is re-enabled
-([../TEMP-local-paired-gain-plan.md](../TEMP-local-paired-gain-plan.md)). Neither is a cap on the
+([../TEMP-local-paired-gain-plan.md](TEMP-local-paired-gain-plan.md)). Neither is a cap on the
 RMS ratio. The corpus fact that made the whole-program half possible — every pair's offset inside
 ±0.26 dB — also means the program scalar does **not** rescue this note's cohort: the six were
 boosted 5.6–12 dB by a local reference, and no ~0.2 dB master match touches that. Turning the local

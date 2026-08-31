@@ -441,7 +441,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             });
 
         // Step 6c: the same paired measurement per gap, over a collar of A blocks either side of
-        // the hole (`docs/dev/TEMP-local-paired-gain-plan.md`). Same siting reason as 6b and the
+        // the hole (`docs/dev/archive/TEMP-local-paired-gain-plan.md`). Same siting reason as 6b and the
         // same inputs — this is the last point at which the timelines exist.
         //
         // Skipped wholesale when the channel counts are not comparable: RMS over interleaved

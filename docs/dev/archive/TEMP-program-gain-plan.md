@@ -47,7 +47,7 @@ seven. (Those pins also censor the distribution — [settled.md](../settled.md) 
   **reported**, never a per-gap bucket (§ 4).
 - Fixing the local A-border window (5 s + 5 s energy pool). The replacement
   estimator is a separate Change:
-  [TEMP-local-paired-gain-plan.md](../TEMP-local-paired-gain-plan.md). Do not bundle.
+  [TEMP-local-paired-gain-plan.md](TEMP-local-paired-gain-plan.md). Do not bundle.
 - ITU / LUFS.
 - Peak-aware limiting / clip protection beyond a dB clamp.
 - Reopening the symmetric clamp on *local* normalize.
@@ -552,7 +552,7 @@ in `PatchRequestSettings::into_request` and carried on the request.
 - [x] Dual-fit / SilenceSplice: takes `g_program`, keeps local at `1.0`
 - [x] Docs: [pipeline.md](../../pipeline.md) § Fill gain (rewritten to two halves), [json-output.md](../../json-output.md) (`normalize_gain` is now a product, per-gap `program_gain`, new § ProgramGainReport; `program_levels` no longer "report-only"), [cli-output.md](../../cli-output.md) (the `Gain:` line, and the Levels line's "no fill gain derives from it" retracted), README flags + config block
 - [x] Tests in § 11; `cargo test --workspace` green; `cargo clippy` clean
-- [x] Did **not** bundle with [TEMP-local-paired-gain-plan.md](../TEMP-local-paired-gain-plan.md). B shoulders unread
+- [x] Did **not** bundle with [TEMP-local-paired-gain-plan.md](TEMP-local-paired-gain-plan.md). B shoulders unread
 
 ---
 
@@ -586,6 +586,6 @@ Plan closed and archived that day.
 
 - [TEMP-ab-program-levels-plan.md](TEMP-ab-program-levels-plan.md) — measurement, trust inputs, § 8
 - [TEMP-fill-normalize-local-reference-2026-08-25.md](TEMP-fill-normalize-local-reference-2026-08-25.md) — why local defaults off
-- [TEMP-local-paired-gain-plan.md](../TEMP-local-paired-gain-plan.md) — residual local estimator (separate Change)
+- [TEMP-local-paired-gain-plan.md](TEMP-local-paired-gain-plan.md) — residual local estimator (separate Change)
 - [settled.md](../settled.md) § A B-relative gain; § C local-attenuation latch; § E `normalize_gain` contaminates `peak_delta_db`
 - [pipeline.md](../../pipeline.md) — current boost-only local normalize

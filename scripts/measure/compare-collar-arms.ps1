@@ -1,7 +1,7 @@
 #!/usr/bin/env pwsh
 #Requires -Version 7.0
 # Matched per-gap comparison of TWO collar-level census arms (§4b of
-# docs/dev/TEMP-local-paired-gain-plan.md). Sibling of census-collar-levels.ps1, which describes ONE
+# docs/dev/archive/TEMP-local-paired-gain-plan.md). Sibling of census-collar-levels.ps1, which describes ONE
 # arm; this one answers "did the change help?", which no single-dump census can.
 #
 # WHY THIS IS A SCRIPT AND NOT AN AD-HOC JOIN. Every arm comparison in §4b has to obey the same two

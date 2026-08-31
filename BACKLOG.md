@@ -89,20 +89,24 @@ energy-pooled 5 s + 5 s vs −52 dB local shoulders). Boost-only PR archived:
 B-relative gain is **refuted** ([settled.md](docs/dev/settled.md) § A); the unvalidated attenuation
 half is latched (§ C).
 
-**Shipped 2026-08-27** — the whole-program half of the fix is done and accepted:
-[archive/TEMP-program-gain-plan.md](docs/dev/archive/TEMP-program-gain-plan.md) applies
+**Both halves shipped; the estimator this section was written about no longer exists.**
+The whole-program half landed 2026-08-27
+([archive/TEMP-program-gain-plan.md](docs/dev/archive/TEMP-program-gain-plan.md)) — it applies
 `g_program = 10^(-offset_db/20)` to every B-derived fill and defaults `normalize_fill` **off**, which
-removed the n = 6 over-boost outright (only `g_program` remains, under 0.3 dB on every corpus pair)
-without crushing 24/g46. What is left below is the **local** half: the hole-local gain is still
-`compute_fill_gain`'s wide-A-border RMS ratio whenever `--normalize` is passed, and under that flag
-it is now a **boost-only** regime — 111 of 308 gaps changed, zero cuts, seven still pinned at the
-12 dB clamp. Do not re-litigate the default; the rows below are about making the local gain correct
-enough to enable.
+removed the n = 6 over-boost outright without crushing 24/g46. The **local** half landed 2026-08-31
+([archive/TEMP-local-paired-gain-plan.md](docs/dev/archive/TEMP-local-paired-gain-plan.md)):
+`compute_fill_gain`'s wide-A-border RMS ratio is **deleted**, replaced by a paired B−A collar
+residual around each hole. Its acceptance roll-up is in [pipeline.md](docs/pipeline.md) § Fill gain
+— 277 of 308 patched gaps applied, 150 boosts / 127 cuts, median +0.011 dB, zero gaps at any rail,
+and all seven former 12 dB clamp pins now inside ±0.16 dB.
+
+What is left below is **not** about the estimator. Do not re-litigate the default here: flipping
+`normalize_fill` on wants an ear pass on gaps that move under the *collar*, and the corpus numbers
+say it is conservative, which is not the same as saying it is right.
 
 | Item | Next action | Done when |
 |------|-------------|-----------|
-| **Local paired-shoulder gain** | [TEMP-local-paired-gain-plan.md](docs/dev/TEMP-local-paired-gain-plan.md) — replace `compute_fill_gain` (5 s + 5 s A-border RMS vs whole-fill RMS) with the same paired B−A difference as the program scalar, restricted to collar blocks around the hole, applied as a residual against the applied program offset. **Separate Change** from program-gain; do not bundle. Does not flip the `normalize_fill` default. The RMS-window options (narrow / quieter-of / cap) and the findings-note Q4 “keep 15/g6 and 2/g6 boosts” test are withdrawn — those boosts were fill RMS vs a wide A window. **Two halves, measurement first** (plan § 4a): the collar stamps unconditionally at scan and `normalize_fill` stays off, so the corpus census that sets `MIN_LOCAL_PAIRS`, `local_pair_collar_secs` and `MAX_LOCAL_RESIDUAL_DB` costs one ordinary scan and lands before anything applies a local gain. The residual gets its **own** bound — `max_fill_gain_db` (12.0, uncalibrated since 2026-06-08) is not reused | § 4a's census exists and the three constants are stated against it, including the corpus abstention rate; scan JSON carries `collar_level` with per-side medians; `--normalize` does not revive the n=5 over-boost; `g_program * g_local = 10^(-d_local/20)` when both apply |
-| **Ear-label the seven clamp-pinned gaps** | The 2026-08-25 census found seven patched gaps pinned at the 12.000 dB `max_fill_gain_db` ceiling — 5@4199.1 s, 10@6479.8 s, 10@6501.0 s, 19@95.7 s, 43@6144.7 s, 44@1714.1 s, 45@1142.2 s. With corpus offsets inside 0.26 dB a 12 dB demand **cannot** be master mismatch, so each is a local-reference failure by construction — the largest available evidence for the default-off row above. `--gap-listen` each and label. Note the clamp censors: these mean *at least* 12 dB ([settled.md](docs/dev/settled.md) § E). 5@4199.1 is 5/g6, labelled audible 2026-08-27 | All seven are labelled and the audible fraction is known |
+| **Ear-label the gaps the collar *moves*** | **Retargeted 2026-08-31 — the original seven are answered.** The 2026-08-25 census's seven 12.000 dB pins were `compute_fill_gain` artifacts: under the paired collar all seven read within **±0.16 dB** (5/g6 +0.155, 10/g9 −0.065, 10/g11 +0.066, 19/g2 +0.061, 43/g7 −0.097, 44/g6 −0.070, 45/g4 abstaining), six of them admitted on two-sided collars of n = 9 … 76. Six of the seven demands are gone by measurement, not by refusal, so there is nothing left to label there — 5/g6 stays labelled audible as evidence about the **old** estimator. What now needs ears is the set the collar actually changes, because that is the only missing input to the `normalize_fill` default: the **8 gaps applying more than 0.5 dB** (50/g8 +1.573, 22/g2 −0.988, 32/g5 +0.915, 23/g11 −0.722, 40/g6 +0.587, 48/g4 +0.572, 50/g6 −0.534, 36/g3 −0.522) and the **15 admitted on 8–11 pairs** just over the floor, of which 48/g4 is both — n = 9 at `se_db` 0.859 against a 1.0 bound, applying +0.572 dB. `--gap-listen` each under `--normalize` and label. Note the **cuts are new**: 127 of 277 applied gaps attenuate, a direction no ear label in the corpus covers | The moved-set labels exist and the audible fraction under `--normalize` is known, split by direction |
 | **Re-label `2026-08-08-edge-listen`** | Pairs 7/8/12 are swapped. Required before quoting "lowest labelled clean" as a bound | Relabelled |
 | Residual seam `g` (`a ≈ g·b`) as the production gain | Candidate replacement — estimates level from the **seam** rather than whole-fill RMS. Needs verdict plumbing plus corpus rules for when the estimate is trustworthy | Evaluated against the sweep |
 

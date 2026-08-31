@@ -42,7 +42,7 @@ pub struct Gap {
     /// turns one into a gain.
     ///
     /// Measurement only: nothing applies a gain from it. Plan:
-    /// `docs/dev/TEMP-local-paired-gain-plan.md`.
+    /// `docs/dev/archive/TEMP-local-paired-gain-plan.md`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub collar_level: Option<crate::domain::program_levels::CollarLevelOffset>,
 }

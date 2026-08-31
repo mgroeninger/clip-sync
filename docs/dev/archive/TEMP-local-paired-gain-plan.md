@@ -1,7 +1,7 @@
 # TEMP — Local paired-shoulder fill gain (replace `compute_fill_gain`)
 
 **Status:** draft, 2026-08-26. **Startable** as a **separate Change** from
-[TEMP-program-gain-plan.md](archive/TEMP-program-gain-plan.md) — do not bundle. The
+[TEMP-program-gain-plan.md](TEMP-program-gain-plan.md) — do not bundle. The
 measurement it reuses (`paired_level_offset`) and the program prior
 (`program_levels.offset`) already exist on the scan report. Reviewed against
 the landed program-gain tree the same day: § 6 (scan threading + helper), § 7
@@ -32,16 +32,16 @@ against the tree (it had landed) and the **arm-4 write-back** is broken out as
 the remaining work — the four constants are decided in § 4b and still absent
 from the code.
 
-**Tracked as:** [BACKLOG.md](../../BACKLOG.md) § *Fill normalize boosts against a
+**Tracked as:** [BACKLOG.md](../../../BACKLOG.md) § *Fill normalize boosts against a
 non-local reference* → *Local paired-shoulder gain*.
 
 **Companions:** program scalar
-[TEMP-program-gain-plan.md](archive/TEMP-program-gain-plan.md) § 5 (stacking this
+[TEMP-program-gain-plan.md](TEMP-program-gain-plan.md) § 5 (stacking this
 discharges); capture
-[archive/TEMP-ab-program-levels-plan.md](archive/TEMP-ab-program-levels-plan.md);
+[archive/TEMP-ab-program-levels-plan.md](TEMP-ab-program-levels-plan.md);
 local-reference defect
-[TEMP-fill-normalize-local-reference-2026-08-25.md](archive/TEMP-fill-normalize-local-reference-2026-08-25.md);
-[settled.md](settled.md) § A **B-relative / donor-shoulder fill gain** (refuted —
+[TEMP-fill-normalize-local-reference-2026-08-25.md](TEMP-fill-normalize-local-reference-2026-08-25.md);
+[settled.md](../settled.md) § A **B-relative / donor-shoulder fill gain** (refuted —
 this plan is **not** that idea, see § 2); latched attenuation-half of *RMS* local
 normalize (§ C — also not this idea, see § 5).
 
@@ -183,7 +183,7 @@ the wrong B material with nothing to out-vote it.
 
 **The corpus base rate is one gap.** 31/g7 (straddling a −1.15 s step) is the
 only within-gap boundary measured, and the sequence test reads 0 / 0 elsewhere —
-[settled.md](settled.md) § D. That is what makes this a detector and not a gate:
+[settled.md](../settled.md) § D. That is what makes this a detector and not a gate:
 a refusal rule calibrated against n = 1 is not calibrated. It also means the
 detector has a **known expected count** for § 4a's census — roughly one — so a
 census that flags many collars is saying the collar is misregistering for some
@@ -1191,11 +1191,41 @@ Q4 of the findings note was written for an RMS-window tweak that had to keep
 15/g6 and 2/g6 boosts. **That test is withdrawn** — those boosts were fill RMS
 vs a wide A window, which this estimator does not compute.
 
-| Gap | Expect with `--normalize` |
-|---|---|
-| 45/g4, 45/g5, 19/g13, 5/g6, 15/g3 | `local_gain ≈ 1` — either reason. `applied` with residual ~0 is the designed path (a quiet A collar is still *active*: the threshold is ≈ −60 dBFS and 19/g13's shoulders read −52), but `abstained_n` is an equally passing outcome and the more likely one on a short or transient-heavy collar. The defect is dead either way; **record which**, because a corpus that mostly abstains is § 4a's first question answered the wrong way |
-| 24/g46 | not crushed (scalar from shoulders, not fill RMS) |
-| 15/g6, 2/g6 | **may sit at unity**; not a failure |
+| Gap | Expect with `--normalize` | **Result (2026-08-31)** |
+|---|---|---|
+| 45/g4, 45/g5, 19/g13, 5/g6, 15/g3 | `local_gain ≈ 1` — either reason. `applied` with residual ~0 is the designed path (a quiet A collar is still *active*: the threshold is ≈ −60 dBFS and 19/g13's shoulders read −52), but `abstained_n` is an equally passing outcome and the more likely one on a short or transient-heavy collar. The defect is dead either way; **record which**, because a corpus that mostly abstains is § 4a's first question answered the wrong way | **Pass, and mostly by the designed path, not by abstention.** 45/g4 `abstained_n` (n = 7, one-sided 7/0); 45/g5 `applied` −0.041 dB (n = 36); 19/g13 `applied` **+0.239 dB** (n = 51, both sides) — the quiet-collar case resolves as predicted, active and admitted; 5/g6 `applied` **+0.155 dB** (n = 66); 15/g3 `applied` −0.071 dB (n = 44). Four of five admitted on well-populated two-sided collars, so the defect dies by measurement rather than by declining to look. 45/g3 is worth noting beside them: `abstained_dispersion` on a **one-sided** 17-pair collar (0/17) whose spread is 0.179 dB — a precise reading refused for having no pre-side |
+| 24/g46 | not crushed (scalar from shoulders, not fill RMS) | **Pass** — `abstained_n`, unity, on a 4-pair one-sided (4/0) collar. Not crushed, and it never reached the residual at all |
+| 15/g6, 2/g6 | **may sit at unity**; not a failure | **Both at unity, as allowed.** 15/g6 `applied` −0.121 dB; 2/g6 `abstained_n` (n = 6). Neither keeps its old boost (+1.14 / +0.25 dB), which is the withdrawn Q4 test resolving in the direction the withdrawal predicted |
+
+**The 111 and the 7, as § 10 required.** Against the 2026-08-27 baseline over the
+same 308 patched gaps: **277 applied / 31 abstained / 0 refused**, 150 boosts and
+**127 cuts** where the old arm had none, median applied residual **+0.011 dB**
+against +1.91, largest applied **+1.573 dB** against a clamped 12.0, and **zero
+gaps at any rail**. All seven pins are answered rather than merely unreachable
+— 5/g6 +0.155, 10/g9 −0.065, 10/g11 +0.066, 19/g2 +0.061, 43/g7 −0.097,
+44/g6 −0.070, and 45/g4 abstaining; six of the seven on two-sided collars of
+n = 9 … 76, so the collar **disagrees** with each old 12 dB demand by more than
+11 dB. None became `refused_residual` at a new rail.
+
+**Abstention rate: 31 of 308 = 10.1%** — § 4a's first question answered the
+right way. This Change replaced the estimator; it did not delete it. Composition:
+`abstained_n` 19 (17 with a real collar of 1–7 pairs, only 9/g6 and 18/g27 with
+none at all), `abstained_dispersion` 12 (**3 one-sided + 9 past `MAX_LOCAL_SE_DB`**).
+Concentrated — pairs 24, 31, 50 and 3 carry 14 of the 31; pair 50 abstains on 4
+of its 10.
+
+**Stacking identity confirmed on real media**, not only in the unit tests:
+`|g_program_db + g_local_db + offset_db| ≤ 1.3e-06 dB` across all 277 applied
+gaps, and `program_gain × local_gain == normalize_gain` to 1.5e-07. Not the
+square.
+
+**One finding the acceptance run added** — `MAX_LOCAL_RESIDUAL_DB` never fired,
+and the three collars that exceed it (31/g9 −6.52, 50/g9 −5.82, 50/g10 +7.05)
+were all caught upstream by `se_db`. The bound is therefore **untested rather
+than validated**, and `refused_residual` is a branch with no corpus instance.
+Recorded as a standing caution in [settled.md](../settled.md) § E, because the two
+constants cannot be recalibrated independently: raising `MAX_LOCAL_SE_DB` is
+what would expose the residual bound.
 
 Default flags (local off) are program-gain’s acceptance, not this plan’s.
 
@@ -1214,7 +1244,7 @@ Default flags (local off) are program-gain’s acceptance, not this plan’s.
 - [x] Hoist `channels_comparable` onto `ProgramLevels` (keep it on `AbLevelOffset`; same fact, existing consumers)
 - [x] Thread `local_pair_collar_secs` onto `ScanGapsRequest` (`composition.rs` and every request literal) — because the timelines live in `ScanGaps`, **not** because of `--patch-only` (§ 3); echoed back as `GapReport.local_pair_collar_secs` so a dump is attributable to its arm
 - [x] Stamp `Gap.collar_level` in `ScanGaps` next to `program_levels` (timelines still live); skip when channels incomparable
-- [x] Gap object table in [json-output.md](../json-output.md); omit when `None` (`GapScanJson` serializes `Gap` already)
+- [x] Gap object table in [json-output.md](../../json-output.md); omit when `None` (`GapScanJson` serializes `Gap` already)
 - [x] `scripts/measure/census-collar-levels.ps1` — per-**gap** sibling of `census-program-levels.ps1` (which is per-pair and cannot answer § 4a)
 - [x] `scripts/measure/compare-collar-arms.ps1` — matched two-arm join; no single-dump census can answer "did it help?", and both of the rules that answer it wrong are silent failures (§ 4b)
 - [x] **§ 4a: run the corpus census.** Arms 1–4 complete; the constants are stated against arm 4 in § 4b Result 4
@@ -1244,10 +1274,10 @@ were re-verified against the corrected census on 2026-08-31 (§ 4b Result 4).
 
 **Docs — wider than the gap table; these all go actively false**
 
-- [x] [json-output.md](../json-output.md) § `GapPatchStatus`: the `normalize_gain` narrative asserts *"never below 1.0"*, *"`g_local` (never serialized separately)"* and *"there is deliberately no third field"* — all three die with `local_gain`. Also § CollarLevelOffset's *"Nothing reads it yet"*, the 2.0 collar default (already stale at 4.0), and the 2026-08-25 `FillLevelCheck` cohort finding, which is now scoped to the boost-only regime it was measured on
-- [x] [pipeline.md](../pipeline.md) § Fill gain: the *Hole-local* paragraph (RMS vs A-border, `[1.0, max_fill_gain_db]` clamp), the *How they stack* paragraph (dual-fit takes program only), and *What `--normalize` now means* (the boost-only regime + the 111/308 measurement — supersede it, do not delete the number)
-- [x] [gap-scan.md](../gap-scan.md) *"`normalize_gain` is censored at its clamp"* → refusal, not clamp
-- [x] [settled.md](settled.md) § E *The fill-gain distribution is censored at the clamp*: still true for old dumps, no longer describes current behaviour — date-scope it
+- [x] [json-output.md](../../json-output.md) § `GapPatchStatus`: the `normalize_gain` narrative asserts *"never below 1.0"*, *"`g_local` (never serialized separately)"* and *"there is deliberately no third field"* — all three die with `local_gain`. Also § CollarLevelOffset's *"Nothing reads it yet"*, the 2.0 collar default (already stale at 4.0), and the 2026-08-25 `FillLevelCheck` cohort finding, which is now scoped to the boost-only regime it was measured on
+- [x] [pipeline.md](../../pipeline.md) § Fill gain: the *Hole-local* paragraph (RMS vs A-border, `[1.0, max_fill_gain_db]` clamp), the *How they stack* paragraph (dual-fit takes program only), and *What `--normalize` now means* (the boost-only regime + the 111/308 measurement — supersede it, do not delete the number)
+- [x] [gap-scan.md](../../gap-scan.md) *"`normalize_gain` is censored at its clamp"* → refusal, not clamp
+- [x] [settled.md](../settled.md) § E *The fill-gain distribution is censored at the clamp*: still true for old dumps, no longer describes current behaviour — date-scope it
 - [x] `patch_result.rs` doc comment on `normalize_gain` (*"Never below 1.0 since 2026-08-12"*) and `config.rs` on `max_fill_gain_db` (removed outright — see above). Also `config.rs` on `normalize_window_secs`, which still claimed to size *"A's border RMS"* — a quantity nothing computes any more
 - [x] README `--normalize` row; `max_fill_gain_db` dropped from the config block with the knob. Also the two census scripts, which are not in this list and should have been: `measure-patch-outcomes.ps1` asserted *"never below 1.0"* in `Get-NormalizeGain`, and `census-program-levels.ps1`'s gain join emitted only the product — it now carries `program_gain`, `local_gain` and `local_gain_reason` separately, since regressing the pair offset against `normalize_gain` partly regresses that offset against itself
 
@@ -1282,8 +1312,8 @@ between "this Change replaced the estimator" and "this Change deleted it".
 
 ## Related
 
-- [TEMP-program-gain-plan.md](archive/TEMP-program-gain-plan.md) — file-wide scalar, stacking identity
-- [archive/TEMP-ab-program-levels-plan.md](archive/TEMP-ab-program-levels-plan.md) — pairing rules
-- [TEMP-fill-normalize-local-reference-2026-08-25.md](archive/TEMP-fill-normalize-local-reference-2026-08-25.md) — defect this replaces the RMS fix for
-- [settled.md](settled.md) § A B-relative gain; § C RMS-attenuation latch
-- [pipeline.md](../pipeline.md) — current two-half fill gain (program scalar + RMS local residual)
+- [TEMP-program-gain-plan.md](TEMP-program-gain-plan.md) — file-wide scalar, stacking identity
+- [archive/TEMP-ab-program-levels-plan.md](TEMP-ab-program-levels-plan.md) — pairing rules
+- [TEMP-fill-normalize-local-reference-2026-08-25.md](TEMP-fill-normalize-local-reference-2026-08-25.md) — defect this replaces the RMS fix for
+- [settled.md](../settled.md) § A B-relative gain; § C RMS-attenuation latch
+- [pipeline.md](../../pipeline.md) — current two-half fill gain (program scalar + RMS local residual)

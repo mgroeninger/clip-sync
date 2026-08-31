@@ -41,7 +41,7 @@ pub const MIN_PAIRS: usize = 50;
 /// Minimum accepted pairs before a collar offset may be **applied as a gain**.
 ///
 /// **Necessary, not sufficient** — set by the 51-pair / 1073-gap corpus census, arm 4
-/// (`docs/dev/TEMP-local-paired-gain-plan.md` § 4b Result 4, `W` = 4.0 on the shoulder-corrected
+/// (`docs/dev/archive/TEMP-local-paired-gain-plan.md` § 4b Result 4, `W` = 4.0 on the shoulder-corrected
 /// map). 711 gaps (66.3%) clear it; raising it to 16 moves the median residual only 0.136 → 0.117
 /// dB and costs 167 gaps, so the extra strictness buys nothing.
 ///
@@ -230,8 +230,10 @@ pub struct AbLevelOffset {
 /// blocks either side of one gap — the hole's own master relationship, to be read against the
 /// whole-file one rather than instead of it.
 ///
-/// Plan: `docs/dev/TEMP-local-paired-gain-plan.md`. Measurement only in this Change; no gain reads
-/// it. No `chunks` — a 4 s collar is one chunk by construction.
+/// Plan: `docs/dev/archive/TEMP-local-paired-gain-plan.md`, closed 2026-08-31. Stamped
+/// unconditionally at scan — measurement never depended on `normalize_fill` — and read on the apply
+/// side by [`collar_residual_gain`](crate::domain::collar_residual_gain) since that date. No
+/// `chunks` — a 4 s collar is one chunk by construction.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct CollarLevelOffset {
     /// Median paired difference over the **pooled** collar. This — not either side alone — is what

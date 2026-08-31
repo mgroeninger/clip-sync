@@ -228,7 +228,7 @@ pub struct RepairConfig {
     /// Half-width (seconds) of the per-gap paired level collar stamped on the scan report
     /// (`Gap::collar_level`). Read by **scan**, not patch — see `ScanGapsRequest`.
     ///
-    /// **Set by the corpus census** (`docs/dev/TEMP-local-paired-gain-plan.md` § 4b Results 1 and
+    /// **Set by the corpus census** (`docs/dev/archive/TEMP-local-paired-gain-plan.md` § 4b Results 1 and
     /// 4), which measured the choice rather than arguing it: doubling 2.0 → 4.0 buys `n_pairs`
     /// ×2.06 with `spread_db` **flat** (×1.01) and the collar's standard error ×0.717 ≈ 1/√2, takes
     /// abstentions from 133 to 50 over 1073 gaps, and costs no gap its collar. Improving by exactly

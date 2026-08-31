@@ -45,7 +45,7 @@ pub struct PatchAudioRequest {
 }
 
 impl PatchAudioRequest {
-    /// The hole-local half of this gap's fill gain (plan `TEMP-local-paired-gain-plan.md` § 8).
+    /// The hole-local half of this gap's fill gain (plan `docs/dev/archive/TEMP-local-paired-gain-plan.md` § 8).
     ///
     /// Every input but the collar itself is a run constant, which is why this lives on the request
     /// rather than being rebuilt at each of the two call sites that need it (bracket characterize

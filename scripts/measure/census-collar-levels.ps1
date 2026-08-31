@@ -6,7 +6,7 @@
 # whole-program offset. Q6 reports which map was used and compares the two cohorts; on a dump that
 # predates the field, Q6 says so rather than guessing.
 #
-# The calibration pass of docs/dev/TEMP-local-paired-gain-plan.md §4a. Per-**gap** sibling of
+# The calibration pass of docs/dev/archive/TEMP-local-paired-gain-plan.md §4a. Per-**gap** sibling of
 # census-program-levels.ps1, which is per-**pair**: every question §4a asks is about one hole, not
 # one file. Consumer only — opens no media, runs no repair, needs no oracle. Point it at repair JSON
 # that `measure-patch-outcomes.ps1` (or any `--patch-only --format json` run) already wrote.
