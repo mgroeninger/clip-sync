@@ -90,8 +90,13 @@ function Get-Median([double[]]$Values) {
 }
 
 # Import-Csv renders an absent value as '', which [double] silently turns into 0. A null residual
-# means the whole-program offset abstained (§4 prior = 0) and a null map_lag_ms means no fit cleared
-# the trust floor; both would read as a real zero and change every count below.
+# means the row ABSTAINED (no collar at all) and a null map_lag_ms means no fit cleared the trust
+# floor; both would read as a real zero and change every count below.
+#
+# Since 2026-08-31 a residual is no longer null merely because the whole-program offset was refused
+# or absent: §4's prior is 0 there, so the census records the residual as `d_local` itself and names
+# the case in `prior_source`. Both arms read the same pairs, so the prior cannot differ across a
+# joined row - the change moves rows INTO every cohort below rather than between them.
 function AsD([object]$Value) {
     if ($null -eq $Value -or "$Value" -eq '') { return $null }
     return [double]$Value

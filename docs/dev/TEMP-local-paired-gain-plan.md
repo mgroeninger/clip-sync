@@ -329,7 +329,7 @@ same number.
 | abstain | Applied | `−offset_db` |
 | abstain | Refused / off | 0 |
 
-**`MIN_LOCAL_PAIRS = 8` — provisional, see § 4a.** Whole-file `MIN_PAIRS` is 50;
+**`MIN_LOCAL_PAIRS = 8` — provisional, see § 4a.** *(Answered — § 4b Result 4 keeps it at 8 but demotes it: it is **necessary, not sufficient**, and the dispersion admission test is what disposes of the tail. The sizing argument below is why 8 rather than 50, and that part stands.)* Whole-file `MIN_PAIRS` is 50;
 a 2 s + 2 s collar at 100 ms is 40 blocks *before* active/steady/B filters. Eight
 is 0.8 s of accepted pairs — enough for a median to mean something, low enough
 that a one-sided file-edge hole can still speak. Below it: local abstains
@@ -762,6 +762,32 @@ failure mode 51 pairs did not produce. That is a reason to set it where the read
 on, not a reason to drop it — but it does mean § 4's "refuse, don't clamp" is now carried by the
 admission gate, and the acceptance tests in § 10 should exercise *that*, not the bound.
 
+#### Re-verified 2026-08-31, after the census script's prior rule was corrected
+
+`census-collar-levels.ps1` was subtracting the **measured** whole-program offset rather than the
+**applied** one, and dropping rows whose pair had no offset instead of reading them against § 4's
+prior of 0. Both are fixed (the script now reads the recorded decision off `patch.program_gain`, and
+falls back to re-deriving one only on a dump with no patch block, labelled `derived:` and warned
+about). Arm 4 was re-censused on the corrected script; the dump is unchanged, so this is a
+consumer-only re-read, not a new arm.
+
+**Every table above survives untouched.** All 1023 measured collars resolve to `derived:applied` —
+**not one pair in 51 has program gain refused**, and none is missing an offset, so neither defect
+ever fired on this corpus. The fix corrected no published number; it is insurance for a future
+corpus, a non-default-flag run, or the `--no-program-gain` arm.
+
+| admitted cohort (`n_pairs >= 8`, both sides present, `se_db <= 1.0`) | |
+|---|---|
+| collars admitted | 562 of 1023 measured (54.9%); 52.4% of all 1073 gaps |
+| \|residual\| p50 / p99 / max | 0.123 / 0.909 / **1.573** dB |
+| largest **un**admitted | 9.347 dB |
+| admitted over 1.0 / 2.0 / 3.0 dB | 2 / **0** / **0** |
+
+**One consequence for § 10.** A corpus with zero program-gain refusals never exercises § 4's
+`offset_prior = 0` branch — the *"Refused / off ⇒ `−d_local`"* row of the stacking table, and with it
+half the identity `g_program_db + g_local_db = −d_local`. No cohort run can cover it. It has to be a
+unit test, and § 10's residual cases do not currently include one.
+
 ### Running the remaining arms
 
 **`local_pair_collar_secs` has no CLI flag** (§ 9: "No new CLI") — it is a `[repair]` TOML field, so
@@ -1191,18 +1217,19 @@ Default flags (local off) are program-gain’s acceptance, not this plan’s.
 - [x] `scripts/measure/compare-collar-arms.ps1` — matched two-arm join; no single-dump census can answer "did it help?", and both of the rules that answer it wrong are silent failures (§ 4b)
 - [x] **§ 4a: run the corpus census.** Arms 1–4 complete; the constants are stated against arm 4 in § 4b Result 4
 
-**Arm-4 write-back (the remaining measurement-half work; nothing in the apply half starts before it)**
+**Arm-4 write-back — DONE 2026-08-30.** *(Ticked against the tree 2026-08-31, not from memory.)*
 
-The four constants are *decided* in § 4b Result 4 and *not yet in the code*. As of 2026-08-28 the
-tree holds `default_local_pair_collar_secs() = 2.0`, `MAX_LOCAL_RESIDUAL_DB = 6.0` (doc-commented
-"Provisional"), and no `MAX_LOCAL_SE_DB` at all — so the plan currently reads as settled where the
-code reads as provisional, which is exactly the drift § 4a exists to prevent.
+The four constants were *decided* in § 4b Result 4 and, for two days, *not in the code*: the tree
+held `default_local_pair_collar_secs() = 2.0`, `MAX_LOCAL_RESIDUAL_DB = 6.0` (doc-commented
+"Provisional") and no `MAX_LOCAL_SE_DB` at all — the plan reading as settled where the code read as
+provisional, exactly the drift § 4a exists to prevent. All five items have landed, and the constants
+were re-verified against the corrected census on 2026-08-31 (§ 4b Result 4).
 
-- [ ] `default_local_pair_collar_secs()` 2.0 → **4.0** (§ 4b Results 1 and 4); update the `config.rs` doc comment to cite the arm, not the envelope-context argument § 3 originally made
-- [ ] `MAX_LOCAL_RESIDUAL_DB` 6.0 → **3.0**, and rewrite its doc comment: no longer "provisional pending § 4a" but a **backstop** — on this corpus it fires on nothing at any value from 2.0 up, and the admission test is the disposal
-- [ ] Add `MAX_LOCAL_SE_DB = 1.0` next to them, documenting that the **axis** is what arm 4 established and the threshold is fitted to this corpus; name the three interchangeable axes (`se`, `|pre − post|`, `spread`) so nobody later claims two of them as independent confirmation
-- [ ] `se_db()` method on `CollarLevelOffset` (§ 6 — derived, never a field) so census, apply gate and plan share one expression
-- [ ] `MIN_LOCAL_PAIRS` stays **8**; amend its doc comment — it is *necessary, not sufficient*, and at `W` = 4.0 it leaves a 9.3 dB tail that only the dispersion axis disposes of
+- [x] `default_local_pair_collar_secs()` 2.0 → **4.0** (§ 4b Results 1 and 4); update the `config.rs` doc comment to cite the arm, not the envelope-context argument § 3 originally made
+- [x] `MAX_LOCAL_RESIDUAL_DB` 6.0 → **3.0**, and rewrite its doc comment: no longer "provisional pending § 4a" but a **backstop** — on this corpus it fires on nothing at any value from 2.0 up, and the admission test is the disposal
+- [x] Add `MAX_LOCAL_SE_DB = 1.0` next to them, documenting that the **axis** is what arm 4 established and the threshold is fitted to this corpus; name the three interchangeable axes (`se`, `|pre − post|`, `spread`) so nobody later claims two of them as independent confirmation
+- [x] `se_db()` method on `CollarLevelOffset` (§ 6 — derived, never a field) so census, apply gate and plan share one expression
+- [x] `MIN_LOCAL_PAIRS` stays **8**; amend its doc comment — it is *necessary, not sufficient*, and at `W` = 4.0 it leaves a 9.3 dB tail that only the dispersion axis disposes of
 
 **Apply half**
 

@@ -74,9 +74,13 @@ is untracked — that is a bug in the catalog, not a state a doc may sit in.
 Measurement records. A findings note lives here only while it has an open question; once every
 question is promoted to [BACKLOG.md](../../BACKLOG.md) or closed, it archives.
 
-**None open.** All four notes open on 2026-08-24 (the two flat-3000 runs, the collapsed-bridge
-census, the pair-50 outcomes) went to [archive/](archive/) that day under exactly that rule, and
-their surviving questions are [BACKLOG.md](../../BACKLOG.md) § *Post-join defects (pairs 31 and 50)*.
+| Note | Open question | Tracked as |
+|------|---------------|------------|
+| [TEMP-rigid-shoulder-offset-skips-2026-08-31.md](TEMP-rigid-shoulder-offset-skips-2026-08-31.md) | Conversion fraction if the keep path scored 250 ms seams at the 1 s mid-lag (Q2). Q1 named: 38/g1 is not map-lag and is already dual-fit patched. Class re-derived at 90/644, not 95. | [BACKLOG.md](../../BACKLOG.md) § *Fill placement* → *95 skips at a rigid shoulder offset* |
+
+Earlier notes (the two flat-3000 runs, the collapsed-bridge census, the pair-50 outcomes) went to
+[archive/](archive/) on 2026-08-24 under exactly that rule, and their surviving questions are
+[BACKLOG.md](../../BACKLOG.md) § *Post-join defects (pairs 31 and 50)*.
 [archive/TEMP-fill-normalize-local-reference-2026-08-25.md](archive/TEMP-fill-normalize-local-reference-2026-08-25.md)
 followed on 2026-08-26 — the note that sized the normalize-boost exposure (308 gaps: 65% at unity,
 6 of 8 hot fills hot only from our own gain) and carried the ear labels. Its Q1 was answered

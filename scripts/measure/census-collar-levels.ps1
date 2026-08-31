@@ -47,10 +47,27 @@
 # A `measured` report whose gaps ALL abstain is reported separately: that shape is also what a
 # pre-feature binary looks like, and the script cannot tell the two apart from the JSON alone.
 #
-# RESIDUAL. `collar_level.offset_db − program_levels.offset.offset_db` — the quantity the apply half
-# would turn into a gain. Null when the pair's whole-program offset abstained: §4 makes the prior 0
-# there, so there is no residual to take, and averaging a null into the distribution would understate
-# it.
+# RESIDUAL. `collar_level.offset_db − prior` — the quantity the apply half turns into a gain
+# (`g_local_db = −residual`). ALWAYS defined on a measured collar.
+#
+# THE PRIOR IS THE APPLIED PROGRAM OFFSET, NOT THE MEASURED ONE (§4). Program gain is refused on
+# `spread_db` past `max_spread_db`, `|offset_db|` past `max_program_gain_db`, incomparable channels,
+# a non-finite reading, or `--no-program-gain` — and §4 then sets the prior to 0, which makes the
+# residual `d_local` itself and the gain a hole-local master match on its own. Two things follow,
+# and this script got both wrong until 2026-08-31:
+#
+#   - Subtracting a REFUSED offset reports a residual the apply half would never compute. The run
+#     already recorded which way it went, so read the decision off `patch.program_gain` rather than
+#     re-deriving it from `program_levels`.
+#   - A pair whose offset abstained does not have a MISSING residual; it has one taken against 0.
+#     Dropping those rows censors the very distribution that sets MAX_LOCAL_RESIDUAL_DB, in the
+#     direction that makes the bound look safer than it is.
+#
+# `prior_source` on every row says which case it is, and Q4 breaks the population down by it. A dump
+# with no `patch` block (report-only run, or a binary predating the field) carries no recorded
+# decision and falls back to re-deriving one — labelled `derived:*`, warned about once, and governed
+# by -MaxProgramSpreadDb / -MaxProgramGainDb, which are a COPY of the domain constants and must be
+# passed explicitly for a run made under non-default flags.
 #
 # SIDE DISAGREEMENT. `|pre_offset_db − post_offset_db|` was specified as §3a's straddle detector in
 # the level domain, expecting roughly ONE flag across the corpus (settled.md §D; 31/g7). The
@@ -84,7 +101,14 @@ param(
 
     # Candidate pair floors to score. The point of Q2 is to CHOOSE one, so the census reports what
     # each would cost rather than assuming the provisional 8.
-    [int[]]$PairFloors = @(4, 8, 16)
+    [int[]]$PairFloors = @(4, 8, 16),
+
+    # Program-gain refusal thresholds, used ONLY to re-derive the §4 prior on a dump that carries no
+    # `patch.program_gain` (see RESIDUAL above). Defaults mirror DEFAULT_PROGRAM_GAIN_MAX_SPREAD_DB
+    # and DEFAULT_MAX_PROGRAM_GAIN_DB in crates/clip-sync-repair/src/domain/program_gain.rs. They are
+    # a copy, not a read: a run made under non-default flags must pass its own values.
+    [double]$MaxProgramSpreadDb = 2.5,
+    [double]$MaxProgramGainDb = 6.0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -180,6 +204,50 @@ foreach ($file in $files) {
 
     $pairOffsetDb = if ($null -eq $programOffset) { $null } else { [double](Get-Node $programOffset 'offset_db') }
 
+    # THE PRIOR (see RESIDUAL in the header). Read the DECISION the run recorded, not the
+    # measurement: `patch.program_gain` carries `gain`, the `offset_db` it applied or refused, and
+    # `refused`. A refusal means the prior is 0 — not that the residual is unknown.
+    $patchSummary = Get-Node $report 'patch'
+    $programGain = Get-Node $patchSummary 'program_gain'
+    $priorDb = 0.0
+    $priorSource = $null
+    if ($null -ne $programGain) {
+        $refused = Get-Node $programGain 'refused'
+        $appliedDb = Get-Node $programGain 'offset_db'
+        if ($null -ne $refused) {
+            $priorSource = "refused:$refused"
+        } elseif ($null -ne $appliedDb) {
+            $priorDb = [double]$appliedDb
+            $priorSource = 'applied'
+        } else {
+            # Neither refused nor carrying the offset it applied: not a shape the binary emits.
+            # Named rather than silently treated as a refusal, because it means the dump is wrong.
+            $priorSource = 'malformed'
+        }
+    } elseif ($null -eq $pairOffsetDb) {
+        # No `patch` block AND no measured offset. Both roads lead to a prior of 0, and no threshold
+        # is involved, so this needs no `derived:` caveat.
+        $priorSource = 'no_offset'
+    } else {
+        # No recorded decision, but an offset exists — re-derive with the SAME order and rules as
+        # domain::program_fill_gain. Every branch here is a copy that can drift from the real one;
+        # that is what the `derived:` prefix and the one-time warning below are for.
+        $spreadDb = Get-Node $programOffset 'spread_db'
+        $comparable = Get-Node $programOffset 'channels_comparable'
+        if ($comparable -eq $false) {
+            $priorSource = 'derived:channels'
+        } elseif ($null -eq $spreadDb -or -not [double]::IsFinite([double]$spreadDb) -or -not [double]::IsFinite($pairOffsetDb)) {
+            $priorSource = 'derived:not_finite'
+        } elseif ([double]$spreadDb -gt $MaxProgramSpreadDb) {
+            $priorSource = 'derived:spread'
+        } elseif ([Math]::Abs($pairOffsetDb) -gt $MaxProgramGainDb) {
+            $priorSource = 'derived:too_large'
+        } else {
+            $priorDb = $pairOffsetDb
+            $priorSource = 'derived:applied'
+        }
+    }
+
     # One probe per report: does this binary emit `map_lag_ms`? An old dump has no such property,
     # which is NOT the same as a collar that declined the correction — see `registered` below.
     $hasMapLag = $false
@@ -217,6 +285,10 @@ foreach ($file in $files) {
             map_lag_ms        = $null
             registered        = $null
             pair_offset_db    = $pairOffsetDb
+            # What §4 actually subtracts, and why it is that number. `prior_db` differs from
+            # `pair_offset_db` on exactly the rows where program gain was not applied.
+            prior_db          = $priorDb
+            prior_source      = $priorSource
             residual_db       = $null
         }
 
@@ -269,11 +341,11 @@ foreach ($file in $files) {
                 if ($null -ne $lag) { $row.map_lag_ms = [double]$lag }
             }
 
-            # Null when the whole-program offset abstained: §4 sets the prior to 0 there, so there is
-            # no residual — writing 0 would report a perfect local match that was never measured.
-            if ($null -ne $pairOffsetDb) {
-                $row.residual_db = $row.offset_db - $pairOffsetDb
-            }
+            # ALWAYS defined on a measured collar. Where program gain was refused the prior is 0
+            # (§4), so the residual is `d_local` itself and the gain is a hole-local master match —
+            # a real reading that belongs in the distribution, not an absence. `prior_source` keeps
+            # the two cases apart without censoring either.
+            $row.residual_db = $row.offset_db - $priorDb
         }
 
         $rows.Add([pscustomobject]$row)
@@ -286,6 +358,21 @@ foreach ($report in $reportStates) {
 
 $measured = @($rows | Where-Object { $_.state -eq 'measured' })
 $examined = @($reportStates | Where-Object { $_.state -eq 'measured' })
+
+# The prior is only authoritative when the run recorded its own program-gain decision. Say so once,
+# loudly, rather than per row: a census quoted from re-derived priors is quoting this script's copy
+# of the thresholds, not the ones the binary ran.
+$derived = @($measured | Where-Object { $_.prior_source -like 'derived:*' })
+if ($derived.Count -gt 0) {
+    $derivedPairs = @($derived | Select-Object -ExpandProperty pair -Unique)
+    Write-Warning ("{0} of {1} collars carry a RE-DERIVED §4 prior — those reports have no 'patch.program_gain' (report-only run, or a binary predating the field), so the refusal thresholds applied were this script's -MaxProgramSpreadDb {2} / -MaxProgramGainDb {3}, not the run's. Pass the run's own values if it used non-default flags. Pairs: {4}" -f `
+            $derived.Count, $measured.Count, $MaxProgramSpreadDb, $MaxProgramGainDb, ($derivedPairs -join ', '))
+}
+$malformed = @($measured | Where-Object { $_.prior_source -eq 'malformed' })
+if ($malformed.Count -gt 0) {
+    Write-Warning ("{0} collars sit in a report whose 'patch.program_gain' neither refused nor recorded an offset. That is not a shape the binary emits; treat those rows as suspect. Pairs: {1}" -f `
+            $malformed.Count, (@($malformed | Select-Object -ExpandProperty pair -Unique) -join ', '))
+}
 
 Write-Host ''
 Write-Host "Collar-level census over $DumpDir"
@@ -340,11 +427,13 @@ if ($measured.Count -eq 0) {
     return
 }
 
-$tableFormat = '{0,-10} {1,4} {2,10} {3,8} {4,5} {5,5} {6,5} {7,5} {8,8} {9,8} {10,8} {11,7} {12,8} {13,8} {14,7}'
+$tableFormat = '{0,-10} {1,4} {2,10} {3,8} {4,5} {5,5} {6,5} {7,5} {8,8} {9,8} {10,8} {11,7} {12,8} {13,8} {14,8} {15,7}'
 Write-Host ''
 # `lag` is the map this row was read through, in ms: '-' means the nominal map (no trusted fit, or a
 # dump predating the field), '0' means a fit was believed and it said zero. Not the same fact.
-Write-Host ($tableFormat -f 'pair', 'gap', 'a_start', 'gap_s', 'act', 'std', 'pre', 'post', 'offset', 'spread', 'se', '|p-p|', 'prog', 'resid', 'lag_ms')
+# `prog` is the MEASURED whole-program offset; `prior` is what §4 subtracts, which is 0 wherever
+# program gain was refused. They differ on exactly the rows the residual used to be wrong on.
+Write-Host ($tableFormat -f 'pair', 'gap', 'a_start', 'gap_s', 'act', 'std', 'pre', 'post', 'offset', 'spread', 'se', '|p-p|', 'prog', 'prior', 'resid', 'lag_ms')
 Write-Host '  act -> std -> (pre + post) is where the collar was spent: a thin pair count is read off those, not guessed at'
 foreach ($row in $measured) {
     Write-Host ($tableFormat -f `
@@ -361,6 +450,7 @@ foreach ($row in $measured) {
         (Format-Ratio $row.se_db),
         $(if ($null -eq $row.side_delta_db) { '-' } else { Format-Ratio $row.side_delta_db }),
         (Format-Db $row.pair_offset_db),
+        (Format-Db $row.prior_db),
         (Format-Db $row.residual_db),
         $(if ($null -eq $row.map_lag_ms) { '-' } else { '{0:0}' -f [double]$row.map_lag_ms }))
 }
@@ -406,10 +496,18 @@ $withResidual = @($measured | Where-Object { $null -ne $_.residual_db })
 Write-Host ''
 Write-Host '4a Q4. Where do real residuals stop?'
 if ($withResidual.Count -eq 0) {
-    Write-Host '  no collar sits in a pair whose whole-program offset was measured — residual is undefined, not zero'
+    Write-Host '  no residual on any measured collar — impossible unless a row failed to compute one'
 } else {
     $absResiduals = [double[]]@($withResidual | ForEach-Object { [Math]::Abs([double]$_.residual_db) } | Sort-Object)
-    Write-Host ("  collars with a prior            {0} of {1}" -f $withResidual.Count, $measured.Count)
+    Write-Host ("  collars with a residual         {0} of {1}" -f $withResidual.Count, $measured.Count)
+    # Which number each residual was taken against. §4 subtracts the APPLIED program offset, so
+    # every non-`applied` row below has a prior of 0 and reads `-d_local` — a hole-local master
+    # match on its own. That is a result, not a gap in the data, but it changes what the
+    # distribution means: a corpus dominated by refusals is not measuring a residual at all.
+    Write-Host '  prior each residual was taken against:'
+    foreach ($sourceGroup in ($withResidual | Group-Object prior_source | Sort-Object Count -Descending)) {
+        Write-Host ("    {0,-26} {1,4}" -f $sourceGroup.Name, $sourceGroup.Count)
+    }
     Write-Host ("  |residual| median / p90 / max   {0} / {1} / {2}" -f `
         (Format-Ratio (Get-Percentile $absResiduals 0.50)), (Format-Ratio (Get-Percentile $absResiduals 0.90)), (Format-Ratio (Get-Percentile $absResiduals 1.0)))
     Write-Host ("  |residual| <= {0,-5} dB           {1} of {2}" -f $ResidualDb, @($withResidual | Where-Object { [Math]::Abs([double]$_.residual_db) -le $ResidualDb }).Count, $withResidual.Count)
