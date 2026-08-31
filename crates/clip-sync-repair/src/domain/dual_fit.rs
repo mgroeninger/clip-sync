@@ -354,7 +354,12 @@ mod tests {
             a_gap_floor_db: -60.0,
         };
 
-        let r = dual_fit_at_nominal(&templates(&a_pre_mono, &a_post_mono, b_mapped_start, &p), &b_mono, &b_samples, &p)
+        let r = dual_fit_at_nominal(
+            &templates(&a_pre_mono, &a_post_mono, b_mapped_start, &p),
+            &b_mono,
+            &b_samples,
+            &p,
+        )
         .expect("dual-fit target");
         assert!(
             r.pre_seam_r > 0.9 && r.post_seam_r > 0.9,
@@ -442,7 +447,12 @@ mod tests {
             step_real_margin: 0.15,
             a_gap_floor_db: -60.0,
         };
-        let r = dual_fit_at_nominal(&templates(&a_pre_mono, &a_post_mono, b_mapped_start, &p), &b_mono, &b_samples, &p)
+        let r = dual_fit_at_nominal(
+            &templates(&a_pre_mono, &a_post_mono, b_mapped_start, &p),
+            &b_mono,
+            &b_samples,
+            &p,
+        )
         .expect("dual-fit target");
 
         // The fix: production classifies confidence from these — the correct assembled-seam scores.

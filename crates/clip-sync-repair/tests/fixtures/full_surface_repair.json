@@ -212,6 +212,8 @@
             "dual_fit_used": false,
             "normalize_gain": 0.76647854,
             "program_gain": 0.76647854,
+            "local_gain": 1.0,
+            "local_gain_reason": "flag_off",
             "fit_terms": {
               "total": 0.71,
               "structure_combined": 0.82,

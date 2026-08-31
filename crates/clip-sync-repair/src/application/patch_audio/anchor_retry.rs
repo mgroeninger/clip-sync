@@ -266,6 +266,7 @@ mod tests {
                     anchor_bracket_move_frames: 0,
                     dual_fit_used: false,
                     normalize_gain: 1.0,
+                    local_gain: crate::domain::LocalGainDecision::OFF,
                     fit_terms: None,
                     registration_residual_ms: None,
                 },
@@ -288,6 +289,7 @@ mod tests {
                     anchor_bracket_move_frames: 0,
                     dual_fit_used: false,
                     normalize_gain: 1.0,
+                    local_gain: crate::domain::LocalGainDecision::OFF,
                     fit_terms: None,
                     registration_residual_ms: None,
                 },
@@ -328,6 +330,7 @@ mod tests {
             anchor_bracket_move_frames: 0,
             dual_fit_used: false,
             normalize_gain: 1.0,
+            local_gain: crate::domain::LocalGainDecision::OFF,
             fit_terms: None,
             registration_residual_ms: None,
         };
@@ -346,6 +349,7 @@ mod tests {
             anchor_bracket_move_frames: 0,
             dual_fit_used: false,
             normalize_gain: 1.0,
+            local_gain: crate::domain::LocalGainDecision::OFF,
             fit_terms: None,
             registration_residual_ms: None,
         };

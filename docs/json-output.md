@@ -1,6 +1,6 @@
 # JSON output contract — v1
 
-Authoritative field-by-field contract for `--format json` output of both CLIs. **Frozen as v1 (2026-06-10).** Additive revisions: optional `end_clip_anchor` on analyzer/repair alignment reports (2026-06-17); optional `video_b_window_*` on clip entries when B differs from A; optional `audio_timeline_skew` on repair `GapReport` (2026-06-19); additive scan-recipe echo keys `min_gap_ms`, `silence_hold_ms` (effective), and `absolute_silence_rms` (normalized) on repair `GapReport` (2026-07-31); optional `fill_geometry` on repair `PatchSummary` (2026-08-17); optional `program_levels` on repair `GapReport` (2026-08-26); optional per-gap `collar_level` on repair `Gap`, with `map_lag_ms` recording the map each collar was read through (2026-08-27); optional `local_pair_collar_secs` knob echo on repair `GapReport` (2026-08-27); new `shoulders_abut` skip reason and optional `shoulders_abut` list on repair `PatchSummary` (2026-08-28).
+Authoritative field-by-field contract for `--format json` output of both CLIs. **Frozen as v1 (2026-06-10).** Additive revisions: optional `end_clip_anchor` on analyzer/repair alignment reports (2026-06-17); optional `video_b_window_*` on clip entries when B differs from A; optional `audio_timeline_skew` on repair `GapReport` (2026-06-19); additive scan-recipe echo keys `min_gap_ms`, `silence_hold_ms` (effective), and `absolute_silence_rms` (normalized) on repair `GapReport` (2026-07-31); optional `fill_geometry` on repair `PatchSummary` (2026-08-17); optional `program_levels` on repair `GapReport` (2026-08-26); optional per-gap `collar_level` on repair `Gap`, with `map_lag_ms` recording the map each collar was read through (2026-08-27); optional `local_pair_collar_secs` knob echo on repair `GapReport` (2026-08-27); new `shoulders_abut` skip reason and optional `shoulders_abut` list on repair `PatchSummary` (2026-08-28); `local_gain` and `local_gain_reason` on repair `GapPatchStatus::Patched` (2026-08-31).
 
 Any change to field names, types, optionality, or nesting is a contract revision: update this document, regenerate the golden fixtures, and call the revision out explicitly in the changelog/commit.
 
@@ -231,18 +231,24 @@ it.
 
 The same paired estimator as [AbLevelOffset](#ableveloffset), restricted to a **collar** around one
 gap: `[start − W, start)` ∪ `(end, end + W]` on A's timeline, `W = repair.local_pair_collar_secs`
-(default 2.0 s). Blocks overlapping the gap core never pair; the block abutting the core normally
+(default 4.0 s). Blocks overlapping the gap core never pair; the block abutting the core normally
 walks off by itself, because steadiness is judged against the core's silence rail rather than against
 a sliced-away neighbour.
 
 It exists because the whole-program `offset` is a single scalar over the entire runtime, and a fill
 dropped into a quiet passage inherits it whether or not it describes that passage. This object is the
-measurement of the same relationship where the fill actually lands. **Nothing reads it yet** — the
-scan stamps it, the apply path still uses `program_levels.offset`.
+measurement of the same relationship where the fill actually lands. **Since 2026-08-31 the patch path
+reads it** when `--normalize` is on, as the hole-local half of the fill gain — see
+[pipeline.md](pipeline.md) § Fill gain and `status.patched.local_gain`. The scan stamps it either
+way: measurement does not depend on the flag, only application does, so a default (non-normalizing)
+run's dump still carries every collar.
 
-It is a **measurement, not a verdict**: no minimum-pair floor, no spread gate, no refusal. Every
-threshold is the consumer's, so that the corpus census can see the full distribution before any of
-them is chosen.
+It remains a **measurement, not a verdict**: no minimum-pair floor, no spread gate, no refusal lives
+in this object. Every threshold is the consumer's — the apply path's admission test
+(`n_pairs >= 8`, both sides present, `se_db <= 1.0`) and its 3 dB residual refusal are applied to
+this reading, never baked into it, so a census can still see the full distribution. A collar that
+appears here and was not applied is the normal case, not a defect; `local_gain_reason` on the patched
+gap says why.
 
 Since 2026-08-27 each collar is mapped into B at **that gap's own** registered shoulder lag rather
 than the whole-program alignment offset, and `map_lag_ms` records which map was used. The correction
@@ -456,13 +462,17 @@ normalize boosting a fill against a non-local reference, not a donor-level misma
 consequences for reading this section. The table's conclusion **strengthens**: a uniform gain error
 is exactly the shape `edge_delta_db` catches and `peak_delta_db` cannot. But the **numbers are
 gain-contaminated** — every delta here is measured on `gained_fill` against ungained shoulders, so
-each row is inflated by its own gap's boost (0–12 dB, and not recorded at all before 2026-08-12).
-Backing this one out gives ≈4.15 dB. Do not compare these deltas across gaps without dividing out
-`normalize_gain` first.
+each row is inflated by its own gap's boost (0–12 dB on the run measured here, and not recorded at
+all before 2026-08-12). Backing this one out gives ≈4.15 dB. Do not compare these deltas across gaps
+without dividing out `normalize_gain` first — still the rule, and more so from 2026-08-31, when the
+gain stopped being boost-only: a row can now be *deflated* by its own gap as well, so the sign of
+the correction varies within a single run.
 
 **Extended 2026-08-25 — this is a cohort, not a one-off, and the division separates the two kinds of
-loud fill.** Over the 51-pair corpus (308 spliced gaps) 199 (65%) are left at unity by the boost-only
-policy. Of the 8 boosted gaps reading hotter than +3 dB at the seams, **6 fall to at-or-below their
+loud fill.** *(Measured on the boost-only `compute_fill_gain` regime, which ended 2026-08-31. The
+mechanism — a fill gained against a non-local reference — is what generalizes; the counts below are
+that run's and do not describe a current one.)* Over the 51-pair corpus (308 spliced gaps) 199 (65%)
+are left at unity by the boost-only policy. Of the 8 boosted gaps reading hotter than +3 dB at the seams, **6 fall to at-or-below their
 own shoulders once the gain is divided out** — 45/g4 (−0.89), 5/g6 (−1.39), 19/g13 (−2.66), 45/g5
 (−0.72), 15/g3 (−6.68), 31/g7 (−3.00) — while every donor-driven row above +3 dB is at or near unity
 gain. The control is decisive: the correctly-restored gunshot (24/g46, +9.83 dB, the case that
@@ -533,13 +543,15 @@ Orthogonal gap classification tags. `plan_skip_reason`, `fit_path`, and `signatu
 | `anchor_bracket_move_frames` | integer | when `anchor_seam_used` and > 0 | Total frame displacement from scan-refined baseline |
 | `dual_fit_used` | bool | when true | A3 dual-fit (G6) rescued this gap after the bracket search exhausted, not ordinary bracket-search fitting |
 | `normalize_gain` | number | always (since 2026-08-12) | **Total** gain applied to this fill before the splice — whole-program × hole-local. `1.0` = untouched donor level |
-| `program_gain` | number | always (since 2026-08-26) | The whole-program half of `normalize_gain`, repeated on every gap so a single row is self-describing. The hole-local residual is `normalize_gain / program_gain`; there is deliberately no third field for it |
+| `program_gain` | number | always (since 2026-08-26) | The whole-program half of `normalize_gain`, repeated on every gap so a single row is self-describing |
+| `local_gain` | number | always (since 2026-08-31) | The hole-local half — the paired-collar residual against the applied program offset. `1.0` on any abstention or refusal. On older runs recover it as `normalize_gain / program_gain`, remembering that it was a different estimator then |
+| `local_gain_reason` | string | always (since 2026-08-31) | Why `local_gain` is what it is: `applied` \| `flag_off` \| `channels` \| `abstained_n` \| `abstained_dispersion` \| `refused_residual`. **Read this before reading `local_gain`** — a `1.0` covers both "declined" and "ran and agreed" |
 
 ### GapPatchStatus
 
 Externally tagged (serde default): exactly one of the following keys.
 
-- `{"patched": {"pre_correlation": number, "post_correlation": number, "align_adjustment_secs": number, "structure_trusted": bool, "confidence": "high"|"marginal", "gap_start_adjust_frames": number, "gap_end_adjust_frames": number, "residual_db": number, "floor_db": number, "headroom_db": number, "anchor_seam_used": bool, "anchor_bracket_move_frames": number, "dual_fit_used": bool, "normalize_gain": number, "program_gain": number, "fit_terms": {"total": number, "structure_combined": number, "waveform_min": number, "late_start_penalty": number, "anchor_penalty": number, "repeat_penalty": number, "repeat_pre": number, "repeat_post": number}, "registration_residual_ms": number}}`
+- `{"patched": {"pre_correlation": number, "post_correlation": number, "align_adjustment_secs": number, "structure_trusted": bool, "confidence": "high"|"marginal", "gap_start_adjust_frames": number, "gap_end_adjust_frames": number, "residual_db": number, "floor_db": number, "headroom_db": number, "anchor_seam_used": bool, "anchor_bracket_move_frames": number, "dual_fit_used": bool, "normalize_gain": number, "program_gain": number, "local_gain": number, "local_gain_reason": string, "fit_terms": {"total": number, "structure_combined": number, "waveform_min": number, "late_start_penalty": number, "anchor_penalty": number, "repeat_penalty": number, "repeat_pre": number, "repeat_post": number}, "registration_residual_ms": number}}`
 
 Optional `residual_db`, `floor_db`, `headroom_db` (worst-side scalars) are present when residual was measured; omitted otherwise. `anchor_seam_used` and `dual_fit_used` are **always serialized, including when `false`** (changed 2026-08-12; both were omitted-when-false before that). `false` on `dual_fit_used` means the A3 dual-fit path (G6) did not carry this gap — it ran and declined, or was never reached — and has never meant the path was disabled; the old absence was read that way at least once. `false` on `anchor_seam_used` means baseline-throat placement. When `dual_fit_used` is `true`, this gap was rescued by dual-fit after the bracket search exhausted — see [gap-fill-modes.md](gap-fill-modes.md) § Dual-fit rescue. `anchor_bracket_move_frames` is still omitted when 0. Full per-side detail is in `GapPatchOutcome.residual`.
 
@@ -547,7 +559,15 @@ Optional `residual_db`, `floor_db`, `headroom_db` (worst-side scalars) are prese
 
 **What it meant on runs from 2026-08-12 to 2026-08-25** (the hole-local gain was the only gain): `1.0` when `normalize_fill` was off, when dual-fit produced the fill (never locally normalized), or when the **boost-only** policy declined to touch a fill already at or above A's border level; `> 1.0` when a quiet fill was raised, bounded by `max_fill_gain_db`. It was **never below 1.0** on that vintage — runs before 2026-08-12 could attenuate down to `-max_fill_gain_db`, and the field is how you tell those two vintages apart.
 
-Since 2026-08-26 it is a **product**, not just the local boost: `normalize_gain = program_gain × g_local`, and `g_local` (never serialized separately) is `normalize_gain / program_gain`. Because the hole-local half now defaults **off**, a typical run has `g_local == 1` and `normalize_gain == program_gain` — and unlike the local half, the program half **can be below 1.0** (it attenuates a louder donor by design). The "never below 1.0" rule above therefore describes `g_local`, not this field, on runs from 2026-08-26 onward — and dual-fit fills now carry `g_program` too (they still take no local half), so `1.0` there no longer follows from the path. **Neither knob bounds the product:** `max_program_gain_db` (6.0) bounds the program half and `max_fill_gain_db` (12.0) the local one, so a run with `--normalize` can reach +18 dB total before `gained_fill` clamps the samples. Per-gap `program_gain` is absent on older runs; that means the run predates the field, not unity. Why the run applied or refused the value it did is stamped once on [`patch.program_gain`](#programgainreport).
+**Since 2026-08-26 it is a product**, not just the local boost: `normalize_gain = program_gain × local_gain`. Unlike the local half, the program half **can be below 1.0** — it attenuates a louder donor by design — so the "never below 1.0" rule above stopped describing this field on that date. Per-gap `program_gain` is absent on older runs; that means the run predates the field, not unity. Why the run applied or refused the whole-program value is stamped once on [`patch.program_gain`](#programgainreport).
+
+**What changed on 2026-08-31.** The hole-local half is no longer the A-border-RMS-versus-whole-fill-RMS boost. It is now the **paired-collar residual**: the same B−A block difference the program offset is built from, restricted to blocks flanking this gap, with the *applied* program offset subtracted so the two halves compose to the hole's own paired offset rather than correcting the master twice. Three consequences for anyone reading a dump:
+
+- **`local_gain` and `local_gain_reason` are now their own fields.** The old recovery — `normalize_gain / program_gain` — still works arithmetically but is lossy where it matters: a quotient of `1.0` covers both "the collar declined" and "the collar ran and found this hole already matched", and only `local_gain_reason` separates them. On a `--normalize` run, report the reason mix before you report the gains: a corpus reading mostly `abstained_n` has had its local gain *deleted*, not replaced.
+- **The local half may now sit below 1.0.** Boost-only was introduced 2026-08-12 because whole-fill RMS let one loud mid-gap event drag the entire patch toward talking-level shoulders. A scalar taken from paired shoulder *blocks* cannot do that, so the floor went with the estimator. `local_gain < 1.0` on a post-2026-08-31 run is correct behaviour, not the pre-2026-08-12 vintage returning.
+- **Dual-fit fills now take both halves.** They took only `g_program` from 2026-08-26 to 2026-08-31, because the RMS estimator had nothing sensible to say about a synthesized interior. The collar never reads the fill, so that exclusion no longer had a reason.
+
+**Neither knob bounds the product:** `max_program_gain_db` (6.0) bounds the program half and `MAX_LOCAL_RESIDUAL_DB` (3.0) the local one, so a `--normalize` run can reach +9 dB total before `gained_fill` clamps the samples. `max_fill_gain_db` (12.0), the old boost ceiling, was **removed** on 2026-08-31 along with the estimator it bounded, so a `--normalize` run has no gap pinned at 12 dB — nothing can reach it. A TOML that still sets the key now warns that it was ignored.
 
 `fit_terms` (added 2026-08-12) breaks the unified fit objective into the terms that produced the applied
 placement, so a placement can be explained rather than only located. `total` is the objective evaluated at that

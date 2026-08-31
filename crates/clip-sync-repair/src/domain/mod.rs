@@ -19,6 +19,7 @@ pub mod gap_structure;
 pub mod gap_tags;
 pub mod lag_envelope;
 pub mod level_stats;
+pub mod local_gain;
 pub mod metrics;
 pub mod patch_anchor;
 pub mod patch_result;
@@ -63,6 +64,9 @@ pub use gap_tags::{
     format_gap_tags_verbose_line, DonorRelation, FillTierThresholds, FitPathTag, GapPatchTierInput,
     GapTags, GapTagsPatchContext, PatchTier, PlanKind, RegionPatchOutcomeView, ResidualBand,
     SeamShape, SignatureModeTag,
+};
+pub use local_gain::{
+    collar_residual_gain, collar_residual_gain_default, LocalGainDecision, LocalGainReason,
 };
 pub use patch_anchor::{
     is_retryable_patch_skip, AnchorSearchPrior, PatchAnchorCandidate, PatchAnchorPolicy,

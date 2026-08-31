@@ -167,8 +167,11 @@ Wide spread means dynamics or compression differ, or the alignment is wrong. `ch
 that scalar is constant across the program. `channels_comparable` is false when A and B channel
 counts differ, in which case the offset carries a channel-geometry constant and is not a pure gain.
 
-Nothing reads this back: no fill gain is derived from it, and the patch path is untouched. Field
-schema in [json-output.md](json-output.md) § ProgramLevels; rationale in
+The whole-program `offset` has fed the fill gain since 2026-08-26, and the per-gap `collar_level`
+readings — measurement-only when they shipped 2026-08-27 — feed the hole-local half since
+2026-08-31. Neither changes a gap boundary or a repair verdict: they scale samples the patch path
+had already decided to write. Field schema in [json-output.md](json-output.md) § ProgramLevels and
+§ CollarLevelOffset; how they compose in [pipeline.md](pipeline.md) § Fill gain; rationale in
 [dev/archive/TEMP-ab-program-levels-plan.md](dev/archive/TEMP-ab-program-levels-plan.md).
 
 **What the corpus reads (51 pairs, 2026-08-26).** Every pair measured, and every `offset_db` fell
@@ -176,7 +179,7 @@ inside ±0.26 dB (median +0.005) with 50 of 51 constant across the program. On t
 the same program loudness, so a whole-program scalar would be unity everywhere — which is a fact
 about these masters, not a general one. Two cautions that outlive the run are in
 [dev/settled.md](dev/settled.md) § E: chunk drift read as raw max-minus-min is set by the
-least-populated chunk, and `normalize_gain` is censored at its clamp.
+least-populated chunk, and `normalize_gain` was censored at its clamp on runs before 2026-08-31.
 
 > **Clock caveat:** gap times are on the **decoded-sample clock**, not container PTS — see the "shared overlap starts at N.Ns" warning and [cli-output.md](cli-output.md) § Timeline warnings. Prefer a clean source / MKV for exact timestamps.
 

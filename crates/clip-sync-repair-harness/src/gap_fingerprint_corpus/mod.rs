@@ -472,7 +472,7 @@ mod tests {
                 gap(0, true, abut), // the abut: locks pass the gate and the bridge is crossed
                 gap(1, false, abut), // two dead shoulders that happen to cross — gate refuses first
                 gap(2, true, r#","gap_frames":86400,"bridge_frames":5000"#), // donor material exists
-                gap(3, true, ""),   // older dump: no bridge at all — unmeasurable, not "no"
+                gap(3, true, ""), // older dump: no bridge at all — unmeasurable, not "no"
             ),
         );
         let report = analyze_dirs(&[root.path().to_path_buf()], 1.0, 30.0);
@@ -509,7 +509,10 @@ mod tests {
             &bare.path().join("1"),
             "aaaa",
             "bbbb",
-            &format!("[{}]", gap(0, true, r#","gap_frames":86400,"bridge_frames":-100"#)),
+            &format!(
+                "[{}]",
+                gap(0, true, r#","gap_frames":86400,"bridge_frames":-100"#)
+            ),
         );
         let text = analyze_dirs(&[bare.path().to_path_buf()], 1.0, 30.0).shoulders_abut_text();
         assert!(text.contains("provenance UNRECORDED"), "{text}");

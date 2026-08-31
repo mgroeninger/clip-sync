@@ -54,6 +54,8 @@ fn gap_status_gating_core(status: &GapPatchStatus) -> GapPatchStatus {
             dual_fit_used: false,
             normalize_gain: 1.0,
             program_gain: 1.0,
+            local_gain: 1.0,
+            local_gain_reason: clip_sync_repair::domain::LocalGainReason::FlagOff,
             // Normalized away like `residual_db` — the gating comparison is about the decision, and the
             // score terms are a report of how it was reached.
             fit_terms: None,

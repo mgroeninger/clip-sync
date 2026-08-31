@@ -57,11 +57,13 @@ pub(in crate::application::patch_audio) enum RegionPatchOutcome {
         anchor_seam_used: bool,
         anchor_bracket_move_frames: usize,
         dual_fit_used: bool,
-        /// The gain actually applied to this fill (`1.0` when `normalize_fill` is off, or when the
-        /// boost-only policy declined to move a fill at or above A's border level). Carried to the
+        /// The gain actually applied to this fill — whole-program × hole-local. Carried to the
         /// patch record so `fill_level`'s `gained_fill`-based fields can be read across gain-policy
-        /// changes — see [`policies::compute_fill_gain`].
+        /// changes.
         normalize_gain: f32,
+        /// The hole-local half of [`Self::Patched::normalize_gain`], carried whole so the reason
+        /// survives to the patch record (`domain::local_gain`).
+        local_gain: crate::domain::LocalGainDecision,
         /// The unified fit objective's terms at the applied placement; `None` on paths that never ran
         /// it (dual-fit, splice). Carried through to `GapPatchStatus::Patched::fit_terms`.
         fit_terms: Option<UnifiedFitBreakdown>,
@@ -193,6 +195,7 @@ pub(in crate::application::patch_audio) fn outcomes_in_report_order(
                 anchor_bracket_move_frames,
                 dual_fit_used,
                 normalize_gain,
+                local_gain,
                 fit_terms,
                 registration_residual_ms,
                 ..
@@ -205,6 +208,8 @@ pub(in crate::application::patch_audio) fn outcomes_in_report_order(
                 GapPatchStatus::Patched {
                     normalize_gain: *normalize_gain,
                     program_gain,
+                    local_gain: local_gain.gain(),
+                    local_gain_reason: local_gain.reason(),
                     pre_correlation: *pre_correlation,
                     post_correlation: *post_correlation,
                     align_adjustment_secs: *align_adjustment_secs,
@@ -268,7 +273,6 @@ pub(in crate::application::patch_audio) struct RegionPatchContext {
     pub(in crate::application::patch_audio) channels: usize,
     pub(in crate::application::patch_audio) sample_rate: u32,
     pub(in crate::application::patch_audio) max_refine_frames: usize,
-    pub(in crate::application::patch_audio) global_a_rms: f32,
     /// From the scan report (matches the thresholds the gaps were detected with).
     pub(in crate::application::patch_audio) silence_peak_fraction: f32,
 }
@@ -439,6 +443,7 @@ pub(in crate::application::patch_audio) fn outcome_from_spec(
             fit_boundary_grid_cells,
             residual,
             normalize_gain,
+            local_gain,
             fit_terms,
             registration_residual_ms,
             ..
@@ -461,6 +466,7 @@ pub(in crate::application::patch_audio) fn outcome_from_spec(
                 dual_fit_used: false,
                 fit_terms: *fit_terms,
                 normalize_gain: *normalize_gain,
+                local_gain: *local_gain,
                 registration_residual_ms: *registration_residual_ms,
             }
         }
@@ -471,6 +477,7 @@ pub(in crate::application::patch_audio) fn outcome_from_spec(
             confidence,
             registration_residual_ms,
             normalize_gain,
+            local_gain,
             ..
         }) => RegionPatchOutcome::Patched {
             pre_correlation: *pre_seam_r,
@@ -488,9 +495,10 @@ pub(in crate::application::patch_audio) fn outcome_from_spec(
             dual_fit_used: true,
             // Dual-fit does not run the unified objective at all — there is no placement search to report.
             fit_terms: None,
-            // Dual-fit takes the program scalar but never the local residual — the strategy
-            // carries it so this preview read and `region/execute.rs`'s splice cannot diverge.
+            // Dual-fit takes both halves since 2026-08-31; the strategy carries them so this
+            // preview read and `region/execute.rs`'s splice cannot diverge.
             normalize_gain: *normalize_gain,
+            local_gain: *local_gain,
             registration_residual_ms: *registration_residual_ms,
         },
         GapRepairVerdict::Skip { reason, .. } => {
@@ -534,18 +542,19 @@ mod tests {
         assert_eq!(spec.gap_index, 7);
     }
 
-    /// The dual-fit / silence-splice path takes the **program** half of the gain (never the local
-    /// residual), and it takes it off the strategy rather than the request — so this preview read
-    /// and the executor's splice cannot disagree about what was applied. A regression that reverted
-    /// this to a literal `1.0` would leave rescued holes at B's master while bracket holes sit at
-    /// A's, which is exactly the split the whole-program scalar exists to remove.
+    /// The dual-fit / silence-splice path takes **both** halves of the gain since 2026-08-31, and
+    /// takes them off the strategy rather than the request — so this preview read and the
+    /// executor's splice cannot disagree about what was applied. A regression that reverted either
+    /// to a literal `1.0` would leave rescued holes at a different level from bracket holes, which
+    /// is exactly the split the paired estimators exist to remove.
     #[test]
-    fn silence_splice_outcome_carries_the_program_gain_from_the_strategy() {
+    fn silence_splice_outcome_carries_both_gain_halves_from_the_strategy() {
         use crate::domain::gap_repair_spec::{GapRepairStrategy, GapRepairTags, GapRepairVerdict};
         use crate::domain::policies::RefinedGapFrames;
         use crate::domain::BExtractWindow;
 
         let g_program = 0.501_187f32;
+        let g_local = crate::domain::LocalGainDecision::Applied { gain: 0.891_251 };
         let spec = GapRepairSpec {
             gap_index: 0,
             a_start_secs: 1.0,
@@ -571,13 +580,22 @@ mod tests {
                 residual: None,
                 confidence: crate::domain::FillConfidence::High,
                 registration_residual_ms: None,
-                normalize_gain: g_program,
+                normalize_gain: g_program * g_local.gain(),
+                local_gain: g_local,
             }),
             tags_ctx: GapRepairTags::default(),
         };
         match outcome_from_spec(&spec, 48_000) {
-            RegionPatchOutcome::Patched { normalize_gain, .. } => {
-                assert_eq!(normalize_gain, g_program)
+            RegionPatchOutcome::Patched {
+                normalize_gain,
+                local_gain,
+                ..
+            } => {
+                assert_eq!(normalize_gain, g_program * g_local.gain());
+                assert_eq!(local_gain, g_local);
+                // And the reason survives to the record: without it the patched row cannot say
+                // whether dual-fit was *given* a local gain or merely defaulted to unity.
+                assert_eq!(local_gain.reason(), crate::domain::LocalGainReason::Applied);
             }
             other => panic!("expected a patched outcome, got {other:?}"),
         }
@@ -646,6 +664,7 @@ mod tests {
             anchor_bracket_move_frames: 0,
             dual_fit_used: false,
             normalize_gain: 1.0,
+            local_gain: crate::domain::LocalGainDecision::OFF,
             fit_terms: None,
             registration_residual_ms: None,
         };
@@ -766,6 +785,7 @@ mod tests {
             anchor_bracket_move_frames: 0,
             dual_fit_used: false,
             normalize_gain: 1.0,
+            local_gain: crate::domain::LocalGainDecision::OFF,
             fit_terms: None,
             registration_residual_ms: None,
         };

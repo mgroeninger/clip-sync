@@ -57,6 +57,7 @@ pub(in crate::application::patch_audio) fn execute_region_spec(
             fit_boundary_grid_cells,
             residual,
             normalize_gain,
+            local_gain,
             fit_terms,
             registration_residual_ms,
             ..
@@ -96,6 +97,7 @@ pub(in crate::application::patch_audio) fn execute_region_spec(
             let (patch, outcome) = execute_bracket_output(ExecuteBracketOutputCtx {
                 fill,
                 gain: normalize_gain,
+                local_gain,
                 refined,
                 crossfade_secs,
                 final_pre: seam_pre,
@@ -125,6 +127,7 @@ pub(in crate::application::patch_audio) fn execute_region_spec(
             confidence,
             registration_residual_ms,
             normalize_gain,
+            local_gain,
             ..
         }) => {
             // Dual-fit rescue: the fill is the synthesized bridge on the spec; seams sit at their own lags, so
@@ -152,9 +155,10 @@ pub(in crate::application::patch_audio) fn execute_region_spec(
                 dual_fit_used: true,
                 // No unified search on this path — see the preview arm.
                 fit_terms: None,
-                // The program scalar, matching the `gain` on the patch just above. Local
-                // normalize never runs on this path, so this is `g_program` with no residual.
+                // The product, matching the `gain` on the patch just above. Both halves ride the
+                // strategy, so this and the preview-only `outcome_from_spec` read the same values.
                 normalize_gain,
+                local_gain,
                 registration_residual_ms,
             };
             (Some(patch), outcome)

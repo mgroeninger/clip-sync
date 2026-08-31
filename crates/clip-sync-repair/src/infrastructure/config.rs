@@ -181,7 +181,8 @@ pub struct RepairConfig {
     #[serde(default = "default_program_gain_max_spread_db")]
     pub program_gain_max_spread_db: f64,
     /// Refuse the program gain when `|offset_db|` exceeds this. A **refusal, not a clamp** — see
-    /// `domain::program_gain`. Unrelated to [`Self::max_fill_gain_db`], which bounds the local path.
+    /// `domain::program_gain`. Bounds the whole-program half only; the hole-local half has its own
+    /// `MAX_LOCAL_RESIDUAL_DB` constant in `domain::program_levels`, deliberately not shared.
     #[serde(default = "default_max_program_gain_db")]
     pub max_program_gain_db: f64,
     /// **A3 dual-fit repair** — fallback fill for bracket-exhausted skips (independent per-shoulder fit +
@@ -241,13 +242,13 @@ pub struct RepairConfig {
     /// context, an argument the arms superseded.
     #[serde(default = "default_local_pair_collar_secs")]
     pub local_pair_collar_secs: f64,
-    /// Window size (seconds) for computing A's border RMS.
+    /// Width (seconds) of the A-border template either side of a gap. Named for normalization, and
+    /// no longer used by it: since 2026-08-31 no fill gain reads a border RMS. It still sizes the
+    /// splice's boundary-alignment template (`patch_audio::geometry`) and the gap-fingerprint noise
+    /// collar (`noise_collar_secs`), which are what actually depend on it. Not the local gain's
+    /// window — that is [`Self::local_pair_collar_secs`].
     #[serde(default = "default_normalize_window_secs")]
     pub normalize_window_secs: f64,
-    /// Maximum **boost** (dB) applied during normalization. There is no attenuating counterpart:
-    /// the gain is clamped to `[1.0, +max_fill_gain_db]`.
-    #[serde(default = "default_max_fill_gain_db")]
-    pub max_fill_gain_db: f64,
     /// Output configuration (paths for writing repaired audio/video).
     #[serde(default)]
     pub output: RepairOutputConfig,
@@ -512,9 +513,6 @@ fn default_normalize_window_secs() -> f64 {
 fn default_local_pair_collar_secs() -> f64 {
     4.0
 }
-fn default_max_fill_gain_db() -> f64 {
-    12.0
-}
 fn default_program_gain_max_spread_db() -> f64 {
     crate::domain::DEFAULT_PROGRAM_GAIN_MAX_SPREAD_DB
 }
@@ -663,7 +661,6 @@ impl Default for RepairConfig {
             lag_envelope_window_secs: default_lag_envelope_window_secs(),
             local_pair_collar_secs: default_local_pair_collar_secs(),
             normalize_window_secs: default_normalize_window_secs(),
-            max_fill_gain_db: default_max_fill_gain_db(),
             output: RepairOutputConfig::default(),
             dry_run: default_true(),
             repair_preview: false,
@@ -796,7 +793,6 @@ impl RepairConfig {
             lag_envelope_max_lag_ms: self.lag_envelope_max_lag_ms,
             lag_envelope_window_secs: self.lag_envelope_window_secs,
             normalize_window_secs: self.normalize_window_secs,
-            max_fill_gain_db: self.max_fill_gain_db,
             min_fill_correlation: self.min_fill_correlation,
             fill_align_margin_secs: self.fill_align_margin_secs,
             fill_border_search_secs: self.fill_border_search_secs,
@@ -893,7 +889,6 @@ impl RepairConfig {
             ),
             ("local_pair_collar_secs", self.local_pair_collar_secs),
             ("normalize_window_secs", self.normalize_window_secs),
-            ("max_fill_gain_db", self.max_fill_gain_db),
             (
                 "program_gain_max_spread_db",
                 self.program_gain_max_spread_db,
@@ -1006,12 +1001,6 @@ impl RepairConfig {
             return Err(ConfigError::InvalidValue {
                 field: "min_fill_correlation".into(),
                 reason: "must be between -1.0 and 1.0 inclusive".into(),
-            });
-        }
-        if self.max_fill_gain_db <= 0.0 {
-            return Err(ConfigError::InvalidValue {
-                field: "max_fill_gain_db".into(),
-                reason: "must be greater than zero".into(),
             });
         }
         if self.normalize_window_secs <= 0.0 {

@@ -45,7 +45,7 @@ use super::dual_fit::{
     select_registration_residual_ms, skip_or_dual_fit, DualFitAttempt, DualFitInputSpec,
 };
 use super::execute::execute_region_spec;
-use super::pcm::{b_extract_frames, b_mapped_start_frame, compute_a_border_rms, slice_b_extract};
+use super::pcm::{b_extract_frames, b_mapped_start_frame, slice_b_extract};
 use super::types::{
     skip_outcome_from_fields, skip_region_spec, RegionPatch, RegionPatchContext, RegionPatchMedia,
     RegionPatchOpts, RegionPatchOutcome,
@@ -110,7 +110,6 @@ pub(in crate::application::patch_audio) fn characterize_region(
         channels,
         sample_rate,
         max_refine_frames,
-        global_a_rms,
         silence_peak_fraction,
     } = ctx;
 
@@ -121,7 +120,6 @@ pub(in crate::application::patch_audio) fn characterize_region(
     // characterize time stays bucketed separately per §0.
     let _characterize_span = tracing::info_span!("characterize").entered();
 
-    let normalize_window_secs = request.normalize_window_secs;
     let margin_secs = request.fill_align_margin_secs;
     let border_search_secs = request.fill_border_search_secs;
     let border_standoff_secs = request.border_standoff_secs;
@@ -131,8 +129,6 @@ pub(in crate::application::patch_audio) fn characterize_region(
     let gap_signature_bin_ms = request.gap_signature_bin_ms;
     let min_structure_match_score = request.min_structure_match_score;
     let min_fill_correlation = request.min_fill_correlation;
-    let normalize_fill = request.normalize_fill;
-    let max_fill_gain_db = request.max_fill_gain_db;
     let absolute_silence_rms = request.absolute_silence_rms;
     let fill_offset_mode = request.fill_offset_mode;
     let gap_end_extend_on_post_seam_fail = request.gap_end_extend_on_post_seam_fail;
@@ -847,43 +843,15 @@ pub(in crate::application::patch_audio) fn characterize_region(
     // refusal, so a run without a trusted offset is the pre-2026-08-26 path exactly. The two halves
     // compose in `stack_fill_gain` (plan § 5) — local is a residual on the already-matched fill.
     let program_gain = request.program_gain.gain();
-    // The A-side border pool, and only ever A's: the local half reads A's shoulders, never B's
-    // (plan § 2 — reading B's shoulders at the hole is the refuted idea, `settled.md` § A).
-    let a_border_rms = if normalize_fill {
-        compute_a_border_rms(
-            a_pcm,
-            refined.start_frame,
-            refined.end_frame,
-            normalize_window_secs,
-            global_a_rms,
-        )
-    } else {
-        0.0
-    };
-    // Both inputs are normalize-only, so both are gated the same way: `stack_fill_gain` discards
-    // this whenever the flag is off, and off is the default — no reason to walk the fill for it.
-    let b_fill_rms = if normalize_fill {
-        policies::rms_interleaved(&b_fill)
-    } else {
-        0.0
-    };
-    let stacked = crate::domain::stack_fill_gain(
-        program_gain,
-        a_border_rms,
-        b_fill_rms,
-        max_fill_gain_db,
-        normalize_fill,
-    );
-    // Boost-only: no production path may quiet a fill below the level it was assembled at. The
-    // clamp lives in `compute_fill_gain`; this pins the property at the one site that consumes it,
-    // so a future edit to the policy cannot silently reintroduce attenuation here. It is the
-    // *local* half that is boost-only — `program_gain` attenuates a louder donor by design (plan
-    // § 3), which is why `stacked.total` is not asserted.
-    debug_assert!(
-        stacked.local >= 1.0,
-        "local normalize gain must never attenuate (boost-only policy), got {}",
-        stacked.local
-    );
+    // Hole-local half: the paired A-versus-B collar flanking THIS gap, stamped at scan time and
+    // decided in `domain::local_gain`. It replaced the A-border-RMS-versus-whole-fill-RMS estimator
+    // on 2026-08-31; nothing here walks the fill or the borders any more, which is why the
+    // `compute_a_border_rms` / `rms_interleaved(&b_fill)` pair that used to sit at this spot is
+    // gone, along with the per-run whole-A RMS that was only ever its silent-border fallback.
+    // `normalize_window_secs` is untouched — it still sizes the splice's border geometry in
+    // `geometry.rs` and the fingerprint noise collar, which are different jobs.
+    let local_gain = request.local_gain(region.gap_index);
+    let stacked = crate::domain::stack_fill_gain(program_gain, local_gain);
     let gain = stacked.total;
 
     log_gap_fill_result_verbose(
@@ -978,13 +946,15 @@ pub(in crate::application::patch_audio) fn characterize_region(
             fit_boundary_grid_cells,
             residual: residual_verdict,
             normalize_gain: gain,
+            local_gain,
             fit_terms,
             registration_residual_ms,
         }),
         tags_ctx: GapRepairTags::default(),
     };
     (
-        // F2: the fill is NOT handed over — `b_fill` was built for the reconciliation and the gain above, and
+        // F2: the fill is NOT handed over — `b_fill` was built for the reconciliation, and since
+        // 2026-08-31 for nothing else (the gain no longer reads its RMS), and
         // dies here. The executor rebuilds its own from the spec.
         spec, tag_ctx,
     )
@@ -1072,7 +1042,6 @@ mod tests {
         };
         use crate::domain::gap::Gap;
         use crate::domain::gap_fill::FillRegion;
-        use crate::domain::policies;
         use crate::domain::{GapReport, GapSignatureMode, ScanAlignment};
         use crate::infrastructure::config::RepairConfig;
         use clip_sync::MultiChannelPcm;
@@ -1170,7 +1139,6 @@ mod tests {
             channels: 1,
             sample_rate: rate,
             max_refine_frames: (0.05 * f64::from(rate)) as usize,
-            global_a_rms: policies::rms_interleaved(&a_pcm.samples),
             silence_peak_fraction: 0.05,
         };
         let media = RegionPatchMedia {
@@ -1237,7 +1205,6 @@ mod tests {
         use crate::domain::gap::Gap;
         use crate::domain::gap_fill::FillRegion;
         use crate::domain::gap_repair_spec::GapRepairStrategy;
-        use crate::domain::policies;
         use crate::domain::{GapReport, GapSignatureMode, ScanAlignment};
         use crate::infrastructure::config::RepairConfig;
         use clip_sync::MultiChannelPcm;
@@ -1341,7 +1308,6 @@ mod tests {
             channels: 1,
             sample_rate: rate,
             max_refine_frames: (0.05 * f64::from(rate)) as usize,
-            global_a_rms: policies::rms_interleaved(&a_pcm.samples),
             silence_peak_fraction: 0.05,
         };
         let media = RegionPatchMedia {

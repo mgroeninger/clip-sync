@@ -181,7 +181,7 @@ clip-sync-repair [OPTIONS] <VIDEO_A> <VIDEO_B>
 | `--wav <PATH>` | — | Write patched multi-channel WAV (implies write mode) |
 | `--mux <PATH>` | — | Mux patched audio into video A via ffmpeg (implies write mode; requires build with `--features ffmpeg-mux` and `ffmpeg` on `PATH`). AAC is re-encoded; bitrate defaults to the lower measured rate of A and B (see `mux_audio_bitrate` below) |
 | `--patch-only` | — | Run the full patch (splice included) and report it, writing no audio. The way to collect splice-time measurements such as `fill_level` — `--repair-preview` stops before the splice. Mutually exclusive with `--wav` / `--mux` / `--repair-preview` |
-| `--normalize` / `--no-normalize` | off | Hole-local fill normalization, **off by default since 2026-08-26**. Boost-only: raises a quiet fill toward A's borders (up to `max_fill_gain_db`), never attenuates a louder one. Local only — it does not touch the whole-program gain |
+| `--normalize` / `--no-normalize` | off | Hole-local fill normalization, **off by default since 2026-08-26**. Since 2026-08-31 it is a paired A/B level reading over a collar flanking each gap (`local_pair_collar_secs`), applied as a residual against the whole-program offset and in **either direction** — the boost-only rail belonged to the RMS estimator it replaced. It abstains on a thin or one-sided collar and refuses past 3 dB; `status.patched.local_gain_reason` says which. Local only — it does not touch the whole-program gain |
 | `--no-program-gain` | — | Do not apply the whole-program A↔B level scalar (from `scan.program_levels.offset`) to B-derived fills; fills land at B's own master level |
 | `--no-dual-fit` | — | Disable dual-fit rescue (G6); bracket-only skip path for regression (D6) |
 | `--dual-fit` | on | Re-enable dual-fit after TOML/override; default is on — omit both flags for normal repair |
@@ -575,10 +575,10 @@ crossfade_ms = 10
 program_gain = true                 # apply the whole-program A<->B level scalar to every fill
 program_gain_max_spread_db = 2.5    # refuse (unity) when no single scalar describes the pair
 max_program_gain_db = 6.0           # refuse (unity) past this; deliberately NOT a clamp
-normalize_fill = false           # hole-local boost, off since 2026-08-26 (boost-only when on)
+normalize_fill = false           # hole-local fill gain, off since 2026-08-26; paired collar
+                                 # residual since 2026-08-31 — attenuates as well as boosts
 normalize_window_secs = 5.0
-local_pair_collar_secs = 2.0     # per-gap A/B level collar each side of a hole (scan; report-only so far)
-max_fill_gain_db = 12.0          # max LOCAL boost; there is no attenuation side
+local_pair_collar_secs = 4.0     # per-gap A/B level collar each side of a hole; the local gain's reference
 dry_run = true
 
 [repair.output]

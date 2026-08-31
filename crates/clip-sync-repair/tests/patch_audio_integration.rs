@@ -886,6 +886,53 @@ fn program_levels_offset(
 }
 
 /// The `normalize_gain` recorded for a single-gap patch run.
+/// A synthetic per-gap collar reading, thick and tight enough to clear the admission test
+/// (`n_pairs >= 8`, both sides present, `se_db <= 1.0`) so a test can choose the `offset_db` it
+/// wants applied. **B minus A**, same polarity as the whole-program offset: positive means B is the
+/// louder master here and the fill must come down.
+fn collar_reading(offset_db: f64) -> clip_sync_repair::domain::program_levels::CollarLevelOffset {
+    clip_sync_repair::domain::program_levels::CollarLevelOffset {
+        offset_db,
+        spread_db: 0.05,
+        n_pairs: 24,
+        n_active: 48,
+        n_steady: 26,
+        n_pre: 12,
+        n_post: 12,
+        pre_offset_db: Some(offset_db),
+        post_offset_db: Some(offset_db),
+        first_pair_secs: GAP_START - 2.0,
+        last_pair_secs: GAP_END + 2.0,
+        map_lag_ms: Some(0.0),
+    }
+}
+
+/// `make_report` with a collar stamped on its one gap — what a scan produces for a pair whose
+/// shoulders paired. Without this the report looks like a pair where nothing paired, and the local
+/// half abstains.
+fn report_with_collar(
+    path_a: PathBuf,
+    path_b: PathBuf,
+    compat: TrackCompatibility,
+    offset_db: f64,
+) -> GapReport {
+    let mut report = make_report(path_a, path_b, compat);
+    report.local_pair_collar_secs = Some(4.0);
+    report.gaps[0].collar_level = Some(collar_reading(offset_db));
+    report
+}
+
+fn only_gap_local_gain(summary: &PatchSummary) -> (f32, clip_sync_repair::domain::LocalGainReason) {
+    match &summary.gaps[0].status {
+        GapPatchStatus::Patched {
+            local_gain,
+            local_gain_reason,
+            ..
+        } => (*local_gain, *local_gain_reason),
+        other => panic!("expected a patched gap, got {other:?}"),
+    }
+}
+
 fn only_gap_normalize_gain(summary: &PatchSummary) -> f32 {
     match &summary.gaps[0].status {
         GapPatchStatus::Patched { normalize_gain, .. } => *normalize_gain,
@@ -1148,18 +1195,33 @@ fn patch_audio_refuses_the_program_gain_on_a_wide_spread() {
     assert_eq!(json["gaps"][0]["status"]["patched"]["program_gain"], 1.0);
 }
 
+/// The hole-local half applies the **paired collar residual** (2026-08-31), so a report carrying a
+/// collar moves the fill by exactly `10^(-offset_db/20)` relative to the same run with
+/// `--no-normalize`. This replaced `patch_audio_normalizes_fill_loudness_to_a_border`, which
+/// asserted the estimator that was deleted: that one boosted a fill toward A's *border RMS*, a
+/// different quantity that only coincides with the paired offset on uniform material.
+///
+/// The gain is asserted against the unnormalized run rather than against A's border level, because
+/// the collar is a *stamped measurement* here. That is the point: this test covers the wiring —
+/// report → request → characterize → splice, and the same value reaching the record — while the
+/// estimator's own numbers are unit-tested in `domain::local_gain` on data that is not a sine.
 #[test]
-fn patch_audio_normalizes_fill_loudness_to_a_border() {
+fn patch_audio_applies_the_paired_collar_residual_to_the_fill() {
     let temp = tempfile::tempdir().expect("tempdir");
-    // B is the same frequency but much quieter than A's borders.
-    let fixture = sine_gap_fixture(temp.path(), SAMPLE_RATE, SAMPLE_RATE, 440.0, 2_500.0);
+    let fixture = sine_gap_fixture(temp.path(), SAMPLE_RATE, SAMPLE_RATE, 440.0, 16_000.0);
+
+    // B reads 2 dB hot in this hole's collar, so the fill must come DOWN by 2 dB. An attenuation is
+    // deliberate: it is the direction the boost-only rail forbade before this estimator landed.
+    const COLLAR_DB: f64 = 2.0;
+    let want = 10f32.powf(-(COLLAR_DB as f32) / 20.0);
 
     let (unnormalized, _, _) = patch_to_samples(
         patch_request(
-            make_report(
+            report_with_collar(
                 fixture.path_a.clone(),
                 fixture.path_b.clone(),
                 stereo_identical_compat(SAMPLE_RATE),
+                COLLAR_DB,
             ),
             false,
             2.0,
@@ -1169,10 +1231,11 @@ fn patch_audio_normalizes_fill_loudness_to_a_border() {
     );
     let (normalized, _, _, summary) = patch_to_samples_and_summary(
         patch_request(
-            make_report(
+            report_with_collar(
                 fixture.path_a,
                 fixture.path_b,
                 stereo_identical_compat(SAMPLE_RATE),
+                COLLAR_DB,
             ),
             true,
             2.0,
@@ -1181,11 +1244,9 @@ fn patch_audio_normalizes_fill_loudness_to_a_border() {
         10,
     );
 
-    let pre_rms = rms_region(&unnormalized, SAMPLE_RATE, CHANNELS, 0.0, 2.0);
-    // Measure the gap interior (away from crossfade seams).
+    // Measure the gap interior, away from the crossfade seams.
     const GAP_INNER_START: f64 = 3.5;
     const GAP_INNER_END: f64 = 5.5;
-
     let gap_unnorm = rms_region(
         &unnormalized,
         SAMPLE_RATE,
@@ -1200,39 +1261,41 @@ fn patch_audio_normalizes_fill_loudness_to_a_border() {
         GAP_INNER_START,
         GAP_INNER_END,
     );
-
+    assert!(gap_unnorm > 0.0, "the fill must not be silent");
+    let ratio = gap_norm / gap_unnorm;
     assert!(
-        gap_unnorm < pre_rms * 0.4,
-        "unnormalized fill should be much quieter than A border (pre={pre_rms}, gap={gap_unnorm})"
-    );
-    assert!(
-        gap_norm > gap_unnorm * 2.0,
-        "normalization should boost quiet B fill (unnorm={gap_unnorm}, norm={gap_norm})"
-    );
-    assert!(
-        gap_norm > pre_rms * 0.55,
-        "normalized gap should be close to A border level (pre={pre_rms}, gap={gap_norm})"
+        (ratio - want).abs() < 0.01,
+        "fill should scale by the collar residual (want {want}, got {ratio}; \
+         unnorm={gap_unnorm}, norm={gap_norm})"
     );
 
-    // The boost is recorded, not just applied: `fill_level` is measured on the gained fill, so a
-    // reader cannot interpret those numbers without knowing what gain produced them.
-    let gain = only_gap_normalize_gain(&summary);
+    // The same number reaches the record, with the reason that separates "applied" from the three
+    // ways this can be 1.0. `normalize_gain` is the product; program gain is unity on this report
+    // (no `program_levels`), so the two coincide here.
+    let (local_gain, reason) = only_gap_local_gain(&summary);
     assert!(
-        gain > 1.0,
-        "quiet B fill should record the boost it received, got {gain}"
+        (local_gain - want).abs() < 1e-4,
+        "recorded local_gain should be the applied residual, got {local_gain}"
+    );
+    assert_eq!(reason, clip_sync_repair::domain::LocalGainReason::Applied);
+    assert!(
+        (only_gap_normalize_gain(&summary) - want).abs() < 1e-4,
+        "normalize_gain is the product, and the program half is unity on this report"
     );
 }
 
-/// Boost-only: a fill *louder* than A's borders keeps its own level. The whole-fill RMS is what the
-/// ratio sees, so before 2026-08-12 this case was attenuated toward A's shoulders — crushing exactly
-/// the intentional dynamics a same-master donor exists to restore (the gunshot-in-conversation
-/// shape). Now the gain floors at unity, which makes the normalized run *bit-identical* to the
-/// `--no-normalize` run: `gained_fill` multiplies by exactly 1.0, so there is no tolerance to allow.
+/// Two ways the local half declines, both unity, both **bit-identical** to `--no-normalize`, and
+/// distinguishable only by `local_gain_reason` — which is the entire reason that field exists.
+///
+/// This replaced `patch_audio_never_attenuates_a_fill_louder_than_a_border`. That test asserted the
+/// boost-only floor, which went away with the RMS estimator that needed it (whole-fill RMS let one
+/// loud mid-gap event drag the whole patch toward talking-level shoulders; a paired-shoulder scalar
+/// cannot). Left as it was it would still have passed — a report with no collar abstains to unity —
+/// while claiming to prove a rail that no longer exists.
 #[test]
-fn patch_audio_never_attenuates_a_fill_louder_than_a_border() {
+fn patch_audio_local_half_declines_to_unity_and_says_why() {
     let temp = tempfile::tempdir().expect("tempdir");
-    // A's own sine is written at 16_000; B is well above it and inside i16 range.
-    let fixture = sine_gap_fixture(temp.path(), SAMPLE_RATE, SAMPLE_RATE, 440.0, 28_000.0);
+    let fixture = sine_gap_fixture(temp.path(), SAMPLE_RATE, SAMPLE_RATE, 440.0, 16_000.0);
 
     let (unnormalized, _, _) = patch_to_samples(
         patch_request(
@@ -1247,11 +1310,13 @@ fn patch_audio_never_attenuates_a_fill_louder_than_a_border() {
         ),
         10,
     );
-    let (normalized, _, _, summary) = patch_to_samples_and_summary(
+
+    // (a) No collar on the report at all — nothing paired, or the scan predates the field.
+    let (no_collar, _, _, no_collar_summary) = patch_to_samples_and_summary(
         patch_request(
             make_report(
-                fixture.path_a,
-                fixture.path_b,
+                fixture.path_a.clone(),
+                fixture.path_b.clone(),
                 stereo_identical_compat(SAMPLE_RATE),
             ),
             true,
@@ -1260,32 +1325,43 @@ fn patch_audio_never_attenuates_a_fill_louder_than_a_border() {
         ),
         10,
     );
-
-    let gain = only_gap_normalize_gain(&summary);
     assert_eq!(
-        gain, 1.0,
-        "loud B fill must not be attenuated (boost-only), got gain {gain}"
+        only_gap_local_gain(&no_collar_summary),
+        (1.0, clip_sync_repair::domain::LocalGainReason::AbstainedN)
     );
     assert_eq!(
-        normalized, unnormalized,
-        "with gain exactly 1.0 the normalized run must be sample-identical to --no-normalize"
+        no_collar, unnormalized,
+        "an abstaining local half must be sample-identical to --no-normalize"
     );
 
-    // Guard the property the bit-equality is standing in for, in case a future change makes the two
-    // runs differ for an unrelated reason: the gap interior keeps B's louder level.
-    const GAP_INNER_START: f64 = 3.5;
-    const GAP_INNER_END: f64 = 5.5;
-    let pre_rms = rms_region(&normalized, SAMPLE_RATE, CHANNELS, 0.0, 2.0);
-    let gap_rms = rms_region(
-        &normalized,
-        SAMPLE_RATE,
-        CHANNELS,
-        GAP_INNER_START,
-        GAP_INNER_END,
+    // (b) A collar past MAX_LOCAL_RESIDUAL_DB (3.0). It **refuses** rather than clamping to the
+    // bound: a reading this far out says the collar is reaching material that is not this hole's
+    // neighbourhood, and applying 3 dB of a number you disbelieve is worse than applying none.
+    // Note this is also why no gap can pin at a rail the way the old 12 dB clamp made seven of them.
+    let (refused, _, _, refused_summary) = patch_to_samples_and_summary(
+        patch_request(
+            report_with_collar(
+                fixture.path_a,
+                fixture.path_b,
+                stereo_identical_compat(SAMPLE_RATE),
+                9.0,
+            ),
+            true,
+            2.0,
+            0.35,
+        ),
+        10,
     );
-    assert!(
-        gap_rms > pre_rms,
-        "loud fill should stay louder than A's borders (pre={pre_rms}, gap={gap_rms})"
+    assert_eq!(
+        only_gap_local_gain(&refused_summary),
+        (
+            1.0,
+            clip_sync_repair::domain::LocalGainReason::RefusedResidual
+        )
+    );
+    assert_eq!(
+        refused, unnormalized,
+        "a refused local half must be sample-identical to --no-normalize"
     );
 }
 

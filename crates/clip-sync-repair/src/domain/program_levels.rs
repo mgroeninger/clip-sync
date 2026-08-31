@@ -55,8 +55,9 @@ pub const MIN_PAIRS: usize = 50;
 /// **Deliberately not read by [`collar_level_offset`].** A floor inside the estimator would censor
 /// the dump at exactly the value the census exists to choose — the reading would stop at the rail
 /// and the rail would look like the answer, which is how `max_fill_gain_db` survived two policy
-/// changes at a number nobody picked (`settled.md` § E). The estimator measures; this is policy,
-/// checked where a gain is applied. Nothing reads it yet: the apply half is a separate Change.
+/// changes at a number nobody picked (`settled.md` § E) before being deleted on 2026-08-31. The
+/// estimator measures; this is policy, checked where a gain is applied —
+/// [`collar_residual_gain`](crate::domain::collar_residual_gain), since 2026-08-31.
 pub const MIN_LOCAL_PAIRS: usize = 8;
 
 /// Maximum standard error (dB) of a collar's median before it may be **applied as a gain**, paired
@@ -91,12 +92,13 @@ pub const MAX_LOCAL_SE_DB: f64 = 1.0;
 ///
 /// Placing it at 6.0 would have reproduced the failure mode it exists to avoid: on arm 3 that value
 /// fired on 2 of 503 collars, sitting above p99, forfeiting the detection it was added for. It is
-/// deliberately not inherited from `max_fill_gain_db` (12.0), which bounds an RMS ratio and has
-/// never been calibrated, nor from
+/// deliberately not inherited from `max_fill_gain_db` (12.0), which bounded an RMS ratio, was never
+/// calibrated, and was deleted on 2026-08-31 with the estimator it belonged to, nor from
 /// [`DEFAULT_MAX_PROGRAM_GAIN_DB`](crate::domain::DEFAULT_MAX_PROGRAM_GAIN_DB), which bounds the
 /// whole-file offset rather than a residual against it.
 ///
-/// Nothing reads this yet: the apply half of that plan is a separate Change.
+/// Read by [`collar_residual_gain`](crate::domain::collar_residual_gain) since 2026-08-31 — the
+/// apply half of that plan, which landed as its own Change after the census above.
 pub const MAX_LOCAL_RESIDUAL_DB: f64 = 3.0;
 
 /// Minimum pairs for a per-chunk median to be emitted.

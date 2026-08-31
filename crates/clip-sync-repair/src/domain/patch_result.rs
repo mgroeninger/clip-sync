@@ -489,12 +489,16 @@ pub enum GapPatchStatus {
         /// let a reader factor apart. `1.0` means the donor level was written untouched: the run
         /// refused the program scalar *and* the local half was off or declined.
         ///
-        /// **It can sit below 1.0 since 2026-08-26.** The program half attenuates a louder donor by
-        /// design (plan § 3). The boost-only floor introduced 2026-08-12 constrains only the
-        /// *local* half (`policies::compute_fill_gain`); runs before that date could attenuate
-        /// locally, down to `-max_fill_gain_db`. Neither half bounds the product: the program half
-        /// is bounded by `max_program_gain_db` and the local half by `max_fill_gain_db`, so a
-        /// boosting run can reach the sum of the two before the splice clamps samples.
+        /// **It can sit below 1.0 since 2026-08-26**, and since 2026-08-31 either half can put it
+        /// there. The program half has always attenuated a louder donor by design (plan § 3); the
+        /// local half was boost-only from 2026-08-12 to 2026-08-31, when the paired collar replaced
+        /// `policies::compute_fill_gain` and the floor went with it — a scalar taken from paired
+        /// shoulder blocks cannot crush a loud mid-gap event the way whole-fill RMS could, which is
+        /// the entire reason the floor existed. Runs before 2026-08-12 could also attenuate
+        /// locally, down to `-max_fill_gain_db` — a knob removed on 2026-08-31 with the estimator it bounded.
+        /// Neither half bounds the product: `max_program_gain_db` bounds the program half and
+        /// `MAX_LOCAL_RESIDUAL_DB` (3.0) the local one, so a run can reach their sum before the
+        /// splice clamps samples.
         ///
         /// **Always serialized.** It exists to make the `fill_level` fields interpretable: those are
         /// measured on `gained_fill`, so without the gain there is no way to tell a loud fill from a
@@ -510,14 +514,36 @@ pub enum GapPatchStatus {
         /// The **whole-program** half of `normalize_gain` — A↔B master match from the scan's paired
         /// offset (`domain::program_gain`), `1.0` when the run refused it or `--no-program-gain`.
         ///
-        /// A run constant, repeated on every gap so a single patched row is self-describing: the
-        /// hole-local residual is `normalize_gain / program_gain`, and there is deliberately no
-        /// third field for it. Why this run applied (or refused) the value it did is stamped once on
+        /// A run constant, repeated on every gap so a single patched row is self-describing. Why
+        /// this run applied (or refused) the value it did is stamped once on
         /// [`PatchSummary::program_gain`], not here.
         ///
         /// **Always serialized** (this type is serialize-only, so there is no serde default to
         /// lean on). Absence in a dump means the run predates 2026-08-26, not unity.
         program_gain: f32,
+        /// The **hole-local** half of [`Self::Patched::normalize_gain`] — the paired-collar residual
+        /// against the applied program offset (`domain::local_gain`), `1.0` on any abstention or
+        /// refusal. Per gap, unlike [`Self::Patched::program_gain`].
+        ///
+        /// Until 2026-08-31 this was recoverable as `normalize_gain / program_gain` and no field
+        /// existed. It has one now because the division is lossy in the direction that matters: a
+        /// quotient of exactly 1.0 covers *both* "the collar declined" and "the collar ran and found
+        /// this hole already matched", and those are different facts about the gap — the first says
+        /// the estimator was absent, the second that it agreed. A corpus that reads mostly the
+        /// former has not had its local gain replaced, it has had it deleted, and that has to be
+        /// visible without a second run. [`Self::Patched::local_gain_reason`] is which.
+        ///
+        /// **Always serialized.** Absence means the run predates 2026-08-31 — on such a run the
+        /// quotient is still the right recovery, and it is still the local *boost* estimator, not
+        /// this one.
+        local_gain: f32,
+        /// Why [`Self::Patched::local_gain`] is what it is, including on success.
+        ///
+        /// `applied` and any of the abstentions can all carry `local_gain: 1.0`; only this field
+        /// separates them. `flag_off` is the default run's answer (`--normalize` is off), and
+        /// `abstained_n` on a run with the flag on means the collar was too thin — a `--normalize`
+        /// roll-up should report the mix before it reports the gains.
+        local_gain_reason: crate::domain::LocalGainReason,
         /// The unified fit objective's terms at the placement that was applied — `structure_combined`,
         /// `waveform_min`, and each prior's subtracted amount (see
         /// [`crate::domain::gap_fill_fit::UnifiedFitBreakdown`]).

@@ -64,6 +64,13 @@ pub(in crate::application::gap_fingerprint::measure) fn seam_prominence(
     let curve = lag_correlation_curve(a_win, b_ctx, max_lag);
     summarize_lag_curve(&curve, sample_rate, 0, 0, LagChannel::Mono).and_then(|s| s.prominence)
 }
+/// The coarse-envelope primitives moved to the shared `domain::lag_envelope` for the same reason
+/// `seam_local` did: the production patch path and this diagnostic scan must use one implementation
+/// (no drift). Re-exported here so the existing call sites / tests keep their paths.
+pub use crate::domain::lag_envelope::{
+    envelope_recenter_frames, envelope_shoulder, EnvelopeCfg, EnvelopePeak, EnvelopeSide,
+    LAG_DECISION_RECOVERABLE_R,
+};
 /// `lag_correlation_curve` + `seam_local_peak` moved to the shared `domain::seam_local` so the production
 /// dual-fit repair (A3) and this diagnostic scan use one implementation (no drift). Re-exported here so the
 /// existing call sites / tests keep their paths.
@@ -71,13 +78,6 @@ pub(in crate::application::gap_fingerprint::measure) fn seam_prominence(
 /// `LagSummary::edge_pinned` are the same test, so it is one function in `domain`, not one per path.
 pub use crate::domain::seam_local::{
     lag_correlation_curve, lag_correlation_curve_auto, lag_is_edge_pinned, seam_local_peak,
-};
-/// The coarse-envelope primitives moved to the shared `domain::lag_envelope` for the same reason
-/// `seam_local` did: the production patch path and this diagnostic scan must use one implementation
-/// (no drift). Re-exported here so the existing call sites / tests keep their paths.
-pub use crate::domain::lag_envelope::{
-    envelope_recenter_frames, envelope_shoulder, EnvelopeCfg, EnvelopePeak, EnvelopeSide,
-    LAG_DECISION_RECOVERABLE_R,
 };
 /// Summarize a lag curve: lag-0 value, integer peak, parabolic-interpolated (fractional) peak, and a
 /// [`LagVerdict`]. `None` for an empty curve.

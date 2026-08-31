@@ -896,6 +896,8 @@ mod tests {
             dual_fit_used: false,
             normalize_gain: 1.0,
             program_gain: 1.0,
+            local_gain: 1.0,
+            local_gain_reason: crate::domain::LocalGainReason::FlagOff,
             fit_terms: None,
             registration_residual_ms: None,
         };
@@ -922,6 +924,8 @@ mod tests {
             dual_fit_used: true,
             normalize_gain: 1.0,
             program_gain: 1.0,
+            local_gain: 1.0,
+            local_gain_reason: crate::domain::LocalGainReason::FlagOff,
             fit_terms: None,
             registration_residual_ms: None,
         };

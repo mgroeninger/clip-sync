@@ -33,9 +33,22 @@
 # i.e. the program is shorter than ~2x600 s. Chunk drift is undefined there, not zero.
 #
 # GAIN JOIN. The same reports carry `patch.gaps[*].status.patched.normalize_gain`, so -GainCsvOut
-# emits one row per patched gap with the pair's offset beside the gap's own boost. Expected
-# direction, if the offset means anything: a pair whose B is quieter than A (`offset_db` < 0) should
-# need more boosting. The census reports the data and does not assert the relationship.
+# emits one row per patched gap with the pair's offset beside the gap's own gain. The census reports
+# the data and does not assert any relationship.
+#
+# `normalize_gain` is a PRODUCT from 2026-08-26 — `program_gain` (whole-pair, one value per report)
+# times `local_gain` (this hole's collar residual). Both halves are emitted separately because the
+# product hides which one moved, and they answer different questions: the pair offset joined here is
+# the *same measurement* the program half already applied, so regressing it against `normalize_gain`
+# partly regresses a number against itself. Join it against `local_gain` instead — that is the part
+# the whole-file offset does NOT explain, which is what "does the pair offset predict this hole?"
+# actually asks.
+#
+# `local_gain_reason` is required to read `local_gain`: it is 1.0 on `applied` (nothing to correct),
+# on `abstained_n` / `abstained_dispersion` (no usable collar) and on `refused_residual` (a collar
+# disbelieved), and those are different facts. Filter to `applied` before quoting any distribution,
+# and report the abstention rate beside it rather than folding the unity rows in. Both fields are
+# absent on runs before 2026-08-31; absent does NOT mean unity.
 #
 # MEDIA HYGIENE: pair labels come from filenames and nothing else is read from the path. Use numeric
 # pair indices as labels — never titles or media paths, in the manifest or in anything quoted from
@@ -49,7 +62,7 @@ param(
     # Per-pair CSV: label, state, offset_db, spread_db, chunk drift, counts, yields.
     [string]$CsvOut = '',
 
-    # Per-patched-gap CSV joining `normalize_gain` to the pair's offset.
+    # Per-patched-gap CSV joining the gain halves to the pair's offset.
     [string]$GainCsvOut = '',
 
     # Reporting cut for "a single scalar plausibly exists" — NOT a gate, and not a validated
@@ -205,13 +218,25 @@ foreach ($file in $files) {
         $gain = Get-Node $patched 'normalize_gain'
         if ($null -eq $gain) { continue }
         $gainDb = if ([double]$gain -gt 0) { 20.0 * [Math]::Log10([double]$gain) } else { $null }
+        # Halves. $null where the run predates the field — carried through as $null rather than
+        # defaulted, so a mixed-vintage dump directory cannot silently read as "unity everywhere".
+        $programGain = Get-Node $patched 'program_gain'
+        $localGain = Get-Node $patched 'local_gain'
+        $localReason = Get-Node $patched 'local_gain_reason'
+        $localGainDb = if ($null -ne $localGain -and [double]$localGain -gt 0) {
+            20.0 * [Math]::Log10([double]$localGain)
+        } else { $null }
         $gainRows.Add([pscustomobject][ordered]@{
-                pair            = $label
-                a_start_secs    = Get-Node $gap 'a_start_secs'
-                normalize_gain  = [double]$gain
-                gain_db         = $gainDb
-                pair_offset_db  = $row.offset_db
-                pair_spread_db  = $row.spread_db
+                pair              = $label
+                a_start_secs      = Get-Node $gap 'a_start_secs'
+                normalize_gain    = [double]$gain
+                gain_db           = $gainDb
+                program_gain      = $programGain
+                local_gain        = $localGain
+                local_gain_db     = $localGainDb
+                local_gain_reason = $localReason
+                pair_offset_db    = $row.offset_db
+                pair_spread_db    = $row.spread_db
             })
     }
 }

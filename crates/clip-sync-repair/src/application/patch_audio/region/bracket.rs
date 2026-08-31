@@ -228,7 +228,10 @@ pub(in crate::application::patch_audio::region) fn execute_bracket_fill(
 /// via [`execute_bracket_fill`], slides recomputed from the geometry fields).
 pub(in crate::application::patch_audio::region) struct ExecuteBracketOutputCtx {
     pub(in crate::application::patch_audio::region) fill: Vec<f32>,
+    /// The product actually multiplied into the fill.
     pub(in crate::application::patch_audio::region) gain: f32,
+    /// The hole-local half of [`Self::gain`], carried whole so the reason reaches the record.
+    pub(in crate::application::patch_audio::region) local_gain: crate::domain::LocalGainDecision,
     pub(in crate::application::patch_audio::region) refined: RefinedGapFrames,
     pub(in crate::application::patch_audio::region) crossfade_secs: f64,
     pub(in crate::application::patch_audio::region) final_pre: f64,
@@ -290,6 +293,7 @@ pub(in crate::application::patch_audio::region) fn execute_bracket_output(
         dual_fit_used: false,
         fit_terms: ctx.fit_terms,
         normalize_gain: ctx.gain,
+        local_gain: ctx.local_gain,
         registration_residual_ms: ctx.registration_residual_ms,
     };
     (patch, outcome)

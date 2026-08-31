@@ -105,8 +105,10 @@ impl SeamLockTemplates {
         if gap_start_frame < w || gap_end_frame + w > a_frames || gap_frames == 0 {
             return None;
         }
-        let a_pre =
-            interleaved_to_mono(&a_samples[(gap_start_frame - w) * ch..gap_start_frame * ch], ch);
+        let a_pre = interleaved_to_mono(
+            &a_samples[(gap_start_frame - w) * ch..gap_start_frame * ch],
+            ch,
+        );
         let a_post =
             interleaved_to_mono(&a_samples[gap_end_frame * ch..(gap_end_frame + w) * ch], ch);
         Self::from_mono(a_pre, a_post, gap_frames, b_mapped_start, w)
@@ -221,8 +223,7 @@ pub fn wide_a_slicer(
         } else {
             (gap_end_frame, gap_end_frame.checked_add(wide_window)?)
         };
-        (hi <= a_frames && hi > lo)
-            .then(|| interleaved_to_mono(&a_samples[lo * ch..hi * ch], ch))
+        (hi <= a_frames && hi > lo).then(|| interleaved_to_mono(&a_samples[lo * ch..hi * ch], ch))
     }
 }
 
@@ -480,9 +481,8 @@ mod tests {
             .zip(&dirt)
             .map(|(t, d)| 0.30 * t + 0.70 * d)
             .collect();
-        let a_post: Vec<f64> = b[nominal_pre_start + w + gap_frames
-            ..nominal_pre_start + w + gap_frames + w]
-            .to_vec();
+        let a_post: Vec<f64> =
+            b[nominal_pre_start + w + gap_frames..nominal_pre_start + w + gap_frames + w].to_vec();
 
         let templates = SeamLockTemplates::from_mono(
             a_pre.clone(),

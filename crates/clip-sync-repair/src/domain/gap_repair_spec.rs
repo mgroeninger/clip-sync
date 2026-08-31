@@ -206,11 +206,15 @@ pub enum GapRepairStrategy {
         fit_used_boundary_grid: bool,
         fit_boundary_grid_cells: Option<u32>,
         residual: Option<SeamResidualVerdict>,
-        /// The total splice gain — whole-program × hole-local (`domain::stack_fill_gain`), computed
-        /// at characterize time because the local half needs the sliced B. `1.0` when the run
-        /// refused the program scalar and local normalize is off or declined; **below 1.0** when
-        /// the program half attenuates a louder donor.
+        /// The total splice gain — whole-program × hole-local (`domain::stack_fill_gain`), decided
+        /// at characterize time. `1.0` when the run refused the program scalar and the local half
+        /// was off or declined; **below 1.0** when either half attenuates.
         normalize_gain: f32,
+        /// The hole-local half of [`Self::Bracket::normalize_gain`], kept whole rather than left to
+        /// be recovered as `normalize_gain / program_gain`: the reason is not a number and cannot
+        /// be divided out, and `1.0` on its own cannot distinguish a collar that declined from one
+        /// that ran and found the hole already matched.
+        local_gain: crate::domain::LocalGainDecision,
         /// The unified fit objective's terms at `alignment.start_frame` — decided at characterize time
         /// alongside the placement itself, because only the search knows them. `None` when the gate
         /// reached its placement without the unified search (structure-only gate mode).
@@ -241,10 +245,14 @@ pub enum GapRepairStrategy {
         /// Carried on the strategy — rather than read from the request at the splice — so the
         /// executor and the preview-only `outcome_from_spec` cannot disagree about what was applied.
         ///
-        /// This path takes **no local** normalize gain: hole-local normalization was never designed
-        /// for a dual-fit interior. Withholding the *program* half too would leave rescued holes at
-        /// B's master while bracket holes sit at A's, which is why this is not simply `1.0`.
+        /// Since 2026-08-31 this is the **product**, as on [`Self::Bracket`]: the paired collar is
+        /// measured on A-versus-B blocks flanking the hole and never touches the fill, so unlike the
+        /// whole-fill-RMS estimator it replaced there is nothing about a dual-fit interior it cannot
+        /// read. Withholding a half would leave rescued holes at a different master from bracket
+        /// holes, which is why neither is simply `1.0`.
         normalize_gain: f32,
+        /// The hole-local half of [`Self::SilenceSplice::normalize_gain`]. See the `Bracket` field.
+        local_gain: crate::domain::LocalGainDecision,
     },
 }
 
@@ -572,6 +580,7 @@ mod tests {
             fit_boundary_grid_cells: None,
             residual: None,
             normalize_gain: 1.0,
+            local_gain: crate::domain::LocalGainDecision::OFF,
             fit_terms: None,
             registration_residual_ms: None,
         }
@@ -589,6 +598,7 @@ mod tests {
             confidence: FillConfidence::High,
             registration_residual_ms: None,
             normalize_gain: 1.0,
+            local_gain: crate::domain::LocalGainDecision::OFF,
         }
     }
 

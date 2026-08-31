@@ -182,7 +182,15 @@ function Get-DualFitUsed {
 # `fill_level` field — the level fields are measured *after* this gain, so a loud fill and a boosted
 # quiet one are indistinguishable without it. $null means the report predates 2026-08-12 and carries
 # no gain at all; it does NOT mean unity, and such rows must be held out of any gain-backed ranking
-# rather than defaulted to 1.0. Since the boost-only policy it is never below 1.0.
+# rather than defaulted to 1.0.
+#
+# It is a PRODUCT of two halves from 2026-08-26 (`program_gain` x `local_gain`) and can sit either
+# side of 1.0: the program half attenuates a louder donor by design, and from 2026-08-31 so does the
+# hole-local half — the boost-only floor went out with the RMS estimator that needed it. A ranking
+# that assumes `>= 1.0`, or that reads this field as the local gain alone, is reading a 2026-08-12
+# to 2026-08-25 contract. For the local half on its own use `status.patched.local_gain`, with
+# `local_gain_reason` to separate "declined" from "ran and found nothing to correct" — the quotient
+# `normalize_gain / program_gain` cannot, since both read 1.0.
 function Get-NormalizeGain {
     param($Outcome)
     $status = $Outcome.status

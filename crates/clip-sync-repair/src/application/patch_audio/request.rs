@@ -44,6 +44,47 @@ pub struct PatchAudioRequest {
     pub gap_selection: GapSelection,
 }
 
+impl PatchAudioRequest {
+    /// The hole-local half of this gap's fill gain (plan `TEMP-local-paired-gain-plan.md` § 8).
+    ///
+    /// Every input but the collar itself is a run constant, which is why this lives on the request
+    /// rather than being rebuilt at each of the two call sites that need it (bracket characterize
+    /// and dual-fit). Both must agree: a gap that gets one gain from the executor and another from
+    /// the preview-only outcome is the class of bug `outcome_from_spec` exists to prevent.
+    ///
+    /// The prior is [`ProgramGainDecision::offset_db`] — the offset this run **applied**, `None` on
+    /// a refusal — and *not* `report.program_levels`'s measured offset. On a refusal there is no
+    /// trusted file average to subtract, so the prior is 0 and the collar becomes a hole-local
+    /// master match on its own; subtracting an offset the run declined to apply would bake a
+    /// phantom into every gap on the pair.
+    ///
+    /// Out-of-range `gap_index` yields the same decision as a missing collar. It cannot happen —
+    /// `FillRegion::gap_index` indexes `report.gaps` by construction — and indexing would be the
+    /// honest thing were that ever false, but a panic in the gain path is a worse failure than a
+    /// gap that quietly abstains.
+    ///
+    /// A run with no `program_levels` at all reads as *comparable*, so such a gap reports
+    /// `abstained_n` rather than `channels`. Both are unity; the choice is about which is the less
+    /// false thing to have said afterwards, and "no channel mismatch was ever measured" is.
+    #[must_use]
+    pub fn local_gain(&self, gap_index: usize) -> crate::domain::LocalGainDecision {
+        let collar = self
+            .report
+            .gaps
+            .get(gap_index)
+            .and_then(|gap| gap.collar_level.as_ref());
+        crate::domain::collar_residual_gain_default(
+            collar,
+            self.normalize_fill,
+            self.program_gain.offset_db().unwrap_or(0.0),
+            self.report
+                .program_levels
+                .as_ref()
+                .is_none_or(|levels| levels.channels_comparable),
+        )
+    }
+}
+
 impl std::ops::Deref for PatchAudioRequest {
     type Target = PatchRequestSettings;
 
@@ -73,8 +114,10 @@ pub struct PatchRequestSettings {
     /// Coarse envelope window (seconds) the seam-lock rescue correlates. Positive and finite
     /// (enforced by `RepairConfig::validate`).
     pub lag_envelope_window_secs: f64,
+    /// Width (seconds) of the A-border template either side of a gap. Not a normalization knob any
+    /// more despite the name — see
+    /// [`RepairConfig::normalize_window_secs`](crate::infrastructure::config::RepairConfig::normalize_window_secs).
     pub normalize_window_secs: f64,
-    pub max_fill_gain_db: f64,
     /// Match B-derived fills to A's program level from the scan's paired offset. The decision it
     /// produces is resolved once, in [`Self::into_request`].
     pub program_gain: bool,

@@ -670,7 +670,10 @@ fn gap_row(pair: &str, source: &SourceMeta, gap: &GapEntry, eps: f64, tail_secs:
         dualfit_gap_frames: gap.splice_dualfit.as_ref().and_then(|d| d.gap_frames),
         dualfit_seams_clamped: gap.splice_dualfit.as_ref().and_then(|d| d.seams_clamped),
         dualfit_pre_rescued: gap.splice_dualfit.as_ref().and_then(|d| d.pre_seam_rescued),
-        dualfit_post_rescued: gap.splice_dualfit.as_ref().and_then(|d| d.post_seam_rescued),
+        dualfit_post_rescued: gap
+            .splice_dualfit
+            .as_ref()
+            .and_then(|d| d.post_seam_rescued),
         // Either side pinned is enough to caveat the pair of lags; which side is in the dump.
         dualfit_seam_edge_pinned: gap.splice_dualfit.as_ref().and_then(|d| {
             match (d.pre_seam_edge_pinned, d.post_seam_edge_pinned) {

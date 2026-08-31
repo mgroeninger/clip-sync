@@ -461,8 +461,17 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         // its alternative is a map known to be wrong. `map_lag_ms` records which map was used, so
         // the two are never confused in a dump.
         //
-        // Measurement only in this Change: no gain reads `collar_level`, so this runs regardless of
-        // `normalize_fill` and costs one binary search plus ~`2 * collar / block` blocks per gap.
+        // Runs regardless of `normalize_fill`, and still should: measurement does not depend on the
+        // flag, only application does, so a default (non-normalizing) run's dump still carries every
+        // collar for the census. Since 2026-08-31 a `--normalize` run *does* read these back as the
+        // hole-local fill gain (`domain::local_gain`). Costs one binary search plus
+        // ~`2 * collar / block` blocks per gap.
+        //
+        // The `channels_comparable` gate is why the apply path normally sees `collar: None` on a
+        // mismatched pair — but `collar_residual_gain` refuses on the flag itself rather than
+        // relying on this, so moving or removing this gate changes what is *dumped*, not what is
+        // applied. Keep them agreeing anyway: an incomparable pair's offset is a confound, not a
+        // gain (see `program_levels` module docs), and it has no business in a census either.
         if channels_comparable {
             if let (Some(delta), Some(b_levels)) = (offset_secs, b_levels_for_eq) {
                 debug_assert_eq!(

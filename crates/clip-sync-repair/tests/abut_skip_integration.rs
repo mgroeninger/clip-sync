@@ -18,15 +18,15 @@
 
 use std::path::{Path, PathBuf};
 
+use clip_sync::{AlignmentResult, ClipLabel, ClipMatch};
+use clip_sync_repair::application::align_bridge::scan_alignment_from_result;
 use clip_sync_repair::domain::gap::{Gap, GapReport};
 use clip_sync_repair::domain::{
     CompatibilityVerdict, GapPatchSkipReason, GapPatchStatus, TrackCompatibility,
 };
-use clip_sync_repair::application::align_bridge::scan_alignment_from_result;
 use clip_sync_repair_harness::patch_audio::{
     patch_request_with_options, run_patch, run_patch_preview, PatchTestOptions,
 };
-use clip_sync::{AlignmentResult, ClipLabel, ClipMatch};
 use hound::{SampleFormat, WavSpec, WavWriter};
 
 const SAMPLE_RATE: u32 = 44_100;
@@ -230,10 +230,7 @@ fn shoulders_abut_skip_survives_no_dual_fit() {
 
     assert_eq!(summary.patched_count, 0);
     assert!(
-        matches!(
-            skip_reason(&summary),
-            GapPatchSkipReason::ShouldersAbut(_)
-        ),
+        matches!(skip_reason(&summary), GapPatchSkipReason::ShouldersAbut(_)),
         "the abut skip must not depend on --dual-fit"
     );
 }

@@ -55,7 +55,6 @@ fingerprint_diagnostics = false             # Tier-3 fields only with --gap-fing
 crossfade_ms = 10
 normalize_fill = true
 normalize_window_secs = 5.0
-max_fill_gain_db = 12.0
 dry_run = true
 
 [repair.output]

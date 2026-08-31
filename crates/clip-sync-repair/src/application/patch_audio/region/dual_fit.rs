@@ -258,6 +258,7 @@ pub(in crate::application::patch_audio::region) fn skip_or_dual_fit(
     tag_ctx: GapTagsPatchContext,
     attempt: Option<DualFitAttempt<'_>>,
 ) -> (DualFitDecision, GapTagsPatchContext) {
+    let local_gain = request.local_gain(region.gap_index);
     let mut dual_fit_attempt: Option<crate::domain::patch_result::SeamScoreAttempt> = None;
     if dual_fit_eligible(request.dual_fit, fail) {
         if let Some(DualFitAttempt { input: df, locks }) = attempt {
@@ -438,7 +439,17 @@ pub(in crate::application::patch_audio::region) fn skip_or_dual_fit(
                                     residual,
                                     confidence,
                                     registration_residual_ms,
-                                    normalize_gain: request.program_gain.gain(),
+                                    // Since 2026-08-31 dual-fit takes the hole-local half too:
+                                    // the paired collar reads A-versus-B blocks flanking the gap
+                                    // and never the fill, so nothing about a dual-fit interior is
+                                    // out of its reach. Both halves ride the strategy so this and
+                                    // `outcome_from_spec` cannot disagree about what was applied.
+                                    normalize_gain: crate::domain::stack_fill_gain(
+                                        request.program_gain.gain(),
+                                        local_gain,
+                                    )
+                                    .total,
+                                    local_gain,
                                 },
                                 tags_ctx,
                                 refined: RefinedGapFrames {
@@ -845,8 +856,9 @@ mod tests {
             w,
         )
         .expect("fixture borders are exactly one seam window");
-        let r = crate::domain::dual_fit::dual_fit_at_nominal(&templates, &b_mono, &b_samples, &params)
-        .expect("dual-fit target");
+        let r =
+            crate::domain::dual_fit::dual_fit_at_nominal(&templates, &b_mono, &b_samples, &params)
+                .expect("dual-fit target");
         assert_eq!(
             r.pre_lag, 0,
             "pre shoulder matches at nominal lag in this fixture"
@@ -1010,8 +1022,9 @@ mod tests {
             w,
         )
         .expect("fixture borders are exactly one seam window");
-        let r = crate::domain::dual_fit::dual_fit_at_nominal(&templates, &b_mono, &b_samples, &params)
-        .expect("dual-fit target");
+        let r =
+            crate::domain::dual_fit::dual_fit_at_nominal(&templates, &b_mono, &b_samples, &params)
+                .expect("dual-fit target");
 
         let confident_floor = params.min_fill_correlation.max(params.fill_absolute_floor);
         let registration_residual_ms = select_registration_residual_ms(

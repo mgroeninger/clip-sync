@@ -595,6 +595,7 @@ pub fn fingerprint_to_spec(fp: &GapFingerprint) -> crate::domain::gap_repair_spe
             registration_residual_ms: None,
             // Placeholder strategy on a probe path — nothing here is ever spliced.
             normalize_gain: 1.0,
+            local_gain: crate::domain::LocalGainDecision::OFF,
         })
     };
 
@@ -802,7 +803,9 @@ mod tests {
         // every from-decode dump reached the corpus with its `splice_dualfit` flags erased — and an
         // erased `edge_pinned` reads as "not pinned", which is the wrong answer to the one question a
         // non-positive bridge raises.
-        let df = fp.splice_dualfit.expect("seam_local projects a splice_dualfit");
+        let df = fp
+            .splice_dualfit
+            .expect("seam_local projects a splice_dualfit");
         assert_eq!(
             (
                 df.pre_seam_rescued,

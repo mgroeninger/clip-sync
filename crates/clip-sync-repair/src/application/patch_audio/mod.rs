@@ -11,7 +11,6 @@ use crate::domain::{
     inactive_repair_flag_notes,
     patch_anchor::{format_patch_anchor_table_summary, PatchAnchorTable},
     patch_result::{GapPatchNotAppliedReason, GapPatchSkipReason, PatchSummary, ShouldersAbutSkip},
-    policies,
 };
 
 mod anchor_retry;
@@ -29,7 +28,6 @@ use anchor_retry::{
 };
 pub(crate) use decode::{decode_ab, DecodedAb};
 pub use decode::{AbSources, SourceDescriptor};
-pub(crate) use geometry::border_frames_from_secs;
 use geometry::repair_patch_config_view;
 use log::{format_patch_characterize_verbose_line, log_gap_tags_verbose, new_patch_gap_span};
 use region::{
@@ -350,9 +348,6 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             b_channels: _,
         } = decoded;
 
-        // Step 7: Compute global A RMS as normalization fallback.
-        let global_a_rms = policies::rms_interleaved(&a_pcm.samples);
-
         let channels = a_pcm.channels as usize;
         let sample_rate = a_pcm.sample_rate;
         let max_refine_frames = (GAP_EDGE_REFINE_SECS * sample_rate as f64).round() as usize;
@@ -360,7 +355,6 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             channels,
             sample_rate,
             max_refine_frames,
-            global_a_rms,
             silence_peak_fraction: request.report.recipe.silence_peak_fraction(),
         };
 

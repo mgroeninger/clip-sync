@@ -1105,9 +1105,11 @@ local_pair_collar_secs = 4.0    # new; config-only; **scan** reads this (ScanGap
 # MAX_LOCAL_RESIDUAL_DB = 3.0 code constant, SET by § 4b Result 4; refuse past it, do not
 #                            clamp. Admitted readings stop at 1.573 dB, so this fires on
 #                            nothing here — a backstop, no longer the disposal
-max_fill_gain_db = 12.0         # UNTOUCHED. Still the compute_fill_gain boost ceiling and
-                                # nothing else; it is not this estimator's bound (§ 4) and
-                                # dies with compute_fill_gain, not with this Change
+max_fill_gain_db = 12.0         # REMOVED 2026-08-31. It was the compute_fill_gain boost
+                                # ceiling and nothing else, never this estimator's bound
+                                # (§ 4), and this line said it "dies with compute_fill_gain,
+                                # not with this Change" -- which turned out to be the same
+                                # Change, since the estimator was replaced rather than kept
 normalize_window_secs = 5.0     # **keep reading** — A-border template / correlate_frames /
                                 # fingerprint noise_collar_secs. Named for normalization,
                                 # used as a border size. Not this estimator’s window.
@@ -1233,25 +1235,25 @@ were re-verified against the corrected census on 2026-08-31 (§ 4b Result 4).
 
 **Apply half**
 
-- [ ] Pure `collar_residual_gain` per § 8 (`enabled`, `offset_prior`, `max_residual_db`, `channels_comparable`)
-- [ ] Replace the RMS half of `stack_fill_gain` / `compute_fill_gain` production call; drop the local `debug_assert!(gain >= 1.0)`
-- [ ] Thread `g_local` + reason onto bracket **and** dual-fit / `SilenceSplice` (today splice stores only `program_gain`)
-- [ ] Emit `local_gain` + reason; `normalize_gain` remains the product
-- [ ] Config `local_pair_collar_secs`; **keep** reading `normalize_window_secs` for border geometry / fingerprint collar; leave `max_fill_gain_db` alone (§ 4)
-- [ ] Tests in § 10; `cargo test`; clippy clean
+- [x] Pure `collar_residual_gain` per § 8 (`enabled`, `offset_prior`, `max_residual_db`, `channels_comparable`) — `domain/local_gain.rs`, plus `collar_residual_gain_default` for the call sites that do not vary the bounds. The `channels_comparable` check sits **above** the collar match, not only in its absence as § 8 drew it: `scan_gaps` already gates stamping on the same flag so the two are equivalent today, but that is a remote invariant and `paired_level_offset` itself reports on mismatched pairs, so a populated mismatched collar is one stamping decision away — and it is the worst case, since the program half refuses that pair for the same reason and leaves a zero prior
+- [x] Replace the RMS half of `stack_fill_gain` / `compute_fill_gain` production call; drop the local `debug_assert!(gain >= 1.0)`. `compute_fill_gain` **deleted**, and with it a dead-code cascade the plan did not anticipate: `compute_a_border_rms`, `RegionPatchContext::global_a_rms`, and the per-run whole-A-PCM `rms_interleaved` pass that existed only as its silent-border fallback
+- [x] Thread `g_local` + reason onto bracket **and** dual-fit / `SilenceSplice` (today splice stores only `program_gain`). Both read it from one place — `PatchAudioRequest::local_gain(gap_index)` — and both carry it on the **strategy**, so the preview (`outcome_from_spec`) and the splice (`execute.rs`) cannot disagree either
+- [x] Emit `local_gain` + reason; `normalize_gain` remains the product. Both unconditional. An explicit field rather than the `normalize_gain / program_gain` quotient, because the quotient is 1.0 for both "declined" and "ran and agreed"
+- [x] Config `local_pair_collar_secs`; **keep** reading `normalize_window_secs` for border geometry / fingerprint collar. **`max_fill_gain_db` removed, not left alone** — this line is superseded by its own § 8 config block, which says the knob "dies with `compute_fill_gain`, not with this Change". `compute_fill_gain` died *in* this Change, so the condition was met: nothing read it, it was still in `validate()` and the `--show-config` echo, and `program_levels.rs` already cites it as the precedent for a rail surviving two policy changes at a number nobody picked. Leaving a third would have been the thing this plan is about. Removal is safe — the loader has no `deny_unknown_fields`, so an existing TOML loads and warns `unknown config key \`max_fill_gain_db\` was ignored`, which is exactly true
+- [x] Tests in § 10; `cargo test --workspace` green; `cargo clippy --workspace --all-targets` clean. 17 unit tests on `local_gain`; the two `patch_audio_integration` tests that asserted the deleted estimator (`..._normalizes_fill_loudness_to_a_border`, `..._never_attenuates_a_fill_louder_than_a_border`) are **replaced**, not repaired — the second would have kept passing vacuously, taking its unity from abstention while claiming to prove a rail that no longer exists
 
 **Docs — wider than the gap table; these all go actively false**
 
-- [ ] [json-output.md](../json-output.md) § `GapPatchStatus`: the `normalize_gain` narrative asserts *"never below 1.0"*, *"`g_local` (never serialized separately)"* and *"there is deliberately no third field"* — all three die with `local_gain`
-- [ ] [pipeline.md](../pipeline.md) § Fill gain: the *Hole-local* paragraph (RMS vs A-border, `[1.0, max_fill_gain_db]` clamp), the *How they stack* paragraph (dual-fit takes program only), and *What `--normalize` now means* (the boost-only regime + the 111/308 measurement — supersede it, do not delete the number)
-- [ ] [gap-scan.md](../gap-scan.md) *"`normalize_gain` is censored at its clamp"* → refusal, not clamp
-- [ ] [settled.md](settled.md) § E *The fill-gain distribution is censored at the clamp*: still true for old dumps, no longer describes current behaviour — date-scope it
-- [ ] `patch_result.rs` doc comment on `normalize_gain` (*"Never below 1.0 since 2026-08-12"*) and `config.rs` on `max_fill_gain_db`
-- [ ] README `--normalize` row; note `max_fill_gain_db` no longer touches the production path
+- [x] [json-output.md](../json-output.md) § `GapPatchStatus`: the `normalize_gain` narrative asserts *"never below 1.0"*, *"`g_local` (never serialized separately)"* and *"there is deliberately no third field"* — all three die with `local_gain`. Also § CollarLevelOffset's *"Nothing reads it yet"*, the 2.0 collar default (already stale at 4.0), and the 2026-08-25 `FillLevelCheck` cohort finding, which is now scoped to the boost-only regime it was measured on
+- [x] [pipeline.md](../pipeline.md) § Fill gain: the *Hole-local* paragraph (RMS vs A-border, `[1.0, max_fill_gain_db]` clamp), the *How they stack* paragraph (dual-fit takes program only), and *What `--normalize` now means* (the boost-only regime + the 111/308 measurement — supersede it, do not delete the number)
+- [x] [gap-scan.md](../gap-scan.md) *"`normalize_gain` is censored at its clamp"* → refusal, not clamp
+- [x] [settled.md](settled.md) § E *The fill-gain distribution is censored at the clamp*: still true for old dumps, no longer describes current behaviour — date-scope it
+- [x] `patch_result.rs` doc comment on `normalize_gain` (*"Never below 1.0 since 2026-08-12"*) and `config.rs` on `max_fill_gain_db` (removed outright — see above). Also `config.rs` on `normalize_window_secs`, which still claimed to size *"A's border RMS"* — a quantity nothing computes any more
+- [x] README `--normalize` row; `max_fill_gain_db` dropped from the config block with the knob. Also the two census scripts, which are not in this list and should have been: `measure-patch-outcomes.ps1` asserted *"never below 1.0"* in `Get-NormalizeGain`, and `census-program-levels.ps1`'s gain join emitted only the product — it now carries `program_gain`, `local_gain` and `local_gain_reason` separately, since regressing the pair offset against `normalize_gain` partly regresses that offset against itself
 
 **Do nots**
 
-- [ ] Do **not** bundle with program-gain. Do **not** keep `BlockLevel` arrays. Do **not** read B gap interior. Do **not** stop reading `normalize_window_secs` as a border size. Do **not** reuse `max_fill_gain_db` as the residual bound. Do **not** slice the A timeline before the steadiness check
+- [x] Do **not** bundle with program-gain. Do **not** keep `BlockLevel` arrays. Do **not** read B gap interior. Do **not** stop reading `normalize_window_secs` as a border size. Do **not** reuse `max_fill_gain_db` as the residual bound. Do **not** slice the A timeline before the steadiness check
 
 ---
 

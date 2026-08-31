@@ -4,14 +4,10 @@
 //! Depends only on `types`. `gained_fill` lives here rather than with `RegionPatch` because it
 //! is the splice / measurement source of truth for "what gets written", next to `splice_into_a`.
 
-use clip_sync::MultiChannelPcm;
-
 use crate::domain::{
     patch_result::GapPatchNotAppliedReason,
     policies::{self},
 };
-
-use super::super::border_frames_from_secs;
 
 use super::types::RegionPatch;
 
@@ -115,51 +111,6 @@ pub(in crate::application::patch_audio::region) fn b_extract_frames(
         (start_secs * sample_rate as f64).round() as usize,
         (end_secs * sample_rate as f64).round() as usize,
     )
-}
-
-/// Compute RMS of the A samples bordering the gap region.
-///
-/// Looks at `window_secs` before the gap start and `window_secs` after the gap end.
-/// Returns `fallback` when the computed RMS is zero.
-pub(in crate::application::patch_audio::region) fn compute_a_border_rms(
-    a_pcm: &MultiChannelPcm,
-    gap_start_frame: usize,
-    gap_end_frame: usize,
-    window_secs: f64,
-    fallback: f32,
-) -> f32 {
-    let channels = a_pcm.channels as usize;
-    let sample_rate = a_pcm.sample_rate;
-    let window_frames = border_frames_from_secs(window_secs, sample_rate);
-
-    let pre_start = gap_start_frame.saturating_sub(window_frames);
-    let pre_end = gap_start_frame;
-    let post_start = gap_end_frame;
-    let post_end = (gap_end_frame + window_frames).min(a_pcm.samples.len() / channels);
-
-    let pre_samples = &a_pcm.samples[pre_start * channels..pre_end * channels];
-    let post_samples = &a_pcm.samples[post_start * channels..post_end * channels];
-
-    let total = pre_samples.len() + post_samples.len();
-    if total == 0 {
-        return fallback;
-    }
-
-    let sum_sq: f64 = pre_samples
-        .iter()
-        .chain(post_samples.iter())
-        .map(|&s| {
-            let v = s as f64;
-            v * v
-        })
-        .sum();
-
-    let rms = (sum_sq / total as f64).sqrt() as f32;
-    if rms == 0.0 {
-        fallback
-    } else {
-        rms
-    }
 }
 
 /// Splice B samples into A's interleaved sample buffer at the gap location.

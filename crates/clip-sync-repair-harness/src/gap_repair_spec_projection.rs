@@ -251,6 +251,7 @@ mod tests {
             confidence: FillConfidence::High,
             registration_residual_ms: None,
             normalize_gain: 1.0,
+            local_gain: clip_sync_repair::domain::LocalGainDecision::OFF,
         }
     }
 
@@ -278,6 +279,7 @@ mod tests {
             fit_boundary_grid_cells: None,
             residual: None,
             normalize_gain: 1.0,
+            local_gain: clip_sync_repair::domain::LocalGainDecision::OFF,
             fit_terms: None,
             registration_residual_ms: None,
         }

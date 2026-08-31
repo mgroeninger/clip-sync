@@ -36,6 +36,7 @@
 
 use serde::Serialize;
 
+use crate::domain::local_gain::{LocalGainDecision, LocalGainReason};
 use crate::domain::program_levels::{AbLevelOffset, AbLevelOffsetChunk, ProgramLevels};
 
 /// Default `program_gain_max_spread_db`. Tier 2 (plan § 4b): the widest corpus pair whose offset
@@ -44,7 +45,8 @@ pub const DEFAULT_PROGRAM_GAIN_MAX_SPREAD_DB: f64 = 2.5;
 
 /// Default `max_program_gain_db`. No corpus pair comes within 20× of it (max 0.260 dB), and it sits
 /// under Tier 2's 8.387 dB phantom from a 2:1-compressed B. Deliberately **not** inherited from the
-/// 12 dB local `max_fill_gain_db`, which bounds a different quantity with a different failure mode.
+/// 12 dB local `max_fill_gain_db`, which bounded a different quantity with a different failure mode
+/// and was deleted on 2026-08-31. The hole-local bound is now `MAX_LOCAL_RESIDUAL_DB` (3.0).
 pub const DEFAULT_MAX_PROGRAM_GAIN_DB: f64 = 6.0;
 
 /// Robust-chunk-drift reading above which the demoted drift gate should be reconsidered (plan § 4).
@@ -141,6 +143,20 @@ impl ProgramGainDecision {
         match self {
             Self::Applied { gain, .. } => gain,
             Self::Refused { .. } => 1.0,
+        }
+    }
+
+    /// The offset this run actually **applied**, or `None` on any refusal.
+    ///
+    /// The local half's prior (`domain::local_gain`, plan § 4). Deliberately not the *measured*
+    /// offset, which [`ProgramGainReport::offset_db`] still records even on a refusal so a
+    /// `too-large` line can name the number it refused: subtracting a refused offset would bake a
+    /// phantom the run never applied into every hole-local residual on the pair.
+    #[must_use]
+    pub fn offset_db(self) -> Option<f64> {
+        match self {
+            Self::Applied { offset_db, .. } => Some(offset_db),
+            Self::Refused { .. } => None,
         }
     }
 
@@ -301,42 +317,39 @@ impl ProgramGainReport {
 pub struct StackedFillGain {
     /// Whole-program A-to-B match for the run, or `1.0` on a refusal.
     pub program: f32,
-    /// Hole-local residual boost toward the A-side border, or `1.0` when local normalize is off.
+    /// Hole-local paired-collar residual, or `1.0` on any abstention or refusal.
+    ///
+    /// **May be below 1.0 since 2026-08-31.** The boost-only rail belonged to the RMS estimator
+    /// this replaced (whole-fill RMS against A's borders, where attenuating crushed a loud
+    /// mid-gap event toward talking-level shoulders). A constant scalar taken from *paired*
+    /// shoulder blocks carries no such hazard: it corrects a master difference and leaves every
+    /// dynamic inside the fill exactly where the donor had it.
     pub local: f32,
+    /// Why [`Self::local`] is what it is — including on success, since `1.0` alone cannot
+    /// distinguish "declined" from "ran and found nothing to correct".
+    pub local_reason: LocalGainReason,
     /// What the splice actually applies: `program * local`.
     pub total: f32,
 }
 
 /// Compose the two gains in the order the design requires (plan § 5).
 ///
-/// The local half is a **residual**: it is measured on the fill *after* the program scalar has
-/// already matched masters, which is why `b_fill_rms` is scaled before `compute_fill_gain` sees it.
-/// Reading the raw B level here instead would correct the master offset twice — a `program^2` fill —
-/// and dropping the program half on a normalizing run would leave the offset uncorrected wherever
-/// the local boost clamps.
+/// The local half is a **residual**: [`collar_residual_gain`](crate::domain::collar_residual_gain)
+/// has already subtracted the *applied* program offset from the collar's paired reading, so when
+/// both halves apply the product is `10^(-d_local/20)` — the hole's own paired offset — and not the
+/// square of anything. Program gain is the fallback for collars that abstain, not a second copy of
+/// the same correction.
 ///
-/// Scaling the RMS is the same thing as scaling the samples (`rms_interleaved` is homogeneous of
-/// degree 1) and saves a PCM pass.
-pub fn stack_fill_gain(
-    program_gain: f32,
-    a_border_rms: f32,
-    b_fill_rms: f32,
-    max_local_gain_db: f64,
-    normalize_fill: bool,
-) -> StackedFillGain {
-    let local = if normalize_fill {
-        crate::domain::policies::compute_fill_gain(
-            a_border_rms,
-            b_fill_rms * program_gain,
-            max_local_gain_db,
-        )
-    } else {
-        1.0
-    };
+/// This function is now pure bookkeeping: both halves arrive already decided. It exists so the
+/// product is formed in exactly one place and so a report can name each half separately.
+#[must_use]
+pub fn stack_fill_gain(program_gain: f32, local: LocalGainDecision) -> StackedFillGain {
+    let local_gain = local.gain();
     StackedFillGain {
         program: program_gain,
-        local,
-        total: program_gain * local,
+        local: local_gain,
+        local_reason: local.reason(),
+        total: program_gain * local_gain,
     }
 }
 
@@ -611,39 +624,77 @@ mod tests {
         assert_eq!(robust_chunk_drift_db(&[]), None);
     }
 
+    /// The joint between the two halves: [`ProgramGainDecision::offset_db`] is what
+    /// `PatchAudioRequest::local_gain` subtracts, and it must go to `None` on a refusal so the
+    /// caller's `unwrap_or(0.0)` yields a zero prior. The measured offset is still on the *report*
+    /// either way — a version of this that returned `Some(measured)` on a refusal would compile,
+    /// pass every local-gain unit test, and bake a phantom into every gap on a refused pair.
     #[test]
-    fn stacking_applies_the_program_offset_once_not_twice() {
-        // A at 0.2 RMS, B 6 dB hot at 0.4: the program scalar alone already matches them.
-        let g_program = 10f32.powf(-6.0 / 20.0);
-        let stacked = stack_fill_gain(g_program, 0.2, 0.4, 12.0, true);
+    fn a_refused_offset_is_none_even_though_the_report_still_records_it() {
+        // Past `max_program_gain_db` (6.0): the -8.4 dB compressed-B shape the refusal exists for.
+        let refused = decide(&levels(Some(offset(-8.4, 0.2))));
+        assert!(refused.refusal().is_some(), "{refused:?}");
+        assert_eq!(refused.offset_db(), None, "{refused:?}");
+        assert_eq!(refused.gain(), 1.0, "{refused:?}");
+        // The measurement survives on the report, which is the field this must not be confused with.
+        let report = ProgramGainReport::new(refused, Some(&levels(Some(offset(-8.4, 0.2)))), true);
+        assert_eq!(report.offset_db, Some(-8.4));
+
+        let ok = decide(&levels(Some(offset(0.5, 0.2))));
+        assert_eq!(ok.offset_db(), Some(0.5), "{ok:?}");
+    }
+
+    fn applied(db: f64) -> LocalGainDecision {
+        LocalGainDecision::Applied {
+            gain: 10f64.powf(-db / 20.0) as f32,
+        }
+    }
+
+    #[test]
+    fn stacking_applies_the_local_offset_once_not_twice() {
+        // The collar read the hole at B−A = +6 dB and the run applied +5.5 of that file-wide, so
+        // 0.5 dB is all that is left for the local half. The product must be the hole's own paired
+        // offset — 10^(-6/20) — not the programme scalar squared and not 10^(-6.5/20).
+        let g_program = 10f32.powf(-5.5 / 20.0);
+        let stacked = stack_fill_gain(g_program, applied(0.5));
+        let want = 10f32.powf(-6.0 / 20.0);
         assert!(
-            (stacked.local - 1.0).abs() < 1e-3,
-            "local must read a matched fill as needing nothing: {stacked:?}"
-        );
-        assert!(
-            (stacked.total - g_program).abs() < 1e-3,
-            "total must be the program gain, not its square ({}): {stacked:?}",
+            (stacked.total - want).abs() < 1e-5,
+            "total must be the hole's paired offset, not the programme squared ({}): {stacked:?}",
             g_program * g_program
         );
+        assert_eq!(stacked.local_reason, LocalGainReason::Applied);
     }
 
     #[test]
     fn stacking_with_local_off_is_the_program_gain_alone() {
         let g_program = 10f32.powf(-6.0 / 20.0);
-        // A border far above the fill, so a normalizing run would boost hard; with local off the
-        // fill still lands at A's *master*, which is the point of defaulting normalize_fill off.
-        let stacked = stack_fill_gain(g_program, 0.5, 0.05, 12.0, false);
+        let stacked = stack_fill_gain(
+            g_program,
+            LocalGainDecision::Refused {
+                reason: LocalGainReason::FlagOff,
+            },
+        );
         assert_eq!(stacked.local, 1.0);
         assert_eq!(stacked.total, g_program);
+        // The reason survives the stack: `local == 1.0` on its own cannot say whether the flag was
+        // off or the collar ran and found the hole already matched.
+        assert_eq!(stacked.local_reason, LocalGainReason::FlagOff);
     }
 
     #[test]
-    fn local_stays_boost_only_and_cannot_undo_a_program_attenuation() {
-        // B 6 dB hot AND a quiet A border: local must not attenuate further, so the fill can never
-        // end up below the program-matched level by way of the local half.
+    fn the_local_half_may_attenuate() {
+        // Was `local_stays_boost_only_and_cannot_undo_a_program_attenuation`, inverted on purpose
+        // when the paired collar replaced the RMS estimator (plan § 5). Boost-only existed because
+        // whole-fill RMS let one loud mid-gap event drag the entire patch down toward talking-level
+        // shoulders; a paired-shoulder scalar cannot do that, so a hole where B genuinely sits
+        // above A after the programme match comes down.
         let g_program = 10f32.powf(-6.0 / 20.0);
-        let stacked = stack_fill_gain(g_program, 0.01, 0.4, 12.0, true);
-        assert_eq!(stacked.local, 1.0, "{stacked:?}");
-        assert_eq!(stacked.total, g_program, "{stacked:?}");
+        let stacked = stack_fill_gain(g_program, applied(2.0));
+        assert!(stacked.local < 1.0, "{stacked:?}");
+        assert!(
+            (stacked.total - 10f32.powf(-8.0 / 20.0)).abs() < 1e-5,
+            "{stacked:?}"
+        );
     }
 }

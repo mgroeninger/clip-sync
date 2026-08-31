@@ -412,7 +412,10 @@ mod tests {
 
         assert_eq!(recipe.min_gap_ms(), DEFAULT_MIN_GAP_MS);
         assert_eq!(recipe.scan_block_ms(), DEFAULT_SCAN_BLOCK_MS);
-        assert_eq!(recipe.silence_peak_fraction(), DEFAULT_SILENCE_PEAK_FRACTION);
+        assert_eq!(
+            recipe.silence_peak_fraction(),
+            DEFAULT_SILENCE_PEAK_FRACTION
+        );
         assert_eq!(recipe.absolute_silence_rms(), DEFAULT_ABSOLUTE_SILENCE_RMS);
 
         // Effective hold is the quantized product, and it round-trips back to the block count.
@@ -424,7 +427,10 @@ mod tests {
             "configured hold must quantize exactly at the default block size"
         );
 
-        assert!(recipe.scan_block_ms() > 0, "a zeroed recipe detects nothing");
+        assert!(
+            recipe.scan_block_ms() > 0,
+            "a zeroed recipe detects nothing"
+        );
         assert!(recipe.min_gap_ms() > 0);
     }
 
