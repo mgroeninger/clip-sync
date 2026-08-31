@@ -12,9 +12,9 @@
 # Consumer only — opens no media, runs no repair, needs no oracle. Point it at fingerprint-corpus
 # JSON that `measure-gap-fingerprints.ps1` already wrote.
 #
-# WHAT THIS CANNOT ANSWER. Question 2 (the conversion fraction) needs a seam Pearson at a SHIFTED
-# start (`b_mapped + mid_lag`). No dump carries that number; it is the Phase 1 media run. This
-# census sizes and names the class, and is the sampling frame for that run — nothing more.
+# WHAT THIS CANNOT ANSWER. Question 2 (would the keep path patch the remainder after a map
+# shift) re-runs evaluate_seam_gate on a shifted B clock. No dump carries that outcome; it is
+# the Phase 1 overlay media run. This census sizes and names the class — nothing more.
 #
 # Usage:
 #   ./scripts/measure/census-skip-buckets.ps1 -DumpDir gap-files/<date>-complete-corpus
