@@ -8,7 +8,7 @@ apart. Same fall-through as dual-fit; not a new search.
 shoulder offset*.
 
 **Companions:** findings
-[TEMP-rigid-shoulder-offset-skips-2026-08-31.md](TEMP-rigid-shoulder-offset-skips-2026-08-31.md)
+[TEMP-rigid-shoulder-offset-skips-2026-08-31.md](archive/TEMP-rigid-shoulder-offset-skips-2026-08-31.md)
 (Q2 null: register-before-sweep does not convert); dual-fit wire
 [seam-scoring.md](../seam-scoring.md) § 6; cell table
 [gap-vocabulary.md](gap-vocabulary.md) § *Cell → action*; G6 operator
@@ -58,7 +58,7 @@ Keep-path Pearson at the unified-search start is 0.02–0.18 on the five remaind
 gaps are 0.91–1.00, and `post@pre` is within 0.15 of `post` own (`trim` 0.0–0.2 ms). The
 joins exist and are already `G` apart.
 
-Q2 ([TEMP-rigid-shoulder-offset-skips-2026-08-31.md](TEMP-rigid-shoulder-offset-skips-2026-08-31.md)
+Q2 ([TEMP-rigid-shoulder-offset-skips-2026-08-31.md](archive/TEMP-rigid-shoulder-offset-skips-2026-08-31.md)
 Result 6) slid keep-path's extract by that lock lag and still `waveform_floor`. Sliding
 the structure search does not sit it on those joins.
 

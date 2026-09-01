@@ -1,21 +1,22 @@
 # TEMP — Rigid shoulder-offset skips: does map-lag explain the missed fills? (2026-08-31)
 
-**Status:** findings note, not a Change, 2026-08-31. **Startable.** Sizes the BACKLOG
-class "95 skips at a rigid shoulder offset the bracket sweep never reaches" and probes
-whether the **production remainder** would patch if the keep path saw a constant map
-shift. **This note proposes no production change.**
+**Status:** archived 2026-09-01. Findings note, not a Change. Sized the BACKLOG class
+"95 skips at a rigid shoulder offset the bracket sweep never reaches." Q1–Q3 named;
+keep-path shift probe stripped after Result 6. Successor Change:
+[TEMP-seam-lock-rigid-fill-plan.md](../TEMP-seam-lock-rigid-fill-plan.md).
+**This note proposes no production change.**
 
-**Tracked as:** [BACKLOG.md](../../BACKLOG.md) § *Fill placement* → *95 skips at a rigid
+**Tracked as:** [BACKLOG.md](../../../BACKLOG.md) § *Fill placement* → *95 skips at a rigid
 shoulder offset the bracket sweep never reaches*. **Q2 successor:**
-[TEMP-seam-lock-rigid-fill-plan.md](TEMP-seam-lock-rigid-fill-plan.md) (trim-0 G6 arm;
+[TEMP-seam-lock-rigid-fill-plan.md](../TEMP-seam-lock-rigid-fill-plan.md) (trim-0 G6 arm;
 do not wire register-before-sweep from this note).
 
 **Companions:** the caution
-[settled.md](settled.md) § E *A bracket sweep score cannot see a rigid map-lag error*;
+[settled.md](../settled.md) § E *A bracket sweep score cannot see a rigid map-lag error*;
 11/g9 as abut false positive
-[TEMP-early-shoulder-locks-collapse-skip-plan.md](archive/TEMP-early-shoulder-locks-collapse-skip-plan.md)
+[TEMP-early-shoulder-locks-collapse-skip-plan.md](TEMP-early-shoulder-locks-collapse-skip-plan.md)
 § 4 / § 8.1; drain-not-patch
-[TEMP-post-splice-introduced-silence-collapse-plan.md](TEMP-post-splice-introduced-silence-collapse-plan.md)
+[TEMP-post-splice-introduced-silence-collapse-plan.md](../TEMP-post-splice-introduced-silence-collapse-plan.md)
 § 1 (11/g9 must not drain; un-abut is that plan's step-agreement filter, not this probe).
 
 **Media hygiene:** pair index + gap index only. `gap-files/` is gitignored; numbers below
@@ -51,7 +52,7 @@ would patch those holes if it ran at that lag.
 - Not a Change. Do not wire register-before-sweep from this doc. Do not hoist
   `post_seam_global_r` onto `SeamLocks` to drive the sweep from this doc.
 - Not the collapse successor. Un-abutting 11/g9 so it can reach the keep path is
-  [TEMP-post-splice-introduced-silence-collapse-plan.md](TEMP-post-splice-introduced-silence-collapse-plan.md),
+  [TEMP-post-splice-introduced-silence-collapse-plan.md](../TEMP-post-splice-introduced-silence-collapse-plan.md),
   not a side effect of this probe.
 - Not a 1 s `peak_r` census of "would convert." The class is *defined* by 1 s `peak_r ≥ 0.94`
   at the agreed lag, so that number converting 90/90 is a tautology.
@@ -71,7 +72,7 @@ would patch those holes if it ran at that lag.
    Residual is `throat.residual.headroom_ok` and does not move `any_ok`.
    **Answered, Result 6 — no.** Zero of the six production remainder convert (11/g9
    fingerprint-only also misses). Do not wire register-before-sweep from this class.
-   Successor: [TEMP-seam-lock-rigid-fill-plan.md](TEMP-seam-lock-rigid-fill-plan.md).
+   Successor: [TEMP-seam-lock-rigid-fill-plan.md](../TEMP-seam-lock-rigid-fill-plan.md).
 3. **Is the class one mechanism?** Split by `|mid_lag|` and by `dual_fit_rescue`.
    **Answered for membership, Result 1 / 3 / 5: no.** The 83 are dual-fit fills; the
    seven remainder split further (Result 4). Q2 asks only whether the keep path can take
@@ -510,7 +511,7 @@ array index within a pair label (Result 5). Dual-fit conjuncts from
   keep-path candidate is the wrong shape for the holes that are actually open. Do not
   wire register-before-sweep. Do not file a class-wide `settled.md` refute from this
   null (Limit).
-- This note archives when every question is promoted or closed.
+- **Archived 2026-09-01.** Every question named. Successor Change is live.
 
 ---
 

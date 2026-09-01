@@ -74,9 +74,9 @@ is untracked — that is a bug in the catalog, not a state a doc may sit in.
 Measurement records. A findings note lives here only while it has an open question; once every
 question is promoted to [BACKLOG.md](../../BACKLOG.md) or closed, it archives.
 
-| Note | Open question | Tracked as |
-|------|---------------|------------|
-| [TEMP-rigid-shoulder-offset-skips-2026-08-31.md](TEMP-rigid-shoulder-offset-skips-2026-08-31.md) | All questions named. Q2 successor is [TEMP-seam-lock-rigid-fill-plan.md](TEMP-seam-lock-rigid-fill-plan.md) (trim-0 G6 arm). Do not wire register-before-sweep. Archives when that Change ships or the remainder is named closed. | [BACKLOG.md](../../BACKLOG.md) § *Fill placement* → *95 skips at a rigid shoulder offset* |
+None currently. [TEMP-rigid-shoulder-offset-skips-2026-08-31.md](archive/TEMP-rigid-shoulder-offset-skips-2026-08-31.md)
+archived 2026-09-01 (Q1–Q3 named; Q2 successor is
+[TEMP-seam-lock-rigid-fill-plan.md](TEMP-seam-lock-rigid-fill-plan.md)).
 
 Earlier notes (the two flat-3000 runs, the collapsed-bridge census, the pair-50 outcomes) went to
 [archive/](archive/) on 2026-08-24 under exactly that rule, and their surviving questions are
