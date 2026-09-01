@@ -608,11 +608,14 @@ struct Row {
     post_peaks: Vec<Peak>,
 }
 
-#[allow(clippy::too_many_arguments)]
+struct Site<'a> {
+    pair: &'a str,
+    stem: &'a str,
+    source_tree: &'a str,
+}
+
 fn assemble_row(
-    pair: &str,
-    stem: &str,
-    source_tree: &str,
+    site: Site<'_>,
     pre: &ShoulderResult,
     post: &ShoulderResult,
     gap_ms: f64,
@@ -621,10 +624,10 @@ fn assemble_row(
 ) -> Row {
     let step_ms = post.peak_lag_ms - pre.peak_lag_ms;
     Row {
-        pair: pair.to_string(),
+        pair: site.pair.to_string(),
         gap_index: dump.index,
         fingerprint_gap_1based: dump.index.map(|i| i + 1),
-        dump_g: gap_tag(stem),
+        dump_g: gap_tag(site.stem),
         a_start_secs: dump.a_start_secs,
         listen_disposition: disposition,
         gap_ms: r1(gap_ms),
@@ -655,8 +658,8 @@ fn assemble_row(
         // failed `live` while its best peak sat on the window edge was probably not searched far
         // enough, not measured dead.
         sweep_may_be_narrow: (!pre.live && pre.edge_pinned) || (!post.live && post.edge_pinned),
-        source_tree: source_tree.to_string(),
-        stem: stem.to_string(),
+        source_tree: site.source_tree.to_string(),
+        stem: site.stem.to_string(),
         dump_pre_ms: dump.pre.as_ref().map(|p| p.0),
         dump_pre_r: dump.pre.as_ref().map(|p| p.1),
         dump_pre_verdict: dump.pre.as_ref().map(|p| p.2.clone()),
@@ -1139,9 +1142,11 @@ fn sweep_gap(
     }
     let gap_ms = pre.gap_secs * 1000.0;
     Ok(assemble_row(
-        pair,
-        &stem,
-        tree,
+        Site {
+            pair,
+            stem: &stem,
+            source_tree: tree,
+        },
         &pre,
         &post,
         gap_ms,
@@ -1400,9 +1405,11 @@ mod tests {
         let mut dead = shoulder_fixture(-200.0, 0.2);
         dead.edge_pinned = true;
         let row = assemble_row(
-            "31",
-            "stem",
-            "tree",
+            Site {
+                pair: "31",
+                stem: "stem",
+                source_tree: "tree",
+            },
             &dead,
             &shoulder_fixture(0.0, 0.95),
             1000.0,
@@ -1509,9 +1516,11 @@ mod tests {
         let small = shoulder_fixture(-35.0, 0.81);
         let large = shoulder_fixture(-1160.0, 0.81);
         let quiet = assemble_row(
-            "31",
-            "s",
-            "t",
+            Site {
+                pair: "31",
+                stem: "s",
+                source_tree: "t",
+            },
             &pre,
             &small,
             1118.8,
@@ -1519,9 +1528,11 @@ mod tests {
             None,
         );
         let stepped = assemble_row(
-            "31",
-            "s",
-            "t",
+            Site {
+                pair: "31",
+                stem: "s",
+                source_tree: "t",
+            },
             &pre,
             &large,
             1118.8,
@@ -1546,9 +1557,11 @@ mod tests {
             ..DumpJoin::default()
         };
         let row = assemble_row(
-            "31",
-            "919e5368_91d1_t00-28-45_g007_full",
-            "tree",
+            Site {
+                pair: "31",
+                stem: "919e5368_91d1_t00-28-45_g007_full",
+                source_tree: "tree",
+            },
             &shoulder_fixture(-38.1, 0.83),
             &shoulder_fixture(-35.0, 0.81),
             1118.8,
@@ -1564,9 +1577,11 @@ mod tests {
     fn rows_without_a_dump_sort_last_within_their_pair_and_carry_a_null_start() {
         let with = |start: Option<f64>, stem: &str| {
             let mut row = assemble_row(
-                "31",
-                stem,
-                "t",
+                Site {
+                    pair: "31",
+                    stem,
+                    source_tree: "t",
+                },
                 &shoulder_fixture(0.0, 0.9),
                 &shoulder_fixture(0.0, 0.9),
                 100.0,
@@ -1601,9 +1616,11 @@ mod tests {
         // `total` is the WAV count, which is what the summary divides by — a dump with more gaps in
         // it never enlarges the denominator, because this instrument cannot reach them.
         let rows = vec![assemble_row(
-            "31",
-            "s",
-            "t",
+            Site {
+                pair: "31",
+                stem: "s",
+                source_tree: "t",
+            },
             &shoulder_fixture(0.0, 0.9),
             &shoulder_fixture(0.0, 0.9),
             100.0,
@@ -1749,9 +1766,11 @@ mod tests {
         }
         assert!(!CSV_FIELDS.contains(&"bucket"), "no classifier column");
         let rows = vec![assemble_row(
-            "31",
-            "s",
-            "t",
+            Site {
+                pair: "31",
+                stem: "s",
+                source_tree: "t",
+            },
             &shoulder_fixture(-38.1, 0.83),
             &shoulder_fixture(-35.0, 0.81),
             1118.8,

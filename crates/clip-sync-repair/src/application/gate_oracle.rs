@@ -5,8 +5,8 @@
 
 pub use crate::application::patch_region::{
     derive_seam_gate_geometry, oracle_anchor_seam_would_run, oracle_build_fit_cache,
-    oracle_evaluate_fit_joint, oracle_score_fit_candidate, OracleJointOutcome, SeamGateDerived,
-    SeamGateFailure, SeamGateParams,
+    oracle_evaluate_fit_joint, oracle_score_fit_candidate, OracleJointOutcome, SeamBWindow,
+    SeamGateDerived, SeamGateFailure, SeamGateParams,
 };
 
 /// Build run-constant derived seam-gate inputs from a repair request (same as production).

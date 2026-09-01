@@ -20,5 +20,5 @@ pub(super) use types::skipped_patch;
 pub(super) use types::{
     outcome_from_spec, outcomes_in_report_order, record_patch_gap_span, region_outcome_gap_tags,
     skip_outcome_from_fields, RegionPatch, RegionPatchContext, RegionPatchMedia, RegionPatchOpts,
-    RegionPatchOutcome,
+    RegionPatchOutcome, ReportStamps,
 };

@@ -147,23 +147,36 @@ pub(in crate::application::patch_audio) struct RegionPatchOpts<'a> {
 ///
 /// `fill_level` is the record-only measurement of the PCM that was actually written, so it too is
 /// empty for callers that do not splice.
-// Eight arguments, and grouping them would not help: `gaps` / `plan` / `region_results` /
-// `not_applied` / `fill_level` are five differently-ordered sources this function exists to join,
-// and the remaining three are per-run constants stamped onto the result. A params struct would move
-// the list rather than shorten it.
-#[allow(clippy::too_many_arguments)]
+/// Run-constant stamps [`outcomes_in_report_order`] writes onto every row.
+///
+/// Distinct from the five join sources (`gaps` / `plan` / `region_results` / `not_applied` /
+/// `fill_level`): those are differently-ordered inputs this function exists to join. These three
+/// are the same on every gap.
+#[derive(Clone, Copy)]
+pub(in crate::application::patch_audio) struct ReportStamps {
+    pub fill_mode: FillMode,
+    pub thresholds: FillTierThresholds,
+    pub program_gain: f32,
+}
+
+/// Join per-gap sources into report order.
+///
+/// `gaps` / `plan` / `region_results` / `not_applied` / `fill_level` are five differently-ordered
+/// sources this function exists to join. [`ReportStamps`] is the run-constant cluster stamped onto
+/// the result.
 pub(in crate::application::patch_audio) fn outcomes_in_report_order(
     gaps: &[Gap],
     plan: &GapFillPlan,
     region_results: &[(usize, RegionPatchOutcome, GapTags)],
-    fill_mode: FillMode,
-    thresholds: FillTierThresholds,
+    stamps: ReportStamps,
     not_applied: &[(usize, GapPatchNotAppliedReason)],
     fill_level: &[(usize, crate::domain::FillLevelCheck)],
-    // The run's whole-program gain (`request.program_gain.gain()`). A run constant: it is stamped
-    // on every patched row so a single row is self-describing, not re-derived per gap.
-    program_gain: f32,
 ) -> Vec<GapPatchOutcome> {
+    let ReportStamps {
+        fill_mode,
+        thresholds,
+        program_gain,
+    } = stamps;
     let mut fill_level_by_gap: HashMap<usize, crate::domain::FillLevelCheck> =
         fill_level.iter().copied().collect();
     let mut status_by_gap: HashMap<usize, GapPatchStatus> = HashMap::new();
@@ -611,7 +624,7 @@ mod tests {
     /// report, so a join that accidentally relied on positional zip would fail here.
     #[test]
     fn outcomes_in_report_order_joins_every_gap_by_identity_not_position() {
-        use super::{outcomes_in_report_order, skipped_patch, RegionPatchOutcome};
+        use super::{outcomes_in_report_order, skipped_patch, RegionPatchOutcome, ReportStamps};
         use crate::domain::gap::Gap;
         use crate::domain::gap_fill::{GapFillPlan, GapFillSkipped};
         use crate::domain::gap_tags::{derive_gap_tags_from_status, FillTierThresholds};
@@ -686,11 +699,13 @@ mod tests {
             &gaps,
             &plan,
             &region_results,
-            fill_mode,
-            thresholds,
+            ReportStamps {
+                fill_mode,
+                thresholds,
+                program_gain: 1.0,
+            },
             &[],
             &[],
-            1.0,
         );
 
         assert_eq!(outcomes.len(), gaps.len(), "one outcome per reported gap");
@@ -747,7 +762,7 @@ mod tests {
     /// result, and `PatchSummary` counts it apart from `patched_count`.
     #[test]
     fn not_applied_overrides_the_patched_region_outcome() {
-        use super::{outcomes_in_report_order, RegionPatchOutcome};
+        use super::{outcomes_in_report_order, RegionPatchOutcome, ReportStamps};
         use crate::domain::gap::Gap;
         use crate::domain::gap_fill::GapFillPlan;
         use crate::domain::gap_tags::{derive_gap_tags_from_status, FillTierThresholds, PatchTier};
@@ -805,11 +820,13 @@ mod tests {
             &gaps,
             &plan,
             &[(0, patched, tags)],
-            fill_mode,
-            thresholds,
+            ReportStamps {
+                fill_mode,
+                thresholds,
+                program_gain: 1.0,
+            },
             &[(0, reason.clone())],
             &[],
-            1.0,
         );
 
         assert_eq!(

@@ -408,22 +408,41 @@ fn mono_lag(v: &[LagSummary]) -> Option<&LagSummary> {
 /// [`spec_to_fingerprint_summary`]'s tag mapping, mirroring `gap_row`'s reads so the projection round-trips the
 /// `golden_baseline` axes. Registration prefers `lag_decision` (falls back to `lag_editorial`), matching
 /// the reader.
+/// Shared input of [`tags_from_fields`] — the overlay fields both wrappers unpack.
+///
+/// `Default` is the all-`None` / empty-brackets stub the residual replay test uses.
+#[derive(Default)]
+pub(crate) struct TagFieldSources<'a> {
+    pub lag_decision: Option<&'a LagFingerprint>,
+    pub diag_lag: Option<&'a LagFingerprint>,
+    pub splice: Option<&'a SpliceSummary>,
+    pub splice_dualfit: Option<SpliceDualfit>,
+    pub brackets: &'a [BracketInfo],
+    pub structure: Option<&'a StructureScores>,
+    pub seams: Option<&'a SeamScores>,
+    pub residual: Option<ResidualInfo>,
+    pub donor_interior_aligned: Option<DonorInterior>,
+    pub donor_interior_nominal: Option<DonorInterior>,
+    pub levels: Option<crate::domain::gap_repair_spec::LevelTags>,
+}
+
 /// Shared core of [`tags_from_fingerprint`] and [`tags_from_measurements`] — build the D/R tag payload from the
 /// individual overlay fields, so the oracle-fingerprint path (8f) and the from-decode path (8g.3b) read specs
 /// through ONE mapping. `structure`/`seams` are the summary throat scores (`None` under `skip_baseline`).
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn tags_from_fields(
-    lag_decision: Option<&LagFingerprint>,
-    diag_lag: Option<&LagFingerprint>,
-    splice: Option<&SpliceSummary>,
-    splice_dualfit: Option<SpliceDualfit>,
-    brackets: &[BracketInfo],
-    structure: Option<&StructureScores>,
-    seams: Option<&SeamScores>,
-    residual: Option<ResidualInfo>,
-    donor_interior_aligned: Option<DonorInterior>,
-    donor_interior_nominal: Option<DonorInterior>,
-    levels: Option<crate::domain::gap_repair_spec::LevelTags>,
+    TagFieldSources {
+        lag_decision,
+        diag_lag,
+        splice,
+        splice_dualfit,
+        brackets,
+        structure,
+        seams,
+        residual,
+        donor_interior_aligned,
+        donor_interior_nominal,
+        levels,
+    }: TagFieldSources<'_>,
 ) -> crate::domain::gap_repair_spec::GapRepairTags {
     use crate::domain::gap_repair_spec::{GateTags, RegistrationTags, SeamLocalTags};
 
@@ -539,22 +558,22 @@ pub(crate) fn tags_from_fields(
 
 /// Extract the D/R tag payload from an oracle [`GapFingerprint`] (8f). Thin wrapper over [`tags_from_fields`].
 pub fn tags_from_fingerprint(fp: &GapFingerprint) -> crate::domain::gap_repair_spec::GapRepairTags {
-    tags_from_fields(
-        fp.lag_decision_fingerprint(),
-        fp.lag_editorial_fingerprint(),
-        fp.splice.as_ref(),
-        fp.splice_dualfit,
-        &fp.brackets,
-        fp.structure.as_ref(),
-        fp.seams.as_ref(),
-        fp.residual_info().copied(),
-        fp.donor_interior_aligned_span().copied(),
-        fp.donor_interior_nominal_span().copied(),
-        Some(crate::domain::gap_repair_spec::LevelTags {
+    tags_from_fields(TagFieldSources {
+        lag_decision: fp.lag_decision_fingerprint(),
+        diag_lag: fp.lag_editorial_fingerprint(),
+        splice: fp.splice.as_ref(),
+        splice_dualfit: fp.splice_dualfit,
+        brackets: &fp.brackets,
+        structure: fp.structure.as_ref(),
+        seams: fp.seams.as_ref(),
+        residual: fp.residual_info().copied(),
+        donor_interior_aligned: fp.donor_interior_aligned_span().copied(),
+        donor_interior_nominal: fp.donor_interior_nominal_span().copied(),
+        levels: Some(crate::domain::gap_repair_spec::LevelTags {
             a_gap_floor_db: f64::from(fp.levels.gap_floor_db),
             a_noise_floor_db: f64::from(fp.levels.noise_floor_db),
         }),
-    )
+    })
 }
 
 /// Rebuild a decision-equivalent [`GapRepairSpec`] from an oracle [`GapFingerprint`] (8f differential). The
@@ -633,19 +652,10 @@ mod tests {
     use crate::domain::policies::RefinedGapFrames;
 
     fn replayed_residual(r: ResidualInfo) -> crate::domain::policies::SeamResidualVerdict {
-        tags_from_fields(
-            None,
-            None,
-            None,
-            None,
-            &[],
-            None,
-            None,
-            Some(r),
-            None,
-            None,
-            None,
-        )
+        tags_from_fields(TagFieldSources {
+            residual: Some(r),
+            ..Default::default()
+        })
         .gate
         .residual
         .expect("residual survives the replay mapping")

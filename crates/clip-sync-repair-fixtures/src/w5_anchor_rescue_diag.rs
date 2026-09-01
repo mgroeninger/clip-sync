@@ -23,8 +23,8 @@ use crate::energy_signature_production::{
 use crate::patch_geometry_preview::{preview_patch_geometry, slice_b_interleaved};
 use clip_sync_repair::application::gate_oracle::{
     derive_seam_gate_geometry, oracle_anchor_seam_would_run, oracle_build_fit_cache,
-    oracle_evaluate_fit_joint, oracle_score_fit_candidate, OracleJointOutcome, SeamGateDerived,
-    SeamGateFailure, SeamGateParams,
+    oracle_evaluate_fit_joint, oracle_score_fit_candidate, OracleJointOutcome, SeamBWindow,
+    SeamGateDerived, SeamGateFailure, SeamGateParams,
 };
 use clip_sync_repair::domain::gap_anchor_seam::{
     list_anchor_candidates_a, list_feasible_anchor_brackets, AnchorBracket, AnchorSeamParams,
@@ -136,10 +136,12 @@ impl W5CellContext {
             &self.derived,
             &self.a_pcm,
             &self.b_haystack,
-            self.b_extract_start_secs,
-            self.refined_b_start_secs,
-            self.refined_b_end_secs,
-            self.gap_frames,
+            SeamBWindow {
+                b_extract_start_secs: self.b_extract_start_secs,
+                refined_b_start_secs: self.refined_b_start_secs,
+                refined_b_end_secs: self.refined_b_end_secs,
+                gap_frames: self.gap_frames,
+            },
             None,
         );
         SeamGateParams {

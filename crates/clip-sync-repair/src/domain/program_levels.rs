@@ -435,6 +435,14 @@ pub fn paired_level_offset(
     })
 }
 
+/// The collar around one gap: `[gap_start − collar, gap_start)` ∪ `(gap_end, gap_end + collar]`.
+#[derive(Clone, Copy, Debug)]
+pub struct CollarSpan {
+    pub gap_start_secs: f64,
+    pub gap_end_secs: f64,
+    pub collar_secs: f64,
+}
+
 /// The same measurement over a collar of A blocks around one gap — see [`CollarLevelOffset`].
 ///
 /// The collar is `[gap_start − collar_secs, gap_start)` ∪ `(gap_end, gap_end + collar_secs]` on
@@ -459,18 +467,20 @@ pub fn paired_level_offset(
 /// non-positive width) or when **nothing paired at all** — never because too few pairs survived.
 /// A thin collar is a measurement, and [`MIN_LOCAL_PAIRS`] is applied by whoever turns one into a
 /// gain; keeping the floor here would censor the very distribution that sets it.
-#[allow(clippy::too_many_arguments)]
 pub fn collar_level_offset(
     a_levels: &[BlockLevel],
     b_levels: &[BlockLevel],
-    gap_start_secs: f64,
-    gap_end_secs: f64,
-    collar_secs: f64,
+    span: CollarSpan,
     offset_secs: f64,
     map_lag_secs: Option<f64>,
     b_scanned_end_secs: Option<f64>,
     params: &ProgramLevelParams,
 ) -> Option<CollarLevelOffset> {
+    let CollarSpan {
+        gap_start_secs,
+        gap_end_secs,
+        collar_secs,
+    } = span;
     // Written as a positive predicate so a NaN bound falls out here rather than through a negated
     // comparison, which NaN passes.
     let bounds_ok = collar_secs.is_finite()
@@ -1194,7 +1204,19 @@ mod tests {
         gap: (f64, f64),
         collar_secs: f64,
     ) -> Option<CollarLevelOffset> {
-        collar_level_offset(a, b, gap.0, gap.1, collar_secs, 0.0, None, None, &params())
+        collar_level_offset(
+            a,
+            b,
+            CollarSpan {
+                gap_start_secs: gap.0,
+                gap_end_secs: gap.1,
+                collar_secs,
+            },
+            0.0,
+            None,
+            None,
+            &params(),
+        )
     }
 
     /// `collar_of` with an explicit per-gap map correction.
@@ -1208,9 +1230,11 @@ mod tests {
         collar_level_offset(
             a,
             b,
-            gap.0,
-            gap.1,
-            collar_secs,
+            CollarSpan {
+                gap_start_secs: gap.0,
+                gap_end_secs: gap.1,
+                collar_secs,
+            },
             0.0,
             map_lag_secs,
             None,

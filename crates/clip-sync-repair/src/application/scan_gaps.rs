@@ -488,9 +488,11 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
                     gap.collar_level = crate::domain::program_levels::collar_level_offset(
                         &a_levels,
                         b_levels,
-                        gap.video_a_start_secs,
-                        gap.video_a_end_secs,
-                        request.local_pair_collar_secs,
+                        crate::domain::program_levels::CollarSpan {
+                            gap_start_secs: gap.video_a_start_secs,
+                            gap_end_secs: gap.video_a_end_secs,
+                            collar_secs: request.local_pair_collar_secs,
+                        },
                         delta,
                         map_lag_secs,
                         b_scan.scanned_end_secs,

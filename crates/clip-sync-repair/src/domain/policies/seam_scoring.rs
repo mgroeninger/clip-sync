@@ -71,6 +71,22 @@ pub struct SeamPlacement {
     pub post_window: usize,
 }
 
+/// Inclusive `[lo, hi]` band for the FFT seam/repeat evaluators.
+///
+/// One type for both the *start* range (`fill_*_correlations_band`) and the already-offset *base*
+/// range (`mono_seam_band`). Width is `hi − lo + 1` when `hi >= lo`.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct BandRange {
+    pub lo: usize,
+    pub hi: usize,
+}
+
+impl BandRange {
+    pub fn width(self) -> Option<usize> {
+        self.hi.checked_sub(self.lo).map(|d| d + 1)
+    }
+}
+
 /// Cap repeat-correlation window length for short gaps and seam-adjacent scoring.
 ///
 /// Without this, `repeat_window_frames` from border discovery (often 2 s via
@@ -230,24 +246,29 @@ pub fn fill_repeat_correlations(
 /// The base offset is what makes one helper serve both, and it is **per-window**: the mono side offsets by the
 /// mono `w`, each channel by its own.
 ///
-/// Returns `None` when a start-dependent bound is not uniform across `[start_lo, start_hi]` (the caller then
+/// Returns `None` when a start-dependent bound is not uniform across `[band.lo, band.hi]` (the caller then
 /// scores the band naively), matching [`fill_seam_correlations_band`]'s decline contract.
-#[allow(clippy::too_many_arguments)]
 fn repeat_side_band(
-    a_mono: &[f64],
-    a_ch: &[Vec<f64>],
-    b_mono: &[f64],
-    b_ch: &[Vec<f64>],
-    mono_window: usize,
+    templates: &SeamTemplates<'_>,
     repeat_window_frames: usize,
     gap_frames: usize,
     seam_window: usize,
     score_channels: &[usize],
     tail: bool,
-    start_lo: usize,
-    start_hi: usize,
-    width: usize,
+    band: BandRange,
 ) -> Option<Vec<f64>> {
+    let (a_mono, a_ch) = if tail {
+        (templates.a_pre, templates.a_pre_ch)
+    } else {
+        (templates.a_post, templates.a_post_ch)
+    };
+    let b_mono = templates.b_mono;
+    let b_ch = templates.b_ch;
+    let mono_window =
+        effective_repeat_window_frames(repeat_window_frames, gap_frames, a_mono.len(), seam_window);
+    let width = band.width()?;
+    let start_lo = band.lo;
+    let start_hi = band.hi;
     // The POST side compares A's head against the fill's TAIL, so its B base trails `start` by
     // `gap_frames − w`; the PRE side reads at `start` itself.
     let base_offset = |w: usize| {
@@ -369,60 +390,31 @@ pub(crate) fn fill_repeat_correlations_band(
     pre_window: usize,
     post_window: usize,
     repeat_window_frames: usize,
-    start_lo: usize,
-    start_hi: usize,
+    band: BandRange,
 ) -> Option<Vec<(f64, f64)>> {
-    if start_hi < start_lo {
-        return None;
-    }
-    let width = start_hi - start_lo + 1;
-    let SeamTemplates {
-        a_pre,
-        a_post,
-        a_pre_ch,
-        a_post_ch,
-        b_mono,
-        b_ch,
-    } = *templates;
-
-    // Start-independent (this is the precondition that makes banding possible at all): the effective windows
-    // derive only from the gap/border/seam geometry, none of which moves with `start`.
-    let pre_repeat_window =
-        effective_repeat_window_frames(repeat_window_frames, gap_frames, a_pre.len(), pre_window);
-    let post_repeat_window =
-        effective_repeat_window_frames(repeat_window_frames, gap_frames, a_post.len(), post_window);
-    let score_channels = seam_score_channel_indices(a_pre_ch, a_post_ch);
+    let width = band.width()?;
+    let score_channels = seam_score_channel_indices(templates.a_pre_ch, templates.a_post_ch);
 
     let pre = repeat_side_band(
-        a_pre,
-        a_pre_ch,
-        b_mono,
-        b_ch,
-        pre_repeat_window,
+        templates,
         repeat_window_frames,
         gap_frames,
         pre_window,
         &score_channels,
         true,
-        start_lo,
-        start_hi,
-        width,
+        band,
     )?;
     let post = repeat_side_band(
-        a_post,
-        a_post_ch,
-        b_mono,
-        b_ch,
-        post_repeat_window,
+        templates,
         repeat_window_frames,
         gap_frames,
         post_window,
         &score_channels,
         false,
-        start_lo,
-        start_hi,
-        width,
+        band,
     )?;
+    debug_assert_eq!(pre.len(), width);
+    debug_assert_eq!(post.len(), width);
     Some(pre.into_iter().zip(post).collect())
 }
 
@@ -870,13 +862,11 @@ pub(crate) fn fill_seam_correlations_band(
     pre_window: usize,
     post_window: usize,
     score_channels: &[usize],
-    start_lo: usize,
-    start_hi: usize,
+    band: BandRange,
 ) -> Option<Vec<(f64, f64)>> {
-    if start_hi < start_lo {
-        return None;
-    }
-    let width = start_hi - start_lo + 1;
+    let width = band.width()?;
+    let start_lo = band.lo;
+    let start_hi = band.hi;
     let SeamTemplates {
         a_pre,
         a_post,
@@ -904,8 +894,10 @@ pub(crate) fn fill_seam_correlations_band(
         a_pre,
         b_mono,
         pre_window,
-        start_lo.saturating_sub(pre_window),
-        start_hi.saturating_sub(pre_window),
+        BandRange {
+            lo: start_lo.saturating_sub(pre_window),
+            hi: start_hi.saturating_sub(pre_window),
+        },
         true,
         width,
     )?;
@@ -948,8 +940,10 @@ pub(crate) fn fill_seam_correlations_band(
         a_post,
         b_mono,
         post_window,
-        start_lo + gap_frames,
-        start_hi + gap_frames,
+        BandRange {
+            lo: start_lo + gap_frames,
+            hi: start_hi + gap_frames,
+        },
         false,
         width,
     )?;
@@ -989,14 +983,12 @@ pub(crate) fn fill_seam_correlations_band(
 /// [`fill_seam_correlations_with_channels`]: `0.0` for all starts when the seam is not scored or the template
 /// is shorter than the window (naive `seam_pearson` returns 0.0 on unequal lengths); else the FFT band. `tail`
 /// selects the pre-side tail vs the post-side head of `a`.
-#[allow(clippy::too_many_arguments)]
 fn mono_seam_band(
     score: bool,
     a: &[f64],
     b_mono: &[f64],
     window: usize,
-    base_lo: usize,
-    base_hi: usize,
+    bases: BandRange,
     tail: bool,
     width: usize,
 ) -> Option<Vec<f64>> {
@@ -1008,7 +1000,7 @@ fn mono_seam_band(
     } else {
         &a[..window]
     };
-    let band = seam_correlation_over_bases(template, b_mono, base_lo, base_hi);
+    let band = seam_correlation_over_bases(template, b_mono, bases.lo, bases.hi);
     (band.len() == width).then_some(band)
 }
 
@@ -1169,8 +1161,10 @@ mod tests {
             pre_window,
             post_window,
             &score_channels,
-            start_lo,
-            start_hi,
+            BandRange {
+                lo: start_lo,
+                hi: start_hi,
+            },
         )
         .expect("band applies for interior starts");
         assert_eq!(band.len(), start_hi - start_lo + 1);
@@ -1208,8 +1202,10 @@ mod tests {
             pre_window,
             post_window,
             &[],
-            start_lo,
-            start_hi,
+            BandRange {
+                lo: start_lo,
+                hi: start_hi,
+            },
         )
         .expect("mono band applies");
         for (i, &(pre, post)) in mband.iter().enumerate() {
@@ -1241,30 +1237,27 @@ mod tests {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn assert_repeat_band_matches(
         templates: &SeamTemplates<'_>,
         gap_frames: usize,
         pre_window: usize,
         post_window: usize,
         repeat_window_frames: usize,
-        start_lo: usize,
-        start_hi: usize,
+        band: BandRange,
         label: &str,
     ) {
-        let band = fill_repeat_correlations_band(
+        let filled = fill_repeat_correlations_band(
             templates,
             gap_frames,
             pre_window,
             post_window,
             repeat_window_frames,
-            start_lo,
-            start_hi,
+            band,
         )
         .unwrap_or_else(|| panic!("{label}: band declined but the bounds are uniform"));
-        assert_eq!(band.len(), start_hi - start_lo + 1, "{label}: band width");
-        for (i, &(pre, post)) in band.iter().enumerate() {
-            let start = start_lo + i;
+        assert_eq!(filled.len(), band.width().unwrap(), "{label}: band width");
+        for (i, &(pre, post)) in filled.iter().enumerate() {
+            let start = band.lo + i;
             let (npre, npost) = fill_repeat_correlations(
                 templates,
                 SeamPlacement {
@@ -1334,8 +1327,7 @@ mod tests {
             pre_window,
             post_window,
             repeat_window_frames,
-            lo,
-            hi,
+            BandRange { lo, hi },
             "fft",
         );
 
@@ -1351,8 +1343,7 @@ mod tests {
             pre_window,
             post_window,
             repeat_window_frames,
-            nlo,
-            nhi,
+            BandRange { lo: nlo, hi: nhi },
             "naive",
         );
 
@@ -1379,8 +1370,7 @@ mod tests {
             pre_window,
             post_window,
             repeat_window_frames,
-            5900,
-            6000,
+            BandRange { lo: 5900, hi: 6000 },
             "outer-gate-fails",
         );
 
@@ -1396,8 +1386,7 @@ mod tests {
             pre_window,
             post_window,
             repeat_window_frames,
-            lo,
-            hi,
+            BandRange { lo, hi },
             "empty-a-pre",
         );
 
@@ -1417,8 +1406,7 @@ mod tests {
             pre_window,
             post_window,
             repeat_window_frames,
-            lo,
-            hi,
+            BandRange { lo, hi },
             "single-channel",
         );
 
@@ -1441,8 +1429,7 @@ mod tests {
                 pre_window,
                 post_window,
                 repeat_window_frames,
-                lo,
-                hi,
+                BandRange { lo, hi },
             )
             .is_none(),
             "case F: non-uniform per-channel bound must decline"
@@ -1552,7 +1539,15 @@ mod tests {
         assert!(seam_score_channel_indices(&a_pre_ch, &a_post_ch).is_empty());
         let (pre, post) = fill_repeat_correlations(&templates, placement, w);
         assert_eq!((pre, post), (0.0, 0.0));
-        assert_repeat_band_matches(&templates, gap, w, w, w, 8, 8, "empty-selection");
+        assert_repeat_band_matches(
+            &templates,
+            gap,
+            w,
+            w,
+            w,
+            BandRange { lo: 8, hi: 8 },
+            "empty-selection",
+        );
     }
 
     /// Center-dominant repeat: silent fronts must not participate; selected center still flags repeat.
@@ -1591,7 +1586,18 @@ mod tests {
         let (pre, post) = fill_repeat_correlations(&templates, placement, w);
         assert!(pre > 0.9, "pre repeat should follow center, got {pre}");
         assert!(post > 0.9, "post repeat should follow center, got {post}");
-        assert_repeat_band_matches(&templates, gap, w, w, w, start, start, "center-repeat");
+        assert_repeat_band_matches(
+            &templates,
+            gap,
+            w,
+            w,
+            w,
+            BandRange {
+                lo: start,
+                hi: start,
+            },
+            "center-repeat",
+        );
     }
 
     /// Smeared multichannel repeat: same template on several equal-energy channels (no mono term).
@@ -1628,7 +1634,18 @@ mod tests {
         let (pre, post) = fill_repeat_correlations(&templates, placement, w);
         assert!(pre > 0.9, "smeared pre repeat got {pre}");
         assert!(post > 0.9, "smeared post repeat got {post}");
-        assert_repeat_band_matches(&templates, gap, w, w, w, start, start, "smeared-repeat");
+        assert_repeat_band_matches(
+            &templates,
+            gap,
+            w,
+            w,
+            w,
+            BandRange {
+                lo: start,
+                hi: start,
+            },
+            "smeared-repeat",
+        );
     }
 
     #[test]

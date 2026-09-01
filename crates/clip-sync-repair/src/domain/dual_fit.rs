@@ -11,7 +11,7 @@ use clip_sync::normalized_correlation;
 use crate::domain::donor::{donor_interior_at, program_quiet_at_nominal, DonorInterior};
 use crate::domain::gap_fill_fit::trim_at_lowest_energy_interior;
 use crate::domain::seam_locks::{
-    nominal_first_seam_locks, SeamGateFloors, SeamLockTemplates, SeamLocks,
+    nominal_first_seam_locks, EnvelopeSearch, SeamGateFloors, SeamLockTemplates, SeamLocks,
 };
 
 /// The **step is real** margin: the post seam at its own lag must beat the post seam forced to the pre lag
@@ -83,8 +83,7 @@ pub fn nominal_seam_locks(
         templates,
         b_mono,
         p.max_lag_frames,
-        None,
-        None,
+        EnvelopeSearch::off(),
         p.sample_rate,
         SeamGateFloors {
             min_fill_correlation: p.min_fill_correlation,

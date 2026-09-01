@@ -34,6 +34,7 @@ use region::{
     characterize_region, execute_region_spec, outcome_from_spec, outcomes_in_report_order,
     record_patch_gap_span, region_outcome_gap_tags, skip_outcome_from_fields, splice_into_a,
     RegionPatch, RegionPatchContext, RegionPatchMedia, RegionPatchOpts, RegionPatchOutcome,
+    ReportStamps,
 };
 
 /// Write = full repair (characterize → execute → optional anchored retry → splice).
@@ -194,15 +195,17 @@ fn empty_plan_result(
         &request.report.gaps,
         plan,
         &[],
-        request.fill_mode,
-        FillTierThresholds {
-            min_fill_correlation: request.min_fill_correlation,
-            fill_marginal_margin: request.fill_marginal_margin,
-            fill_absolute_floor: request.fill_absolute_floor,
+        ReportStamps {
+            fill_mode: request.fill_mode,
+            thresholds: FillTierThresholds {
+                min_fill_correlation: request.min_fill_correlation,
+                fill_marginal_margin: request.fill_marginal_margin,
+                fill_absolute_floor: request.fill_absolute_floor,
+            },
+            program_gain: request.program_gain.gain(),
         },
         &[],
         &[],
-        request.program_gain.gain(),
     ))
     .with_fill_geometry(fill_geometry_for(request))
     .with_program_gain(program_gain_report(request));
@@ -423,13 +426,15 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                 &request.report.gaps,
                 &plan,
                 &region_results,
-                request.fill_mode,
-                thresholds,
+                ReportStamps {
+                    fill_mode: request.fill_mode,
+                    thresholds,
+                    program_gain: request.program_gain.gain(),
+                },
                 // Preview never splices, so no splice can fail — and nothing is written to
                 // measure a fill level on.
                 &[],
                 &[],
-                request.program_gain.gain(),
             ))
             .with_fill_geometry(fill_geometry_for(&request))
             .with_program_gain(program_gain_report(&request))
@@ -639,11 +644,13 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             &request.report.gaps,
             &plan,
             &region_results,
-            request.fill_mode,
-            thresholds,
+            ReportStamps {
+                fill_mode: request.fill_mode,
+                thresholds,
+                program_gain: request.program_gain.gain(),
+            },
             &not_applied,
             &fill_level,
-            request.program_gain.gain(),
         ))
         .with_fill_geometry(fill_geometry_for(&request))
         .with_program_gain(program_gain_report(&request))

@@ -27,7 +27,7 @@ pub use seam_scoring::{
 };
 pub(crate) use seam_scoring::{
     fill_repeat_correlations_band, fill_seam_correlations_band,
-    fill_seam_correlations_with_channels, seam_score_channels,
+    fill_seam_correlations_with_channels, seam_score_channels, BandRange,
 };
 pub use seam_splice::{apply_seam_crossfade, effective_seam_crossfade_frames};
 pub use silence::{

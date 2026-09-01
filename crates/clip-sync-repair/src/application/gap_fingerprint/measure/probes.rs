@@ -7,7 +7,7 @@ use clip_sync::normalized_correlation;
 use crate::domain::lag_envelope::EnvelopeCfg;
 use crate::domain::policies::{border_templates_for_gap, RefinedGapFrames};
 use crate::domain::seam_locks::{
-    nominal_first_seam_locks, wide_a_slicer, SeamGateFloors, SeamLockTemplates,
+    nominal_first_seam_locks, wide_a_slicer, EnvelopeSearch, SeamGateFloors, SeamLockTemplates,
 };
 
 use super::config::*;
@@ -316,8 +316,10 @@ pub(in crate::application::gap_fingerprint::measure) fn splice_dualfit_at(
         &templates,
         b_mono,
         max_lag,
-        env_cfg,
-        Some(&wide_a),
+        EnvelopeSearch {
+            cfg: env_cfg,
+            wide_a: Some(&wide_a),
+        },
         sample_rate,
         SeamGateFloors {
             min_fill_correlation: f64::from(cfg.min_fill_correlation),

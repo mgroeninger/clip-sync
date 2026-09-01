@@ -24,19 +24,19 @@ pub(in crate::application::gap_fingerprint::measure) fn tags_from_measurements(
     m: &RegionMeasurements,
     levels: Option<crate::domain::gap_repair_spec::LevelTags>,
 ) -> crate::domain::gap_repair_spec::GapRepairTags {
-    tags_from_fields(
-        m.lag_decision.as_ref(),
-        m.lag_editorial.as_ref(),
-        m.splice.as_ref(),
-        m.splice_dualfit,
-        &m.brackets,
-        None,
-        None,
-        m.residual,
-        m.donor_interior_aligned,
-        m.donor_interior_nominal,
+    tags_from_fields(TagFieldSources {
+        lag_decision: m.lag_decision.as_ref(),
+        diag_lag: m.lag_editorial.as_ref(),
+        splice: m.splice.as_ref(),
+        splice_dualfit: m.splice_dualfit,
+        brackets: &m.brackets,
+        structure: None,
+        seams: None,
+        residual: m.residual,
+        donor_interior_aligned: m.donor_interior_aligned,
+        donor_interior_nominal: m.donor_interior_nominal,
         levels,
-    )
+    })
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -206,10 +206,12 @@ pub(in crate::application::gap_fingerprint::measure) fn compute_region_measureme
         &gate_derived,
         a_pcm,
         b_slice,
-        b_extract_start_secs,
-        refined.start_frame as f64 / rate + gap_offset,
-        refined.end_frame as f64 / rate + gap_offset,
-        gap_frames,
+        crate::application::patch_region::SeamBWindow {
+            b_extract_start_secs,
+            refined_b_start_secs: refined.start_frame as f64 / rate + gap_offset,
+            refined_b_end_secs: refined.end_frame as f64 / rate + gap_offset,
+            gap_frames,
+        },
         None,
     );
     let params = SeamGateParams {
@@ -225,8 +227,10 @@ pub(in crate::application::gap_fingerprint::measure) fn compute_region_measureme
     let candidates = list_anchor_candidates_a(&a_pcm.samples, ch, refined, &anchor_params);
     let brackets = list_feasible_anchor_brackets(&candidates, refined, &anchor_params);
     let scored = score_keep_path_brackets(
-        &params,
-        &cache,
+        crate::application::patch_region::FitHaystack {
+            params: &params,
+            cache: &cache,
+        },
         &brackets,
         refined,
         rate,
@@ -464,10 +468,8 @@ struct ScoredKeepPath {
 
 /// Unshifted keep-path bracket loop. `include_diagnostics` only affects the energy-bracket
 /// pick used by `lag_editorial`.
-#[allow(clippy::too_many_arguments)]
 fn score_keep_path_brackets(
-    params: &crate::application::patch_region::SeamGateParams<'_>,
-    cache: &crate::application::patch_region::FitHaystackCache,
+    haystack: crate::application::patch_region::FitHaystack<'_>,
     brackets: &[crate::domain::gap_anchor_seam::AnchorBracket],
     refined: RefinedGapFrames,
     rate: f64,
@@ -500,7 +502,13 @@ fn score_keep_path_brackets(
             stage,
             residual_margin_db,
             placement,
-        ) = match oracle_score_fit_candidate(params, cache, br.refined, refined, true) {
+        ) = match oracle_score_fit_candidate(
+            haystack.params,
+            haystack.cache,
+            br.refined,
+            refined,
+            true,
+        ) {
             Ok(sc) => {
                 any_ok = true;
                 if br.refined == refined {

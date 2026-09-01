@@ -20,7 +20,7 @@ use crate::domain::policies::SeamResidualVerdict;
 use crate::domain::policies::{
     fill_repeat_correlations, fill_repeat_correlations_band, fill_seam_correlations,
     fill_seam_correlations_band, fill_seam_correlations_with_channels,
-    fill_splice_seam_correlations_interleaved, seam_score_channels, BorderSeamTemplates,
+    fill_splice_seam_correlations_interleaved, seam_score_channels, BandRange, BorderSeamTemplates,
     FillAlignment, SeamPlacement, SeamTemplates, SpliceSeamContext,
 };
 
@@ -748,8 +748,7 @@ fn build_wave_seam_band(
         ctx.pre_window,
         ctx.post_window,
         score_channels,
-        lo,
-        hi,
+        BandRange { lo, hi },
     )
 }
 
@@ -777,8 +776,7 @@ fn build_repeat_band(
         ctx.pre_window,
         ctx.post_window,
         ctx.repeat_window_frames,
-        lo,
-        hi,
+        BandRange { lo, hi },
     )
 }
 

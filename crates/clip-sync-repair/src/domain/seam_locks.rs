@@ -201,6 +201,27 @@ impl SeamGateFloors {
 /// should, and both callers that decode A whole use [`wide_a_slicer`].
 pub type WideA<'a> = dyn Fn(bool) -> Option<Vec<f64>> + 'a;
 
+/// Coarse-envelope *input* for [`nominal_first_seam_locks`]: knobs plus the lazy wider A border.
+///
+/// The two travel together — both `None` on the dual-fit path (measure at nominal only), both
+/// populated on the patch/fingerprint paths that may rescue. Named so it cannot be confused with
+/// the fingerprint dump's `EnvelopeRescue` outcome (`NotConsulted` / `Declined` / `Rescued`).
+#[derive(Clone, Copy)]
+pub struct EnvelopeSearch<'a> {
+    pub cfg: Option<EnvelopeCfg>,
+    pub wide_a: Option<&'a WideA<'a>>,
+}
+
+impl EnvelopeSearch<'static> {
+    /// Measure at the nominal `b_mapped` only — no envelope, no wider border.
+    pub fn off() -> Self {
+        Self {
+            cfg: None,
+            wide_a: None,
+        }
+    }
+}
+
 /// The wider A border as a plain slice of already-decoded interleaved A.
 ///
 /// Both `characterize_region` (production) and `splice_dualfit_at` (fingerprint) hold all of A, so
@@ -244,18 +265,25 @@ pub fn wide_a_slicer(
 /// the two track each other. (The 1 s `lag_decision` census keeps its own
 /// [`crate::domain::lag_envelope::LAG_DECISION_RECOVERABLE_R`] = 0.5; that is a different instrument
 /// — a 1 s template at `b_mapped` rather than a 250 ms one at the seam — not this line.)
-#[allow(clippy::too_many_arguments)]
 fn lock_shoulder(
-    a_seam: &[f64],
+    templates: &SeamLockTemplates,
     b_mono: &[f64],
-    nominal_center: usize,
     max_lag_frames: usize,
     pre_shoulder: bool,
-    envelope: Option<EnvelopeCfg>,
-    wide_a: Option<&WideA<'_>>,
+    envelope: EnvelopeSearch<'_>,
     sample_rate: u32,
     triage_r: f64,
 ) -> Option<SeamLock> {
+    let a_seam = if pre_shoulder {
+        templates.a_pre()
+    } else {
+        templates.a_post()
+    };
+    let nominal_center = if pre_shoulder {
+        templates.b_mapped_start()
+    } else {
+        templates.b_post_nominal()
+    };
     // The pre seam's search window starts a full template before its nominal center.
     let anchor_start = if pre_shoulder {
         nominal_center.checked_sub(a_seam.len())?
@@ -272,7 +300,7 @@ fn lock_shoulder(
         edge_pinned: peak.edge_pinned(sample_rate),
     };
 
-    let Some(env_cfg) = envelope else {
+    let Some(env_cfg) = envelope.cfg else {
         return Some(nominal);
     };
     if r >= triage_r {
@@ -282,7 +310,7 @@ fn lock_shoulder(
         return Some(nominal);
     }
 
-    let wide = wide_a.and_then(|f| f(pre_shoulder));
+    let wide = envelope.wide_a.and_then(|f| f(pre_shoulder));
     let a_border: &[f64] = wide.as_deref().unwrap_or(a_seam);
     let peak = envelope_shoulder(
         EnvelopeSide {
@@ -322,36 +350,30 @@ fn lock_shoulder(
 ///
 /// `None` only when a seam window is out of range — the same condition on which `try_dual_fit`
 /// declined before.
-#[allow(clippy::too_many_arguments)]
 pub fn nominal_first_seam_locks(
     templates: &SeamLockTemplates,
     b_mono: &[f64],
     max_lag_frames: usize,
-    envelope: Option<EnvelopeCfg>,
-    wide_a: Option<&WideA<'_>>,
+    envelope: EnvelopeSearch<'_>,
     sample_rate: u32,
     floors: SeamGateFloors,
     triage_r: f64,
 ) -> Option<SeamLocks> {
     let pre = lock_shoulder(
-        templates.a_pre(),
+        templates,
         b_mono,
-        templates.b_mapped_start(),
         max_lag_frames,
         true,
         envelope,
-        wide_a,
         sample_rate,
         triage_r,
     )?;
     let post = lock_shoulder(
-        templates.a_post(),
+        templates,
         b_mono,
-        templates.b_post_nominal(),
         max_lag_frames,
         false,
         envelope,
-        wide_a,
         sample_rate,
         triage_r,
     )?;
@@ -504,8 +526,10 @@ mod tests {
             &templates,
             &b,
             (0.6 * f64::from(sr)) as usize,
-            envelope,
-            Some(wide.as_ref()),
+            EnvelopeSearch {
+                cfg: envelope,
+                wide_a: Some(wide.as_ref()),
+            },
             sr,
             floors,
             0.35,
@@ -532,8 +556,10 @@ mod tests {
             &templates,
             &b,
             (0.6 * f64::from(sr)) as usize,
-            envelope,
-            Some(wide.as_ref()),
+            EnvelopeSearch {
+                cfg: envelope,
+                wide_a: Some(wide.as_ref()),
+            },
             sr,
             floors,
             above_floor,
@@ -655,8 +681,10 @@ mod tests {
             &templates,
             &b,
             seam_max_lag,
-            Some(cfg),
-            Some(wide.as_ref()),
+            EnvelopeSearch {
+                cfg: Some(cfg),
+                wide_a: Some(wide.as_ref()),
+            },
             sr,
             SeamGateFloors {
                 min_fill_correlation: floor,

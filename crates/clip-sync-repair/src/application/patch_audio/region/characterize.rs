@@ -6,7 +6,7 @@
 use clip_sync::ProgressReporter;
 
 use crate::application::patch_region::{
-    derive_seam_gate_geometry, evaluate_seam_gate, retry_waveform_seam_extensions,
+    derive_seam_gate_geometry, evaluate_seam_gate, retry_waveform_seam_extensions, SeamBWindow,
     SeamExtensionRetry, SeamGateDerived, SeamGateFailure, SeamGateOutcome, SeamGateParams,
 };
 use crate::domain::{
@@ -361,10 +361,12 @@ pub(in crate::application::patch_audio) fn characterize_region(
             &derived,
             a_pcm,
             b_samples,
-            b_extract_start_secs,
-            refined_b_start_secs,
-            refined_b_end_secs,
-            gap_frames,
+            SeamBWindow {
+                b_extract_start_secs,
+                refined_b_start_secs,
+                refined_b_end_secs,
+                gap_frames,
+            },
             anchor_search_prior,
         )
     };
@@ -438,8 +440,10 @@ pub(in crate::application::patch_audio) fn characterize_region(
             &df.templates,
             &df.b_mono,
             df.params.max_lag_frames,
-            env_cfg,
-            Some(&wide_a),
+            crate::domain::seam_locks::EnvelopeSearch {
+                cfg: env_cfg,
+                wide_a: Some(&wide_a),
+            },
             sample_rate,
             crate::domain::seam_locks::SeamGateFloors {
                 min_fill_correlation: df.params.min_fill_correlation,

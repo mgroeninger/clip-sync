@@ -113,20 +113,26 @@ pub struct SeamGateParams<'a> {
     pub geom: SeamGateGeometry<'a>,
 }
 
+/// Per-gap B window the seam-gate geometry is built from (extract origin, refined B bounds, gap length).
+#[derive(Clone, Copy)]
+#[doc(hidden)]
+pub struct SeamBWindow {
+    pub b_extract_start_secs: f64,
+    pub refined_b_start_secs: f64,
+    pub refined_b_end_secs: f64,
+    pub gap_frames: usize,
+}
+
 /// Build per-gap [`SeamGateGeometry`] from settings + derived run constants + this gap's window.
 /// Computes `seam_gate_frames`/`border_frames` from `gap_frames` so the oracle and production share
 /// one path (see docs/dev/archive/TEMP-w5-anchor-rescue-diag-plan.md Phase 0).
-#[allow(clippy::too_many_arguments)]
 #[doc(hidden)]
 pub fn derive_seam_gate_geometry<'a>(
     settings: &crate::application::PatchRequestSettings,
     derived: &SeamGateDerived,
     a_pcm: &'a MultiChannelPcm,
     b_samples: &'a [f32],
-    b_extract_start_secs: f64,
-    refined_b_start_secs: f64,
-    refined_b_end_secs: f64,
-    gap_frames: usize,
+    window: SeamBWindow,
     anchor_search_prior: Option<AnchorSearchPrior>,
 ) -> SeamGateGeometry<'a> {
     let crate::application::patch_audio::FillWindowFrames {
@@ -135,15 +141,15 @@ pub fn derive_seam_gate_geometry<'a>(
         ..
     } = crate::application::patch_audio::FillWindowFrames::for_gap(
         settings,
-        gap_frames,
+        window.gap_frames,
         derived.sample_rate,
     );
     SeamGateGeometry {
         a_pcm,
         b_samples,
-        b_extract_start_secs,
-        refined_b_start_secs,
-        refined_b_end_secs,
+        b_extract_start_secs: window.b_extract_start_secs,
+        refined_b_start_secs: window.refined_b_start_secs,
+        refined_b_end_secs: window.refined_b_end_secs,
         seam_gate_frames,
         border_frames,
         anchor_search_prior,
@@ -269,6 +275,14 @@ pub struct FitHaystackCache {
     b_ch: Vec<Vec<f64>>,
     bool_timeline: gap_structure::ActivityTimeline,
     energy_timeline: EnergyTimeline,
+}
+
+/// [`SeamGateParams`] plus the cache built from them — they travel together for every oracle score.
+#[derive(Clone, Copy)]
+#[doc(hidden)]
+pub struct FitHaystack<'a> {
+    pub params: &'a SeamGateParams<'a>,
+    pub cache: &'a FitHaystackCache,
 }
 
 impl FitHaystackCache {
