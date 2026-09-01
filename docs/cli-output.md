@@ -402,9 +402,7 @@ Details: [gap-fill-modes.md](gap-fill-modes.md) § Dual-fit rescue.
 **Gap-fingerprint dump (`--gap-fingerprints`):** after a normal repair run (align → scan → patch plan →
 patch when write mode), optionally writes a licensing-safe corpus under `DIR`. stderr phase:
 `characterizing gaps for fingerprinting`. Default output is decision/repair (D/R) axes only; add
-`--fingerprint-diagnostics` for Tier-3 analyzer fields. `--fingerprint-keep-path-shift[=pre|mid|both]`
-re-scores the keep-path gate after a constant B-map lag (record-only `keep_path_shift`; does not
-change `outcome.tier`). `--lag-envelope-max-lag-ms MS` recenters
+`--fingerprint-diagnostics` for Tier-3 analyzer fields. `--lag-envelope-max-lag-ms MS` recenters
 `lag_decision` (default 2000; `0` disables). `--border-capture narrow|wide` selects the shared
 A-border capture width (`narrow` default; `wide` is a diagnostic arm that re-baselines
 `border_displacement_ms` corpus-wide, so its dumps are not field-comparable with narrow ones).
@@ -421,7 +419,7 @@ They carry **no verdict token** — one was dropped 2026-08-12 because it named 
 bracket gate, which production routinely overrides (a `skip` fingerprint is often a patched gap);
 read `outcome.tier` in the JSON or `manifest.json` instead. Ignored when
 `--mux` is set (warning). `--fingerprint-gap` / `--fingerprint-diagnostics` /
-`--fingerprint-keep-path-shift` / `--border-capture` without `--gap-fingerprints` are rejected at startup. The two
+`--border-capture` without `--gap-fingerprints` are rejected at startup. The two
 `--lag-envelope-*` flags are **not** in that set and are not calibration-only: production's seam-lock
 rescue reads the same two knobs, so they apply on any run mode and on every build (a non-positive or
 non-finite `--lag-envelope-window-secs` is still rejected at startup; `0` is a documented disable

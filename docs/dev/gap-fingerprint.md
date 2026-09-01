@@ -35,15 +35,6 @@ clip-sync-repair A.mkv B.m4v --gap-fingerprints gap-files/ [--fingerprint-gap 3]
 - `--fingerprint-diagnostics` — also write the **Tier-3 X-set** (`seam_probe`, `wide_envelope`,
   `b_levels`, `lag_editorial`). Off by default (decision/repair fields only); slower. Needed for the
   analyzer's seam-probe reports.
-- `--fingerprint-keep-path-shift[=pre|mid|both]` — record-only: after the unshifted overlay, re-run
-  `evaluate_seam_gate` with a constant lag added to the B times `derive_seam_gate_geometry` already
-  uses. `pre` is the 250 ms `locks.pre.lag`; `mid` is the mean of the two 1 s `lag_decision`
-  `frac_lag_ms`; omit the value (or `both`) for both arms. Writes `keep_path_shift` beside
-  `outcome`; **does not change `outcome.tier`**. Convert on an arm ⇔ that arm's `any_ok`
-  (structure + waveform). Residual is a separate `throat.residual` column and does not move
-  `any_ok`. Stamps `source.probe_recipe.keep_path_shift` when any gap scored an arm. Requires
-  `--gap-fingerprints`. See [TEMP-rigid-shoulder-offset-skips-2026-08-31.md](TEMP-rigid-shoulder-offset-skips-2026-08-31.md)
-  Phase 1.
 - `--lag-envelope-max-lag-ms MS` — coarse envelope half-width used to **rescue** `lag_decision`
   shoulders that are dead at nominal (`peak_r` < 0.5; default **2000**). `0` disables rescue
   (nominal `b_mapped` only; no `envelope_*` / `envelope_rescue` on the wire). Probe-only — not
@@ -292,7 +283,6 @@ approaches were refuted by measurement. Full analysis + cost hierarchy: that pla
 | `splice_dualfit` | full, B present | dual-fit viability: seams scored at per-shoulder placement + `gate_pass` / `trim_frames` / validators (see below) |
 | `residual` | full, B present | least-squares same-source cancellation (dB) vs noise floor, measured at the gate's **structure throat** — the one decision group *not* read at `b_mapped`, so its numbers do not compare against `seam_probe`'s; per-side dB values are `Option` (absent for non-finite / −120 sentinel). `uninformative_pre`/`_post` name *why* a side carries no usable floor (`no_reference_window` / `probe_non_finite` / `floor_above_ok_db`), and `placement_slide_frames` / `max_lag_frames` carry the lag reach so a replayed verdict abstains where production did — all four absent on pre-2026-08-05 dumps |
 | `outcome` | B present | plan_kind, tier, fit_path, signature_mode, skip_reason. On skip, `skip_reason` is the closest failing bracket's `failure_stage` (`structure_align` / `structure_floor` / `waveform_floor` / `residual`) — fingerprint-native, **not** a production `GapPatchSkipReason`. `seam_shape` is **omitted** on the production path (`None`). Legacy dumps may still say `correlation_below_threshold` |
-| `keep_path_shift` | `--fingerprint-keep-path-shift` | Record-only keep-path B-map shift. Each arm is `{ source: pre_lock\|mid_lag, shift_ms?, unused_lag_ms?, unavailable?, b_extract_start_secs?, throat, any_ok, skip_reason?, n_brackets, n_ok }`. Convert ⇔ `any_ok` (structure + waveform). `throat.residual` is a side column and does **not** move `any_ok`. `skip_reason` is a `failure_stage` spelling only; `unavailable` is the other axis (`locks` / `lag_decision` / `extract_empty` / `map_before_extract`). `shift_ms` is omitted when the lag is unknown. `throat.start_frame` is relative to this arm's shifted extract. Never writes `outcome.tier`. Absent when the flag is off |
 | `equivalence_diagnostic` | B present | **gap-equivalence class (diagnostic)** — does this gap need patching? (silence-character; see below) |
 | `equivalence_production` | scan classified | the **authoritative production** verdict for the same gap (`GapReport::gap_equivalence`; block size = the `scan_block_ms` knob), copied in so one dump holds both readings for calibration. **This is the authoritative one** — see below |
 | `lag_editorial` | diagnostics | **Tier-3** per pre/post anchor lag fingerprint at the best-energy **editorial** bracket / structure throat — a *diagnostic* placement, not the decision seam. Requires `--fingerprint-diagnostics`. Wire key was `lag` before 2026-08-07 (serde alias reads old corpora) |
@@ -444,7 +434,6 @@ where the geometry has to be recovered from the binary that wrote them):
 | `lag_envelope_window_secs` | when some gap carries `lag_decision` | coarse envelope **window** the rescue correlates (default 2.0). Recorded even at the default because the Tier-3 `wide_envelope` diagnostic does **not** follow it — a reader comparing the two envelope lags needs to know which window ran. Absent on corpora written before 2026-08-22, which all ran 2.0 |
 | `seam_window_secs` | when some gap carries `seams` | seam window behind `splice` / `splice_dualfit` |
 | `border_standoff_secs` | always | converted from `PROBE_BORDER_STANDOFF_FRAMES` (currently 0 frames) at the dump's sample rate — the same constant every probe `GapBorderSpec` is built with |
-| `keep_path_shift` | when some gap carries `keep_path_shift` | which arm(s) `--fingerprint-keep-path-shift` scored: `pre_lock`, `mid_lag`, or `both`. Absent (not `off`) when the flag was off |
 
 The lag and seam keys are **absent, not zero**, on a summary-only corpus. `characterize_gaps` builds
 every gap at `DetailTier::Summary` with `skip_baseline_placement`, which calls neither

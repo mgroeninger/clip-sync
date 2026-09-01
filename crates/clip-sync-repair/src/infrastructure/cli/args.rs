@@ -61,22 +61,6 @@ pub struct Args {
     #[arg(long)]
     pub fingerprint_diagnostics: bool,
 
-    /// Record-only: re-score the keep-path gate after adding a constant lag to the B map
-    /// (`locks.pre.lag` and/or 1 s `lag_decision` mid). Writes `keep_path_shift` beside the
-    /// unshifted overlay; does **not** change `outcome.tier` or production skip/patch.
-    /// `pre` = 250 ms pre lock; `mid` = mean of the two 1 s `frac_lag_ms`; omit the value
-    /// (or `both`) for both arms. Requires `--gap-fingerprints`. See
-    /// docs/dev/TEMP-rigid-shoulder-offset-skips-2026-08-31.md Phase 1.
-    #[cfg(feature = "calibration")]
-    #[arg(
-        long,
-        value_enum,
-        num_args = 0..=1,
-        default_missing_value = "both",
-        value_name = "pre|mid|both"
-    )]
-    pub fingerprint_keep_path_shift: Option<KeepPathShiftArg>,
-
     /// Coarse envelope half-width (ms) for the nominal-first shoulder rescue: it recenters
     /// `lag_decision`'s ±600 ms sweep in a fingerprint dump, and the seam locks on a production
     /// repair. Default 2000. `0` disables recenter (nominal `b_mapped`, no `envelope_*` on the
@@ -523,27 +507,6 @@ impl From<BorderCaptureArg> for BorderCapture {
     }
 }
 
-/// CLI spelling of [`crate::application::gap_fingerprint::KeepPathShiftMode`].
-#[cfg(feature = "calibration")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum KeepPathShiftArg {
-    Pre,
-    Mid,
-    Both,
-}
-
-#[cfg(feature = "calibration")]
-impl From<KeepPathShiftArg> for crate::application::gap_fingerprint::KeepPathShiftMode {
-    fn from(value: KeepPathShiftArg) -> Self {
-        use crate::application::gap_fingerprint::KeepPathShiftMode;
-        match value {
-            KeepPathShiftArg::Pre => KeepPathShiftMode::PreLock,
-            KeepPathShiftArg::Mid => KeepPathShiftMode::MidLag,
-            KeepPathShiftArg::Both => KeepPathShiftMode::Both,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum LogLevelArg {
     Error,
@@ -705,7 +668,6 @@ mod tests {
         for needle in [
             "gap-fingerprints",
             "fingerprint-diagnostics",
-            "fingerprint-keep-path-shift",
             "lag-envelope-max-lag-ms",
             "border-capture",
             "lag-envelope-window-secs",

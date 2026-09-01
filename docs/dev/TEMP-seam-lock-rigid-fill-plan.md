@@ -160,7 +160,7 @@ required if `dual_fit_step_real` is present.
 `gate_pass`, `bridge_frames > 0`, aligned continuous, ¬program-quiet. The five become
 `Some(true)`. Tests in `schema.rs` that pin `rigid → false` flip to `true`.
 
-`keep_path_shift` overlay is **untouched**. Q2 stays a null on the search.
+The keep-path-shift overlay probe was stripped after Q2 (Result 6). Q2 stays a null on the search.
 
 ---
 

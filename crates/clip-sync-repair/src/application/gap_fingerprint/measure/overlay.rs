@@ -144,9 +144,6 @@ pub(in crate::application::gap_fingerprint::measure) struct RegionMeasurements {
         Option<WideEnvelopeFingerprint>,
     pub(in crate::application::gap_fingerprint::measure) residual: Option<ResidualInfo>,
     pub(in crate::application::gap_fingerprint::measure) lag_editorial: Option<LagFingerprint>,
-    /// Record-only keep-path shift arms. `None` when the dump flag is off.
-    pub(in crate::application::gap_fingerprint::measure) keep_path_shift:
-        Option<Vec<KeepPathShiftArm>>,
 }
 /// Per-gap inputs for [`compute_region_measurements`] — the geometry the caller resolved (refined throat, B
 /// extract window/offset) plus the shared config/frame params. `gap_floor_db` is `fp.levels.gap_floor_db` from
@@ -173,12 +170,6 @@ pub(in crate::application::gap_fingerprint::measure) struct RegionMeasureInput<'
     pub(in crate::application::gap_fingerprint::measure) sample_rate: u32,
     pub(in crate::application::gap_fingerprint::measure) progress:
         &'a dyn clip_sync::ProgressReporter,
-    /// Whole-file B — the shifted arm extracts a window around the registered map so `|lag|`
-    /// cannot clip the haystack. Unshifted scoring still uses [`Self::b_slice`].
-    pub(in crate::application::gap_fingerprint::measure) b_samples_full: &'a [f32],
-    pub(in crate::application::gap_fingerprint::measure) pad_lead: f64,
-    pub(in crate::application::gap_fingerprint::measure) pad_tail: f64,
-    pub(in crate::application::gap_fingerprint::measure) keep_path_shift: KeepPathShiftMode,
 }
 /// Compute one gap's gate-overlay measurements from decode — the shared per-gap measurement site the
 /// from-decode dump ([`characterize_gaps_from_decode`]) projects via [`tags_from_measurements`] (8g.3a).
@@ -208,10 +199,6 @@ pub(in crate::application::gap_fingerprint::measure) fn compute_region_measureme
         rate,
         sample_rate,
         progress,
-        b_samples_full,
-        pad_lead,
-        pad_tail,
-        keep_path_shift,
     } = inp;
 
     let geom = derive_seam_gate_geometry(
@@ -359,7 +346,7 @@ pub(in crate::application::gap_fingerprint::measure) fn compute_region_measureme
     } else {
         None
     };
-    let splice_measure = splice_dualfit_at(&SpliceDualfitInput {
+    let splice_dualfit = splice_dualfit_at(&SpliceDualfitInput {
         a_samples: &a_pcm.samples,
         channels: ch,
         refined,
@@ -368,7 +355,6 @@ pub(in crate::application::gap_fingerprint::measure) fn compute_region_measureme
         cfg,
         sample_rate,
     });
-    let splice_dualfit = splice_measure.as_ref().map(|m| m.dualfit);
     // F14: now that `splice_dualfit` exists, record whether production's dual-fit would rescue this
     // skip. Deliberately the same `dual_fit_rescue_flag` the projection calls — the two paths are
     // compared axis-by-axis by `decode_path_projection`, so a second inline copy would be a drift bug
@@ -395,28 +381,6 @@ pub(in crate::application::gap_fingerprint::measure) fn compute_region_measureme
         None
     };
     let splice = lag_decision.as_ref().and_then(splice_summary_from_lag);
-
-    let keep_path_shift_arms = keep_path_shift.is_on().then(|| {
-        probe_keep_path_shift(KeepPathShiftProbeInput {
-            a_pcm,
-            ch,
-            b_samples_full,
-            gate_settings,
-            gate_derived,
-            refined,
-            gap_frames,
-            gap_offset,
-            rate,
-            sample_rate,
-            pad_lead,
-            pad_tail,
-            brackets: &brackets,
-            mode: keep_path_shift,
-            lag_decision: lag_decision.as_ref(),
-            splice_measure: splice_measure.as_ref(),
-            progress,
-        })
-    });
 
     // Residual stays at the gate's structure throat. Reuse the throat placement from the bracket loop when the
     // throat bracket scored `Ok`; else a fresh `gate_structure_align` call.
@@ -488,7 +452,6 @@ pub(in crate::application::gap_fingerprint::measure) fn compute_region_measureme
         wide_envelope,
         residual,
         lag_editorial,
-        keep_path_shift: keep_path_shift_arms,
     }
 }
 
@@ -499,8 +462,8 @@ struct ScoredKeepPath {
     best_energy: Option<(f64, RefinedGapFrames)>,
 }
 
-/// Shared unshifted / shifted bracket loop. `include_diagnostics` only affects the energy-bracket
-/// pick used by `lag_editorial`; the shifted arm passes `false`.
+/// Unshifted keep-path bracket loop. `include_diagnostics` only affects the energy-bracket
+/// pick used by `lag_editorial`.
 #[allow(clippy::too_many_arguments)]
 fn score_keep_path_brackets(
     params: &crate::application::patch_region::SeamGateParams<'_>,
@@ -601,369 +564,6 @@ fn score_keep_path_brackets(
     }
 }
 
-struct KeepPathShiftProbeInput<'a> {
-    a_pcm: &'a clip_sync::MultiChannelPcm,
-    ch: usize,
-    b_samples_full: &'a [f32],
-    gate_settings: &'a crate::application::PatchRequestSettings,
-    gate_derived: crate::application::patch_region::SeamGateDerived,
-    refined: RefinedGapFrames,
-    gap_frames: usize,
-    gap_offset: f64,
-    rate: f64,
-    sample_rate: u32,
-    pad_lead: f64,
-    pad_tail: f64,
-    brackets: &'a [crate::domain::gap_anchor_seam::AnchorBracket],
-    mode: KeepPathShiftMode,
-    lag_decision: Option<&'a LagFingerprint>,
-    splice_measure: Option<&'a SpliceDualfitMeasure>,
-    progress: &'a dyn clip_sync::ProgressReporter,
-}
-
-fn probe_keep_path_shift(inp: KeepPathShiftProbeInput<'_>) -> Vec<KeepPathShiftArm> {
-    let pre_lock_ms = inp
-        .splice_measure
-        .map(|m| lag_frames_to_ms(m.pre_lag_frames, inp.sample_rate));
-    let mid_lag_ms = inp.lag_decision.and_then(mid_lag_ms_from_decision);
-
-    let mut arms = Vec::new();
-    if inp.mode.wants_pre_lock() {
-        arms.push(score_shifted_arm(
-            &inp,
-            KeepPathShiftSource::PreLock,
-            pre_lock_ms,
-            mid_lag_ms,
-            "fingerprint-scoring-shift-pre",
-            KeepPathShiftUnavailable::Locks,
-        ));
-    }
-    if inp.mode.wants_mid_lag() {
-        arms.push(score_shifted_arm(
-            &inp,
-            KeepPathShiftSource::MidLag,
-            mid_lag_ms,
-            pre_lock_ms,
-            "fingerprint-scoring-shift-mid",
-            KeepPathShiftUnavailable::LagDecision,
-        ));
-    }
-    arms
-}
-
-fn score_shifted_arm(
-    inp: &KeepPathShiftProbeInput<'_>,
-    source: KeepPathShiftSource,
-    shift_ms: Option<f64>,
-    unused_lag_ms: Option<f64>,
-    progress_label: &str,
-    lag_unavailable: KeepPathShiftUnavailable,
-) -> KeepPathShiftArm {
-    use crate::application::patch_region::{
-        derive_seam_gate_geometry, oracle_build_fit_cache, SeamGateParams,
-    };
-
-    let Some(shift_ms) = shift_ms else {
-        return unavailable_arm(source, None, unused_lag_ms, lag_unavailable);
-    };
-    let shift_secs = shift_ms / 1000.0;
-    let Some((b_slice, b_extract_start_secs)) = shifted_b_extract(
-        inp.b_samples_full,
-        inp.ch,
-        inp.rate,
-        inp.refined,
-        inp.gap_offset,
-        shift_secs,
-        inp.pad_lead,
-        inp.pad_tail,
-    ) else {
-        return unavailable_arm(
-            source,
-            Some(shift_ms),
-            unused_lag_ms,
-            KeepPathShiftUnavailable::ExtractEmpty,
-        );
-    };
-
-    let refined_b_start_secs =
-        inp.refined.start_frame as f64 / inp.rate + inp.gap_offset + shift_secs;
-    let refined_b_end_secs = inp.refined.end_frame as f64 / inp.rate + inp.gap_offset + shift_secs;
-    // `gate_structure_align` does `(refined_b - extract_start) * rate) as usize`. A map that starts
-    // before the extract wraps; refuse the arm instead of scoring a bogus haystack index.
-    if map_starts_before_extract(refined_b_start_secs, b_extract_start_secs) {
-        return unavailable_arm(
-            source,
-            Some(shift_ms),
-            unused_lag_ms,
-            KeepPathShiftUnavailable::MapBeforeExtract,
-        );
-    }
-
-    let geom = derive_seam_gate_geometry(
-        inp.gate_settings,
-        &inp.gate_derived,
-        inp.a_pcm,
-        b_slice,
-        b_extract_start_secs,
-        refined_b_start_secs,
-        refined_b_end_secs,
-        inp.gap_frames,
-        None,
-    );
-    let params = SeamGateParams {
-        settings: inp.gate_settings,
-        derived: inp.gate_derived,
-        geom,
-    };
-    let cache = oracle_build_fit_cache(&params);
-    let scored = score_keep_path_brackets(
-        &params,
-        &cache,
-        inp.brackets,
-        inp.refined,
-        inp.rate,
-        false,
-        inp.progress,
-        progress_label,
-    );
-    keep_path_shift_arm_from_scores(
-        source,
-        shift_ms,
-        unused_lag_ms,
-        &scored,
-        inp.refined,
-        inp.rate,
-        inp.ch,
-        &params,
-        &cache,
-        b_extract_start_secs,
-    )
-}
-
-fn unavailable_arm(
-    source: KeepPathShiftSource,
-    shift_ms: Option<f64>,
-    unused_lag_ms: Option<f64>,
-    unavailable: KeepPathShiftUnavailable,
-) -> KeepPathShiftArm {
-    KeepPathShiftArm {
-        source,
-        shift_ms,
-        unused_lag_ms,
-        unavailable: Some(unavailable),
-        b_extract_start_secs: None,
-        throat: KeepPathShiftThroat {
-            pass: false,
-            structure_pre: None,
-            structure_post: None,
-            seam_pre: None,
-            seam_post: None,
-            failure_stage: None,
-            residual_margin_db: None,
-            start_frame: None,
-            fill_frames: None,
-            placement_in_bounds: false,
-            residual: None,
-        },
-        any_ok: false,
-        skip_reason: None,
-        n_brackets: 0,
-        n_ok: 0,
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn keep_path_shift_arm_from_scores(
-    source: KeepPathShiftSource,
-    shift_ms: f64,
-    unused_lag_ms: Option<f64>,
-    scored: &ScoredKeepPath,
-    refined: RefinedGapFrames,
-    rate: f64,
-    channels: usize,
-    params: &crate::application::patch_region::SeamGateParams<'_>,
-    cache: &crate::application::patch_region::FitHaystackCache,
-    b_extract_start_secs: f64,
-) -> KeepPathShiftArm {
-    let n_ok = scored
-        .infos
-        .iter()
-        .filter(|b| b.failure_stage.is_none())
-        .count();
-    let throat_info = scored
-        .infos
-        .iter()
-        .find(|b| b.move_frames == 0)
-        .or_else(|| scored.infos.first());
-    let residual = shifted_throat_residual(params, cache, refined, scored.throat_structure_frame);
-    let ch = channels.max(1);
-    let b_total_frames = params.geom.b_samples.len() / ch;
-    let throat = match throat_info {
-        Some(t) => {
-            let in_bounds = keep_path_placement_in_bounds(
-                t.start_frame,
-                t.span_secs,
-                rate,
-                params.geom.seam_gate_frames,
-                b_total_frames,
-                params.geom.refined_b_start_secs,
-                b_extract_start_secs,
-            );
-            KeepPathShiftThroat {
-                pass: t.failure_stage.is_none(),
-                structure_pre: t.structure_pre,
-                structure_post: t.structure_post,
-                seam_pre: t.seam_pre,
-                seam_post: t.seam_post,
-                failure_stage: t.failure_stage,
-                residual_margin_db: t.residual_margin_db,
-                start_frame: t.start_frame,
-                fill_frames: t.fill_frames,
-                placement_in_bounds: in_bounds,
-                residual,
-            }
-        }
-        None => KeepPathShiftThroat {
-            pass: false,
-            structure_pre: None,
-            structure_post: None,
-            seam_pre: None,
-            seam_post: None,
-            failure_stage: None,
-            residual_margin_db: None,
-            start_frame: None,
-            fill_frames: None,
-            placement_in_bounds: keep_path_placement_in_bounds(
-                None,
-                refined.end_frame.saturating_sub(refined.start_frame) as f64 / rate,
-                rate,
-                params.geom.seam_gate_frames,
-                b_total_frames,
-                params.geom.refined_b_start_secs,
-                b_extract_start_secs,
-            ),
-            residual,
-        },
-    };
-    KeepPathShiftArm {
-        source,
-        shift_ms: Some(shift_ms),
-        unused_lag_ms,
-        unavailable: None,
-        b_extract_start_secs: Some(b_extract_start_secs),
-        throat,
-        any_ok: scored.any_ok,
-        skip_reason: (!scored.any_ok)
-            .then(|| closest_bracket_failure_stage(&scored.infos).map(|s| s.as_str().to_string()))
-            .flatten(),
-        n_brackets: scored.infos.len(),
-        n_ok,
-    }
-}
-
-/// Residual at the shifted throat. Does **not** fold into overlay `any_ok`.
-fn shifted_throat_residual(
-    params: &crate::application::patch_region::SeamGateParams<'_>,
-    cache: &crate::application::patch_region::FitHaystackCache,
-    refined: RefinedGapFrames,
-    throat_structure_frame: Option<usize>,
-) -> Option<KeepPathShiftResidual> {
-    use crate::application::patch_region::oracle_measure_residual;
-    use crate::domain::gap_fill_fit::{
-        apply_residual_to_confidence, FillConfidence, ResidualGateError,
-    };
-
-    let throat_frame = throat_structure_frame?;
-    let v = oracle_measure_residual(params, cache, refined, throat_frame)?;
-    let gate_on = params.settings.residual_gate.is_active();
-    let margin = params.settings.residual_headroom_margin_db;
-    let headroom_ok = if !gate_on || v.gate_abstains() {
-        None
-    } else {
-        match apply_residual_to_confidence(
-            Ok(FillConfidence::High),
-            &v,
-            margin,
-            params.settings.residual_gate.rescue_enabled(),
-        ) {
-            Ok(_) => Some(true),
-            Err(ResidualGateError::HeadroomExceeded { .. }) => Some(false),
-            Err(ResidualGateError::PearsonBelowFloor(_)) => None,
-        }
-    };
-    Some(KeepPathShiftResidual {
-        informative: v.informative,
-        chosen_pre_db: residual_db_opt(v.chosen_pre_db),
-        chosen_post_db: residual_db_opt(v.chosen_post_db),
-        floor_pre_db: residual_db_opt(v.floor_pre_db),
-        floor_post_db: residual_db_opt(v.floor_post_db),
-        headroom_ok,
-        margin_db: gate_on.then_some(margin),
-    })
-}
-
-fn keep_path_placement_in_bounds(
-    start: Option<usize>,
-    span_secs: f64,
-    rate: f64,
-    seam_gate_frames: usize,
-    b_total_frames: usize,
-    refined_b_start_secs: f64,
-    b_extract_start_secs: f64,
-) -> bool {
-    let gap_frames = (span_secs * rate).round().max(0.0) as usize;
-    let start = start.unwrap_or_else(|| {
-        ((refined_b_start_secs - b_extract_start_secs) * rate)
-            .round()
-            .max(0.0) as usize
-    });
-    seam_gate_frames > 0
-        && start >= seam_gate_frames
-        && start + gap_frames + seam_gate_frames <= b_total_frames
-}
-
-#[allow(clippy::too_many_arguments)]
-fn shifted_b_extract(
-    b_full: &[f32],
-    ch: usize,
-    rate: f64,
-    refined: RefinedGapFrames,
-    gap_offset: f64,
-    shift_secs: f64,
-    pad_lead: f64,
-    pad_tail: f64,
-) -> Option<(&[f32], f64)> {
-    let ch = ch.max(1);
-    let b_total = b_full.len() / ch;
-    if b_total == 0 || rate <= 0.0 {
-        return None;
-    }
-    let b_start = refined.start_frame as f64 / rate + gap_offset + shift_secs;
-    let b_end = refined.end_frame as f64 / rate + gap_offset + shift_secs;
-    let lo = (((b_start - pad_lead).max(0.0) * rate) as usize).min(b_total);
-    let hi = (((b_end + pad_tail) * rate).ceil() as usize).min(b_total);
-    if hi <= lo {
-        return None;
-    }
-    Some((&b_full[lo * ch..hi * ch], lo as f64 / rate))
-}
-
-/// True when the refined B map starts before the extract origin. `gate_structure_align` would
-/// then `(delta * rate) as usize`-wrap a negative offset.
-fn map_starts_before_extract(refined_b_start_secs: f64, b_extract_start_secs: f64) -> bool {
-    refined_b_start_secs < b_extract_start_secs
-}
-
-fn lag_frames_to_ms(lag_frames: i64, sample_rate: u32) -> f64 {
-    lag_frames as f64 * 1000.0 / f64::from(sample_rate.max(1))
-}
-
-fn mid_lag_ms_from_decision(lag: &LagFingerprint) -> Option<f64> {
-    let pre = mono_lag_side(lag, true)?;
-    let post = mono_lag_side(lag, false)?;
-    Some(0.5 * (pre.frac_lag_ms + post.frac_lag_ms))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1061,7 +661,6 @@ mod tests {
                 max_lag_frames: Some(0),
             }),
             lag_editorial: None,
-            keep_path_shift: None,
         };
         let levels = LevelTags {
             a_gap_floor_db: -70.0,
@@ -1160,75 +759,5 @@ mod tests {
         assert_eq!(residual_fail.seam_post, Some(0.91));
         assert_eq!(residual_fail.structure_pre, None);
         assert_eq!(residual_fail.residual_margin_db, Some(6.0));
-    }
-
-    #[test]
-    fn shifted_b_extract_slides_the_window_by_the_lag() {
-        use crate::domain::policies::RefinedGapFrames;
-
-        let rate = 48_000.0;
-        let samples = vec![0.1f32; 48_000 * 5];
-        let refined = RefinedGapFrames {
-            start_frame: 48_000,
-            end_frame: 96_000,
-        };
-        let (_, start0) = shifted_b_extract(&samples, 1, rate, refined, 0.0, 0.0, 0.5, 0.5)
-            .expect("unshifted extract");
-        let (_, start1) = shifted_b_extract(&samples, 1, rate, refined, 0.0, 0.1, 0.5, 0.5)
-            .expect("shifted extract");
-        assert!(
-            (start1 - start0 - 0.1).abs() < 1.0 / rate + 1e-9,
-            "extract origin must slide by the lag: {start0} → {start1}"
-        );
-    }
-
-    #[test]
-    fn keep_path_placement_in_bounds_rejects_a_start_inside_the_pre_window() {
-        assert!(
-            !keep_path_placement_in_bounds(Some(0), 0.1, 48_000.0, 100, 10_000, 1.0, 0.0),
-            "start 0 cannot score a 100-frame pre window"
-        );
-        assert!(
-            keep_path_placement_in_bounds(Some(200), 0.1, 48_000.0, 50, 10_000, 1.0, 0.0),
-            "interior start with room for both windows must pass"
-        );
-    }
-
-    #[test]
-    fn lag_frames_to_ms_matches_the_sample_clock() {
-        assert!((lag_frames_to_ms(-3360, 48_000) - (-70.0)).abs() < 1e-9);
-        assert!((lag_frames_to_ms(4800, 48_000) - 100.0).abs() < 1e-9);
-    }
-
-    #[test]
-    fn map_starts_before_extract_refuses_a_negative_offset() {
-        assert!(
-            map_starts_before_extract(-0.05, 0.0),
-            "a map before the extract would wrap as usize"
-        );
-        assert!(!map_starts_before_extract(0.0, 0.0));
-        assert!(!map_starts_before_extract(1.0, 0.5));
-    }
-
-    #[test]
-    fn unavailable_arm_omits_skip_reason_and_unknown_shift() {
-        let arm = unavailable_arm(
-            KeepPathShiftSource::PreLock,
-            None,
-            None,
-            KeepPathShiftUnavailable::Locks,
-        );
-        let json = serde_json::to_string(&arm).expect("serialize");
-        assert!(
-            !json.contains("skip_reason"),
-            "unavailable is not a FailureStage skip_reason: {json}"
-        );
-        assert!(
-            !json.contains("shift_ms"),
-            "unknown lag must omit shift_ms, not write 0: {json}"
-        );
-        assert!(json.contains("\"unavailable\":\"locks\""));
-        assert!(!arm.any_ok);
-        assert_eq!(arm.shift_ms, None);
     }
 }

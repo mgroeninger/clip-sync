@@ -6,7 +6,9 @@ whether the **production remainder** would patch if the keep path saw a constant
 shift. **This note proposes no production change.**
 
 **Tracked as:** [BACKLOG.md](../../BACKLOG.md) § *Fill placement* → *95 skips at a rigid
-shoulder offset the bracket sweep never reaches*.
+shoulder offset the bracket sweep never reaches*. **Q2 successor:**
+[TEMP-seam-lock-rigid-fill-plan.md](TEMP-seam-lock-rigid-fill-plan.md) (trim-0 G6 arm;
+do not wire register-before-sweep from this note).
 
 **Companions:** the caution
 [settled.md](settled.md) § E *A bracket sweep score cannot see a rigid map-lag error*;
@@ -69,6 +71,7 @@ would patch those holes if it ran at that lag.
    Residual is `throat.residual.headroom_ok` and does not move `any_ok`.
    **Answered, Result 6 — no.** Zero of the six production remainder convert (11/g9
    fingerprint-only also misses). Do not wire register-before-sweep from this class.
+   Successor: [TEMP-seam-lock-rigid-fill-plan.md](TEMP-seam-lock-rigid-fill-plan.md).
 3. **Is the class one mechanism?** Split by `|mid_lag|` and by `dual_fit_rescue`.
    **Answered for membership, Result 1 / 3 / 5: no.** The 83 are dual-fit fills; the
    seven remainder split further (Result 4). Q2 asks only whether the keep path can take
@@ -298,6 +301,9 @@ literals; `placement_in_bounds` as its own column (a shifted start can 0.0-senti
 ---
 
 ## Phase 1 probe (run complete — Result 6)
+
+The `--fingerprint-keep-path-shift` instrument was **stripped after this result**. The dump and
+numbers below are the durable record; the flag, dump field, and delayed-B fixture are gone.
 
 **Question 2.** On the production remainder, add a constant map lag to the B clock the
 keep path already uses, then run `evaluate_seam_gate` (structure + waveform). Residual is

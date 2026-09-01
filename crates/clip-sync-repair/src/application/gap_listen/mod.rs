@@ -93,8 +93,6 @@ pub struct GapListenRequest {
     pub border_capture: BorderCapture,
     /// Fingerprint-only: coarse envelope window (seconds) for the `lag_decision` recenter.
     pub lag_envelope_window_secs: f64,
-    /// Record-only keep-path B-map shift; `Off` omits `keep_path_shift` on the dump.
-    pub keep_path_shift: crate::application::gap_fingerprint::KeepPathShiftMode,
     pub crossfade_ms: u64,
 }
 
@@ -244,7 +242,6 @@ pub fn run_gap_listen<MR: MediaReader, PW: PatchedAudioWriter>(
             lag_envelope_max_lag_ms: listen.lag_envelope_max_lag_ms,
             border_capture: listen.border_capture,
             lag_envelope_window_secs: listen.lag_envelope_window_secs,
-            keep_path_shift: listen.keep_path_shift,
         },
         progress,
     );
