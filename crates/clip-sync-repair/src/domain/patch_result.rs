@@ -484,6 +484,12 @@ pub enum GapPatchStatus {
         /// disabled", though the old omitted-when-false encoding was read that way.
         #[serde(default)]
         dual_fit_used: bool,
+        /// When `dual_fit_used`: `true` = a real length edit (interior-trim bridge extract), `false`
+        /// = a rigid single-lag map (trim-0 extract off the pre lock,
+        /// docs/dev/TEMP-seam-lock-rigid-fill-plan.md §3.1). `None` on every non-dual-fit path, and
+        /// on runs predating this field — not recoverable from anything else on the record.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        dual_fit_step_real: Option<bool>,
         /// **Total** loudness gain applied to this fill before the splice — whole-program ×
         /// hole-local (`domain::stack_fill_gain`), which is what [`Self::program_gain`] exists to
         /// let a reader factor apart. `1.0` means the donor level was written untouched: the run

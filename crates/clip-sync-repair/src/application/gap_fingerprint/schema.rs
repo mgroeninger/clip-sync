@@ -953,15 +953,19 @@ pub struct DualFitRescueInput<'a> {
 ///    correlations are finite by construction, so there is no NaN case here);
 /// 3. shoulders do **not** cross — `bridge_frames > 0` (production declines when
 ///    `b_post_seam <= b_pre_seam`);
-/// 4. the **step is real** — `post_seam_r` beats `post_seam_global_r` by
-///    `DUALFIT_STEP_REAL_MARGIN`, via the same `partial_cmp` production uses (so a non-finite
-///    global — OOB window or zero-variance silence — declines, never over-promises);
-/// 5. the **aligned donor bridges** the hole (`continuous`);
-/// 6. the **nominal donor is not program-quiet**.
+/// 4. the **aligned donor bridges** the hole (`continuous`);
+/// 5. the **nominal donor is not program-quiet**.
 ///
-/// Dropping 3–6 makes this over-promise badly: a program-quiet gap has high seam correlation and a
-/// dead donor, and a crossed-shoulder / NaN-global case can still clear a naive `post − global ≥
-/// margin` arithmetic. The curated `04_program_quiet` fixture pins the donor case.
+/// Does **not** require the step to be real (dropped 2026-09-01,
+/// docs/dev/TEMP-seam-lock-rigid-fill-plan.md §3.5): `try_dual_fit` assembles a trim-0 fill on a
+/// rigid map exactly as it does an interior-trim fill on a real step, so `step_real` is a report
+/// axis on the result, not an admission gate.
+///
+/// Dropping the rest makes this over-promise badly: a program-quiet gap has high seam correlation
+/// and a dead donor, a crossed-shoulder bridge has nothing to splice, and a NaN `post_global` is
+/// still `try_dual_fit`'s hard decline (§3.1 — unmeasured is not "a constant shift suffices"),
+/// not a case the dropped `step_real` conjunct is around to catch anymore. The curated
+/// `04_program_quiet` fixture pins the donor case.
 ///
 /// `None` means "no claim": a patched gap never reaches `skip_or_dual_fit`, and a gap missing any input
 /// isn't measurable. Never a defaulted `false`.
@@ -973,12 +977,6 @@ pub fn dual_fit_rescue_flag(input: &DualFitRescueInput<'_>) -> Option<bool> {
     let aligned = input.donor_aligned?;
     let nominal = input.donor_nominal?;
 
-    // Mirror `try_dual_fit`: decline when `partial_cmp` is None (NaN) or Less. Unlike the seam
-    // correlations, `post_seam_global_r` really can be NaN (OOB window or zero-variance silence).
-    let step_real = df
-        .post_seam_r
-        .partial_cmp(&(df.post_seam_global_r + crate::domain::dual_fit::DUALFIT_STEP_REAL_MARGIN))
-        .is_some_and(|ord| ord != std::cmp::Ordering::Less);
     let program_quiet =
         nominal.silence_fraction >= crate::domain::donor::PROGRAM_QUIET_SILENCE_FRAC;
 
@@ -986,7 +984,7 @@ pub fn dual_fit_rescue_flag(input: &DualFitRescueInput<'_>) -> Option<bool> {
         brackets_dual_fit_eligible(input.brackets)
             && df.gate_pass
             && df.bridge_frames > 0
-            && step_real
+            && df.post_seam_global_r.is_finite()
             && aligned.continuous
             && !program_quiet,
     )
@@ -1792,13 +1790,14 @@ mod tests {
         let pass = splice_dualfit(true);
         let occupied = donor(0.0, true);
 
-        // Step not real: the post seam at the pre lag is just as good ⇒ a rigid single-lag map already
-        // explains it, so there is no splice to fit.
+        // Step not real: the post seam at the pre lag is just as good ⇒ a rigid single-lag map
+        // explains it. Since 2026-09-01 (§3.5) this still rescues: `try_dual_fit` assembles a
+        // trim-0 fill off the rigid map rather than declining.
         let mut rigid = splice_dualfit(true);
         rigid.post_seam_global_r = rigid.post_seam_r;
         assert_eq!(
             dual_fit_rescue_flag(&rescuable(&scored, &rigid, &occupied, &occupied)),
-            Some(false)
+            Some(true)
         );
 
         // Shoulders crossed / collapsed (`b_post_seam <= b_pre_seam`) — production declines; a

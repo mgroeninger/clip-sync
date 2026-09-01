@@ -436,6 +436,7 @@ pub(in crate::application::patch_audio::region) fn skip_or_dual_fit(
                                     pre_lag: r.pre_lag,
                                     post_lag: r.post_lag,
                                     trim_frames: r.trim_frames,
+                                    step_real: r.step_real,
                                     residual,
                                     confidence,
                                     registration_residual_ms,

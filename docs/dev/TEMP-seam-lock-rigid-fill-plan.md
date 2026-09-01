@@ -17,7 +17,10 @@ shoulder offset*.
 (silence has no landmark → encoder changes **spacing** → independent locks + length edit).
 W5 reserved the constant-shift remainder for keep path
 [archive/TEMP-w5-timing-offset-rescue-plan.md](archive/TEMP-w5-timing-offset-rescue-plan.md)
-(haystack was supposed to own it; it does not).
+(haystack was supposed to own it; it does not). Opposite G6 error (false `step_real` from a
+quiet 250 ms post, 8/g4):
+[TEMP-dual-fit-post-window-ladder-plan.md](TEMP-dual-fit-post-window-ladder-plan.md)
+(dump only; not this Change).
 
 **Media hygiene:** pair index + gap index only. `gap-files/` is gitignored; numbers below
 are the durable record.
@@ -265,3 +268,100 @@ Do not start this list until Phase 0 has named the convert set.
 - `gap-files/2026-08-29-complete-corpus/` — locks, `splice_dualfit`, class remainder.
 - `gap-files/2026-08-31-local-gain-acceptance/` — production skip disposition.
 - `gap-files/2026-08-31-keep-path-shift/` — Q2 null (do not re-run as acceptance).
+
+---
+
+## 9. Phase 0 census (2026-09-01)
+
+Dump-only, `scripts/measure/dualfit-coverage-census.ps1 -DumpDir gap-files/2026-08-29-complete-corpus
+-InclRigidFill`, filtered to `keep_path_tier == skip ∧ dualfit_rigid_verdict == true ∧
+dualfit_alone_verdict == false` (i.e. every leg but `step_real` passes). **Six**, not five:
+
+| Gap | pre r | post r | post@pre | trim |
+|---|---|---:|---:|---:|
+| 1/1 | 1.000 | 0.985 | 0.984 | +1 |
+| 1/15 | 0.999 | 0.983 | 0.909 | −3 |
+| 20/1 | 1.000 | 0.953 | 0.882 | +9 |
+| 20/3 | 0.997 | 0.443 | 0.363 | −1 |
+| 22/5 | 0.998 | 0.982 | 0.847 | −11 |
+| 30/43 | 0.908 | 0.968 | 0.946 | −1 |
+
+11/9 and 22/13 confirmed absent from this set (still blocked on `bridge_frames` and
+`gate_pass` respectively, as § 2 says). 20/3 is the extra § 2 did not name; every other
+admission leg passes clean (`eligible`, `gate_pass`, `bridge_frames_pos`, `donor
+continuous`, `¬program-quiet` all true) — `step_real` is the only failing conjunct, same
+as the other five. Do not read that as "same case as the other five," though: its
+`post_seam_r` (0.443) is far weaker than the other five (0.91–1.00), and § *Companion
+finding* below is why that gap gets its own ear-check rather than riding in on the
+group's confidence.
+
+### Companion finding — 8/4, a weak-lock length-edit already in production
+
+Not a Phase 0 member (it patches today; `step_real` holds). Raised while sizing whether
+weak `post_seam_r` is safe territory for dual-fit generally, since 20/3 sits there too.
+Same corpus, `dualfit_alone_verdict == true` set (105 gaps: skip-tier, `step_real` holds,
+every leg passes) — 8/4 is the weakest by `post_seam_r` (0.390; next-weakest is 0.566,
+n=1 below 0.5). `dual_fit_rescue_field` on the row agrees (`true`), and it is a large
+length edit, not a rigid map (`trim_frames = −13738`, ≈286 ms at 48 kHz). A (00:36:51.19,
+duration 0.658 s); B mapped +4.244 s.
+
+Ear-checked 2026-09-01 against a production repair run (~1 month old; dual-fit is the
+only mechanism that could have produced this patch, but the run predates this note and
+its exact code path was not logged). **Result: broken.** The fill sits well at the start
+and leaves an audible gap at the end — the interleaved re-gate passed a fill with a
+real defect at the post seam. Confirmed a second time same day directly off the
+`--gap-listen` WAV (not the month-old production recollection): same defect, same
+description — not a fluke of the older run or a since-fixed code path.
+
+This is the load-bearing reason 20/3's ear-check is not routine: it is the second-weakest
+`post_seam_r` adjacent to 8/4's, and the one confirmed-broken case so far is exactly the
+weakest one. n=1 does not indict every weak lock (8/4 is also a large trim, unlike 20/3's
+≈0), but it does mean "inside dual-fit's existing operating range" is no longer a
+sufficient argument on its own — the range itself has an unverified tail.
+
+**Action:** add 8/4 to the same `--gap-listen` run built for the Phase 0 six, so its WAV
+sits beside 20/3's for a direct side-by-side (near-zero trim, weak lock vs large trim,
+weak lock) instead of relying on a month-old recollection. Do not fold 8/4 into the
+Phase 0 convert table above — it is a length-edit precedent, not a rigid-arm candidate.
+
+### Phase 0 ear-check (2026-09-01, post-Phase-1 build)
+
+`--gap-listen`/`--patch-only` against a build with the Phase 1 domain change
+(`domain/dual_fit.rs`: `!step_real` assembles trim-0 instead of declining), narrowed to
+the six `--fingerprint-gap` indices above, plus 8/4 alongside for the companion
+side-by-side.
+
+| Gap | Result |
+|---|---|
+| 1/1 | context reads as empty at normal playback gain — see caveat below |
+| 1/15 | patches very well |
+| 20/1 | gap falls in silence; repaired fine |
+| **20/3** | **passes** — loud discordant instrument, fades through the gap, patch sounds good |
+| 22/5 | gap falls in silence; repaired fine |
+| 30/43 | perfect |
+| 8/4 (companion) | confirmed broken a second time, independent of the month-old production run — same defect (fill covers the start, leaves an audible gap at the end) |
+
+**20/3 is the headline result.** It's the one gap in the set whose `post_seam_r` (0.443)
+sits far below the other five (0.91–1.00) — adjacent to 8/4's 0.390, the weakest lock in
+the whole 105-gap `dualfit_alone_verdict` population and the one case so far confirmed
+broken. 20/3 passing clean says a weak `post_seam_r` is not on its own disqualifying for
+the rigid (trim-0) arm — 8/4's break lives in the length-edit branch (real `step_real`,
+interior-trim search), not evidence against trim-0 assembly. Five of six Phase 0 gaps are
+unambiguous passes.
+
+**1/1 caveat, not yet resolved:** reads as "all clips empty" by ear, but the corpus row
+says otherwise — `pre_seam_r` 0.9999, `post_seam_r` 0.9852, `trim_frames` +1 (as tight a
+lock as the set has), and the surrounding context is genuinely quiet (context RMS ≈ −54
+to −60 dB fanning down to true silence, −101 dB, inside the gap itself — a real dropout
+in an otherwise quiet passage, per `equivalence_production.class = repairable_dropout`).
+"Empty at normal volume" is consistent with a correctly-repaired quiet passage, not
+necessarily a broken one — but it's indistinguishable by casual listen from a WAV-writing
+or index-mismatch bug, so don't count it as a pass without a re-listen at higher gain (or
+a level/waveform check on the three `--gap-listen` files directly).
+
+**1/1 resolved (2026-09-01):** waveform-graph check on all three `--gap-listen` files —
+digital silence sitting inside a wider normative-silence passage, patch reads correct. Not
+a bug; matches the corpus row.
+
+Net: **6/6 Phase 0 gaps pass**, including the load-bearing 20/3 case. No blocker to
+proceeding to Phase 2/3.

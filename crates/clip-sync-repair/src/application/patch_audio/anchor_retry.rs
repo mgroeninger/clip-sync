@@ -243,6 +243,7 @@ mod tests {
             anchor_seam_used: false,
             anchor_bracket_move_frames: 0,
             dual_fit_used: false,
+            dual_fit_step_real: None,
         }
     }
 
@@ -265,6 +266,7 @@ mod tests {
                     anchor_seam_used: false,
                     anchor_bracket_move_frames: 0,
                     dual_fit_used: false,
+                    dual_fit_step_real: None,
                     normalize_gain: 1.0,
                     local_gain: crate::domain::LocalGainDecision::OFF,
                     fit_terms: None,
@@ -288,6 +290,7 @@ mod tests {
                     anchor_seam_used: false,
                     anchor_bracket_move_frames: 0,
                     dual_fit_used: false,
+                    dual_fit_step_real: None,
                     normalize_gain: 1.0,
                     local_gain: crate::domain::LocalGainDecision::OFF,
                     fit_terms: None,
@@ -329,6 +332,7 @@ mod tests {
             anchor_seam_used: false,
             anchor_bracket_move_frames: 0,
             dual_fit_used: false,
+            dual_fit_step_real: None,
             normalize_gain: 1.0,
             local_gain: crate::domain::LocalGainDecision::OFF,
             fit_terms: None,
@@ -348,6 +352,7 @@ mod tests {
             anchor_seam_used: false,
             anchor_bracket_move_frames: 0,
             dual_fit_used: false,
+            dual_fit_step_real: None,
             normalize_gain: 1.0,
             local_gain: crate::domain::LocalGainDecision::OFF,
             fit_terms: None,

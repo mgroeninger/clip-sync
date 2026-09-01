@@ -310,6 +310,11 @@ pub struct GapTags {
     /// and declined, or was never reached; it never means the path was off.
     #[serde(default)]
     pub dual_fit_used: bool,
+    /// When `dual_fit_used`: `true` = a real length edit (interior-trim bridge), `false` = a rigid
+    /// single-lag map (trim-0 extract, docs/dev/TEMP-seam-lock-rigid-fill-plan.md §3.1). `None` on
+    /// every non-dual-fit path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dual_fit_step_real: Option<bool>,
 }
 
 /// Inputs for tag derivation during a fill-region patch attempt.
@@ -323,6 +328,7 @@ pub struct GapTagsPatchContext {
     pub anchor_bracket_move_frames: usize,
     pub anchor_trusted: bool,
     pub dual_fit_used: bool,
+    pub dual_fit_step_real: Option<bool>,
     pub residual: Option<SeamResidualVerdict>,
     pub residual_headroom_margin_db: f64,
 }
@@ -486,6 +492,7 @@ pub fn derive_gap_tags_from_patch_outcome(
             0
         },
         dual_fit_used: ctx.dual_fit_used,
+        dual_fit_step_real: ctx.dual_fit_step_real,
     }
 }
 
@@ -517,6 +524,7 @@ pub fn derive_gap_tags_from_status(
                 anchor_seam_used: false,
                 anchor_bracket_move_frames: 0,
                 dual_fit_used: false,
+                dual_fit_step_real: None,
             }
         }
         GapPatchStatus::Patched {
@@ -526,6 +534,7 @@ pub fn derive_gap_tags_from_status(
             anchor_seam_used,
             anchor_bracket_move_frames,
             dual_fit_used,
+            dual_fit_step_real,
             ..
         } => derive_gap_tags_from_patch_outcome(
             &GapPatchTierInput::Patched {
@@ -542,6 +551,7 @@ pub fn derive_gap_tags_from_status(
                 anchor_bracket_move_frames: *anchor_bracket_move_frames,
                 anchor_trusted: false,
                 dual_fit_used: *dual_fit_used,
+                dual_fit_step_real: *dual_fit_step_real,
                 residual: None,
                 residual_headroom_margin_db: DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
             },
@@ -557,6 +567,7 @@ pub fn derive_gap_tags_from_status(
                 anchor_bracket_move_frames: 0,
                 anchor_trusted: false,
                 dual_fit_used: false,
+                dual_fit_step_real: None,
                 residual: None,
                 residual_headroom_margin_db: DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
             },
@@ -576,6 +587,7 @@ pub fn derive_gap_tags_from_status(
             anchor_seam_used: false,
             anchor_bracket_move_frames: 0,
             dual_fit_used: false,
+            dual_fit_step_real: None,
         },
     }
 }
@@ -703,6 +715,7 @@ mod tests {
             anchor_bracket_move_frames: 0,
             anchor_trusted: false,
             dual_fit_used: false,
+            dual_fit_step_real: None,
             residual: None,
             residual_headroom_margin_db: DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
         }
@@ -894,6 +907,7 @@ mod tests {
             anchor_seam_used: true,
             anchor_bracket_move_frames: 900,
             dual_fit_used: false,
+            dual_fit_step_real: None,
             normalize_gain: 1.0,
             program_gain: 1.0,
             local_gain: 1.0,
@@ -922,6 +936,7 @@ mod tests {
             anchor_seam_used: false,
             anchor_bracket_move_frames: 0,
             dual_fit_used: true,
+            dual_fit_step_real: Some(true),
             normalize_gain: 1.0,
             program_gain: 1.0,
             local_gain: 1.0,

@@ -234,6 +234,7 @@ pub fn characterize_gaps_from_decode(
                 pre_lag: 0,
                 post_lag: 0,
                 trim_frames: 0,
+                step_real: false,
                 residual: None,
                 confidence: crate::domain::gap_fill_fit::FillConfidence::High,
                 registration_residual_ms: None,

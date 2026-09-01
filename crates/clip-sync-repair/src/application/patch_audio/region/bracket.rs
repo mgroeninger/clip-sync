@@ -291,6 +291,7 @@ pub(in crate::application::patch_audio::region) fn execute_bracket_output(
         anchor_seam_used: ctx.anchor_seam_used,
         anchor_bracket_move_frames: ctx.anchor_bracket_move_frames,
         dual_fit_used: false,
+        dual_fit_step_real: None,
         fit_terms: ctx.fit_terms,
         normalize_gain: ctx.gain,
         local_gain: ctx.local_gain,

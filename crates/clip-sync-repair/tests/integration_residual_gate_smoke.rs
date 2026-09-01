@@ -52,6 +52,7 @@ fn gap_status_gating_core(status: &GapPatchStatus) -> GapPatchStatus {
             anchor_seam_used: *anchor_seam_used,
             anchor_bracket_move_frames: *anchor_bracket_move_frames,
             dual_fit_used: false,
+            dual_fit_step_real: None,
             normalize_gain: 1.0,
             program_gain: 1.0,
             local_gain: 1.0,

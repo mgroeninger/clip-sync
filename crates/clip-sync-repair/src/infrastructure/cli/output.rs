@@ -541,6 +541,7 @@ struct PatchedGapDetail<'a> {
     structure_trusted: bool,
     anchor_seam_used: bool,
     dual_fit_used: bool,
+    dual_fit_step_real: Option<bool>,
     confidence: crate::domain::FillConfidence,
     patch_tier: PatchTier,
     diagnostics: bool,
@@ -556,6 +557,7 @@ fn format_patched_gap_detail(detail: &PatchedGapDetail<'_>) -> String {
         structure_trusted,
         anchor_seam_used,
         dual_fit_used,
+        dual_fit_step_real,
         confidence,
         patch_tier,
         diagnostics,
@@ -572,6 +574,8 @@ fn format_patched_gap_detail(detail: &PatchedGapDetail<'_>) -> String {
         "struct"
     } else if anchor_seam_used || patch_tier == PatchTier::AnchorTrusted {
         "anchor"
+    } else if dual_fit_used && dual_fit_step_real == Some(false) {
+        "seam-lock"
     } else if dual_fit_used {
         "dual-fit"
     } else {
@@ -618,6 +622,7 @@ fn format_unified_gap_status(
             confidence,
             anchor_seam_used,
             dual_fit_used,
+            dual_fit_step_real,
             ..
         } => format_patched_gap_detail(&PatchedGapDetail {
             pre_correlation: *pre_correlation,
@@ -626,6 +631,7 @@ fn format_unified_gap_status(
             structure_trusted: *structure_trusted,
             anchor_seam_used: *anchor_seam_used,
             dual_fit_used: *dual_fit_used,
+            dual_fit_step_real: *dual_fit_step_real,
             confidence: *confidence,
             patch_tier: outcome.tags.patch_tier,
             diagnostics: show_diagnostics,
@@ -901,6 +907,7 @@ pub fn format_patch_summary(summary: &PatchSummary) -> String {
                 confidence,
                 anchor_seam_used,
                 dual_fit_used,
+                dual_fit_step_real,
                 ..
             } => format_patched_gap_detail(&PatchedGapDetail {
                 pre_correlation: *pre_correlation,
@@ -909,6 +916,7 @@ pub fn format_patch_summary(summary: &PatchSummary) -> String {
                 structure_trusted: *structure_trusted,
                 anchor_seam_used: *anchor_seam_used,
                 dual_fit_used: *dual_fit_used,
+                dual_fit_step_real: *dual_fit_step_real,
                 confidence: *confidence,
                 patch_tier: gap.tags.patch_tier,
                 diagnostics: true,
@@ -1280,6 +1288,7 @@ mod tests {
                     anchor_seam_used: false,
                     anchor_bracket_move_frames: 0,
                     dual_fit_used: false,
+                    dual_fit_step_real: None,
                     // The golden's scan measured B 2.31 dB hot, so a real run applies 0.7665 to
                     // every fill and no local residual (normalize_fill is off by default since
                     // 2026-08-26) — the two fields are equal here, and both must appear.
@@ -1616,6 +1625,7 @@ mod tests {
                 anchor_seam_used: false,
                 anchor_bracket_move_frames: 0,
                 dual_fit_used: false,
+                dual_fit_step_real: None,
                 normalize_gain: 1.0,
                 program_gain: 1.0,
                 local_gain: 1.0,
@@ -1662,6 +1672,7 @@ mod tests {
                     anchor_seam_used: false,
                     anchor_bracket_move_frames: 0,
                     dual_fit_used: false,
+                    dual_fit_step_real: None,
                     normalize_gain: 1.0,
                     program_gain: 1.0,
                     local_gain: 1.0,
@@ -2002,6 +2013,7 @@ mod tests {
                 anchor_seam_used: false,
                 anchor_bracket_move_frames: 0,
                 dual_fit_used: false,
+                dual_fit_step_real: None,
                 normalize_gain: 1.0,
                 program_gain: 1.0,
                 local_gain: 1.0,
@@ -2042,6 +2054,7 @@ mod tests {
             anchor_seam_used: true,
             anchor_bracket_move_frames: 48_000,
             dual_fit_used: false,
+            dual_fit_step_real: None,
             normalize_gain: 1.0,
             program_gain: 1.0,
             local_gain: 1.0,
@@ -2064,6 +2077,7 @@ mod tests {
                 anchor_bracket_move_frames: 48_000,
                 anchor_trusted: true,
                 dual_fit_used: false,
+                dual_fit_step_real: None,
                 residual: None,
                 residual_headroom_margin_db: DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
             },
@@ -2126,6 +2140,7 @@ mod tests {
             anchor_seam_used: false,
             anchor_bracket_move_frames: 0,
             dual_fit_used: true,
+            dual_fit_step_real: Some(true),
             normalize_gain: 1.0,
             program_gain: 1.0,
             local_gain: 1.0,
@@ -2148,6 +2163,7 @@ mod tests {
                 anchor_bracket_move_frames: 0,
                 anchor_trusted: false,
                 dual_fit_used: true,
+                dual_fit_step_real: Some(true),
                 residual: None,
                 residual_headroom_margin_db: DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
             },
@@ -2201,6 +2217,7 @@ mod tests {
                 anchor_seam_used: false,
                 anchor_bracket_move_frames: 0,
                 dual_fit_used: false,
+                dual_fit_step_real: None,
                 normalize_gain: 1.0,
                 program_gain: 1.0,
                 local_gain: 1.0,
@@ -2337,6 +2354,7 @@ mod tests {
                     anchor_seam_used: false,
                     anchor_bracket_move_frames: 0,
                     dual_fit_used: false,
+                    dual_fit_step_real: None,
                     normalize_gain: 1.0,
                     program_gain: 1.0,
                     local_gain: 1.0,
@@ -2424,6 +2442,7 @@ mod tests {
                     anchor_seam_used: false,
                     anchor_bracket_move_frames: 0,
                     dual_fit_used: false,
+                    dual_fit_step_real: None,
                     normalize_gain: 1.0,
                     program_gain: 1.0,
                     local_gain: 1.0,

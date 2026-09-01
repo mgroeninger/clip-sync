@@ -249,6 +249,7 @@ pub(in crate::application::patch_audio) fn characterize_region(
         anchor_bracket_move_frames: 0,
         anchor_trusted: false,
         dual_fit_used: false,
+        dual_fit_step_real: None,
         residual: None,
         residual_headroom_margin_db: request.residual_headroom_margin_db,
     };

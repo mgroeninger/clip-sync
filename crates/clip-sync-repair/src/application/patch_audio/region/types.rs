@@ -57,6 +57,10 @@ pub(in crate::application::patch_audio) enum RegionPatchOutcome {
         anchor_seam_used: bool,
         anchor_bracket_move_frames: usize,
         dual_fit_used: bool,
+        /// `Some(step_real)` when `dual_fit_used`: `true` = real length edit (interior-trim bridge),
+        /// `false` = rigid single-lag map (trim-0 extract, docs/dev/TEMP-seam-lock-rigid-fill-plan.md
+        /// §3.1). `None` on every non-dual-fit path (`dual_fit_used == false`).
+        dual_fit_step_real: Option<bool>,
         /// The gain actually applied to this fill — whole-program × hole-local. Carried to the
         /// patch record so `fill_level`'s `gained_fill`-based fields can be read across gain-policy
         /// changes.
@@ -207,6 +211,7 @@ pub(in crate::application::patch_audio) fn outcomes_in_report_order(
                 anchor_seam_used,
                 anchor_bracket_move_frames,
                 dual_fit_used,
+                dual_fit_step_real,
                 normalize_gain,
                 local_gain,
                 fit_terms,
@@ -236,6 +241,7 @@ pub(in crate::application::patch_audio) fn outcomes_in_report_order(
                     anchor_seam_used: *anchor_seam_used,
                     anchor_bracket_move_frames: *anchor_bracket_move_frames,
                     dual_fit_used: *dual_fit_used,
+                    dual_fit_step_real: *dual_fit_step_real,
                     fit_terms: *fit_terms,
                     registration_residual_ms: *registration_residual_ms,
                 }
@@ -298,12 +304,14 @@ pub(in crate::application::patch_audio) fn region_outcome_gap_tags(
         anchor_seam_used,
         anchor_bracket_move_frames,
         dual_fit_used,
+        dual_fit_step_real,
         ..
     } = outcome
     {
         tag_ctx.anchor_seam_used = *anchor_seam_used;
         tag_ctx.anchor_bracket_move_frames = *anchor_bracket_move_frames;
         tag_ctx.dual_fit_used = *dual_fit_used;
+        tag_ctx.dual_fit_step_real = *dual_fit_step_real;
     }
     tag_ctx.residual = match outcome {
         RegionPatchOutcome::Patched { residual, .. }
@@ -477,6 +485,7 @@ pub(in crate::application::patch_audio) fn outcome_from_spec(
                 anchor_seam_used: *anchor_seam_used,
                 anchor_bracket_move_frames: *anchor_bracket_move_frames,
                 dual_fit_used: false,
+                dual_fit_step_real: None,
                 fit_terms: *fit_terms,
                 normalize_gain: *normalize_gain,
                 local_gain: *local_gain,
@@ -491,6 +500,7 @@ pub(in crate::application::patch_audio) fn outcome_from_spec(
             registration_residual_ms,
             normalize_gain,
             local_gain,
+            step_real,
             ..
         }) => RegionPatchOutcome::Patched {
             pre_correlation: *pre_seam_r,
@@ -506,6 +516,7 @@ pub(in crate::application::patch_audio) fn outcome_from_spec(
             anchor_seam_used: false,
             anchor_bracket_move_frames: 0,
             dual_fit_used: true,
+            dual_fit_step_real: Some(*step_real),
             // Dual-fit does not run the unified objective at all — there is no placement search to report.
             fit_terms: None,
             // Dual-fit takes both halves since 2026-08-31; the strategy carries them so this
@@ -590,6 +601,7 @@ mod tests {
                 pre_lag: 0,
                 post_lag: 0,
                 trim_frames: 0,
+                step_real: true,
                 residual: None,
                 confidence: crate::domain::FillConfidence::High,
                 registration_residual_ms: None,
@@ -676,6 +688,7 @@ mod tests {
             anchor_seam_used: false,
             anchor_bracket_move_frames: 0,
             dual_fit_used: false,
+            dual_fit_step_real: None,
             normalize_gain: 1.0,
             local_gain: crate::domain::LocalGainDecision::OFF,
             fit_terms: None,
@@ -799,6 +812,7 @@ mod tests {
             anchor_seam_used: false,
             anchor_bracket_move_frames: 0,
             dual_fit_used: false,
+            dual_fit_step_real: None,
             normalize_gain: 1.0,
             local_gain: crate::domain::LocalGainDecision::OFF,
             fit_terms: None,

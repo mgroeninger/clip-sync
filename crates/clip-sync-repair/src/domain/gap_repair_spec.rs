@@ -235,6 +235,10 @@ pub enum GapRepairStrategy {
         post_lag: i64,
         /// `bridge − gap`.
         trim_frames: i64,
+        /// Copied from the one `DualFitResult` (single-source, A7). `true` = a real length edit (interior-
+        /// trim bridge extract); `false` = a rigid single-lag map (trim-0 extract off the pre lock,
+        /// docs/dev/TEMP-seam-lock-rigid-fill-plan.md §3.1). No longer gates admission — report-only.
+        step_real: bool,
         /// Per-shoulder residual (A6 gate).
         residual: Option<SeamResidualVerdict>,
         confidence: FillConfidence,
@@ -594,6 +598,7 @@ mod tests {
             pre_lag: 24,
             post_lag: -600,
             trim_frames: 480,
+            step_real: true,
             residual: None,
             confidence: FillConfidence::High,
             registration_residual_ms: None,

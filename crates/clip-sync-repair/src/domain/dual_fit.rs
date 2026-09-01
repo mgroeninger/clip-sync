@@ -56,6 +56,12 @@ pub struct DualFitResult {
     /// already measured (§2.5.2a; Fingerprint-unification 8a), not a re-measurement.
     pub post_seam_global_r: f64,
     pub trim_frames: i64,
+    /// `post_seam_r >= post_seam_global_r + step_real_margin`: a real length edit (interior-trim
+    /// bridge extract) vs a rigid single-lag map (trim-0 extract off the pre lock,
+    /// docs/dev/TEMP-seam-lock-rigid-fill-plan.md §3.1). No longer gates admission — surfaced so a
+    /// caller can distinguish the two `Some` shapes without re-deriving the comparison from
+    /// `post_seam_r`/`post_seam_global_r` itself.
+    pub step_real: bool,
     /// Seam-local lag (frames) each shoulder matched at, relative to the nominal `b_mapped_start` /
     /// `b_mapped_start + gap_frames` search center — lets a caller reconstruct the actual matched B
     /// placement per shoulder (`b_pre_seam`/`b_post_seam`) for residual measurement at the same
@@ -155,9 +161,12 @@ pub fn dual_fit_from_locks(
 /// expensive work ahead of this call. They are re-asserted here in debug builds so a caller that
 /// forgets cannot silently splice a crossed bridge.
 ///
-/// Returns `None` unless the remaining `dualfit_target` conditions hold: the step is real
-/// (`post_own − post@pre ≥ margin`), the aligned donor bridges (continuous), and it is not
-/// program-quiet. On `Some`, the caller re-validates `fill` with the production gate before splicing.
+/// Returns `None` unless the remaining `dualfit_target` conditions hold: `post_global` is
+/// measurable, the aligned donor bridges (continuous), and it is not program-quiet. Whether the
+/// step is real (`post_own − post@pre ≥ margin`) no longer gates admission — it selects the
+/// extract: a real step gets the interior-trim search over the bridge (a length edit); a rigid
+/// single-lag map gets a trim-0 fill read straight off the pre lock (docs/dev/TEMP-seam-lock-rigid-fill-plan.md
+/// §3.1). On `Some`, the caller re-validates `fill` with the production gate before splicing.
 pub fn try_dual_fit(
     templates: &SeamLockTemplates,
     locks: &SeamLocks,
@@ -204,18 +213,26 @@ pub fn try_dual_fit(
     } else {
         f64::NAN
     };
-    if post_r
-        .partial_cmp(&(post_global + p.step_real_margin))
-        .is_none_or(|ord| ord == std::cmp::Ordering::Less)
-    {
+    // `step_real` is no longer an admission gate — it selects which extract runs, below. A NaN
+    // `post_global` (OOB window or zero-variance silence) is still a hard decline: unmeasured is
+    // not "a constant shift suffices."
+    let Some(step_real_ord) = post_r.partial_cmp(&(post_global + p.step_real_margin)) else {
         tracing::debug!(
             post_r,
             post_global,
             step_real_margin = p.step_real_margin,
-            "dual_fit: declined — step_real (rigid single-lag map already explains the post seam)"
+            "dual_fit: declined — post_global unmeasurable (NaN)"
         );
         return None;
-    }
+    };
+    let step_real = step_real_ord != std::cmp::Ordering::Less;
+    tracing::debug!(
+        post_r,
+        post_global,
+        step_real,
+        step_real_margin = p.step_real_margin,
+        "dual_fit: step_real measured (report axis, not an admission gate)"
+    );
 
     // Donor: aligned bridge continuous (something to fill) ∧ nominal not program-quiet (content, not silence).
     let Some(aligned) = donor_interior_at(
@@ -257,18 +274,30 @@ pub fn try_dual_fit(
         return None;
     }
 
-    // Assemble: B bridge (interleaved) between the seam-local shoulders → interior-trim to the gap length.
+    // Assemble. `step_real`: B bridge (interleaved) between the seam-local shoulders, interior-trimmed
+    // to the gap length — a real length edit. `!step_real`: the locks already sit ~G apart (a rigid
+    // single-lag map, not a spacing change), so extract exactly the gap window from the pre lock —
+    // no interior-trim search; there is no length edit to find (§3.1).
     let b_total = b_samples.len() / ch;
-    if b_post_seam > b_total {
+    let extract_end = if step_real {
+        b_post_seam
+    } else {
+        b_pre_seam + p.gap_frames
+    };
+    if extract_end > b_total {
         tracing::debug!(
-            b_post_seam,
+            extract_end,
             b_total,
-            "dual_fit: declined — post seam runs past decoded B window"
+            "dual_fit: declined — extract runs past decoded B window"
         );
         return None;
     }
-    let bridge = &b_samples[b_pre_seam * ch..b_post_seam * ch];
-    let fill = trim_at_lowest_energy_interior(bridge, ch, p.gap_frames, p.seam_window_frames);
+    let fill = if step_real {
+        let bridge = &b_samples[b_pre_seam * ch..extract_end * ch];
+        trim_at_lowest_energy_interior(bridge, ch, p.gap_frames, p.seam_window_frames)
+    } else {
+        b_samples[b_pre_seam * ch..extract_end * ch].to_vec()
+    };
     let trim_frames = (b_post_seam - b_pre_seam) as i64 - p.gap_frames as i64;
 
     Some(DualFitResult {
@@ -277,6 +306,7 @@ pub fn try_dual_fit(
         post_seam_r: post_r,
         post_seam_global_r: post_global,
         trim_frames,
+        step_real,
         pre_lag,
         post_lag,
         aligned_donor: aligned,
@@ -383,6 +413,71 @@ mod tests {
             l.post
         );
         assert!(!l.clamped(), "seams are well inside B: {l:?}");
+    }
+
+    /// Seam-lock rigid fill (docs/dev/TEMP-seam-lock-rigid-fill-plan.md §3.1, §4 Phase 1). A's post
+    /// border sits at the NOMINAL gap end (no step): a single rigid map already explains both seams,
+    /// so `step_real` is false. Before this Change `try_dual_fit` declined here; now it assembles a
+    /// trim-0 fill read straight off the pre lock instead of running the interior-trim search a real
+    /// length edit would need.
+    #[test]
+    fn assembles_a_rigid_trim0_fill_when_step_is_not_real() {
+        let sr = 48_000u32;
+        let ch = 1;
+        let w = 1200usize;
+        let gap = 4000usize;
+
+        let mut seed = 0xC0FF_EE00_1234_5678u64;
+        let mut rng = move || {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((seed >> 33) as f64 / (1u64 << 30) as f64) - 1.0
+        };
+        let bn = 40_000usize;
+        let b_mono: Vec<f64> = (0..bn).map(|_| rng()).collect();
+        let b_samples = mono_to_interleaved(&b_mono, ch);
+
+        // No step: A's post border is B's content immediately at the nominal gap end.
+        let b_mapped_start = 10_000usize;
+        let a_pre_mono: Vec<f64> = b_mono[b_mapped_start - w..b_mapped_start].to_vec();
+        let a_post_mono: Vec<f64> = b_mono[b_mapped_start + gap..b_mapped_start + gap + w].to_vec();
+
+        let p = DualFitParams {
+            channels: ch,
+            sample_rate: sr,
+            gap_frames: gap,
+            seam_window_frames: w,
+            max_lag_frames: (0.6 * sr as f64) as usize,
+            min_fill_correlation: 0.35,
+            fill_absolute_floor: 0.12,
+            step_real_margin: 0.15,
+            a_gap_floor_db: -60.0,
+        };
+
+        let r = dual_fit_at_nominal(
+            &templates(&a_pre_mono, &a_post_mono, b_mapped_start, &p),
+            &b_mono,
+            &b_samples,
+            &p,
+        )
+        .expect("rigid map still assembles a fill — step_real is a report axis, not a gate");
+
+        assert!(
+            r.pre_seam_r > 0.9 && r.post_seam_r > 0.9,
+            "both seams recover at the nominal (rigid) lag: {r:?}"
+        );
+        assert!(!r.step_real, "rigid map: step_real reports false: {r:?}");
+        assert!(
+            r.post_seam_r < r.post_seam_global_r + p.step_real_margin,
+            "step is NOT real — the post seam at its own lag does not beat post@pre by the margin: {r:?}"
+        );
+        assert_eq!(r.fill.len(), gap * ch, "fill is exactly the gap length");
+        assert_eq!(
+            r.fill,
+            mono_to_interleaved(&b_mono[b_mapped_start..b_mapped_start + gap], ch),
+            "trim-0: the fill is read straight off the pre lock, not an interior-trimmed search"
+        );
     }
 
     /// Regression for the 2026-07-05 production false-skip (the "previously fixed gaps now
