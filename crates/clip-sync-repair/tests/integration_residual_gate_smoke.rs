@@ -305,10 +305,11 @@ fn off_no_regression_baseline() {
 
 /// **C2 — `--no-dual-fit` is a no-op when the ordinary bracket search already decides:** F1/F4
 /// patch outright (`dual_fit` never engages — no skip to fall through from); the forced-Pearson-skip
-/// arm does reach the G6 branch but has no real step between shoulders, so `try_dual_fit` declines
-/// and the outcome is unchanged either way. `dual_fit = true` vs `false` must produce identical
-/// gating and PCM in all three cases. Closes perf-plan `docs/dev/archive/TEMP-pipeline-perf-redesign-plan.md`
-/// §4.7 backlog item **C2**.
+/// arm does reach the G6 branch, but `DualFitParams.min_fill_correlation` reuses the same forced
+/// `1.0` floor, so `locks.gate_pass` (seam-local correlation below floor) declines before
+/// `try_dual_fit` measures a step at all — the gap stays skipped either way. `dual_fit = true` vs
+/// `false` must produce identical gating and PCM in all three cases. Closes perf-plan
+/// `docs/dev/archive/TEMP-pipeline-perf-redesign-plan.md` §4.7 backlog item **C2**.
 #[test]
 fn dual_fit_flag_is_noop_when_bracket_search_already_decides() {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -327,9 +328,10 @@ fn dual_fit_flag_is_noop_when_bracket_search_already_decides() {
     }
 
     // Forced Pearson skip (`min_fill_correlation = 1.0`) DOES qualify for the G6 branch (it's a
-    // scored gate failure, not `StructureAlignmentFailed`) — but F1 has a single true bracket, no
-    // real step between shoulders, so `try_dual_fit`'s step-real check declines and the gap stays
-    // skipped either way. This asserts that decline, not that G6 never runs.
+    // scored gate failure, not `StructureAlignmentFailed`) — but the same forced `1.0` floor also
+    // feeds `DualFitParams.min_fill_correlation`, so no real seam-local correlation can clear
+    // `locks.gate_pass` and the gap stays skipped either way (declined before `try_dual_fit` ever
+    // measures a step). This asserts that decline, not that G6 never runs.
     let mut forced_on = with_forced_pearson_skip(production_fit_off());
     forced_on.dual_fit = true;
     let mut forced_off = with_forced_pearson_skip(production_fit_off());
