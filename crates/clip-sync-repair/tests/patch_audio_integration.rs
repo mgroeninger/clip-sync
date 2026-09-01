@@ -225,6 +225,83 @@ fn write_stereo_sine_with_gaps(
     writer.finalize().expect("finalize wav");
 }
 
+/// Position-indexed pseudo-noise sample: a splitmix64-style avalanche hash of `(seed, idx)`, in
+/// `[-amplitude, amplitude]`. Unlike [`channel_noise`] (a near-linear congruential map — two positions
+/// a *constant* distance apart stay strongly correlated, r≈0.89 measured at a 15,435-frame shift, since
+/// the map is affine in the frame index), this decorrelates sharply between any two distinct indices
+/// (r≈0.03 at the same shift) — needed so a shifted copy of this content is uncorrelated with the
+/// original at any lag except the true shift.
+fn hash_noise_sample(seed: u32, idx: i64, amplitude: f32) -> i16 {
+    let mut x = (idx as i64).wrapping_add(i64::from(seed)) as u64;
+    x = x.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    x ^= x >> 30;
+    x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x ^= x >> 27;
+    x = x.wrapping_mul(0x94D0_49BB_1331_11EB);
+    x ^= x >> 31;
+    let unit = (x >> 40) as f64 / f64::from(1u32 << 24); // [0, 1)
+    (((unit * 2.0 - 1.0) as f32) * amplitude).round() as i16
+}
+
+/// Write a stereo WAV: sine tone everywhere, except a band of [`hash_noise_sample`] noise in
+/// `[region_start_secs + shift_secs, region_end_secs + shift_secs)`, and (if `gap` is `Some`) true
+/// silence in `[gap_start, gap_end)`.
+///
+/// The noise value written at absolute frame `f` depends only on `f - (region_start_secs + shift_secs)
+/// * sample_rate` — so two calls sharing `seed`/`region_start_secs`/`region_end_secs` but differing
+/// `shift_secs` produce the *same* noise content, just translated in time by the difference in shift.
+/// That lets a caller build an A/B pair whose shoulders correlate strongly at a single constant lag
+/// (`shift_b - shift_a`) and not at all at lag 0 (a lag-0 comparison lines up unrelated noise samples)
+/// — a rigid constant-shift fixture, distinct from [`write_stereo_sine_with_inverted_region`]'s
+/// single-shoulder distortion (which produces a *step*, not a shared lag).
+#[allow(clippy::too_many_arguments)]
+fn write_stereo_with_shifted_noise_band(
+    path: &Path,
+    sample_rate: u32,
+    total_secs: u32,
+    region_start_secs: f64,
+    region_end_secs: f64,
+    shift_secs: f64,
+    seed: u32,
+    noise_amplitude: f32,
+    gap: Option<(f64, f64)>,
+    tone_freq: f32,
+    tone_amplitude: f32,
+) {
+    let spec = WavSpec {
+        channels: CHANNELS,
+        sample_rate,
+        bits_per_sample: 16,
+        sample_format: SampleFormat::Int,
+    };
+    let mut writer = WavWriter::create(path, spec).expect("create wav");
+    let total_frames = u64::from(sample_rate) * u64::from(total_secs);
+    let band_start = ((region_start_secs + shift_secs) * sample_rate as f64).round() as i64;
+    let band_end = ((region_end_secs + shift_secs) * sample_rate as f64).round() as i64;
+    let gap_frames = gap.map(|(start, end)| {
+        (
+            (start * sample_rate as f64).round() as i64,
+            (end * sample_rate as f64).round() as i64,
+        )
+    });
+
+    for frame in 0..total_frames as i64 {
+        let mut s = if frame >= band_start && frame < band_end {
+            hash_noise_sample(seed, frame - band_start, noise_amplitude)
+        } else {
+            sine_sample(sample_rate, frame as u64, tone_freq, tone_amplitude)
+        };
+        if let Some((gap_start, gap_end)) = gap_frames {
+            if frame >= gap_start && frame < gap_end {
+                s = 0;
+            }
+        }
+        writer.write_sample(s).expect("write L");
+        writer.write_sample(s).expect("write R");
+    }
+    writer.finalize().expect("finalize wav");
+}
+
 /// Linear clip-offset interpolation at `a_secs` on a timeline of `timeline_secs`.
 fn interpolated_fill_offset_secs(
     a_secs: f64,
@@ -1729,6 +1806,94 @@ fn patch_audio_dual_fit_rescues_inverted_post_border() {
     assert!(
         gap_rms > 100.0 / 32767.0,
         "dual-fit-rescued gap should contain audio, rms={gap_rms}"
+    );
+}
+
+/// seam-lock rigid-fill (docs/dev/TEMP-seam-lock-rigid-fill-plan.md § 3.1) coverage: both shoulders are a
+/// *constant*-shift copy of B relative to A (same lag pre and post — no step), placed far enough outside
+/// the bracket search's radius that keep-path finds nothing at lag 0, but well inside dual-fit's fixed
+/// per-shoulder search. Both shoulder locks land on the same lag, so the rescue is rigid: `dual_fit_used:
+/// true, dual_fit_step_real: Some(false)`, trim-0 seam-lock fill — not the length-edit ("real step") arm
+/// covered by `patch_audio_dual_fit_rescues_inverted_post_border`.
+#[test]
+fn patch_audio_dual_fit_rescues_constant_shift_as_rigid_seam_lock() {
+    const SHIFT_SECS: f64 = 0.35;
+    // Cover the whole timeline: a matching sine tone outside the band (as the earlier revision used)
+    // gives the correlation gate a "free" match at lag 0 regardless of the noise band's shift, since the
+    // gate's correlation window extends well past the 1s shoulders. Only the file's first/last
+    // `SHIFT_SECS` fall outside the noise band (B's band starts late by the shift) — far from the gap.
+    const REGION_START: f64 = 0.0;
+    const REGION_END: f64 = TOTAL_SECS as f64;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let path_a = temp.path().join("a.wav");
+    let path_b = temp.path().join("b.wav");
+
+    write_stereo_with_shifted_noise_band(
+        &path_a,
+        SAMPLE_RATE,
+        TOTAL_SECS,
+        REGION_START,
+        REGION_END,
+        0.0,
+        7,
+        16_000.0,
+        Some((GAP_START, GAP_END)),
+        440.0,
+        8_000.0,
+    );
+    write_stereo_with_shifted_noise_band(
+        &path_b,
+        SAMPLE_RATE,
+        TOTAL_SECS,
+        REGION_START,
+        REGION_END,
+        SHIFT_SECS,
+        7,
+        16_000.0,
+        None,
+        440.0,
+        8_000.0,
+    );
+
+    let report = make_report(path_a, path_b, stereo_identical_compat(SAMPLE_RATE));
+
+    // Bracket search radius far below SHIFT_SECS: keep-path cannot reach the shared lock lag. Dual-fit's
+    // per-shoulder search (fixed ±600ms, independent of this option) still can.
+    let opts = PatchTestOptions {
+        fill_border_search_secs: 0.05,
+        short_gap_one_strong_seam_fallback: false,
+        gap_end_extend_on_post_seam_fail: false,
+        gap_start_extend_on_pre_seam_fail: false,
+        disable_structure_trust: true,
+        partial_structure_waveform_soften: 1.0,
+        ..Default::default()
+    };
+
+    let patched = run_patch(
+        patch_request_with_options(report, false, 2.0, 0.12, opts),
+        10,
+    );
+    assert_eq!(
+        patched.summary.patched_count, 1,
+        "dual-fit should rescue the constant-shift gap as a rigid seam-lock, got {:?}",
+        patched.summary.gaps
+    );
+    match &patched.summary.gaps[0].status {
+        GapPatchStatus::Patched {
+            dual_fit_used: true,
+            dual_fit_step_real: Some(false),
+            ..
+        } => {}
+        other => panic!(
+            "expected a rigid dual-fit rescue (dual_fit_used, dual_fit_step_real: Some(false)), got {other:?}"
+        ),
+    }
+    let pcm = expect_pcm(&patched);
+    let gap_rms = rms_region(&pcm.samples, SAMPLE_RATE, CHANNELS, GAP_START, GAP_END);
+    assert!(
+        gap_rms > 100.0 / 32767.0,
+        "rigid-rescued gap should contain audio, rms={gap_rms}"
     );
 }
 

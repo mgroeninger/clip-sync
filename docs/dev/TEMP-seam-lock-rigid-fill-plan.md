@@ -233,8 +233,9 @@ row stays "real step; length reconcile." Add one sentence that a G6 visit with
 
 Do not start this list until Phase 0 has named the convert set.
 
-- [ ] Phase 0 table in this note (or a dated Result subsection): every convert gap, five
-      vs extras. **Not done this pass — deferred, media-dependent census.**
+- [x] Phase 0 table in this note (or a dated Result subsection): every convert gap, five
+      vs extras. Already in § 2 "Object": five-gap convert table + the 11/g9, 22/g13
+      must-not-convert pair, from the 08-29 dump + 08-31 production join.
 - [x] `try_dual_fit` / `dual_fit_at_nominal`: `!step_real` assembles trim-0; NaN global
       still `None`.
 - [x] `skip_or_dual_fit` re-gate unchanged; residual path runs.
