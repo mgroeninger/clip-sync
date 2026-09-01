@@ -1325,6 +1325,38 @@ mod tests {
                     },
                 },
             ),
+            // A rigid (trim-0) dual-fit rescue: the two shoulder locks agreed, so
+            // `dual_fit_step_real: Some(false)` populates the field in the golden — the length-edit
+            // gap above pins `dual_fit_used: false` / `dual_fit_step_real: None`; this pins the third
+            // state (docs/dev/TEMP-seam-lock-rigid-fill-plan.md § 3.4).
+            gap_patch_outcome(
+                160.0,
+                160.4,
+                GapPatchStatus::Patched {
+                    pre_correlation: 0.94,
+                    post_correlation: 0.93,
+                    align_adjustment_secs: 0.0,
+                    structure_trusted: false,
+                    confidence: crate::domain::FillConfidence::High,
+                    gap_start_adjust_frames: 0,
+                    gap_end_adjust_frames: 0,
+                    residual_db: None,
+                    floor_db: None,
+                    headroom_db: None,
+                    anchor_seam_used: false,
+                    anchor_bracket_move_frames: 0,
+                    dual_fit_used: true,
+                    dual_fit_step_real: Some(false),
+                    normalize_gain: 0.766_478_54,
+                    program_gain: 0.766_478_54,
+                    local_gain: 1.0,
+                    local_gain_reason: crate::domain::LocalGainReason::FlagOff,
+                    // Dual-fit placement does not come from the unified objective — omitted, per
+                    // json-output.md's `fit_terms` note.
+                    fit_terms: None,
+                    registration_residual_ms: None,
+                },
+            ),
             gap_patch_outcome(
                 200.0,
                 205.0,

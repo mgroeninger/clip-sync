@@ -234,15 +234,19 @@ row stays "real step; length reconcile." Add one sentence that a G6 visit with
 Do not start this list until Phase 0 has named the convert set.
 
 - [ ] Phase 0 table in this note (or a dated Result subsection): every convert gap, five
-      vs extras.
-- [ ] `try_dual_fit` / `dual_fit_at_nominal`: `!step_real` assembles trim-0; NaN global
+      vs extras. **Not done this pass — deferred, media-dependent census.**
+- [x] `try_dual_fit` / `dual_fit_at_nominal`: `!step_real` assembles trim-0; NaN global
       still `None`.
-- [ ] `skip_or_dual_fit` re-gate unchanged; residual path runs.
-- [ ] Status / tags / human line distinguish rigid vs length-edit; JSON golden populated
+- [x] `skip_or_dual_fit` re-gate unchanged; residual path runs.
+- [x] Status / tags / human line distinguish rigid vs length-edit; JSON golden populated
       in both states; `json-output.md` + `cli-output.md` + `gap-fill-modes.md`.
-- [ ] `dual_fit_rescue_flag` drops `step_real`; schema tests updated.
-- [ ] `gap-vocabulary.md` Silence-splice row not redefined; rigid arm named beside it.
-- [ ] Tests in § 4 Phase 4, including `--no-dual-fit` identity.
+- [x] `dual_fit_rescue_flag` drops `step_real`; schema tests updated. (NaN `post_global`
+      still declines — `is_finite()` conjunct added directly, since the dropped `step_real`
+      conjunct was the only thing catching it; caught before landing, see 2026-09-01 note.)
+- [x] `gap-vocabulary.md` Silence-splice row not redefined; rigid arm named beside it.
+- [ ] Tests in § 4 Phase 4, including `--no-dual-fit` identity. **Unit-level covered by the
+      existing suite (714 passed, 0 failed); synthetic constant-shift test and the media
+      `--patch-only` / ear-check runs not done this pass — media-dependent, follows Phase 0.**
 - [ ] Licensed `--patch-only` on the named set; ear the converts.
 
 ---

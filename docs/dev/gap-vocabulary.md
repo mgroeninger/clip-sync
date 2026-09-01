@@ -189,6 +189,12 @@ bracket).*
 each shoulder registers cleanly at its *own* lag, the lags disagree by a real step, and B is occupied
 across the hole. This is the dual-fit addressable set (`dualfit_target()`); repair = independent
 per-seam fit + length reconciliation ([gap-fill-modes.md](../gap-fill-modes.md) § Dual-fit rescue (G6)).
+
+A G6 visit where the two shoulders lock at the *same* lag (`!step_real`) is not this cell: there is no
+step to reconcile, so the fill is a **rigid seam-lock fill** — a trim-0 extract off the shared lock,
+same visit, same gate. Do not merge it into Silence-splice's "real step" description above; it is
+reported distinctly (`dual_fit_step_real: false`, human line `patched (seam-lock pre→post)`,
+[gap-fill-modes.md](../gap-fill-modes.md) § Dual-fit rescue).
 *Old guide: throat **W5** skip; after rescue the gap becomes **W7** (`patch_tier=high`) — W7 is a
 post-rescue outcome, not a separate gap type.*
 

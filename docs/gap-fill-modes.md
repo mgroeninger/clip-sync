@@ -200,11 +200,19 @@ always routes eligible skips through `skip_or_dual_fit`; there is no fill-mode g
 ```text
 seam-local peaks on A pre/post shoulders (±600 ms)
   → independent per-shoulder lag on B
-  → interior trim to reconcile length
-  → donor continuity + step-real checks
+  → step real? → interior-trim bridge extract (length reconcile)
+  → step not real? → trim-0 extract off the shared (rigid) lock
+  → donor continuity check
   → re-validate assembled fill with unchanged gate floors (Pearson + residual)
   → patch or fall through to skip
 ```
+
+Two arms, one visit: whether the two shoulder locks disagree by a real step or land on the same
+lag, the gap reaches `skip_or_dual_fit` exactly once. `step_real` no longer decides *whether* to
+assemble a fill — only *how*: a real step drives an interior-trim bridge extract (length-edit),
+and a rigid (non-real) step drives a trim-0 extract straight off the shared lock (seam-lock). Both
+arms run the same re-validation against unchanged gate floors; a NaN post-seam-at-shared-lag
+measurement (unmeasurable, not "rigid") still declines outright.
 
 Dual-fit does **not** run when structure alignment failed (no bracket scored). It also declines
 donor-broken bridges (internal silent run in the donor interior) and fully program-quiet donors.
@@ -216,9 +224,12 @@ donor-broken bridges (internal silent run in the donor interior) and fully progr
 | Force on | `--dual-fit` | — |
 
 Rescued gaps report tier/confidence from the re-validated seams like other patches, but are marked distinct
-from ordinary bracket-search fits: status shows `patched (dual-fit pre→post)` (or `! patched (dual-fit …)`
-when marginal), and `dual_fit_used: true` appears on `status.patched` and `tags` in JSON (verbose `gap tags:`
-adds `dual_fit=true`). See [cli-output.md](cli-output.md) § Gap patch gate and skip reasons.
+from ordinary bracket-search fits: status shows `patched (dual-fit pre→post)` for a real-step (length-edit)
+rescue, or `patched (seam-lock pre→post)` for a rigid (trim-0) rescue (`! patched (…)` variants when
+marginal). `dual_fit_used: true` appears on `status.patched` and `tags` in JSON either way; the two arms
+are distinguished by `dual_fit_step_real` (`true` = length-edit, `false` = rigid seam-lock) on
+`status.patched` and `tags` (verbose `gap tags:` adds `dual_fit=true`). See
+[cli-output.md](cli-output.md) § Gap patch gate and skip reasons.
 Typical rescue profile: scored primary-gate skips where both shoulders align at their own lag but
 rigid lag-0 (fit) / structure-winner (gate) placement failed (see [gap-repair-guide.md](gap-repair-guide.md) § W7).
 

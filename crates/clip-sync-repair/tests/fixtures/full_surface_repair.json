@@ -191,7 +191,7 @@
     }
   },
   "patch": {
-    "patched_count": 1,
+    "patched_count": 2,
     "patched_marginal_count": 0,
     "skipped_count": 1,
     "not_planned_count": 1,
@@ -258,6 +258,38 @@
           "signature_mode": "bool",
           "anchor_seam_used": false,
           "dual_fit_used": false
+        }
+      },
+      {
+        "a_start_secs": 160.0,
+        "a_end_secs": 160.4,
+        "status": {
+          "patched": {
+            "pre_correlation": 0.94,
+            "post_correlation": 0.93,
+            "align_adjustment_secs": 0.0,
+            "structure_trusted": false,
+            "confidence": "high",
+            "gap_start_adjust_frames": 0,
+            "gap_end_adjust_frames": 0,
+            "anchor_seam_used": false,
+            "dual_fit_used": true,
+            "dual_fit_step_real": false,
+            "normalize_gain": 0.76647854,
+            "program_gain": 0.76647854,
+            "local_gain": 1.0,
+            "local_gain_reason": "flag_off"
+          }
+        },
+        "tags": {
+          "plan_kind": "fillable",
+          "patch_tier": "high",
+          "seam_shape": "balanced",
+          "fit_path": "baseline_only",
+          "signature_mode": "bool",
+          "anchor_seam_used": false,
+          "dual_fit_used": true,
+          "dual_fit_step_real": false
         }
       },
       {
