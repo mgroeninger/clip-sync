@@ -65,6 +65,7 @@ is untracked — that is a bug in the catalog, not a state a doc may sit in.
 | Draft | What it is | Tracked as |
 |-------|-----------|-----------|
 | [TEMP-post-splice-introduced-silence-collapse-plan.md](TEMP-post-splice-introduced-silence-collapse-plan.md) | After splice, fill `visit_shoulders_abut`: concat-confirm → **warn by default**; `--collapse-introduced-silence` drains A PCM and the current mux takes that buffer | [BACKLOG.md](../../BACKLOG.md) § *Fill placement* |
+| [TEMP-seam-lock-rigid-fill-plan.md](TEMP-seam-lock-rigid-fill-plan.md) | After keep-path skip, G6 visit emits a trim-0 fill when 250 ms locks already lie `G` apart (`!step_real`). Same re-gate; stamp distinct from length-edit. Do not search again | [BACKLOG.md](../../BACKLOG.md) § *Fill placement* → *95 skips at a rigid shoulder offset* |
 | [TEMP-flac-output-plan.md](TEMP-flac-output-plan.md) | In-process `--flac` lossless output, peer of `--wav`. Motivated by the RIFF `u32` data-chunk limit | [BACKLOG.md](../../BACKLOG.md) § *Repair R6* |
 | [TEMP-nway-donor-alignment-plan.md](TEMP-nway-donor-alignment-plan.md) | Repair one damaged copy from **multiple** donors with sparse non-overlapping damage | [settled.md](settled.md) § C — latched, no corpus |
 
@@ -75,7 +76,7 @@ question is promoted to [BACKLOG.md](../../BACKLOG.md) or closed, it archives.
 
 | Note | Open question | Tracked as |
 |------|---------------|------------|
-| [TEMP-rigid-shoulder-offset-skips-2026-08-31.md](TEMP-rigid-shoulder-offset-skips-2026-08-31.md) | Q2 answered (Result 6): shifted keep path converts none of the six production remainder (11/g9 also misses). Do not wire register-before-sweep. Q1/Q3 already named. Successor for the five `step_real` holes is not map-lag. | [BACKLOG.md](../../BACKLOG.md) § *Fill placement* → *95 skips at a rigid shoulder offset* |
+| [TEMP-rigid-shoulder-offset-skips-2026-08-31.md](TEMP-rigid-shoulder-offset-skips-2026-08-31.md) | All questions named. Q2 successor is [TEMP-seam-lock-rigid-fill-plan.md](TEMP-seam-lock-rigid-fill-plan.md) (trim-0 G6 arm). Do not wire register-before-sweep. Archives when that Change ships or the remainder is named closed. | [BACKLOG.md](../../BACKLOG.md) § *Fill placement* → *95 skips at a rigid shoulder offset* |
 
 Earlier notes (the two flat-3000 runs, the collapsed-bridge census, the pair-50 outcomes) went to
 [archive/](archive/) on 2026-08-24 under exactly that rule, and their surviving questions are
