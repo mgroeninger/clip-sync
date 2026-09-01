@@ -75,7 +75,7 @@ question is promoted to [BACKLOG.md](../../BACKLOG.md) or closed, it archives.
 
 | Note | Open question | Tracked as |
 |------|---------------|------------|
-| [TEMP-rigid-shoulder-offset-skips-2026-08-31.md](TEMP-rigid-shoulder-offset-skips-2026-08-31.md) | Would the keep path patch the six production remainder if its B map were shifted by the constant-shift lag (Q2). Q1 named: 38/g1 is not map-lag and is already dual-fit patched. Class 90/644; 83 dual-fit; seven still skipped; five of those are `step_real`. | [BACKLOG.md](../../BACKLOG.md) § *Fill placement* → *95 skips at a rigid shoulder offset* |
+| [TEMP-rigid-shoulder-offset-skips-2026-08-31.md](TEMP-rigid-shoulder-offset-skips-2026-08-31.md) | Q2 answered (Result 6): shifted keep path converts none of the six production remainder (11/g9 also misses). Do not wire register-before-sweep. Q1/Q3 already named. Successor for the five `step_real` holes is not map-lag. | [BACKLOG.md](../../BACKLOG.md) § *Fill placement* → *95 skips at a rigid shoulder offset* |
 
 Earlier notes (the two flat-3000 runs, the collapsed-bridge census, the pair-50 outcomes) went to
 [archive/](archive/) on 2026-08-24 under exactly that rule, and their surviving questions are

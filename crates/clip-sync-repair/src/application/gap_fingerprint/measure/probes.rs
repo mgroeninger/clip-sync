@@ -259,10 +259,24 @@ pub(in crate::application::gap_fingerprint::measure) struct SpliceDualfitInput<'
 /// Fingerprint-only, and staying here: `post_seam_global_r` (is the step necessary?) and the two
 /// `*_seam_prom` uniqueness measurements. Production computes neither.
 ///
-/// `None` when either seam window falls out of range.
+/// `None` when either seam window falls out of range. On success, [`SpliceDualfitMeasure::dualfit`]
+/// is the wire row; `pre_lag_frames` is the 250 ms pre lock the keep-path shift probe reads and is
+/// **not** serialized on `SpliceDualfit`.
+pub(in crate::application::gap_fingerprint::measure) struct SpliceDualfitMeasure {
+    pub(in crate::application::gap_fingerprint::measure) dualfit: SpliceDualfit,
+    pub(in crate::application::gap_fingerprint::measure) pre_lag_frames: i64,
+}
+
+impl std::ops::Deref for SpliceDualfitMeasure {
+    type Target = SpliceDualfit;
+    fn deref(&self) -> &Self::Target {
+        &self.dualfit
+    }
+}
+
 pub(in crate::application::gap_fingerprint::measure) fn splice_dualfit_at(
     input: &SpliceDualfitInput<'_>,
-) -> Option<SpliceDualfit> {
+) -> Option<SpliceDualfitMeasure> {
     let SpliceDualfitInput {
         a_samples,
         channels,
@@ -376,23 +390,26 @@ pub(in crate::application::gap_fingerprint::measure) fn splice_dualfit_at(
             })
             .flatten();
 
-    Some(SpliceDualfit {
-        pre_seam_r,
-        post_seam_r,
-        gap_frames,
-        bridge_frames,
-        trim_frames: bridge_frames - gap_frames as i64,
-        gate_pass,
-        post_seam_global_r,
-        pre_seam_prom,
-        post_seam_prom,
-        pre_seam_z,
-        post_seam_z,
-        pre_seam_rescued: Some(locks.pre.rescued),
-        post_seam_rescued: Some(locks.post.rescued),
-        pre_seam_edge_pinned: Some(locks.pre.edge_pinned),
-        post_seam_edge_pinned: Some(locks.post.edge_pinned),
-        seams_clamped: Some(locks.clamped()),
+    Some(SpliceDualfitMeasure {
+        dualfit: SpliceDualfit {
+            pre_seam_r,
+            post_seam_r,
+            gap_frames,
+            bridge_frames,
+            trim_frames: bridge_frames - gap_frames as i64,
+            gate_pass,
+            post_seam_global_r,
+            pre_seam_prom,
+            post_seam_prom,
+            pre_seam_z,
+            post_seam_z,
+            pre_seam_rescued: Some(locks.pre.rescued),
+            post_seam_rescued: Some(locks.post.rescued),
+            pre_seam_edge_pinned: Some(locks.pre.edge_pinned),
+            post_seam_edge_pinned: Some(locks.post.edge_pinned),
+            seams_clamped: Some(locks.clamped()),
+        },
+        pre_lag_frames: locks.pre.lag,
     })
 }
 /// Mono [`LagSummary`] for one side of a [`LagFingerprint`].

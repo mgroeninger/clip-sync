@@ -65,8 +65,10 @@ would patch those holes if it ran at that lag.
    **Answered, Result 2.**
 2. **Would the keep path patch the production remainder** if its B map were shifted by
    the constant-shift lag dual-fit already certified? Overlay `evaluate_seam_gate` after
-   that shift; convert ⇔ `outcome.tier == "patch"` (structure + waveform + residual).
-   **Open — Phase 1.**
+   that shift; convert ⇔ `keep_path_shift[].any_ok` on that arm (structure + waveform).
+   Residual is `throat.residual.headroom_ok` and does not move `any_ok`.
+   **Answered, Result 6 — no.** Zero of the six production remainder convert (11/g9
+   fingerprint-only also misses). Do not wire register-before-sweep from this class.
 3. **Is the class one mechanism?** Split by `|mid_lag|` and by `dual_fit_rescue`.
    **Answered for membership, Result 1 / 3 / 5: no.** The 83 are dual-fit fills; the
    seven remainder split further (Result 4). Q2 asks only whether the keep path can take
@@ -295,12 +297,38 @@ literals; `placement_in_bounds` as its own column (a shifted start can 0.0-senti
 
 ---
 
-## Phase 1 probe (still to run)
+## Phase 1 probe (run complete — Result 6)
 
 **Question 2.** On the production remainder, add a constant map lag to the B clock the
-keep path already uses, then run `evaluate_seam_gate` (structure + waveform + residual).
-Convert ⇔ fingerprint `outcome.tier == "patch"` (`any_ok`). Dual-fit is not in that
-tier; a convert is a keep-path fill.
+keep path already uses, then run `evaluate_seam_gate` (structure + waveform). Residual is
+a side column on the shifted throat (`throat.residual`); it does not move `any_ok`.
+Convert ⇔ fingerprint `keep_path_shift[].any_ok` on that arm (`outcome.tier` stays the
+unshifted overlay). Dual-fit is not in that tier; a convert is a keep-path fill.
+
+### Invoke
+
+Calibration build. `--fingerprint-gap` is **1-based**. Unshifted identity is the same
+process's `brackets` / `outcome` (must match `2026-08-29-complete-corpus` throat
+`seam_pre` / `seam_post` / `failure_stage` on these six).
+
+```
+clip-sync-repair A B --gap-fingerprints gap-files/2026-08-31-keep-path-shift/ \
+  --fingerprint-keep-path-shift --fingerprint-gap N
+```
+
+| Gap | `--fingerprint-gap` | Primary arm |
+|---|---|---|
+| 1/g1 | 2 | `pre_lock` |
+| 1/g15 | 16 | `pre_lock` |
+| 11/g9 | 10 | `mid_lag` (fingerprint only) |
+| 20/g1 | 2 | `pre_lock` |
+| 22/g5 | 6 | `pre_lock` |
+| 22/g13 | 14 | `mid_lag` |
+| 30/g43 | 44 | `pre_lock` |
+
+Bare `--fingerprint-keep-path-shift` writes **both** arms so the unused lag is a scored
+row, not only `unused_lag_ms`. Do not use `--patch-only`. Do not wire register-before-sweep
+from this run.
 
 ### Object
 
@@ -359,9 +387,13 @@ Recipe floors from `source.gate_recipe`, never literals.
    register-**then-sweep**, not a plain fill. Both fail ⇒ this lag is not sufficient
    (wrong lag, 38/g1-shaped structure placement, or residual).
 
-Convert ⇔ `outcome.tier == "patch"`. If it still skips, keep `skip_reason`
-(`structure_floor` / `waveform_floor` / `residual`). Waveform-only was the withdrawn
-instrument; residual can still refuse.
+Convert ⇔ `keep_path_shift[].any_ok` on that arm (structure + waveform). If it still
+skips, keep `skip_reason` (`structure_floor` / `waveform_floor` / `residual` — a
+`FailureStage` only). When the arm could not score, read `unavailable` (`locks` /
+`lag_decision` / `extract_empty` / `map_before_extract`), not `skip_reason`. Residual can
+still refuse (`throat.residual.headroom_ok == false`) without lying about overlay `any_ok`.
+Do **not** read `outcome.tier` for convert — that is the unshifted overlay. `throat.start_frame`
+is relative to `b_extract_start_secs` on that arm.
 
 **Wiring identity (unshifted arm).** In the same process, the unshifted overlay must
 match the 08-29 throat `seam_pre` / `seam_post` (and `failure_stage`) on these six
@@ -383,6 +415,40 @@ If they convert, a **separate** Change plan to wire register-before-sweep is in 
 `gate_pass && bridge > 0 && !step_real` can drive that shift belongs in that Change,
 not here. 11/g9 still needs the collapse plan's un-abut before that Change can see it.
 
+## Result 6 — shifted overlay converts none of the remainder
+
+Dump: `gap-files/2026-08-31-keep-path-shift/` (calibration `--fingerprint-keep-path-shift`,
+both arms, `--fingerprint-gap` as in the invoke table). Unshifted throats on these seven
+match `2026-08-29-complete-corpus` (`skip` / `waveform_floor` / `seam_pre` / `seam_post`).
+`probe_recipe.keep_path_shift` is `both`. No arm `unavailable`. Residual omitted: throat
+never scored `Ok`, so there is no structure placement to read.
+
+Convert ⇔ `keep_path_shift[].any_ok`. All seven: `any_ok == false`, `n_ok == 0`,
+`throat.pass == false`, `placement_in_bounds == true`.
+
+| Gap | Primary arm | `shift_ms` | Unshifted throat | Shifted throat | Convert |
+|---|---|---:|---|---|---|
+| 1/g1 | `pre_lock` | +139.3 | waveform_floor 0.181/0.120 | waveform_floor 0.181/0.120 | no |
+| 1/g15 | `pre_lock` | +158.8 | waveform_floor 0.167/0.136 | waveform_floor 0.167/0.136 | no |
+| 20/g1 | `pre_lock` | −286.7 | waveform_floor 0.165/0.181 | waveform_floor 0.165/0.181 | no |
+| 22/g5 | `pre_lock` | −249.7 | waveform_floor 0.052/0.156 | waveform_floor 0.053/0.101 | no |
+| 30/g43 | `pre_lock` | +10.0 | waveform_floor 0.139/0.289 | waveform_floor 0.139/0.289 | no |
+| 22/g13 | `mid_lag` | −247.9 | waveform_floor 0.068/0.034 | waveform_floor 0.040/0.034 | no |
+| 11/g9 | `mid_lag` | −69.8 | waveform_floor 0.049/0.061 | waveform_floor 0.052/0.053 | no (fingerprint only) |
+
+The unused lag on every row is within 4 ms of the applied lag (1/g1 both arms ≈ +139;
+30/g43 both ≈ +10). 30/g43's 250 ms lock is not a different lag from the 1 s mid — the
+experiment still ran, and a 10 ms shift does not convert. 1/g1's closest-bracket
+`skip_reason` is `structure_floor` while the throat is `waveform_floor`; every other
+primary arm's `skip_reason` is `waveform_floor`.
+
+**Read.** Registering the keep path at the constant-shift lag dual-fit already certified
+does not make a keep-path fill. Waveform still floors at the registered map, in bounds.
+That is a miss on the plain-fill form **and** on register-then-sweep (`n_ok == 0`). Do
+not wire register-before-sweep from this class. The five `step_real` remainder are not
+missed keep-path fills; 22/g13 is not a 1 s mid convert either; 11/g9 overlay-misses and
+would still abut in production.
+
 ## 11/g9 sequencing
 
 | Path | What happens to 11/g9 |
@@ -390,7 +456,7 @@ not here. 11/g9 still needs the collapse plan's un-abut before that Change can s
 | Today (shoulder-locks shipped) | `shoulders_abut` skip, record-only. No fill. |
 | This probe | Can oracle the gate at −70 ms on the fingerprint path. Must not change production. |
 | Collapse successor | Must not drain. Step-agreement admission filter would drop it from the abut list, after which it is an ordinary skip again. |
-| Register-before-sweep Change | Only then can the keep path offer a single-lag fill. |
+| Register-before-sweep Change | Result 6 already oracled the gate at −70 ms: still `waveform_floor`. Do not wire. |
 
 Do not bundle those three.
 
@@ -414,6 +480,7 @@ Do not bundle those three.
 - **`gap-files/2026-08-30-tier-2-on/38.json`** — 38/g1 production patched via dual-fit.
 - **`gap-files/2026-08-31-local-gain-acceptance/`** — Result 5 production join
   (`--normalize` on; read disposition only). Complete 51-pair dump.
+- **`gap-files/2026-08-31-keep-path-shift/`** — Result 6 remainder dump (seven gaps, both arms).
 
 ## Reproduction
 
@@ -432,11 +499,11 @@ array index within a pair label (Result 5). Dual-fit conjuncts from
 - Q1 named (this note, Result 2) → keep.
 - Q3 membership split named (Results 1 / 3 / 4 / 5) → keep.
 - Q2 states, **per remainder gap**, whether the shifted overlay patched (throat and/or
-  full list), with `skip_reason` on a miss → convert on the constant-shift five ⇒
-  promote a Change plan (one deliverable: register-before-sweep on the keep path);
-  null on those five ⇒ rewrite (not delete) the BACKLOG row; the class is not one
-  missed-fill bug and the keep-path candidate is the wrong shape for the holes that
-  are actually open. 22/g13 and 11/g9 report separately.
+  full list), with `skip_reason` on a miss → **Result 6: null on all five `step_real`
+  remainder, on 22/g13, and on 11/g9.** Rewrite (not delete) the BACKLOG row; the
+  keep-path candidate is the wrong shape for the holes that are actually open. Do not
+  wire register-before-sweep. Do not file a class-wide `settled.md` refute from this
+  null (Limit).
 - This note archives when every question is promoted or closed.
 
 ---

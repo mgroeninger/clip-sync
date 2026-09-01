@@ -207,6 +207,10 @@ pub struct CorpusProbeRecipe {
     /// converts it from [`PROBE_BORDER_STANDOFF_FRAMES`](super::measure::PROBE_BORDER_STANDOFF_FRAMES),
     /// the same constant every probe `GapBorderSpec` is given, so the two cannot drift.
     pub border_standoff_secs: f64,
+    /// Which keep-path B-map shift arm(s) this corpus scored. **Absent when no gap carries
+    /// `keep_path_shift`** (flag off, or a summary-only corpus). Never `off` — absence is off.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub keep_path_shift: Option<KeepPathShiftMode>,
 }
 
 /// Non-identifying provenance for a corpus: the A/B file identities (pair = entry identity), the scan
@@ -633,6 +637,13 @@ pub struct GapFingerprint {
     pub splice_dualfit: Option<SpliceDualfit>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub outcome: Option<GateOutcome>,
+    /// Record-only keep-path B-map shift probe (`--fingerprint-keep-path-shift`). Each arm re-runs
+    /// `evaluate_seam_gate` after adding a constant lag to the B times `derive_seam_gate_geometry`
+    /// already uses. Overlay `any_ok` is structure + waveform; residual is a throat column and does
+    /// not move it. Absent when the flag is off; **never** writes `outcome.tier`. See
+    /// `docs/dev/TEMP-rigid-shoulder-offset-skips-2026-08-31.md` Phase 1.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub keep_path_shift: Option<Vec<KeepPathShiftArm>>,
     /// Gap-equivalence classification (`docs/dev/gap-vocabulary.md` § Silence-character pre-gate): does this gap need patching?
     /// Derived from the **silence character** — A's gap RMS vs the recording's noise floor (dropout vs room
     /// tone) + donor silence (is B occupied) — the signals that separate real dropouts from mutual/program
@@ -856,6 +867,149 @@ pub struct BracketInfo {
     /// predate this field). Compare against [`CorpusGateRecipe::residual_headroom_margin_db`].
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub residual_margin_db: Option<f64>,
+}
+
+/// Which lag(s) `--fingerprint-keep-path-shift` re-scores the keep path at. `Off` is the shipped
+/// dump: no extra gate calls, no `keep_path_shift` on the wire. On [`CorpusProbeRecipe`] the field
+/// is omitted rather than written as `off`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KeepPathShiftMode {
+    #[default]
+    Off,
+    /// 250 ms `locks.pre.lag` from `nominal_first_seam_locks` (the lag `step_real` certified).
+    PreLock,
+    /// Mean of the two 1 s `lag_decision` `frac_lag_ms` values.
+    MidLag,
+    /// Both arms. Default when the CLI flag is present without a value.
+    Both,
+}
+
+impl KeepPathShiftMode {
+    pub fn is_on(self) -> bool {
+        !matches!(self, Self::Off)
+    }
+
+    pub fn wants_pre_lock(self) -> bool {
+        matches!(self, Self::PreLock | Self::Both)
+    }
+
+    pub fn wants_mid_lag(self) -> bool {
+        matches!(self, Self::MidLag | Self::Both)
+    }
+}
+
+/// Which lag the keep-path map-shift probe applied. Record-only — never `outcome.tier`.
+///
+/// `pre_lock` is the 250 ms `locks.pre.lag` dual-fit already certified (`step_real`); `mid_lag`
+/// is the mean of the two 1 s `lag_decision` `frac_lag_ms` values. See
+/// `docs/dev/TEMP-rigid-shoulder-offset-skips-2026-08-31.md` Phase 1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KeepPathShiftSource {
+    PreLock,
+    MidLag,
+}
+
+/// Why a keep-path shift arm could not score. Orthogonal to [`KeepPathShiftArm::skip_reason`],
+/// which is a [`FailureStage`] only — never these strings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KeepPathShiftUnavailable {
+    Locks,
+    LagDecision,
+    ExtractEmpty,
+    MapBeforeExtract,
+}
+
+/// Residual headroom at the shifted throat. Record-only column: does **not** move
+/// [`KeepPathShiftArm::any_ok`] (overlay `any_ok` stays structure + waveform).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KeepPathShiftResidual {
+    pub informative: bool,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub chosen_pre_db: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub chosen_post_db: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub floor_pre_db: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub floor_post_db: Option<f64>,
+    /// `None` when the residual gate is off or the verdict abstains. `Some(false)` is the G4 refuse.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub headroom_ok: Option<bool>,
+    /// Applied headroom margin (dB). Absent when the residual gate is off.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub margin_db: Option<f64>,
+}
+
+/// Throat (`move_frames == 0`) after a constant B-map shift. Pass ⇒ a plain single-lag fill at
+/// the registered map would patch (structure + waveform). Residual is [`Self::residual`], not
+/// `pass`.
+///
+/// `start_frame` is relative to this arm's shifted B extract (see
+/// [`KeepPathShiftArm::b_extract_start_secs`]), not the unshifted `brackets[].start_frame` haystack.
+/// `placement_in_bounds` is throat-only: on a pass, the chosen placement; on a fail, the **nominal**
+/// map (there is no chosen start). A 0.0 seam with this false is out-of-bounds, not a dead donor.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KeepPathShiftThroat {
+    pub pass: bool,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub structure_pre: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub structure_post: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub seam_pre: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub seam_post: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub failure_stage: Option<FailureStage>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub residual_margin_db: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub start_frame: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub fill_frames: Option<usize>,
+    /// `false` when the scored placement's seam windows fall off the B haystack — a 0.0 seam
+    /// is then out-of-bounds, not a dead donor.
+    pub placement_in_bounds: bool,
+    /// Residual at the shifted throat when a structure placement exists. Does not move `pass`.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub residual: Option<KeepPathShiftResidual>,
+}
+
+/// One shifted keep-path arm. Convert ⇔ [`Self::any_ok`] (fingerprint overlay `any_ok`: structure
+/// and waveform). Residual is [`KeepPathShiftThroat::residual`] and does **not** move `any_ok`.
+/// Does not overwrite the unshifted [`GapFingerprint::outcome`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KeepPathShiftArm {
+    pub source: KeepPathShiftSource,
+    /// Applied lag. Omitted when the lag itself is unknown ([`KeepPathShiftUnavailable::Locks`] /
+    /// [`KeepPathShiftUnavailable::LagDecision`]); present when the lag is known but extract/map
+    /// failed.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub shift_ms: Option<f64>,
+    /// The lag this arm did **not** apply, so a miss can be "wrong lag" rather than "keep path
+    /// cannot use this donor." `pre_lock` arms record 1 s `mid_lag`; `mid_lag` arms record
+    /// `locks.pre.lag`.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub unused_lag_ms: Option<f64>,
+    /// Set when this arm could not score. Orthogonal to [`Self::skip_reason`].
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub unavailable: Option<KeepPathShiftUnavailable>,
+    /// File-absolute origin of this arm's shifted B extract. Present when the arm scored.
+    /// `throat.start_frame` is relative to this origin.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub b_extract_start_secs: Option<f64>,
+    pub throat: KeepPathShiftThroat,
+    /// At least one bracket passed structure + waveform after the shift. Residual does not move this.
+    pub any_ok: bool,
+    /// Closest failing bracket's [`FailureStage`] when scored and nothing passed. Never an
+    /// [`KeepPathShiftUnavailable`] spelling.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub skip_reason: Option<String>,
+    pub n_brackets: usize,
+    pub n_ok: usize,
 }
 
 /// Progress score for "closest failing bracket" selection: structure scores on
@@ -2035,6 +2189,7 @@ mod tests {
                 skip_reason: Some("boundary correlation below threshold".into()),
                 dual_fit_rescue: None,
             }),
+            keep_path_shift: None,
             equivalence_diagnostic: None,
             equivalence_production: None,
         };
@@ -2045,6 +2200,45 @@ mod tests {
         assert!(!json.contains("\"lag_editorial\""));
         assert!(!json.contains("\"lag_decision\""));
         assert!(!json.contains("\"brackets\""));
+        assert!(!json.contains("\"keep_path_shift\""));
+    }
+
+    #[test]
+    fn keep_path_shift_unavailable_omits_shift_ms_and_skip_reason() {
+        let arm = KeepPathShiftArm {
+            source: KeepPathShiftSource::PreLock,
+            shift_ms: None,
+            unused_lag_ms: Some(12.0),
+            unavailable: Some(KeepPathShiftUnavailable::Locks),
+            b_extract_start_secs: None,
+            throat: KeepPathShiftThroat {
+                pass: false,
+                structure_pre: None,
+                structure_post: None,
+                seam_pre: None,
+                seam_post: None,
+                failure_stage: None,
+                residual_margin_db: None,
+                start_frame: None,
+                fill_frames: None,
+                placement_in_bounds: false,
+                residual: None,
+            },
+            any_ok: false,
+            skip_reason: None,
+            n_brackets: 0,
+            n_ok: 0,
+        };
+        let json = serde_json::to_string(&arm).expect("serialize");
+        assert!(
+            !json.contains("shift_ms"),
+            "unknown lag omits shift_ms: {json}"
+        );
+        assert!(!json.contains("skip_reason"));
+        assert!(!json.contains("b_extract_start_secs"));
+        assert!(json.contains("\"unavailable\":\"locks\""));
+        let back: KeepPathShiftArm = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(arm, back);
     }
 
     /// R1 rename: pre-2026-08-07 corpora wrote `equivalence` / `scan_equivalence`. Those keys must

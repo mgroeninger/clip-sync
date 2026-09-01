@@ -191,6 +191,10 @@ fn gap_listen(
             lag_envelope_max_lag_ms: config.repair.lag_envelope_max_lag_ms,
             border_capture: config.repair.border_capture,
             lag_envelope_window_secs: config.repair.lag_envelope_window_secs,
+            keep_path_shift: args
+                .fingerprint_keep_path_shift
+                .map(Into::into)
+                .unwrap_or_default(),
             crossfade_ms: config.repair.crossfade_ms,
         },
     )
@@ -255,6 +259,10 @@ fn dump_gap_fingerprints(
             lag_envelope_max_lag_ms: config.repair.lag_envelope_max_lag_ms,
             border_capture: config.repair.border_capture,
             lag_envelope_window_secs: config.repair.lag_envelope_window_secs,
+            keep_path_shift: args
+                .fingerprint_keep_path_shift
+                .map(Into::into)
+                .unwrap_or_default(),
         },
         progress,
     );

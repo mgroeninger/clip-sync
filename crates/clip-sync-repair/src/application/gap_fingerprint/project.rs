@@ -254,6 +254,7 @@ pub fn spec_to_fingerprint_summary(
             signature_mode: None,
             skip_reason,
         }),
+        keep_path_shift: None,
         // Equivalence is a from-decode-loop overlay (not a spec projection); the projection leaves it None.
         equivalence_diagnostic: None,
         equivalence_production: None,

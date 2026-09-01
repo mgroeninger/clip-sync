@@ -208,6 +208,10 @@ pub fn characterize_gaps_from_decode(
             rate,
             sample_rate,
             progress,
+            b_samples_full,
+            pad_lead,
+            pad_tail,
+            keep_path_shift: dump.keep_path_shift,
         });
 
         // Decision spec: geometry + levels from the summary fp; verdict from `m.outcome` (any_ok); tags from
@@ -288,6 +292,7 @@ pub fn characterize_gaps_from_decode(
         fp.silence = silence;
         fp.contour = contour;
         fp.anchors = anchors;
+        fp.keep_path_shift = m.keep_path_shift;
         // Count only gaps that ended up with a *fabricated* block. A gap with no sweep and no scalars
         // has no `lag_decision` at all, and absence needs no disowning.
         if !lag_supplied && fp.lag_decision.is_some() {
@@ -1133,6 +1138,11 @@ mod tests {
             probe_border_standoff_secs(corpus.gaps[0].sample_rate),
             "the probe measures at standoff 0; echoing production's 0.35 would misdescribe every \
              recorded frac_lag_ms"
+        );
+        assert_eq!(
+            probe.keep_path_shift,
+            None,
+            "default dump does not run the keep-path shift probe"
         );
         let full: Vec<_> = corpus
             .gaps
@@ -2207,6 +2217,7 @@ mod tests {
             donor_interior_nominal: None,
             b_levels: None,
             outcome: None,
+            keep_path_shift: None,
             equivalence_diagnostic: None,
             equivalence_production: None,
         }

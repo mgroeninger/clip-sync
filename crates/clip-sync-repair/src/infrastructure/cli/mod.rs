@@ -298,10 +298,10 @@ pub(crate) fn validate_repair_profile_flags(args: &Args) -> Result<(), String> {
     Ok(())
 }
 
-/// `--fingerprint-gap`, `--fingerprint-diagnostics`, `--border-capture` and `--gap-listen` only
-/// apply when dumping a corpus; `--gap-listen` additionally rejects the run modes that cannot
-/// produce a patched WAV. Those flags exist only under the `calibration` feature, so that half is a
-/// no-op otherwise.
+/// `--fingerprint-gap`, `--fingerprint-diagnostics`, `--fingerprint-keep-path-shift`,
+/// `--border-capture` and `--gap-listen` only apply when dumping a corpus; `--gap-listen`
+/// additionally rejects the run modes that cannot produce a patched WAV. Those flags exist only
+/// under the `calibration` feature, so that half is a no-op otherwise.
 ///
 /// The two `--lag-envelope-*` flags are **not** in that set. They were, until the seam locks started
 /// reading the same two knobs on the production repair path — gating them on `--gap-fingerprints`
@@ -335,6 +335,9 @@ pub(crate) fn validate_fingerprint_flags(args: &Args) -> Result<(), String> {
         }
         if args.fingerprint_diagnostics {
             return Err("--fingerprint-diagnostics requires --gap-fingerprints DIR".into());
+        }
+        if args.fingerprint_keep_path_shift.is_some() {
+            return Err("--fingerprint-keep-path-shift requires --gap-fingerprints DIR".into());
         }
         if args.border_capture.is_some() {
             return Err("--border-capture requires --gap-fingerprints DIR".into());
@@ -836,6 +839,70 @@ mod cli_override_tests {
         ]);
         let err = validate_fingerprint_flags(&args).unwrap_err();
         assert!(err.contains("--gap-fingerprints"));
+    }
+
+    #[cfg(feature = "calibration")]
+    #[test]
+    fn fingerprint_keep_path_shift_without_dump_dir_is_rejected() {
+        use clap::Parser;
+
+        let args = Args::parse_from([
+            "clip-sync-repair",
+            "a.wav",
+            "b.wav",
+            "--fingerprint-keep-path-shift",
+        ]);
+        let err = validate_fingerprint_flags(&args).unwrap_err();
+        assert!(err.contains("--gap-fingerprints"));
+    }
+
+    #[cfg(feature = "calibration")]
+    #[test]
+    fn fingerprint_keep_path_shift_parses_bare_as_both_and_named_arms() {
+        use crate::application::gap_fingerprint::KeepPathShiftMode;
+        use clap::Parser;
+
+        let bare = Args::parse_from([
+            "clip-sync-repair",
+            "a.wav",
+            "b.wav",
+            "--gap-fingerprints",
+            "gap-files/out",
+            "--fingerprint-keep-path-shift",
+        ]);
+        validate_fingerprint_flags(&bare).expect("valid with dump dir");
+        assert_eq!(
+            bare.fingerprint_keep_path_shift.map(KeepPathShiftMode::from),
+            Some(KeepPathShiftMode::Both)
+        );
+
+        let pre = Args::parse_from([
+            "clip-sync-repair",
+            "a.wav",
+            "b.wav",
+            "--gap-fingerprints",
+            "gap-files/out",
+            "--fingerprint-keep-path-shift",
+            "pre",
+        ]);
+        assert_eq!(
+            pre.fingerprint_keep_path_shift.map(KeepPathShiftMode::from),
+            Some(KeepPathShiftMode::PreLock)
+        );
+
+        let mid = Args::parse_from([
+            "clip-sync-repair",
+            "a.wav",
+            "b.wav",
+            "--gap-fingerprints",
+            "gap-files/out",
+            "--fingerprint-keep-path-shift",
+            "mid",
+        ]);
+        assert_eq!(
+            mid.fingerprint_keep_path_shift.map(KeepPathShiftMode::from),
+            Some(KeepPathShiftMode::MidLag)
+        );
     }
 
     /// A window that rounds to fewer frames than the 100 ms envelope bin refuses on every shoulder

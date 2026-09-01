@@ -217,6 +217,7 @@ fn run_listen_with(
             border_capture: clip_sync_repair::application::gap_fingerprint::BorderCapture::Narrow,
             lag_envelope_window_secs:
                 clip_sync_repair::application::gap_fingerprint::DEFAULT_LAG_ENVELOPE_WINDOW_SECS,
+            keep_path_shift: clip_sync_repair::application::gap_fingerprint::KeepPathShiftMode::Off,
             crossfade_ms: CROSSFADE_MS,
         },
     )
@@ -250,6 +251,7 @@ fn try_run_listen(
             border_capture: clip_sync_repair::application::gap_fingerprint::BorderCapture::Narrow,
             lag_envelope_window_secs:
                 clip_sync_repair::application::gap_fingerprint::DEFAULT_LAG_ENVELOPE_WINDOW_SECS,
+            keep_path_shift: clip_sync_repair::application::gap_fingerprint::KeepPathShiftMode::Off,
             crossfade_ms: CROSSFADE_MS,
         },
     )

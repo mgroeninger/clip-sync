@@ -77,9 +77,32 @@ impl CorpusProbeRecipe {
             lag_envelope_window_secs: measured_lag.then_some(cfg.lag_envelope_window_secs),
             seam_window_secs: measured_seams.then_some(cfg.fill_seam_search_secs),
             border_standoff_secs: probe_border_standoff_secs(sample_rate),
+            keep_path_shift: keep_path_shift_mode_from_gaps(gaps),
         }
     }
 }
+
+fn keep_path_shift_mode_from_gaps(gaps: &[GapFingerprint]) -> Option<KeepPathShiftMode> {
+    let mut pre = false;
+    let mut mid = false;
+    for g in gaps {
+        if let Some(arms) = &g.keep_path_shift {
+            for a in arms {
+                match a.source {
+                    KeepPathShiftSource::PreLock => pre = true,
+                    KeepPathShiftSource::MidLag => mid = true,
+                }
+            }
+        }
+    }
+    match (pre, mid) {
+        (true, true) => Some(KeepPathShiftMode::Both),
+        (true, false) => Some(KeepPathShiftMode::PreLock),
+        (false, true) => Some(KeepPathShiftMode::MidLag),
+        (false, false) => None,
+    }
+}
+
 /// Structure-best placement of the A bracket `refined` on the B haystack, plus the seam there.
 /// Structure-dominant weights so the placement locks to the energy-best (mirrors the production
 /// "structure aligns, seam read there" story). `None` if the match degenerates.
@@ -317,10 +340,11 @@ mod tests {
                 recipe.border_capture,
                 recipe.lag_envelope_window_secs,
                 recipe.seam_window_secs,
+                recipe.keep_path_shift,
             ),
-            (None, None, None, None, None, None),
-            "a summary-only corpus has no lag_decision and no seams — reporting their windows would \
-             describe sweeps that never ran"
+            (None, None, None, None, None, None, None),
+            "a summary-only corpus has no lag_decision, no seams, and no keep_path_shift — reporting \
+             their windows would describe sweeps that never ran"
         );
 
         // The other direction — a corpus that DID sweep must report the windows — is asserted where a

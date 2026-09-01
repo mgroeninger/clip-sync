@@ -338,6 +338,7 @@ pub fn build_gap_fingerprint(
         wide_envelope: None,
         splice_dualfit: None,
         outcome: None,
+        keep_path_shift: None,
         equivalence_diagnostic: None,
         equivalence_production: None,
     }

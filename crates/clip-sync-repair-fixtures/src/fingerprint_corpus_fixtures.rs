@@ -44,7 +44,45 @@ fn write_noise(buf: &mut [f32], start: usize, end: usize, seed: u64, amp: f32) {
 /// (`characterize_gaps_from_decode`) — the live `--gap-fingerprints` path. `diagnostics` toggles the X-set
 /// (`seam_probe`/`wide_envelope`/`b_levels`/`lag`).
 pub fn synth_ab_from_decode_corpus(diagnostics: bool) -> GapCorpus {
-    let (a_pcm, b, report, request) = synth_ab_inputs();
+    synth_ab_from_decode_corpus_with_dump(DumpOptions {
+        diagnostics,
+        ..DumpOptions::default()
+    })
+}
+
+/// Same synthetic pair as [`synth_ab_from_decode_corpus`], with a caller-chosen [`DumpOptions`].
+pub fn synth_ab_from_decode_corpus_with_dump(dump: DumpOptions) -> GapCorpus {
+    characterize_synth_ab(
+        dump,
+        SynthAbOptions {
+            b_delay_secs: 0.0,
+            keep_path_shift_fixture: false,
+        },
+    )
+}
+
+/// Like [`synth_ab_from_decode_corpus_with_dump`], but B is delayed so its content lands later in
+/// the file. The gap report still maps A onto the **unshifted** B times — the keep path searches
+/// the wrong map until a positive shift registers it.
+///
+/// Uses keep-path-shift fixture knobs: `max_anchor_bracket_secs` covers the 1.5 s throat, and
+/// `gap_signature_context_secs` is long enough that the 1 s `lag_decision` pre window fits in the
+/// extract. Gate search stays ±20 ms so a 100 ms delay is a miss until the map shifts.
+pub fn synth_ab_from_decode_corpus_with_dump_and_b_delay(
+    dump: DumpOptions,
+    b_delay_secs: f64,
+) -> GapCorpus {
+    characterize_synth_ab(
+        dump,
+        SynthAbOptions {
+            b_delay_secs,
+            keep_path_shift_fixture: true,
+        },
+    )
+}
+
+fn characterize_synth_ab(dump: DumpOptions, opts: SynthAbOptions) -> GapCorpus {
+    let (a_pcm, b, report, request) = synth_ab_inputs(opts);
     characterize_gaps_from_decode(
         &report,
         &CharacterizeAbPcm {
@@ -55,21 +93,29 @@ pub fn synth_ab_from_decode_corpus(diagnostics: bool) -> GapCorpus {
         },
         &request,
         &[],
-        DumpOptions {
-            diagnostics,
-            ..DumpOptions::default()
-        },
+        dump,
         &NoOpProgressReporter,
     )
 }
 
+struct SynthAbOptions {
+    b_delay_secs: f64,
+    /// Throat-feasible `max_anchor_bracket_secs` and a lead-in long enough for the 1 s pre lag.
+    keep_path_shift_fixture: bool,
+}
+
 /// The synthetic A/B pair + report/request the two `synth_ab_*` helpers share: same-master speech bursts,
-/// decorrelated collars, B carrying fill across the gap.
-fn synth_ab_inputs() -> (MultiChannelPcm, Vec<f32>, GapReport, PatchAudioRequest) {
+/// decorrelated collars, B carrying fill across the gap. `b_delay_secs` > 0 copies B later in the
+/// file (`B_new[i] = B_old[i - delay]`) so a positive `frac_lag_ms` is the register that finds it.
+fn synth_ab_inputs(opts: SynthAbOptions) -> (MultiChannelPcm, Vec<f32>, GapReport, PatchAudioRequest) {
     let rate = 48_000u32;
     let ch = 1usize;
     let secs = |s: f64| (s * f64::from(rate)) as usize;
-    let total = secs(5.0);
+    let total = secs(if opts.keep_path_shift_fixture {
+        8.0
+    } else {
+        5.0
+    });
     let (sp1, n1, gap, n2, sp2) = (
         (secs(0.50), secs(0.85)),
         (secs(0.85), secs(1.85)),
@@ -79,15 +125,34 @@ fn synth_ab_inputs() -> (MultiChannelPcm, Vec<f32>, GapReport, PatchAudioRequest
     );
     let mut a = vec![0f32; total];
     let mut b = vec![0f32; total];
-    write_speech(&mut a, sp1.0, sp1.1, 330.0, 0.063);
-    write_speech(&mut b, sp1.0, sp1.1, 330.0, 0.063);
-    write_speech(&mut a, sp2.0, sp2.1, 440.0, 0.079);
-    write_speech(&mut b, sp2.0, sp2.1, 440.0, 0.079);
-    write_noise(&mut a, n1.0, n1.1, 1, 0.0056);
-    write_noise(&mut b, n1.0, n1.1, 11, 0.0056);
-    write_noise(&mut a, n2.0, n2.1, 3, 0.0056);
-    write_noise(&mut b, n2.0, n2.1, 13, 0.0056);
-    write_noise(&mut b, gap.0, gap.1, 5, 0.0056);
+    if opts.keep_path_shift_fixture {
+        // Live unique shoulders so structure and `lag_decision` can lock; B carries a donor through
+        // the gap. Quiet decorrelated collars walk the 1 s lag off to empty.
+        write_speech(&mut a, sp1.0, n1.1, 330.0, 0.063);
+        write_speech(&mut b, sp1.0, n1.1, 330.0, 0.063);
+        write_speech(&mut a, n2.0, sp2.1, 440.0, 0.079);
+        write_speech(&mut b, n2.0, sp2.1, 440.0, 0.079);
+        write_speech(&mut b, gap.0, gap.1, 370.0, 0.063);
+        a[gap.0..gap.1].fill(0.0);
+    } else {
+        write_speech(&mut a, sp1.0, sp1.1, 330.0, 0.063);
+        write_speech(&mut b, sp1.0, sp1.1, 330.0, 0.063);
+        write_speech(&mut a, sp2.0, sp2.1, 440.0, 0.079);
+        write_speech(&mut b, sp2.0, sp2.1, 440.0, 0.079);
+        write_noise(&mut a, n1.0, n1.1, 1, 0.0056);
+        write_noise(&mut b, n1.0, n1.1, 11, 0.0056);
+        write_noise(&mut a, n2.0, n2.1, 3, 0.0056);
+        write_noise(&mut b, n2.0, n2.1, 13, 0.0056);
+        write_noise(&mut b, gap.0, gap.1, 5, 0.0056);
+    }
+    if opts.b_delay_secs > 0.0 {
+        let delay = secs(opts.b_delay_secs);
+        let mut delayed = vec![0f32; total];
+        if delay < total {
+            delayed[delay..].copy_from_slice(&b[..total - delay]);
+        }
+        b = delayed;
+    }
 
     let a_pcm = MultiChannelPcm {
         sample_rate: rate,
@@ -131,18 +196,29 @@ fn synth_ab_inputs() -> (MultiChannelPcm, Vec<f32>, GapReport, PatchAudioRequest
         audio_timeline_skew: None,
         program_levels: None,
     };
+    let (gap_signature_context_secs, max_anchor_bracket_secs, gap_signature_mode) =
+        if opts.keep_path_shift_fixture {
+            (2.0, 2.0, GapSignatureMode::Bool)
+        } else {
+            (1.5, 0.2, GapSignatureMode::Energy)
+        };
     let repair = RepairConfig {
-        gap_signature_mode: GapSignatureMode::Energy,
-        gap_signature_context_secs: 1.5,
-        // The 5 s synthetic fixture is far smaller than production defaults assume; keep every search radius
-        // inside the fixture timeline so the unified fit search stays cheap.
-        fill_border_search_secs: 0.05,
+        gap_signature_mode,
+        gap_signature_context_secs,
+        // The 5 s synthetic fixture is far smaller than production defaults assume; keep every search
+        // radius inside the fixture timeline so the unified fit search stays cheap. The keep-path-shift
+        // fixture uses ±20 ms so a 100 ms B delay is outside the unshifted overlay.
+        fill_border_search_secs: if opts.keep_path_shift_fixture {
+            0.02
+        } else {
+            0.05
+        },
         fill_align_margin_secs: 0.02,
         fill_length_slack_secs: 0.1,
         fill_extract_tail_slack_secs: 0.1,
         fill_seam_search_secs: 0.05,
         border_standoff_secs: 0.0,
-        max_anchor_bracket_secs: 0.2,
+        max_anchor_bracket_secs,
         max_anchors_per_side: 2,
         ..RepairConfig::default()
     };

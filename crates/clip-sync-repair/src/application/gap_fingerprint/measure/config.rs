@@ -1,6 +1,6 @@
 //! `config` slice of the gap_fingerprint measure folder split.
 
-use crate::application::gap_fingerprint::schema::BorderCapture;
+use crate::application::gap_fingerprint::schema::{BorderCapture, KeepPathShiftMode};
 
 /// Default coarse envelope half-width (ms) that recenters the ±`lag_max_lag_ms` fine sweep.
 /// `0` disables recenter. Probe-only — not Apply's `max_lag_blocks`.
@@ -12,6 +12,7 @@ pub const DEFAULT_LAG_ENVELOPE_MAX_LAG_MS: u32 = 2000;
 /// § *Fill placement* — *Envelope width knobs move only the rescue path*), and it is why the value
 /// is recipe-stamped: a dump must always say which window produced its `lag_decision`.
 pub const DEFAULT_LAG_ENVELOPE_WINDOW_SECS: f64 = super::pcm::WIDE_ENV_WINDOW_SECS;
+
 /// The probe-only knobs a `--gap-fingerprints` dump carries beyond the production patch request.
 ///
 /// Bundled rather than threaded as separate parameters so adding the next one does not re-touch
@@ -28,6 +29,9 @@ pub struct DumpOptions {
     pub border_capture: BorderCapture,
     /// Coarse envelope **window** (seconds) for the `lag_decision` recenter. Rescue path only.
     pub lag_envelope_window_secs: f64,
+    /// Record-only keep-path B-map shift. `Off` leaves `keep_path_shift` omitted and does not
+    /// touch the unshifted overlay.
+    pub keep_path_shift: KeepPathShiftMode,
 }
 impl Default for DumpOptions {
     fn default() -> Self {
@@ -36,6 +40,7 @@ impl Default for DumpOptions {
             lag_envelope_max_lag_ms: DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
             border_capture: BorderCapture::Narrow,
             lag_envelope_window_secs: DEFAULT_LAG_ENVELOPE_WINDOW_SECS,
+            keep_path_shift: KeepPathShiftMode::Off,
         }
     }
 }
