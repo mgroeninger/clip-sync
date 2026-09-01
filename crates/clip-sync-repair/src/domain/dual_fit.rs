@@ -58,7 +58,7 @@ pub struct DualFitResult {
     pub trim_frames: i64,
     /// `post_seam_r >= post_seam_global_r + step_real_margin`: a real length edit (interior-trim
     /// bridge extract) vs a rigid single-lag map (trim-0 extract off the pre lock,
-    /// docs/dev/TEMP-seam-lock-rigid-fill-plan.md §3.1). No longer gates admission — surfaced so a
+    /// docs/dev/archive/TEMP-seam-lock-rigid-fill-plan.md §3.1). No longer gates admission — surfaced so a
     /// caller can distinguish the two `Some` shapes without re-deriving the comparison from
     /// `post_seam_r`/`post_seam_global_r` itself.
     pub step_real: bool,
@@ -165,7 +165,7 @@ pub fn dual_fit_from_locks(
 /// measurable, the aligned donor bridges (continuous), and it is not program-quiet. Whether the
 /// step is real (`post_own − post@pre ≥ margin`) no longer gates admission — it selects the
 /// extract: a real step gets the interior-trim search over the bridge (a length edit); a rigid
-/// single-lag map gets a trim-0 fill read straight off the pre lock (docs/dev/TEMP-seam-lock-rigid-fill-plan.md
+/// single-lag map gets a trim-0 fill read straight off the pre lock (docs/dev/archive/TEMP-seam-lock-rigid-fill-plan.md
 /// §3.1). On `Some`, the caller re-validates `fill` with the production gate before splicing.
 pub fn try_dual_fit(
     templates: &SeamLockTemplates,
@@ -415,7 +415,7 @@ mod tests {
         assert!(!l.clamped(), "seams are well inside B: {l:?}");
     }
 
-    /// Seam-lock rigid fill (docs/dev/TEMP-seam-lock-rigid-fill-plan.md §3.1, §4 Phase 1). A's post
+    /// Seam-lock rigid fill (docs/dev/archive/TEMP-seam-lock-rigid-fill-plan.md §3.1, §4 Phase 1). A's post
     /// border sits at the NOMINAL gap end (no step): a single rigid map already explains both seams,
     /// so `step_real` is false. Before this Change `try_dual_fit` declined here; now it assembles a
     /// trim-0 fill read straight off the pre lock instead of running the interior-trim search a real

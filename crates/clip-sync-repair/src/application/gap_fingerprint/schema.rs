@@ -957,7 +957,7 @@ pub struct DualFitRescueInput<'a> {
 /// 5. the **nominal donor is not program-quiet**.
 ///
 /// Does **not** require the step to be real (dropped 2026-09-01,
-/// docs/dev/TEMP-seam-lock-rigid-fill-plan.md §3.5): `try_dual_fit` assembles a trim-0 fill on a
+/// docs/dev/archive/TEMP-seam-lock-rigid-fill-plan.md §3.5): `try_dual_fit` assembles a trim-0 fill on a
 /// rigid map exactly as it does an interior-trim fill on a real step, so `step_real` is a report
 /// axis on the result, not an admission gate.
 ///

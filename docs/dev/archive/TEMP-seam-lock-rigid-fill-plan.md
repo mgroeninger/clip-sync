@@ -1,25 +1,28 @@
 # TEMP — Seam-lock rigid fill (constant-shift G6 arm)
 
-**Status:** Change plan, 2026-09-01. **Startable.** One deliverable: after a scored keep-path
+**Status:** archived 2026-09-01. **Shipped.** One deliverable: after a scored keep-path
 skip, emit a **trim-0 fill sitting on the 250 ms seam locks** when those locks already lie a gap
-apart. Same fall-through as dual-fit; not a new search.
+apart. Same fall-through as dual-fit; not a new search. All § 6 checklist items done, § 7 exit
+criteria met (6/6 Phase 0 gaps ear-checked clean, `--no-dual-fit` identity confirmed on the
+production set). Verdict: [settled.md](../settled.md) § E. Remainder that still skip stays open
+in [BACKLOG.md](../../../BACKLOG.md) § *Fill placement*.
 
-**Tracked as:** [BACKLOG.md](../../BACKLOG.md) § *Fill placement* → *95 skips at a rigid
+**Tracked as:** [BACKLOG.md](../../../BACKLOG.md) § *Fill placement* → *95 skips at a rigid
 shoulder offset*.
 
 **Companions:** findings
-[TEMP-rigid-shoulder-offset-skips-2026-08-31.md](archive/TEMP-rigid-shoulder-offset-skips-2026-08-31.md)
+[TEMP-rigid-shoulder-offset-skips-2026-08-31.md](TEMP-rigid-shoulder-offset-skips-2026-08-31.md)
 (Q2 null: register-before-sweep does not convert); dual-fit wire
-[seam-scoring.md](../seam-scoring.md) § 6; cell table
-[gap-vocabulary.md](gap-vocabulary.md) § *Cell → action*; G6 operator
-[gap-fill-modes.md](../gap-fill-modes.md) § Dual-fit rescue. Dual-fit's construction
-[archive/TEMP-seam-splice-dualfit-plan.md](archive/TEMP-seam-splice-dualfit-plan.md) § 0
+[seam-scoring.md](../../seam-scoring.md) § 6; cell table
+[gap-vocabulary.md](../gap-vocabulary.md) § *Cell → action*; G6 operator
+[gap-fill-modes.md](../../gap-fill-modes.md) § Dual-fit rescue. Dual-fit's construction
+[TEMP-seam-splice-dualfit-plan.md](TEMP-seam-splice-dualfit-plan.md) § 0
 (silence has no landmark → encoder changes **spacing** → independent locks + length edit).
 W5 reserved the constant-shift remainder for keep path
-[archive/TEMP-w5-timing-offset-rescue-plan.md](archive/TEMP-w5-timing-offset-rescue-plan.md)
+[TEMP-w5-timing-offset-rescue-plan.md](TEMP-w5-timing-offset-rescue-plan.md)
 (haystack was supposed to own it; it does not). Opposite G6 error (false `step_real` from a
 quiet 250 ms post, 8/g4):
-[TEMP-dual-fit-post-window-ladder-plan.md](TEMP-dual-fit-post-window-ladder-plan.md)
+[../TEMP-dual-fit-post-window-ladder-plan.md](../TEMP-dual-fit-post-window-ladder-plan.md)
 (dump only; not this Change).
 
 **Media hygiene:** pair index + gap index only. `gap-files/` is gitignored; numbers below
@@ -61,7 +64,7 @@ Keep-path Pearson at the unified-search start is 0.02–0.18 on the five remaind
 gaps are 0.91–1.00, and `post@pre` is within 0.15 of `post` own (`trim` 0.0–0.2 ms). The
 joins exist and are already `G` apart.
 
-Q2 ([TEMP-rigid-shoulder-offset-skips-2026-08-31.md](archive/TEMP-rigid-shoulder-offset-skips-2026-08-31.md)
+Q2 ([TEMP-rigid-shoulder-offset-skips-2026-08-31.md](TEMP-rigid-shoulder-offset-skips-2026-08-31.md)
 Result 6) slid keep-path's extract by that lock lag and still `waveform_floor`. Sliding
 the structure search does not sit it on those joins.
 
@@ -147,7 +150,7 @@ Same visit, two kinds:
 
 `dual_fit_used` stays "this gap left keep path via the G6 visit." The new bool (name
 locked at implement: `dual_fit_step_real` or `seam_lock_rigid` — pick one, populate a
-golden, follow [json-output.md](../json-output.md) § *Revision procedure*) is the cell
+golden, follow [json-output.md](../../json-output.md) § *Revision procedure*) is the cell
 split so analysis does not call trim-0 a silence-splice.
 
 **Do not** add a `GapRepairCell` in this Change. Skip-with-`--no-dual-fit` may still
@@ -193,13 +196,13 @@ fixtures stay `Some` with nonzero trim.
 ### Phase 2 — report stamp + CLI
 
 Thread `step_real` (or `trim_frames` plus a derived bool) onto the patched status / tags
-/ human line. JSON golden + [json-output.md](../json-output.md).
-[cli-output.md](../cli-output.md) dual-fit line grows the seam-lock spelling.
-[gap-fill-modes.md](../gap-fill-modes.md) G6 paragraph: two arms, one visit.
+/ human line. JSON golden + [json-output.md](../../json-output.md).
+[cli-output.md](../../cli-output.md) dual-fit line grows the seam-lock spelling.
+[gap-fill-modes.md](../../gap-fill-modes.md) G6 paragraph: two arms, one visit.
 
 ### Phase 3 — predictor + vocab
 
-`dual_fit_rescue_flag` as § 3.5. [gap-vocabulary.md](gap-vocabulary.md): Silence-splice
+`dual_fit_rescue_flag` as § 3.5. [gap-vocabulary.md](../gap-vocabulary.md): Silence-splice
 row stays "real step; length reconcile." Add one sentence that a G6 visit with
 `!step_real` is a **rigid seam-lock fill**, not that cell. Do not merge them.
 
@@ -245,10 +248,16 @@ Do not start this list until Phase 0 has named the convert set.
       still declines — `is_finite()` conjunct added directly, since the dropped `step_real`
       conjunct was the only thing catching it; caught before landing, see 2026-09-01 note.)
 - [x] `gap-vocabulary.md` Silence-splice row not redefined; rigid arm named beside it.
-- [ ] Tests in § 4 Phase 4, including `--no-dual-fit` identity. **Unit-level covered by the
-      existing suite (714 passed, 0 failed); synthetic constant-shift test and the media
-      `--patch-only` / ear-check runs not done this pass — media-dependent, follows Phase 0.**
-- [ ] Licensed `--patch-only` on the named set; ear the converts.
+- [x] Tests in § 4 Phase 4, including `--no-dual-fit` identity. Unit-level covered by the
+      existing suite. Synthetic constant-shift test added. Media `--patch-only` run on the
+      Phase 0 six (§ 9): all patch with `dual_fit_step_real == false`; 11/g9 and 22/g13 still
+      skip (`shoulders_abut` / `gate_pass` false, as § 2 predicted); the 83 pre-existing
+      dual-fit rescues stayed `dual_fit_step_real == true`. `--no-dual-fit` re-run on the same
+      set: `dual_fit_used` count 0 throughout, and each pair's `patched_count` drop equals
+      exactly its total dual-fit rescue count (real-step + rigid) — clean kill-switch for
+      both arms.
+- [x] Licensed `--patch-only` on the named set; ear the converts. § 9 ear-check: 6/6 Phase 0
+      gaps pass (1/1 resolved by waveform check after an initial casual-listen caveat).
 
 ---
 
@@ -260,11 +269,17 @@ Do not start this list until Phase 0 has named the convert set.
 - 11/g9, 22/g13 still skip. The 83 still length-edit.
 - `--no-dual-fit` matches today's skip set for these gaps.
 - Ear on the convert set. Fail → do not ship; name the miss (residual, false lock, join).
-- This note archives with a [settled.md](settled.md) row that G6's `!step_real` arm is
+- This note archives with a [settled.md](../settled.md) row that G6's `!step_real` arm is
   the constant-shift fill, and the BACKLOG "95 skips / rigid offset" **row is rewritten
   to the remainder that still skip** (11/g9, 22/g13, extras that failed ear) — not
   deleted until those are named closed. Do not file a class-wide refute of map-lag;
   Q2 already closed that candidate.
+
+**Exit confirmed 2026-09-01.** All five criteria above met: Phase 0 named six (§ 9, one
+extra beyond § 2's five); the six patch on media `--patch-only` with `dual_fit_used` +
+`dual_fit_step_real == false`; 11/g9 and 22/g13 still skip and the 83 pre-existing rescues
+stayed length-edit; `--no-dual-fit` re-run shows `dual_fit_used` count 0 with the expected
+`patched_count` delta on every named pair; ear on all six passes (§ 9). Archived.
 
 ---
 

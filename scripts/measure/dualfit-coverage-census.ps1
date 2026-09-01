@@ -19,7 +19,7 @@
 #   5. donor_interior_aligned.continuous            (aligned donor bridges the hole)
 #   6. donor_interior_nominal.silence_fraction < PROGRAM_QUIET_SILENCE_FRAC (0.5)
 # `-InclRigidFill` additionally reports the relaxed predicate from
-# docs/dev/TEMP-seam-lock-rigid-fill-plan.md, which drops leg 4 (step_real) and instead requires
+# docs/dev/archive/TEMP-seam-lock-rigid-fill-plan.md, which drops leg 4 (step_real) and instead requires
 # only legs 1-3 + 5-6 — i.e. "would a trim-0 rigid fill be assembled", not "would today's dual-fit".
 #
 # THE AXIS THIS SCRIPT USES FOR "keep-path's own disposition": `outcome.tier` ("patch" / "skip").
@@ -47,7 +47,7 @@
 # `listen.json` are always skipped.
 #
 # MEDIA HYGIENE: emit pair label + gap index only — never media paths or titles.
-# Docs: docs/dev/TEMP-seam-lock-rigid-fill-plan.md, docs/dev/TEMP-rigid-shoulder-offset-skips-2026-08-31.md.
+# Docs: docs/dev/archive/TEMP-seam-lock-rigid-fill-plan.md, docs/dev/archive/TEMP-rigid-shoulder-offset-skips-2026-08-31.md.
 
 [CmdletBinding()]
 param(

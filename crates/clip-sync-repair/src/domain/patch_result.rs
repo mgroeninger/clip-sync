@@ -486,7 +486,7 @@ pub enum GapPatchStatus {
         dual_fit_used: bool,
         /// When `dual_fit_used`: `true` = a real length edit (interior-trim bridge extract), `false`
         /// = a rigid single-lag map (trim-0 extract off the pre lock,
-        /// docs/dev/TEMP-seam-lock-rigid-fill-plan.md §3.1). `None` on every non-dual-fit path, and
+        /// docs/dev/archive/TEMP-seam-lock-rigid-fill-plan.md §3.1). `None` on every non-dual-fit path, and
         /// on runs predating this field — not recoverable from anything else on the record.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         dual_fit_step_real: Option<bool>,

@@ -65,7 +65,6 @@ is untracked — that is a bug in the catalog, not a state a doc may sit in.
 | Draft | What it is | Tracked as |
 |-------|-----------|-----------|
 | [TEMP-post-splice-introduced-silence-collapse-plan.md](TEMP-post-splice-introduced-silence-collapse-plan.md) | After splice, fill `visit_shoulders_abut`: concat-confirm → **warn by default**; `--collapse-introduced-silence` drains A PCM and the current mux takes that buffer | [BACKLOG.md](../../BACKLOG.md) § *Fill placement* |
-| [TEMP-seam-lock-rigid-fill-plan.md](TEMP-seam-lock-rigid-fill-plan.md) | After keep-path skip, G6 visit emits a trim-0 fill when 250 ms locks already lie `G` apart (`!step_real`). Same re-gate; stamp distinct from length-edit. Do not search again | [BACKLOG.md](../../BACKLOG.md) § *Fill placement* → *95 skips at a rigid shoulder offset* |
 | [TEMP-dual-fit-post-window-ladder-plan.md](TEMP-dual-fit-post-window-ladder-plan.md) | Fingerprint probe: re-lock dual-fit **post** at 250–1000 ms, same start, envelope off. Dump only; no production grow | [BACKLOG.md](../../BACKLOG.md) § *Fill placement* → *Dual-fit post window ladder* |
 | [TEMP-flac-output-plan.md](TEMP-flac-output-plan.md) | In-process `--flac` lossless output, peer of `--wav`. Motivated by the RIFF `u32` data-chunk limit | [BACKLOG.md](../../BACKLOG.md) § *Repair R6* |
 | [TEMP-nway-donor-alignment-plan.md](TEMP-nway-donor-alignment-plan.md) | Repair one damaged copy from **multiple** donors with sparse non-overlapping damage | [settled.md](settled.md) § C — latched, no corpus |
@@ -76,8 +75,9 @@ Measurement records. A findings note lives here only while it has an open questi
 question is promoted to [BACKLOG.md](../../BACKLOG.md) or closed, it archives.
 
 None currently. [TEMP-rigid-shoulder-offset-skips-2026-08-31.md](archive/TEMP-rigid-shoulder-offset-skips-2026-08-31.md)
-archived 2026-09-01 (Q1–Q3 named; Q2 successor is
-[TEMP-seam-lock-rigid-fill-plan.md](TEMP-seam-lock-rigid-fill-plan.md)).
+archived 2026-09-01 (Q1–Q3 named; Q2 successor
+[TEMP-seam-lock-rigid-fill-plan.md](archive/TEMP-seam-lock-rigid-fill-plan.md) shipped and
+archived the same day).
 
 Earlier notes (the two flat-3000 runs, the collapsed-bridge census, the pair-50 outcomes) went to
 [archive/](archive/) on 2026-08-24 under exactly that rule, and their surviving questions are

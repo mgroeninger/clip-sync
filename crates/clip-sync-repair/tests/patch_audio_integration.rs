@@ -1809,7 +1809,7 @@ fn patch_audio_dual_fit_rescues_inverted_post_border() {
     );
 }
 
-/// seam-lock rigid-fill (docs/dev/TEMP-seam-lock-rigid-fill-plan.md § 3.1) coverage: both shoulders are a
+/// seam-lock rigid-fill (docs/dev/archive/TEMP-seam-lock-rigid-fill-plan.md § 3.1) coverage: both shoulders are a
 /// *constant*-shift copy of B relative to A (same lag pre and post — no step), placed far enough outside
 /// the bracket search's radius that keep-path finds nothing at lag 0, but well inside dual-fit's fixed
 /// per-shoulder search. Both shoulder locks land on the same lag, so the rescue is rigid: `dual_fit_used:

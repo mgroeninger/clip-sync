@@ -9,7 +9,7 @@ ladder*.
 
 **Companions:** G6 [seam-scoring.md](../seam-scoring.md) § 6; dump schema
 [gap-fingerprint.md](gap-fingerprint.md); rigid-fill (the **other** G6 error, `!step_real`)
-[TEMP-seam-lock-rigid-fill-plan.md](TEMP-seam-lock-rigid-fill-plan.md); 1 s vs 250 ms
+[TEMP-seam-lock-rigid-fill-plan.md](archive/TEMP-seam-lock-rigid-fill-plan.md); 1 s vs 250 ms
 disagreement on 8/g4 in [settled.md](settled.md) § B (`[0.35, 0.5)` band). Dual-fit's
 construction [archive/TEMP-seam-splice-dualfit-plan.md](archive/TEMP-seam-splice-dualfit-plan.md)
 § 0.
@@ -97,7 +97,7 @@ go, a successor Change owns lock **and** gate; this plan owns the curve.
 |---|---|
 | 25/g11 | Weak **pre** (0.410), not post. Growing post does not address it |
 | 11/g9 | Abut / collapse plan |
-| The five rigid remainder | `!step_real` already; [TEMP-seam-lock-rigid-fill-plan.md](TEMP-seam-lock-rigid-fill-plan.md) |
+| The five rigid remainder | `!step_real` already; [TEMP-seam-lock-rigid-fill-plan.md](archive/TEMP-seam-lock-rigid-fill-plan.md) |
 
 **Safety set:** production dual-fit length-edits (the 83). At the `w` that fixes 8/g4,
 `post_lag(w)` must stay on `post_lag(250)` (see §5). If it does not, do not grow in

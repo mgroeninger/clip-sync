@@ -58,7 +58,7 @@ pub(in crate::application::patch_audio) enum RegionPatchOutcome {
         anchor_bracket_move_frames: usize,
         dual_fit_used: bool,
         /// `Some(step_real)` when `dual_fit_used`: `true` = real length edit (interior-trim bridge),
-        /// `false` = rigid single-lag map (trim-0 extract, docs/dev/TEMP-seam-lock-rigid-fill-plan.md
+        /// `false` = rigid single-lag map (trim-0 extract, docs/dev/archive/TEMP-seam-lock-rigid-fill-plan.md
         /// §3.1). `None` on every non-dual-fit path (`dual_fit_used == false`).
         dual_fit_step_real: Option<bool>,
         /// The gain actually applied to this fill — whole-program × hole-local. Carried to the

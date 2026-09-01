@@ -1328,7 +1328,7 @@ mod tests {
             // A rigid (trim-0) dual-fit rescue: the two shoulder locks agreed, so
             // `dual_fit_step_real: Some(false)` populates the field in the golden — the length-edit
             // gap above pins `dual_fit_used: false` / `dual_fit_step_real: None`; this pins the third
-            // state (docs/dev/TEMP-seam-lock-rigid-fill-plan.md § 3.4).
+            // state (docs/dev/archive/TEMP-seam-lock-rigid-fill-plan.md § 3.4).
             gap_patch_outcome(
                 160.0,
                 160.4,

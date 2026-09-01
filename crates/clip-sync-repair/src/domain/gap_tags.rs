@@ -311,7 +311,7 @@ pub struct GapTags {
     #[serde(default)]
     pub dual_fit_used: bool,
     /// When `dual_fit_used`: `true` = a real length edit (interior-trim bridge), `false` = a rigid
-    /// single-lag map (trim-0 extract, docs/dev/TEMP-seam-lock-rigid-fill-plan.md §3.1). `None` on
+    /// single-lag map (trim-0 extract, docs/dev/archive/TEMP-seam-lock-rigid-fill-plan.md §3.1). `None` on
     /// every non-dual-fit path.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dual_fit_step_real: Option<bool>,
