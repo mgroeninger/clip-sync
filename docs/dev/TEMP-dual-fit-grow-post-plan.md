@@ -1,8 +1,10 @@
 # TEMP — Dual-fit grow post (production)
 
-**Status:** Change plan, 2026-09-02. **Startable.** One deliverable: when the 250 ms post
-lock is uninformative, re-lock post at a longer same-start window, then assemble and
-stamp as today. Keep path and `fill_seam_search_secs` do not change. Do not grow pre.
+**Status:** Implemented and eared 2026-09-02 (Phase 0 + Phase 1 done, all three of 8/g4,
+20/g3, 22/g13 confirmed good by ear). **Phase 2 safety spot-check still open** — see §4.
+One deliverable: when the 250 ms post lock is uninformative, re-lock post at a longer
+same-start window, then assemble and stamp as today. Keep path and `fill_seam_search_secs`
+do not change. Do not grow pre.
 
 **Tracked as:** [BACKLOG.md](../../BACKLOG.md) § *Fill placement* → *Dual-fit grow post*.
 
@@ -198,10 +200,13 @@ true; grow still runs and stops at 500 ms; `!step_real`; extract `pre+G`. Second
 0.5` (including a rescued post) → no extra `seam_local_peak`. `--no-dual-fit` byte-identical.
 Feature docs as §3.4 (same commit as the code).
 
-### Phase 1 — ear
+### Phase 1 — ear (done, 2026-09-02)
 
 `--gap-listen` / `--patch-only` on 8/g4 (must keep the syllable). If 22/g13 patches, ear it.
 20/g3 optional (fill should not move).
+
+**Result: all three good.** 8/g4 — last syllable now included. 20/g3 — good patch (loud
+noise in silence, previously unheard). 22/g13 — converted from skip and patches clean.
 
 ### Phase 2 — safety spot-check
 
@@ -213,28 +218,27 @@ weak pre.
 
 ## 5. Acceptance
 
-- 8/g4 patched, `dual_fit_post_window_ms` 500, ear: no missing syllable, no new hole at the
-  end.
-- High-r dual-fit gaps unchanged (no grown window stamp).
-- 25/g11 not converted by this Change.
-- `--no-dual-fit` still byte-identical to today.
-- G6 operator/wire docs describe the post-grow as current dual-fit behaviour (§3.4).
+- [x] 8/g4 patched, ear: no missing syllable, no new hole at the end (2026-09-02).
+- [ ] High-r dual-fit gaps unchanged (no grown window stamp) — Phase 2, not yet run.
+- [ ] 25/g11 not converted by this Change — Phase 2, not yet run.
+- [x] `--no-dual-fit` still byte-identical to today (implementation-time check).
+- [x] G6 operator/wire docs describe the post-grow as current dual-fit behaviour (§3.4).
 
 ---
 
 ## 6. Checklist (implement)
 
-- [ ] Admit on locks in hand (`post_r < 0.5`); do not replace 250 ms with envelope-off.
-- [ ] Grow before `dual_fit_from_locks` `gate_pass` reject; recompute `b_post_seam` / bridge / `gate_pass`; no-stop keeps original locks.
-- [ ] Grown A post = raw slice + `seam_local_peak`; do not relax `SeamLockTemplates`; thread into `post@pre` / `step_real` only.
-- [ ] Residual post window = chosen `w`, pre stays 250 (`measure_dual_fit_residual_verdict` splits).
-- [ ] Frozen `w` list; stop rule as §3.2.
-- [ ] `post@pre` at `b_pre_seam + G` with the chosen template (not nominal).
-- [ ] Extract still `step_real` on those scores; `!step_real` → `pre+G`.
-- [ ] Dual-fit classify still uses lock `r`.
-- [ ] Stamp `dual_fit_post_window_ms` when grown.
-- [ ] Quiet-then-speech fixture (`gate_pass` true at junk 250 ms, grow still runs); 22/g13-shaped fixture (`gate_pass` false, grow still runs); no-grow when locks in hand already `r ≥ 0.5` (rescued post included).
-- [ ] Ear 8/g4; ear 22/g13 if it patches.
-- [ ] Feature docs as §3.4: present-tense G6 process in `gap-fill-modes.md`,
+- [x] Admit on locks in hand (`post_r < 0.5`); do not replace 250 ms with envelope-off.
+- [x] Grow before `dual_fit_from_locks` `gate_pass` reject; recompute `b_post_seam` / bridge / `gate_pass`; no-stop keeps original locks.
+- [x] Grown A post = raw slice + `seam_local_peak`; do not relax `SeamLockTemplates`; thread into `post@pre` / `step_real` only.
+- [x] Residual post window = chosen `w`, pre stays 250 (`measure_dual_fit_residual_verdict` splits).
+- [x] Frozen `w` list; stop rule as §3.2.
+- [x] `post@pre` at `b_pre_seam + G` with the chosen template (not nominal).
+- [x] Extract still `step_real` on those scores; `!step_real` → `pre+G`.
+- [x] Dual-fit classify still uses lock `r`.
+- [x] Stamp `dual_fit_post_window_ms` when grown.
+- [x] Quiet-then-speech fixture (`gate_pass` true at junk 250 ms, grow still runs); 22/g13-shaped fixture (`gate_pass` false, grow still runs); no-grow when locks in hand already `r ≥ 0.5` (rescued post included).
+- [x] Ear 8/g4; ear 22/g13 if it patches — both good, 20/g3 also eared and good (2026-09-02).
+- [x] Feature docs as §3.4: present-tense G6 process in `gap-fill-modes.md`,
       `seam-scoring.md` § 6, `gap-repair-guide.md` W7, `cli-output.md`; field in
       `json-output.md`. No TEMP narrative, no pair indices.
