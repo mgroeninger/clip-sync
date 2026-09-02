@@ -403,7 +403,7 @@ pub(in crate::application::gap_fingerprint::measure) fn splice_dualfit_at(
 }
 
 /// Fixed ladder of post-seam window widths (ms) probed by [`post_window_ladder_at`]
-/// (`docs/dev/TEMP-dual-fit-post-window-ladder-plan.md` §3.1). Frozen — do not add, remove, or
+/// (`docs/dev/archive/TEMP-dual-fit-post-window-ladder-plan.md` §3.1). Frozen — do not add, remove, or
 /// reorder without updating the plan and any consumer that assumes this exact set/order.
 pub(in crate::application::gap_fingerprint::measure) const POST_WINDOW_LADDER_MS: [u32; 6] =
     [250, 375, 500, 625, 750, 1000];
@@ -420,7 +420,7 @@ pub(in crate::application::gap_fingerprint::measure) struct PostWindowLadderInpu
 }
 
 /// Re-lock the **post** seam at a fixed ladder of window widths, all starting at the refined gap end,
-/// envelope off, ±[`SEAM_LOCAL_SEARCH_MS`] (`docs/dev/TEMP-dual-fit-post-window-ladder-plan.md`).
+/// envelope off, ±[`SEAM_LOCAL_SEARCH_MS`] (`docs/dev/archive/TEMP-dual-fit-post-window-ladder-plan.md`).
 ///
 /// The pre collar is built from `cfg.fill_seam_search_secs` (production's actual configured seam
 /// window) via [`nominal_first_seam_locks`] with `EnvelopeSearch::off()`. Every rung, including the
@@ -883,7 +883,7 @@ mod tests {
         );
     }
 
-    /// §3.3 of `docs/dev/TEMP-dual-fit-post-window-ladder-plan.md`: the ladder's 250 ms rung must
+    /// §3.3 of `docs/dev/archive/TEMP-dual-fit-post-window-ladder-plan.md`: the ladder's 250 ms rung must
     /// reproduce production's post lock exactly, not approximately — both call
     /// `nominal_first_seam_locks`/`seam_local_peak` with the envelope off, so on identical A/B content
     /// (trivial gate-pass, trim 0) the two readings must agree to floating-point precision.
@@ -959,7 +959,7 @@ mod tests {
     /// Quiet-then-speech post collar: the true content starts partway into the 250 ms collar, so a
     /// short window's peak can lock onto whatever quiet noise floor precedes it while a wider window
     /// spans enough real content to snap to the correct lag. Exercises the ladder's actual purpose —
-    /// this is the shape `docs/dev/TEMP-dual-fit-post-window-ladder-plan.md` exists to characterize.
+    /// this is the shape `docs/dev/archive/TEMP-dual-fit-post-window-ladder-plan.md` exists to characterize.
     #[test]
     fn post_window_ladder_wide_rung_snaps_where_the_250ms_rung_reads_quiet_noise() {
         const RATE: u32 = 48_000;

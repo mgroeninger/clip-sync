@@ -22,7 +22,7 @@ W5 reserved the constant-shift remainder for keep path
 [TEMP-w5-timing-offset-rescue-plan.md](TEMP-w5-timing-offset-rescue-plan.md)
 (haystack was supposed to own it; it does not). Opposite G6 error (false `step_real` from a
 quiet 250 ms post, 8/g4):
-[../TEMP-dual-fit-post-window-ladder-plan.md](../TEMP-dual-fit-post-window-ladder-plan.md)
+[TEMP-dual-fit-post-window-ladder-plan.md](TEMP-dual-fit-post-window-ladder-plan.md)
 (dump only; not this Change).
 
 **Media hygiene:** pair index + gap index only. `gap-files/` is gitignored; numbers below

@@ -62,7 +62,7 @@ pub struct Args {
     pub fingerprint_diagnostics: bool,
 
     /// Re-lock the post seam at a fixed window ladder (250/375/500/625/750/1000 ms), envelope off,
-    /// recorded per gap as `post_window_ladder` (`docs/dev/TEMP-dual-fit-post-window-ladder-plan.md`).
+    /// recorded per gap as `post_window_ladder` (`docs/dev/archive/TEMP-dual-fit-post-window-ladder-plan.md`).
     /// Independent of `--fingerprint-diagnostics`. Requires `--gap-fingerprints DIR`.
     #[cfg(feature = "calibration")]
     #[arg(long)]

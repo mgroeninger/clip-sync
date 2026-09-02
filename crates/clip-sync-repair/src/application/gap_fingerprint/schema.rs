@@ -638,7 +638,7 @@ pub struct GapFingerprint {
     /// length-reconciled fill (ledger C3/C7). Full tier, gate path.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub splice_dualfit: Option<SpliceDualfit>,
-    /// Post-seam window ladder (`docs/dev/TEMP-dual-fit-post-window-ladder-plan.md`) — same-start
+    /// Post-seam window ladder (`docs/dev/archive/TEMP-dual-fit-post-window-ladder-plan.md`) — same-start
     /// re-locks of the **post** seam at `{250, 375, 500, 625, 750, 1000}` ms, envelope off, ±600 ms.
     /// Sibling of `splice_dualfit`, not nested in it: `splice_dualfit` stays the 250 ms
     /// production-predictor (which may envelope-rescue); this is a fixed-geometry probe curve.
@@ -1496,7 +1496,7 @@ pub struct SpliceDualfit {
     pub seams_clamped: Option<bool>,
 }
 
-/// One rung of the post-window ladder probe (`docs/dev/TEMP-dual-fit-post-window-ladder-plan.md`
+/// One rung of the post-window ladder probe (`docs/dev/archive/TEMP-dual-fit-post-window-ladder-plan.md`
 /// §3.2) — a same-start re-lock of the **post** seam at `window_ms`, envelope off, raw
 /// `mono(refined_end .. refined_end + window_ms)` vs `B` around nominal `b_mapped_end` ±600 ms.
 /// Omitted (not recorded, not a fake `0`) when the window runs off A or the B search is OOB.

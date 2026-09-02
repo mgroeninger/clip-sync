@@ -65,7 +65,8 @@ is untracked — that is a bug in the catalog, not a state a doc may sit in.
 | Draft | What it is | Tracked as |
 |-------|-----------|-----------|
 | [TEMP-post-splice-introduced-silence-collapse-plan.md](TEMP-post-splice-introduced-silence-collapse-plan.md) | After splice, fill `visit_shoulders_abut`: concat-confirm → **warn by default**; `--collapse-introduced-silence` drains A PCM and the current mux takes that buffer | [BACKLOG.md](../../BACKLOG.md) § *Fill placement* |
-| [TEMP-dual-fit-post-window-ladder-plan.md](TEMP-dual-fit-post-window-ladder-plan.md) | Fingerprint probe: re-lock dual-fit **post** at 250–1000 ms, same start, envelope off. Dump only; no production grow | [BACKLOG.md](../../BACKLOG.md) § *Fill placement* → *Dual-fit post window ladder* |
+| [TEMP-dual-fit-grow-post-plan.md](TEMP-dual-fit-grow-post-plan.md) | Production: grow dual-fit **post** when 250 ms `r < 0.5`; stop on r and `Δpre`. Extract still `step_real`. Ear 8/g4 | [BACKLOG.md](../../BACKLOG.md) § *Fill placement* → *Dual-fit grow post* |
+| [TEMP-dual-fit-pre-window-ladder-plan.md](TEMP-dual-fit-pre-window-ladder-plan.md) | Fingerprint probe: re-lock dual-fit **pre** at 250–1000 ms, same end, envelope off. Dump only; 25/g11 may not snap | [BACKLOG.md](../../BACKLOG.md) § *Fill placement* → *Dual-fit pre window ladder* |
 | [TEMP-flac-output-plan.md](TEMP-flac-output-plan.md) | In-process `--flac` lossless output, peer of `--wav`. Motivated by the RIFF `u32` data-chunk limit | [BACKLOG.md](../../BACKLOG.md) § *Repair R6* |
 | [TEMP-nway-donor-alignment-plan.md](TEMP-nway-donor-alignment-plan.md) | Repair one damaged copy from **multiple** donors with sparse non-overlapping damage | [settled.md](settled.md) § C — latched, no corpus |
 

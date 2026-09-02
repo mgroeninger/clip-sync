@@ -29,7 +29,7 @@ pub struct DumpOptions {
     pub border_capture: BorderCapture,
     /// Coarse envelope **window** (seconds) for the `lag_decision` recenter. Rescue path only.
     pub lag_envelope_window_secs: f64,
-    /// `--fingerprint-post-window-ladder` (`docs/dev/TEMP-dual-fit-post-window-ladder-plan.md`).
+    /// `--fingerprint-post-window-ladder` (`docs/dev/archive/TEMP-dual-fit-post-window-ladder-plan.md`).
     /// Independent of `diagnostics` — the ladder is dump-only and does not follow the Tier-3 split.
     pub post_window_ladder: bool,
 }

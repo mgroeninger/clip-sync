@@ -193,7 +193,7 @@ pub struct RepairConfig {
     /// Off by default — `--gap-fingerprints` emits decision/repair (D/R) axes only unless enabled.
     #[serde(default)]
     pub fingerprint_diagnostics: bool,
-    /// Post-seam window-ladder probe (`docs/dev/TEMP-dual-fit-post-window-ladder-plan.md`) — fixed
+    /// Post-seam window-ladder probe (`docs/dev/archive/TEMP-dual-fit-post-window-ladder-plan.md`) — fixed
     /// widths `{250, 375, 500, 625, 750, 1000}` ms, envelope off, recorded per gap as
     /// `post_window_ladder`. Off by default; independent of `fingerprint_diagnostics`.
     #[serde(default)]

@@ -390,7 +390,7 @@ pub(in crate::application::gap_fingerprint::measure) fn compute_region_measureme
     };
     let splice = lag_decision.as_ref().and_then(splice_summary_from_lag);
 
-    // Post-seam window ladder (`docs/dev/TEMP-dual-fit-post-window-ladder-plan.md`) — independent of
+    // Post-seam window ladder (`docs/dev/archive/TEMP-dual-fit-post-window-ladder-plan.md`) — independent of
     // `include_diagnostics`, gated only on `--fingerprint-post-window-ladder`.
     let post_window_ladder_curve = if post_window_ladder {
         post_window_ladder_at(&PostWindowLadderInput {

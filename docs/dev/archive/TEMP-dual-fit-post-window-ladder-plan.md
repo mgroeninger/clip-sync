@@ -1,8 +1,7 @@
 # TEMP — Dual-fit post window ladder (fingerprint)
 
-**Status:** Change plan, 2026-09-01. **Startable.** One deliverable: a fingerprint probe that
-re-locks the **post** seam at several lengths, all starting at the refined end, and writes
-the curve. No production fill change.
+**Status:** Change plan, 2026-09-01. **Phase 2 done.** Probe shipped. Production grow and
+pre-collar dump are successor TEMPs, not this deliverable.
 
 **Tracked as:** [BACKLOG.md](../../BACKLOG.md) § *Fill placement* → *Dual-fit post window
 ladder*.
@@ -12,7 +11,8 @@ ladder*.
 [TEMP-seam-lock-rigid-fill-plan.md](archive/TEMP-seam-lock-rigid-fill-plan.md); 1 s vs 250 ms
 disagreement on 8/g4 in [settled.md](settled.md) § B (`[0.35, 0.5)` band). Dual-fit's
 construction [archive/TEMP-seam-splice-dualfit-plan.md](archive/TEMP-seam-splice-dualfit-plan.md)
-§ 0.
+§ 0. Successors: [TEMP-dual-fit-grow-post-plan.md](TEMP-dual-fit-grow-post-plan.md),
+[TEMP-dual-fit-pre-window-ladder-plan.md](TEMP-dual-fit-pre-window-ladder-plan.md).
 
 **Media hygiene:** pair index + gap index only. `gap-files/` is gitignored; numbers below
 are the durable record.
@@ -193,25 +193,81 @@ Tables, pair/gap only:
    columns as (1).
 4. **RMS vs r** — confirm whole-template RMS is not a stop rule on more than 8/g4.
 
-Write the tables into this doc (or a successor findings note) and a go / no-go for a
-production Change.
+**Dump:** `gap-files/2026-09-01-dual-fit-ladder-corpus` (51 pairs, 1073 gaps, 971 with all
+six rungs; 102 have no ladder — same as no `splice_dualfit`). Recipe
+`post_window_ladder_ms = [250, 375, 500, 625, 750, 1000]`.
 
-Go: 8/g4 snaps; the 83 stay (p95 `|lag_minus_w250_ms|` at the chosen `w` is seam-scale,
-not speech-offset-scale); 20/g3 / 22/g13 named as convert / still-dead / unknown.
+**Phase 1 identity vs `2026-08-29-complete-corpus`:** `splice_dualfit.post_seam_r` max
+|Δ| = 0 (n=971); `outcome.tier` 0/1049 disagree; `lag_decision` post `peak_r` max |Δ| = 0
+(n=998). Flag did not move non-ladder fields.
 
-No-go: the 83's lags move, or growing post creates more false `step_real` than it
-removes.
+**250 ms identity vs `splice_dualfit`:** `post_r` p95 |Δ| = 0. Envelope-off vs
+envelope-on outliers are pair 31 (g7–g11) and 11/g9 — expected (§3.3), not a probe bug.
+
+**Do not read dumped `step_real` / `post_global_r` as production's conjunct.** The probe
+scores `post_global_r` at **nominal** `b_mapped_end` (lag 0), not at `b_pre_250 + G`
+(plan §3.2). Smoking gun 8/g4 250 ms: ladder `post_global_r` = 0.152 vs
+`splice_dualfit.post_seam_global_r` = −0.070. 941/971 rungs disagree by >0.02. Dumped
+`step_real` stays true whenever the peak beats lag-0, including after 8/g4's lag has
+snapped to pre. Production `step_real` is `|lag_minus_pre_ms|` (and
+`splice_dualfit.post_seam_global_r` at 250 ms).
+
+#### 1. Named gaps
+
+| Gap | 250 ms | First `|Δpre|<10` ms and `post_r≥0.5` | Production-like step |
+|---|---|---|---|
+| 8/g4 | r 0.390 @ −213 ms, `Δpre` −286 ms (matches `trim_frames` −13738) | **500 ms** (lag already +75 / `Δpre` +1.8 at **375 ms**, r still 0.481) | false from 375 ms (`Δpre` 1.8 ms) |
+| 20/g3 | r 0.443, `Δpre` **0**, `trim` −1 | 375 ms (r only — lag was already pre) | already false (df Δ 0.080 < 0.15). Extra `!step_real` beyond the five remainder |
+| 22/g13 | r 0.271, `gate_pass` false, `Δpre` −7.9 ms | **1000 ms** (r 0.991; lag never moved) | already ~rigid; dead post until 1 s of program is in the template |
+| 25/g11 | post r 0.999, `Δpre` **+600 ms** | never (weak **pre**) | not this probe |
+
+Listen clips predicted 8/g4 exactly (250 ms −212.6 ms / 0.390 → 625 ms +75.4 / 0.873).
+
+#### 2. Length-edit safety set
+
+Fingerprint `skip ∧ dual_fit_rescue ∧ splice_dualfit step_real`: **105** (predictor, not
+the 83 production patches — rescue over-predicts re-gate; conjunct 4 is already dropped).
+Conservative: larger than 83.
+
+`|lag_minus_w250_ms|` on those 105:
+
+| `w` | p50 | p95 | max | `≥5` ms | `≥50` ms |
+|---|---:|---:|---:|---:|---:|
+| 500 | 0.00 | 0.02 | 288 | 2 | 1 |
+| 625 | 0.00 | **0.02** | 288 | 2 | 2 |
+| 1000 | 0.00 | 0.02 | 288 | 2 | 2 |
+
+The two movers at 625/1000: **8/g4** (+288 ms, the target) and **31/g9** (envelope-off
+post r 0.13, noise lag; `splice_dualfit` envelope-rescued 0.90 — not a production
+`dual_fit_at_nominal` lock).
+
+`|Δpre|<5` ms on this set: 48/105 at 250 ms, **49/105** at 375+. The one new agreement is
+8/g4. The other ~56 keep a real step at every `w` — growing post does not collapse genuine
+length edits.
+
+#### 3. Band (`gate_pass` and 250 ms post r in `[0.35, 0.5)`)
+
+Only **8/g4** and **20/g3**. (25/g11's band member was the pre shoulder.)
+
+#### 4. RMS
+
+argmax(RMS) = argmax(r) on 342/971. 8/g4 RMS stays ~−54 to −55 dBFS from 250–1000 ms while
+r goes 0.39 → 0.88. Not a stop rule.
+
+#### Go / no-go
+
+**Go** for a successor that grows the dual-fit **post** template when 250 ms is weak /
+`Δpre` is not seam-scale (8/g4). The 105 stay (p95 0.02 ms at 625). 20/g3 is already
+rigid (r climb is a gate window, not a lock). 22/g13 stays dead unless `w` reaches 1 s.
+
+**Not go** for "always 625 ms" as the first Change — inert on the 83, but 31/g9-class
+dead envelope-off posts would wander, and 22/g13 still needs 1 s. Re-gate is still
+untested (Phase 3 / ear on 8/g4).
 
 ### Phase 3 — not this plan
 
-If go: a **separate** Change. Candidates (pick from the tables, do not pre-commit):
-
-- Grow the dual-fit **post** template only when 250 ms r is weak / lag disagrees with pre.
-- Always use a longer post window (only if Phase 2 says the 83 are inert).
-- Refuse weak post (brake) and take `pre+G` (`!step_real` extract) — re-gate still uses
-  250 ms and may skip; that Change must say so.
-
-Ear 8/g4 (and any Phase 2 convert) on a patch run. Fingerprint cannot.
+Production grow-post: [TEMP-dual-fit-grow-post-plan.md](TEMP-dual-fit-grow-post-plan.md).
+Pre collar dump: [TEMP-dual-fit-pre-window-ladder-plan.md](TEMP-dual-fit-pre-window-ladder-plan.md).
 
 ---
 
@@ -227,11 +283,11 @@ Ear 8/g4 (and any Phase 2 convert) on a patch run. Fingerprint cannot.
 
 ## 6. Checklist (implement)
 
-- [ ] CLI `--fingerprint-post-window-ladder` requires `--gap-fingerprints`; reject otherwise.
-- [ ] `probe_recipe.post_window_ladder_ms` stamped only when the flag is on.
-- [ ] Schema field + serde skip when `None`; harness/analyzer ignore unknown-absent.
-- [ ] Envelope-off pre 250 + per-`w` `seam_local_peak` post; do not widen `SeamLockTemplates`.
-- [ ] 250 ms identity test vs `dual_fit_at_nominal`.
-- [ ] Fixture: post collar quiet ~300 ms then speech → 250 ms junk lag, ≥500 ms snaps.
-- [ ] Phase 1 complete-corpus run; non-ladder identity vs 08-29 dump.
-- [ ] Phase 2 tables + go / no-go.
+- [x] CLI `--fingerprint-post-window-ladder` requires `--gap-fingerprints`; reject otherwise.
+- [x] `probe_recipe.post_window_ladder_ms` stamped only when the flag is on.
+- [x] Schema field + serde skip when `None`; harness/analyzer ignore unknown-absent.
+- [x] Envelope-off pre 250 + per-`w` `seam_local_peak` post; do not widen `SeamLockTemplates`.
+- [x] 250 ms identity test vs `dual_fit_at_nominal`.
+- [x] Fixture: post collar quiet ~300 ms then speech → 250 ms junk lag, ≥500 ms snaps.
+- [x] Phase 1 complete-corpus run; non-ladder identity vs 08-29 dump.
+- [x] Phase 2 tables + go / no-go.
