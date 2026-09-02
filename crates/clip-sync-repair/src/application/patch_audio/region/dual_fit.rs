@@ -156,6 +156,7 @@ fn measure_dual_fit_residual_verdict(
     request: &PatchAudioRequest,
     df: &DualFitRepairInput<'_>,
     r: &crate::domain::dual_fit::DualFitResult,
+    grown_post_window_frames: Option<usize>,
 ) -> Option<policies::SeamResidualVerdict> {
     if !(request.measure_residual
         || request.residual_gate.is_active()
@@ -166,6 +167,12 @@ fn measure_dual_fit_residual_verdict(
     let nominal_delta = df.templates.b_mapped_start() as i64 - df.a_start_frame as i64;
     let max_lag_frames =
         crate::domain::residual_max_lag_frames(df.params.sample_rate, request.residual_lag_secs);
+    let window = df.params.seam_window_frames;
+    // Plan lock 2 (`docs/dev/TEMP-dual-fit-grow-post-plan.md` §3.2) grows the residual **window** to
+    // match the locked template, not the floor-search **stride**: `step_frames` stays the 250 ms gate
+    // window on both shoulders, so a grown post residual still walks the same density
+    // (`max_walk_frames / seam_window_frames` tiles) rather than a coarser one just because the
+    // correlation window widened.
     let floor_common = |window: usize| policies::SeamFloorParams {
         a_samples: df.a_samples,
         channels: df.params.channels,
@@ -173,12 +180,14 @@ fn measure_dual_fit_residual_verdict(
         window,
         standoff_frames: df.border_standoff_frames,
         a_to_b_delta: nominal_delta,
-        step_frames: window.max(1),
+        step_frames: df.params.seam_window_frames.max(1),
         max_walk_frames: df.params.sample_rate as usize * 3,
         absolute_silence_rms: request.absolute_silence_rms,
         max_lag_frames,
     };
-    let window = df.params.seam_window_frames;
+    // A grown post lock widened the post shoulder's own seam window; the pre shoulder stays at the
+    // 250 ms gate window regardless.
+    let post_window = grown_post_window_frames.unwrap_or(window);
     let (chosen_pre, floor_pre) = policies::seam_chosen_and_floor(
         &floor_common(window),
         policies::SeamSide::Pre,
@@ -187,7 +196,7 @@ fn measure_dual_fit_residual_verdict(
         nominal_delta + r.pre_lag,
     );
     let (chosen_post, floor_post) = policies::seam_chosen_and_floor(
-        &floor_common(window),
+        &floor_common(post_window),
         policies::SeamSide::Post,
         df.a_start_frame,
         df.a_end_frame,
@@ -262,12 +271,37 @@ pub(in crate::application::patch_audio::region) fn skip_or_dual_fit(
     let mut dual_fit_attempt: Option<crate::domain::patch_result::SeamScoreAttempt> = None;
     if dual_fit_eligible(request.dual_fit, fail) {
         if let Some(DualFitAttempt { input: df, locks }) = attempt {
-            if let Some(r) = crate::domain::dual_fit::dual_fit_from_locks(
+            // Grow the post seam window before the fit is attempted (§0 lock 3 — grow before the
+            // gate rejects, not on the result): a 250 ms post lock below the admit line is re-locked
+            // at the shortest window in `POST_GROW_LADDER_MS` that stops the ladder
+            // (`docs/dev/TEMP-dual-fit-grow-post-plan.md` §3.2). The whole `GrownPostLock` is handed
+            // to `dual_fit_from_locks_with_grown_post`, which applies the post-lock swap
+            // (`b_post_seam`/`bridge_frames`/`gate_pass`) and threads its `a_post`/`window_frames`
+            // itself — this caller never builds a parallel `(locks, a_post)` pair by hand, so it
+            // cannot desync them. The pre lock and `SeamLockTemplates` (§0 lock 2) are untouched.
+            let grown = if locks.post.r < crate::domain::seam_locks::POST_GROW_ADMIT_R {
+                crate::domain::seam_locks::grow_post_lock(
+                    df.a_samples,
+                    df.params.channels,
+                    df.a_end_frame,
+                    &df.b_mono,
+                    df.templates.b_mapped_start(),
+                    df.params.gap_frames,
+                    locks.pre.lag,
+                    df.params.max_lag_frames,
+                    df.params.sample_rate,
+                    locks.post.lag,
+                )
+            } else {
+                None
+            };
+            if let Some(r) = crate::domain::dual_fit::dual_fit_from_locks_with_grown_post(
                 &df.templates,
                 locks,
                 &df.b_mono,
                 df.b_samples,
                 &df.params,
+                grown.as_ref(),
             ) {
                 // Re-validate the assembled seams. The seam scores are the ones `try_dual_fit`'s own
                 // seam-local search already measured (`r.pre_seam_r`/`r.post_seam_r`): A's near-gap
@@ -295,7 +329,13 @@ pub(in crate::application::patch_audio::region) fn skip_or_dual_fit(
                     request.fill_absolute_floor,
                 ) {
                     Ok(confidence) => {
-                        let residual = measure_dual_fit_residual_verdict(request, df, &r);
+                        let grown_post_window_frames = grown.as_ref().map(|g| g.window_frames);
+                        let residual = measure_dual_fit_residual_verdict(
+                            request,
+                            df,
+                            &r,
+                            grown_post_window_frames,
+                        );
                         let gated_confidence = match &residual {
                             Some(verdict) => match crate::domain::gap_fill_fit::apply_residual_to_confidence(
                                 Ok(confidence),
@@ -451,6 +491,7 @@ pub(in crate::application::patch_audio::region) fn skip_or_dual_fit(
                                     )
                                     .total,
                                     local_gain,
+                                    dual_fit_post_window_ms: grown.as_ref().map(|g| g.window_ms),
                                 },
                                 tags_ctx,
                                 refined: RefinedGapFrames {
@@ -894,7 +935,7 @@ mod tests {
         };
 
         let request = dual_fit_test_request(true, crate::domain::ResidualGateMode::VetoRescue);
-        let verdict = measure_dual_fit_residual_verdict(&request, &df, &r)
+        let verdict = measure_dual_fit_residual_verdict(&request, &df, &r, None)
             .expect("residual measurement must run when measure_residual is set");
         assert!(
             verdict.informative,
@@ -920,7 +961,7 @@ mod tests {
 
         // Off by default: no residual measurement, matching the ordinary path's `want_residual_measurement`.
         let off_request = dual_fit_test_request(false, crate::domain::ResidualGateMode::Off);
-        assert!(measure_dual_fit_residual_verdict(&off_request, &df, &r).is_none());
+        assert!(measure_dual_fit_residual_verdict(&off_request, &df, &r, None).is_none());
     }
 
     /// S1 (`docs/dev/TEMP-registration-residual-plan.md`) — `registration_shoulder_residual_ms`

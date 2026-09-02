@@ -129,6 +129,7 @@ pub(in crate::application::patch_audio) fn execute_region_spec(
             normalize_gain,
             local_gain,
             step_real,
+            dual_fit_post_window_ms,
             ..
         }) => {
             // Dual-fit rescue: the fill is the synthesized bridge on the spec; seams sit at their own lags, so
@@ -155,6 +156,7 @@ pub(in crate::application::patch_audio) fn execute_region_spec(
                 anchor_bracket_move_frames: 0,
                 dual_fit_used: true,
                 dual_fit_step_real: Some(step_real),
+                dual_fit_post_window_ms,
                 // No unified search on this path — see the preview arm.
                 fit_terms: None,
                 // The product, matching the `gain` on the patch just above. Both halves ride the

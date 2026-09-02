@@ -490,6 +490,12 @@ pub enum GapPatchStatus {
         /// on runs predating this field — not recoverable from anything else on the record.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         dual_fit_step_real: Option<bool>,
+        /// When `dual_fit_used`: the post seam's window width (ms) when a 250 ms post lock below
+        /// the admit line was re-locked at a wider rung
+        /// (`docs/dev/TEMP-dual-fit-grow-post-plan.md` §3.2/§3.3). `None` when the post lock stayed
+        /// at the 250 ms `fill_seam_search_secs` window, and on every non-dual-fit path.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        dual_fit_post_window_ms: Option<u32>,
         /// **Total** loudness gain applied to this fill before the splice — whole-program ×
         /// hole-local (`domain::stack_fill_gain`), which is what [`Self::program_gain`] exists to
         /// let a reader factor apart. `1.0` means the donor level was written untouched: the run

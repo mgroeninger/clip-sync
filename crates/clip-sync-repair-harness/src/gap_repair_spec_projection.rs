@@ -253,6 +253,7 @@ mod tests {
             registration_residual_ms: None,
             normalize_gain: 1.0,
             local_gain: clip_sync_repair::domain::LocalGainDecision::OFF,
+            dual_fit_post_window_ms: None,
         }
     }
 

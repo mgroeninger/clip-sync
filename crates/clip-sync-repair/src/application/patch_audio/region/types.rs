@@ -61,6 +61,11 @@ pub(in crate::application::patch_audio) enum RegionPatchOutcome {
         /// `false` = rigid single-lag map (trim-0 extract, docs/dev/archive/TEMP-seam-lock-rigid-fill-plan.md
         /// §3.1). `None` on every non-dual-fit path (`dual_fit_used == false`).
         dual_fit_step_real: Option<bool>,
+        /// When `dual_fit_used`: the post seam's window width (ms) when a 250 ms post lock below
+        /// the admit line was re-locked at a wider rung
+        /// (`docs/dev/TEMP-dual-fit-grow-post-plan.md` §3.2/§3.3). `None` when the post lock stayed
+        /// at the 250 ms `fill_seam_search_secs` window, and on every non-dual-fit path.
+        dual_fit_post_window_ms: Option<u32>,
         /// The gain actually applied to this fill — whole-program × hole-local. Carried to the
         /// patch record so `fill_level`'s `gained_fill`-based fields can be read across gain-policy
         /// changes.
@@ -212,6 +217,7 @@ pub(in crate::application::patch_audio) fn outcomes_in_report_order(
                 anchor_bracket_move_frames,
                 dual_fit_used,
                 dual_fit_step_real,
+                dual_fit_post_window_ms,
                 normalize_gain,
                 local_gain,
                 fit_terms,
@@ -242,6 +248,7 @@ pub(in crate::application::patch_audio) fn outcomes_in_report_order(
                     anchor_bracket_move_frames: *anchor_bracket_move_frames,
                     dual_fit_used: *dual_fit_used,
                     dual_fit_step_real: *dual_fit_step_real,
+                    dual_fit_post_window_ms: *dual_fit_post_window_ms,
                     fit_terms: *fit_terms,
                     registration_residual_ms: *registration_residual_ms,
                 }
@@ -486,6 +493,7 @@ pub(in crate::application::patch_audio) fn outcome_from_spec(
                 anchor_bracket_move_frames: *anchor_bracket_move_frames,
                 dual_fit_used: false,
                 dual_fit_step_real: None,
+                dual_fit_post_window_ms: None,
                 fit_terms: *fit_terms,
                 normalize_gain: *normalize_gain,
                 local_gain: *local_gain,
@@ -501,6 +509,7 @@ pub(in crate::application::patch_audio) fn outcome_from_spec(
             normalize_gain,
             local_gain,
             step_real,
+            dual_fit_post_window_ms,
             ..
         }) => RegionPatchOutcome::Patched {
             pre_correlation: *pre_seam_r,
@@ -517,6 +526,7 @@ pub(in crate::application::patch_audio) fn outcome_from_spec(
             anchor_bracket_move_frames: 0,
             dual_fit_used: true,
             dual_fit_step_real: Some(*step_real),
+            dual_fit_post_window_ms: *dual_fit_post_window_ms,
             // Dual-fit does not run the unified objective at all — there is no placement search to report.
             fit_terms: None,
             // Dual-fit takes both halves since 2026-08-31; the strategy carries them so this
@@ -607,6 +617,7 @@ mod tests {
                 registration_residual_ms: None,
                 normalize_gain: g_program * g_local.gain(),
                 local_gain: g_local,
+                dual_fit_post_window_ms: None,
             }),
             tags_ctx: GapRepairTags::default(),
         };
@@ -689,6 +700,7 @@ mod tests {
             anchor_bracket_move_frames: 0,
             dual_fit_used: false,
             dual_fit_step_real: None,
+            dual_fit_post_window_ms: None,
             normalize_gain: 1.0,
             local_gain: crate::domain::LocalGainDecision::OFF,
             fit_terms: None,
@@ -813,6 +825,7 @@ mod tests {
             anchor_bracket_move_frames: 0,
             dual_fit_used: false,
             dual_fit_step_real: None,
+            dual_fit_post_window_ms: None,
             normalize_gain: 1.0,
             local_gain: crate::domain::LocalGainDecision::OFF,
             fit_terms: None,

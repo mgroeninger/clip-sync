@@ -206,14 +206,18 @@ Anchor seam does **not** require `--full`; it runs under `baseline_only` when tr
 **Dual-fit (G6, W7)** runs when bracket search returns a **scored skip** other than structure alignment
 failed. Default **`dual_fit = true`**. The rescue path:
 
-1. Finds seam-local peaks on A pre/post shoulders.
+1. Finds seam-local peaks on A pre/post shoulders (250 ms).
 2. Registers each shoulder on B at its own lag (not lag-0 bracket search).
-3. Trims the donor interior to reconcile length.
-4. Re-validates the assembled fill with the **unchanged** gate floors.
+3. If the post shoulder's 250 ms lock is uninformative (`r < 0.5`), re-locks it at the shortest
+   longer same-start window that clears the admit line — a weak post join does not have to sink
+   the gap; see [seam-scoring.md](seam-scoring.md) § 6.
+4. Trims the donor interior to reconcile length.
+5. Re-validates the assembled fill with the **unchanged** gate floors.
 
 Typical W7 gaps: silence splices where `min(pre, post)` failed at the throat but both shoulders align
 strongly at independent lags (see golden dual-fit targets in the status ledger §4). Dual-fit **declines**
-donor-broken bridges and program-quiet donors — those remain skips.
+donor-broken bridges and program-quiet donors — those remain skips. A gap rescued via the grown post
+window reports `dual_fit_post_window_ms` on the patched record ([cli-output.md](cli-output.md)).
 
 | Situation | Action |
 |-----------|--------|

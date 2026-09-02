@@ -188,7 +188,7 @@ impl SeamGateFloors {
     /// configurable, so which one binds is not fixed. `smin` is finite by construction
     /// (`seam_local_peak` returns `finite(peak_r)`), so `>=` and `!(<)` agree here and the plain
     /// form is used.
-    fn passes(&self, smin: f64) -> bool {
+    pub fn passes(&self, smin: f64) -> bool {
         smin >= self.min_fill_correlation && smin >= self.fill_absolute_floor
     }
 }
@@ -392,6 +392,102 @@ pub fn nominal_first_seam_locks(
         b_pre_seam_unclamped,
         b_post_seam_unclamped,
     })
+}
+
+/// Frozen post-grow ladder (ms) — `docs/dev/TEMP-dual-fit-grow-post-plan.md` §3.2. Do not add, remove,
+/// or reorder without updating the plan and [`grow_post_lock`]'s callers.
+pub const POST_GROW_LADDER_MS: [u32; 5] = [375, 500, 625, 750, 1000];
+
+/// Admission line for a grown post lock: a rung's `post_r` must clear this to stop the ladder. Leaves
+/// the `[0.35, 0.5)` band — 0.35 is what let a junk 250 ms lock through the fill gate (plan §3.2).
+///
+/// Deliberately independent of the run's configured `min_fill_correlation`/`fill_absolute_floor` —
+/// it is not a second copy of the fill gate, and coupling it (e.g. `max(0.5, min_fill_correlation)`)
+/// would let a raised floor grow the ladder further with no corpus evidence that is safe. If a run
+/// ever configures either floor above 0.5, a grown lock can stop here and still fail that stricter
+/// gate; that is intended, not a bug. Revisit only with corpus evidence at a raised floor.
+pub const POST_GROW_ADMIT_R: f64 = 0.5;
+
+/// `|Δpre|` snap line (ms): when the 250 ms lock's `|post_lag − pre_lag|` exceeded this, a grown rung
+/// must ALSO bring its own `|Δpre|` within it to stop the ladder — not `post_r` alone. Seam-scale, not
+/// speech-offset-scale (plan §3.2).
+pub const POST_GROW_DELTA_PRE_SNAP_MS: f64 = 10.0;
+
+/// A grown post lock: the raw `a_post` template — deliberately NOT run through [`SeamLockTemplates`],
+/// whose invariant requires `a_pre.len() == a_post.len()` and a grown post is by definition wider than
+/// the 250 ms `a_pre` (plan §0 lock 2) — plus the [`SeamLock`] it measured and the window width (ms)
+/// for the caller's `dual_fit_post_window_ms` stamp.
+pub struct GrownPostLock {
+    pub a_post: Vec<f64>,
+    pub window_frames: usize,
+    pub window_ms: u32,
+    pub lock: SeamLock,
+}
+
+/// Re-lock the **post** seam at the shortest window in [`POST_GROW_LADDER_MS`] that stops the ladder
+/// (`docs/dev/TEMP-dual-fit-grow-post-plan.md` §3.2), envelope OFF, same start (`end_frame`) as the
+/// 250 ms lock. The caller decides *whether* to grow (the 250 ms `post.r < 0.5` admission test lives in
+/// `skip_or_dual_fit`, not here) — this function is a pure measurement, mirroring the fingerprint's
+/// `post_window_ladder_at` (`application/gap_fingerprint/measure/probes.rs`) with the same primitive
+/// (`seam_local_peak`, envelope off) but stopping at the first qualifying rung instead of collecting all
+/// of them.
+///
+/// `pre_lag` and `original_post_lag` are the 250 ms lock's own lags — used to compute that lock's
+/// `|Δpre|` (`(post_lag − pre_lag)` in ms), which decides whether a rung must also snap `|Δpre|` to
+/// [`POST_GROW_DELTA_PRE_SNAP_MS`] or `post_r >= `[`POST_GROW_ADMIT_R`]` alone is enough to stop.
+///
+/// `None` when no rung stops — the caller keeps the original 250 ms locks untouched, including a
+/// failing `gate_pass`.
+#[allow(clippy::too_many_arguments)]
+pub fn grow_post_lock(
+    a_samples: &[f32],
+    channels: usize,
+    end_frame: usize,
+    b_mono: &[f64],
+    b_mapped_start: usize,
+    gap_frames: usize,
+    pre_lag: i64,
+    max_lag_frames: usize,
+    sample_rate: u32,
+    original_post_lag: i64,
+) -> Option<GrownPostLock> {
+    let ch = channels.max(1);
+    let rate = f64::from(sample_rate).max(1.0);
+    let a_frames = a_samples.len() / ch;
+    let anchor_start = b_mapped_start + gap_frames;
+    let original_delta_pre_ms = (original_post_lag - pre_lag) as f64 * 1000.0 / rate;
+    let require_delta_pre = original_delta_pre_ms.abs() > POST_GROW_DELTA_PRE_SNAP_MS;
+
+    for &window_ms in POST_GROW_LADDER_MS.iter() {
+        let w = ((f64::from(window_ms) / 1000.0) * rate).round() as usize;
+        if w < 8 || end_frame + w > a_frames {
+            continue;
+        }
+        let a_post = interleaved_to_mono(&a_samples[end_frame * ch..(end_frame + w) * ch], ch);
+        let Some(peak) = seam_local_peak(&a_post, b_mono, anchor_start, max_lag_frames) else {
+            continue;
+        };
+        if peak.r < POST_GROW_ADMIT_R {
+            continue;
+        }
+        let delta_pre_ms = (peak.lag - pre_lag) as f64 * 1000.0 / rate;
+        if require_delta_pre && delta_pre_ms.abs() > POST_GROW_DELTA_PRE_SNAP_MS {
+            continue;
+        }
+        return Some(GrownPostLock {
+            window_frames: a_post.len(),
+            a_post,
+            window_ms,
+            lock: SeamLock {
+                r: peak.r,
+                lag: peak.lag,
+                z: peak.z,
+                rescued: false,
+                edge_pinned: peak.edge_pinned(sample_rate),
+            },
+        });
+    }
+    None
 }
 
 #[cfg(test)]
@@ -710,5 +806,216 @@ mod tests {
             !locks.gate_pass,
             "and a shoulder this dead must not qualify the pair to abut"
         );
+    }
+
+    fn frames_at_ms(rate: u32, ms: u64) -> usize {
+        ((u64::from(rate) * ms) / 1000) as usize
+    }
+
+    /// `grow_post_lock` reads only `a_samples[end_frame..]` — the fixtures below leave everything
+    /// before `end_frame` at zero, since the pre shoulder plays no part in this function.
+    ///
+    /// Quiet-then-speech post collar (mirrors `post_window_ladder`'s fixture in
+    /// `application/gap_fingerprint/measure/probes.rs`, `docs/dev/TEMP-dual-fit-grow-post-plan.md`
+    /// §3.2): the 250 ms rung (below the ladder's own floor) and the 375/500 ms rungs sit entirely in
+    /// a quiet noise floor that never correlates with B; only once a rung reaches far enough to
+    /// include the real, B-matching content does `post_r` clear the admit line. The ladder must stop
+    /// at the shortest such rung, not the first one tried.
+    #[test]
+    fn grow_post_lock_stops_at_the_shortest_rung_that_clears_the_admit_line() {
+        let sr = 48_000u32;
+        let quiet_frames = frames_at_ms(sr, 550);
+        let speech_frames = frames_at_ms(sr, 900);
+        let post_len = quiet_frames + speech_frames;
+        let gap_end = frames_at_ms(sr, 2000);
+        let total = gap_end + post_len + frames_at_ms(sr, 200);
+        let shift = frames_at_ms(sr, 40) as i64;
+
+        let quiet_noise = noise(quiet_frames, 0x9001);
+        let speech_noise = noise(speech_frames, 0x9002);
+        let mut a = vec![0.0f32; total];
+        for (j, slot) in a[gap_end..gap_end + quiet_frames].iter_mut().enumerate() {
+            *slot = (quiet_noise[j] * 0.002) as f32;
+        }
+        for (j, slot) in a[gap_end + quiet_frames..gap_end + post_len]
+            .iter_mut()
+            .enumerate()
+        {
+            *slot = (speech_noise[j] * 0.5) as f32;
+        }
+
+        let mut b_mono = noise(total + shift.unsigned_abs() as usize + 8, 0x9003);
+        for v in &mut b_mono {
+            *v *= 0.002;
+        }
+        for f in gap_end + quiet_frames..gap_end + post_len {
+            b_mono[(f as i64 + shift) as usize] = f64::from(a[f]);
+        }
+
+        let max_lag_frames = frames_at_ms(sr, 600);
+        let grown = grow_post_lock(
+            &a,
+            1,
+            gap_end,
+            &b_mono,
+            gap_end - frames_at_ms(sr, 800),
+            frames_at_ms(sr, 800),
+            0,
+            max_lag_frames,
+            sr,
+            0,
+        )
+        .expect("a wide-enough rung reaches the real content and clears the admit line");
+
+        assert!(
+            grown.lock.r >= POST_GROW_ADMIT_R,
+            "the returned rung must itself clear the admit line: r={}",
+            grown.lock.r
+        );
+        assert_eq!(
+            grown.window_frames,
+            frames_at_ms(sr, u64::from(grown.window_ms)),
+            "window_frames must match the stamped window_ms"
+        );
+        assert!(
+            grown.window_ms > 250,
+            "the 250 ms nominal window is not itself a ladder rung; the shortest rung is 375 ms"
+        );
+        let shift_ms = shift as f64 * 1000.0 / f64::from(sr);
+        assert!(
+            (grown.lock.lag as f64 * 1000.0 / f64::from(sr) - shift_ms).abs() < 2.0,
+            "the qualifying rung must lock onto the real content's true shift, got lag_ms={}",
+            grown.lock.lag as f64 * 1000.0 / f64::from(sr)
+        );
+
+        // Confirm the shorter rungs genuinely fail on their own — otherwise this test would pass
+        // even if the ladder stopped at the first rung instead of the shortest *qualifying* one.
+        for &short_ms in [375u32, 500].iter() {
+            let w = frames_at_ms(sr, u64::from(short_ms));
+            let a_post = interleaved_to_mono(&a[gap_end..gap_end + w], 1);
+            let peak = seam_local_peak(&a_post, &b_mono, gap_end, max_lag_frames)
+                .expect("seam search in range");
+            assert!(
+                peak.r < POST_GROW_ADMIT_R,
+                "fixture premise: the {short_ms}ms rung must not itself qualify, got r={}",
+                peak.r
+            );
+        }
+    }
+
+    /// No rung ever correlates with B — a fully decorrelated post shoulder — so the ladder exhausts
+    /// itself and `grow_post_lock` reports the honest `None` rather than returning a low-confidence
+    /// rung.
+    #[test]
+    fn grow_post_lock_returns_none_when_no_rung_admits() {
+        let sr = 48_000u32;
+        let gap_end = frames_at_ms(sr, 2000);
+        let post_len = frames_at_ms(sr, 1200);
+        let total = gap_end + post_len + frames_at_ms(sr, 100);
+
+        let a_noise = noise(post_len, 0xA001);
+        let mut a = vec![0.0f32; total];
+        for (j, &v) in a_noise.iter().enumerate() {
+            a[gap_end + j] = v as f32;
+        }
+        let b_mono: Vec<f64> = noise(total, 0xB002);
+
+        let max_lag_frames = frames_at_ms(sr, 600);
+        let grown = grow_post_lock(
+            &a,
+            1,
+            gap_end,
+            &b_mono,
+            gap_end - frames_at_ms(sr, 800),
+            frames_at_ms(sr, 800),
+            0,
+            max_lag_frames,
+            sr,
+            0,
+        );
+        assert!(
+            grown.is_none(),
+            "an unmatched post shoulder must not be reported as a rescued rung"
+        );
+    }
+
+    /// §3.2: a rung with `post_r >= 0.5` is not enough to stop the ladder when the 250 ms lock's own
+    /// `|Δpre|` exceeded [`POST_GROW_DELTA_PRE_SNAP_MS`] — the grown rung must ALSO bring `|Δpre|`
+    /// back within the snap line. Same quiet-then-speech shoulder both times; only `pre_lag` changes,
+    /// which is what moves `|Δpre|` in and out of the snap line.
+    #[test]
+    fn grow_post_lock_requires_the_delta_pre_snap_when_the_original_lock_exceeded_it() {
+        let sr = 48_000u32;
+        let quiet_frames = frames_at_ms(sr, 550);
+        let speech_frames = frames_at_ms(sr, 900);
+        let post_len = quiet_frames + speech_frames;
+        let gap_end = frames_at_ms(sr, 2000);
+        let total = gap_end + post_len + frames_at_ms(sr, 200);
+        let shift = frames_at_ms(sr, 40) as i64;
+        let far = frames_at_ms(sr, 100) as i64;
+
+        let quiet_noise = noise(quiet_frames, 0x9001);
+        let speech_noise = noise(speech_frames, 0x9002);
+        let mut a = vec![0.0f32; total];
+        for (j, slot) in a[gap_end..gap_end + quiet_frames].iter_mut().enumerate() {
+            *slot = (quiet_noise[j] * 0.002) as f32;
+        }
+        for (j, slot) in a[gap_end + quiet_frames..gap_end + post_len]
+            .iter_mut()
+            .enumerate()
+        {
+            *slot = (speech_noise[j] * 0.5) as f32;
+        }
+        let mut b_mono = noise(total + shift.unsigned_abs() as usize + 8, 0x9003);
+        for v in &mut b_mono {
+            *v *= 0.002;
+        }
+        for f in gap_end + quiet_frames..gap_end + post_len {
+            b_mono[(f as i64 + shift) as usize] = f64::from(a[f]);
+        }
+
+        let max_lag_frames = frames_at_ms(sr, 600);
+        let b_mapped_start = gap_end - frames_at_ms(sr, 800);
+        let gap_frames = frames_at_ms(sr, 800);
+
+        // pre_lag far from the true content's shift and `original_post_lag` set apart from `pre_lag`
+        // by `far` (past the 10 ms snap line), so the ORIGINAL 250 ms lock's own |Δpre| already
+        // exceeds the snap and `require_delta_pre` turns on. A wide rung locks onto the real shift
+        // and reads well above the admit line, but its own |Δpre| (measured against this same
+        // `pre_lag`) is also `far` — past the snap — so the whole ladder must report `None`.
+        let rejected = grow_post_lock(
+            &a,
+            1,
+            gap_end,
+            &b_mono,
+            b_mapped_start,
+            gap_frames,
+            shift - far,
+            max_lag_frames,
+            sr,
+            shift,
+        );
+        assert!(
+            rejected.is_none(),
+            "a qualifying r must still be rejected when its own |Δpre| stays past the snap line"
+        );
+
+        // Same shoulder, `pre_lag` now equal to the true content's shift: the found rung's |Δpre| is
+        // ~0, well within the snap line, so the same rung that failed above must now stop the ladder
+        // (regardless of what `require_delta_pre` reads for this call).
+        let admitted = grow_post_lock(
+            &a,
+            1,
+            gap_end,
+            &b_mono,
+            b_mapped_start,
+            gap_frames,
+            shift,
+            max_lag_frames,
+            sr,
+            shift,
+        )
+        .expect("with |Δpre| within the snap line, the same rung must now be admitted");
+        assert!(admitted.lock.r >= POST_GROW_ADMIT_R);
     }
 }

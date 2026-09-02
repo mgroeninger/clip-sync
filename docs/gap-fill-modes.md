@@ -198,14 +198,29 @@ always routes eligible skips through `skip_or_dual_fit`; there is no fill-mode g
   (retries only run for waveform-below-threshold; other scored failures go straight to dual-fit).
 
 ```text
-seam-local peaks on A pre/post shoulders (±600 ms)
-  → independent per-shoulder lag on B
+seam-local peaks on A pre/post shoulders (250 ms, ±600 ms)
+  → post lock uninformative (r < 0.5)? → same-start post re-lock at the shortest of
+    {375, 500, 625, 750, 1000} ms that clears r ≥ 0.5 (and |Δpre| ≤ 10 ms when the
+    250 ms lock's own |Δpre| exceeded it); no stop → keep the 250 ms locks
   → step real? → interior-trim bridge extract (length reconcile)
   → step not real? → trim-0 extract off the shared (rigid) lock
   → donor continuity check
   → re-validate assembled fill with unchanged gate floors (Pearson + residual)
   → patch or fall through to skip
 ```
+
+The post grow only ever runs inside `skip_or_dual_fit`, after the gate has already rejected the
+250 ms locks — `shoulders_abut` is decided earlier, straight off those same 250 ms locks, so growing
+the post window can never un-cross a pair the abut check already sent to skip.
+
+When the post shoulder's 250 ms lock is uninformative, dual-fit re-locks that same shoulder — same
+start, envelope off — at the shortest window in a fixed ladder that both clears the admit line and,
+if the 250 ms lock's own pre/post lag disagreement was already large, brings that disagreement back
+in line too. Pre is never grown. A grown post window feeds the same `step_real` extract fork and
+re-validation as the 250 ms case; it only widens the template the post shoulder is measured and
+extracted against. A patch built on a grown post window reports `dual_fit_post_window_ms` (see
+[cli-output.md](cli-output.md) and [json-output.md](json-output.md)); when the 250 ms lock already
+qualified, nothing changes and no such stamp appears.
 
 Two arms, one visit: whether the two shoulder locks disagree by a real step or land on the same
 lag, the gap reaches `skip_or_dual_fit` exactly once. `step_real` no longer decides *whether* to

@@ -257,6 +257,11 @@ pub enum GapRepairStrategy {
         normalize_gain: f32,
         /// The hole-local half of [`Self::SilenceSplice::normalize_gain`]. See the `Bracket` field.
         local_gain: crate::domain::LocalGainDecision,
+        /// The post seam's window width (ms) when a 250 ms post lock below the admit line was
+        /// re-locked at a wider rung (`docs/dev/TEMP-dual-fit-grow-post-plan.md` §3.2/§3.3).
+        /// `None` when the post lock stayed at the 250 ms `fill_seam_search_secs` window — the
+        /// common case, and the only one before this field existed.
+        dual_fit_post_window_ms: Option<u32>,
     },
 }
 
@@ -604,6 +609,7 @@ mod tests {
             registration_residual_ms: None,
             normalize_gain: 1.0,
             local_gain: crate::domain::LocalGainDecision::OFF,
+            dual_fit_post_window_ms: None,
         }
     }
 

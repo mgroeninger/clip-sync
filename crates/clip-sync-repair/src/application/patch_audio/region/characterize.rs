@@ -250,6 +250,7 @@ pub(in crate::application::patch_audio) fn characterize_region(
         anchor_trusted: false,
         dual_fit_used: false,
         dual_fit_step_real: None,
+        dual_fit_post_window_ms: None,
         residual: None,
         residual_headroom_margin_db: request.residual_headroom_margin_db,
     };

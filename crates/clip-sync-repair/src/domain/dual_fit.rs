@@ -11,7 +11,8 @@ use clip_sync::normalized_correlation;
 use crate::domain::donor::{donor_interior_at, program_quiet_at_nominal, DonorInterior};
 use crate::domain::gap_fill_fit::trim_at_lowest_energy_interior;
 use crate::domain::seam_locks::{
-    nominal_first_seam_locks, EnvelopeSearch, SeamGateFloors, SeamLockTemplates, SeamLocks,
+    nominal_first_seam_locks, EnvelopeSearch, GrownPostLock, SeamGateFloors, SeamLockTemplates,
+    SeamLocks,
 };
 
 /// The **step is real** margin: the post seam at its own lag must beat the post seam forced to the pre lag
@@ -128,6 +129,46 @@ pub fn dual_fit_from_locks(
     b_samples: &[f32],
     p: &DualFitParams,
 ) -> Option<DualFitResult> {
+    dual_fit_from_locks_with_grown_post(templates, locks, b_mono, b_samples, p, None)
+}
+
+/// [`dual_fit_from_locks`] with an optional grown post lock
+/// (`docs/dev/TEMP-dual-fit-grow-post-plan.md` §0 lock 2) — the caller passes the whole
+/// [`GrownPostLock`] `grow_post_lock` produced, and this function applies the post-shoulder swap
+/// (`SeamLocks::post`/`b_post_seam`/`bridge_frames`/`gate_pass`, recomputed against `p`'s floors) and
+/// threads its `a_post`/`window_frames` into [`try_dual_fit`]'s `post@pre` / `step_real` computation
+/// itself. A caller can no longer pair a grown `post.r` with a stale (or a different gap's) `a_post`
+/// template — there is exactly one `GrownPostLock` to derive both from. `None` behaves exactly like
+/// [`dual_fit_from_locks`].
+pub fn dual_fit_from_locks_with_grown_post(
+    templates: &SeamLockTemplates,
+    locks: &SeamLocks,
+    b_mono: &[f64],
+    b_samples: &[f32],
+    p: &DualFitParams,
+    grown_post: Option<&GrownPostLock>,
+) -> Option<DualFitResult> {
+    let (locks, a_post_override) = match grown_post {
+        Some(grown) => {
+            let b_post_seam_unclamped = templates.b_post_nominal() as i64 + grown.lock.lag;
+            let b_post_seam = b_post_seam_unclamped.max(0) as usize;
+            let mut grown_locks = *locks;
+            grown_locks.post = grown.lock;
+            grown_locks.b_post_seam = b_post_seam;
+            grown_locks.b_post_seam_unclamped = b_post_seam_unclamped;
+            grown_locks.bridge_frames = b_post_seam as i64 - grown_locks.b_pre_seam as i64;
+            grown_locks.gate_pass = SeamGateFloors {
+                min_fill_correlation: p.min_fill_correlation,
+                fill_absolute_floor: p.fill_absolute_floor,
+            }
+            .passes(grown_locks.pre.r.min(grown_locks.post.r));
+            (
+                grown_locks,
+                Some((grown.a_post.as_slice(), grown.window_frames)),
+            )
+        }
+        None => (*locks, None),
+    };
     if !locks.gate_pass {
         tracing::debug!(
             pre_r = locks.pre.r,
@@ -146,7 +187,7 @@ pub fn dual_fit_from_locks(
         );
         return None;
     }
-    try_dual_fit(templates, locks, b_mono, b_samples, p)
+    try_dual_fit_with_grown_post(templates, &locks, b_mono, b_samples, p, a_post_override)
 }
 
 /// Attempt a dual-fit fill from **already-measured** seam locks.
@@ -174,6 +215,25 @@ pub fn try_dual_fit(
     b_samples: &[f32],
     p: &DualFitParams,
 ) -> Option<DualFitResult> {
+    try_dual_fit_with_grown_post(templates, locks, b_mono, b_samples, p, None)
+}
+
+/// [`try_dual_fit`] with an optional grown post template
+/// (`docs/dev/TEMP-dual-fit-grow-post-plan.md` §0 lock 2): `grown_post` is `(a_post, window_frames)`
+/// from [`crate::domain::seam_locks::grow_post_lock`], used ONLY for the `post_global` (`post@pre`,
+/// the step-real denominator) computation below — the one place this function reads `a_post`/`w`
+/// before extraction. Everything else (the interior-trim edge guard, the `debug_assert_eq!` against
+/// `templates.seam_window_frames()`) stays keyed to the untouched 250 ms `templates`/`p`, because the
+/// keep-path gate window (`fill_seam_search_secs`) does not change. `None` behaves exactly like
+/// [`try_dual_fit`].
+pub fn try_dual_fit_with_grown_post(
+    templates: &SeamLockTemplates,
+    locks: &SeamLocks,
+    b_mono: &[f64],
+    b_samples: &[f32],
+    p: &DualFitParams,
+    grown_post: Option<(&[f64], usize)>,
+) -> Option<DualFitResult> {
     debug_assert!(
         locks.gate_pass,
         "try_dual_fit called on locks the fill gate rejects — the caller must check gate_pass"
@@ -190,8 +250,12 @@ pub fn try_dual_fit(
     let ch = p.channels.max(1);
     // Geometry comes from the templates, not `p`: they are the windows the locks were actually
     // measured with, and every length below (step-real window, bridge, trim guard) must match them.
-    let w = templates.seam_window_frames();
-    let a_post = templates.a_post();
+    // A grown post (§0 lock 2) overrides `w`/`a_post` for the `post_global` computation only — the
+    // interior-trim edge guard below still uses `p.seam_window_frames` (the keep-path gate window).
+    let (w, a_post) = match grown_post {
+        Some((a_post, window_frames)) => (window_frames, a_post),
+        None => (templates.seam_window_frames(), templates.a_post()),
+    };
     let b_mapped_start = templates.b_mapped_start();
     let (pre_r, pre_lag) = (locks.pre.r, locks.pre.lag);
     let (post_r, post_lag) = (locks.post.r, locks.post.lag);

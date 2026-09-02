@@ -921,6 +921,15 @@ trimmed pre template moves `pre_lag`, which moves `post_seam_global_r`, which fl
 is **absent** when either shoulder is shorter than `w`, the same range guard production declines on, rather
 than being computed against a clipped template.
 
+**`splice_dualfit` stays frozen at the 250 ms `w`, envelope off — production does not.** Production
+dual-fit may re-lock a weak post shoulder at a longer same-start window
+(`docs/dev/TEMP-dual-fit-grow-post-plan.md`; [gap-fill-modes.md](../gap-fill-modes.md) § Fit unified
+search) and stamp the patch's `dual_fit_post_window_ms`. This block predicts only the 250 ms case, so
+it under-predicts a gap that production rescues by growing the post window — that gap shows
+`gate_pass: false` here and a patch in the report. The ladder diagnostic
+(`--fingerprint-post-window-ladder`, `post_window_ladder_at` in `measure/probes.rs`) is the tool for
+checking a specific gap's grown-window behaviour; it is not folded into this block's own numbers.
+
 ### Diagnostic-only fields
 
 `wide_envelope`, `seam_probe`, `lag_editorial`, and `b_levels` are **Tier-3** — emitted only with
