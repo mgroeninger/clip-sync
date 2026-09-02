@@ -64,6 +64,7 @@ impl CorpusProbeRecipe {
         let measured_lag = gaps.iter().any(|g| g.lag_decision.is_some());
         let measured_seams = gaps.iter().any(|g| g.seams.is_some());
         let measured_ladder = gaps.iter().any(|g| g.post_window_ladder.is_some());
+        let measured_pre_ladder = gaps.iter().any(|g| g.pre_window_ladder.is_some());
         Self {
             noise_collar_secs: cfg.noise_collar_secs,
             lag_window_secs: measured_lag.then_some(cfg.lag_window_secs),
@@ -78,6 +79,8 @@ impl CorpusProbeRecipe {
             lag_envelope_window_secs: measured_lag.then_some(cfg.lag_envelope_window_secs),
             seam_window_secs: measured_seams.then_some(cfg.fill_seam_search_secs),
             post_window_ladder_ms: measured_ladder.then_some(super::probes::POST_WINDOW_LADDER_MS),
+            pre_window_ladder_ms: measured_pre_ladder
+                .then_some(super::probes::PRE_WINDOW_LADDER_MS),
             border_standoff_secs: probe_border_standoff_secs(sample_rate),
         }
     }

@@ -242,9 +242,10 @@ pub fn run_gap_listen<MR: MediaReader, PW: PatchedAudioWriter>(
             lag_envelope_max_lag_ms: listen.lag_envelope_max_lag_ms,
             border_capture: listen.border_capture,
             lag_envelope_window_secs: listen.lag_envelope_window_secs,
-            // The post-window ladder is a fingerprint-dump-only probe (`--fingerprint-post-window-ladder`);
-            // `--gap-listen` does not carry the flag.
+            // The window-ladder probes are fingerprint-dump-only (`--fingerprint-post-window-ladder`,
+            // `--fingerprint-pre-window-ladder`); `--gap-listen` does not carry either flag.
             post_window_ladder: false,
+            pre_window_ladder: false,
         },
         progress,
     );

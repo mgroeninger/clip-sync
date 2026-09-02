@@ -536,6 +536,152 @@ pub(in crate::application::gap_fingerprint::measure) fn post_window_ladder_at(
     }
     Some(rungs)
 }
+/// Fixed ladder of pre-seam window widths (ms) probed by [`pre_window_ladder_at`]
+/// (`docs/dev/TEMP-dual-fit-pre-window-ladder-plan.md` §3.1). Frozen — do not add, remove, or
+/// reorder without updating the plan and any consumer that assumes this exact set/order.
+pub(in crate::application::gap_fingerprint::measure) const PRE_WINDOW_LADDER_MS: [u32; 6] =
+    [250, 375, 500, 625, 750, 1000];
+
+/// Inputs for [`pre_window_ladder_at`] — same anchor geometry as [`SpliceDualfitInput`].
+pub(in crate::application::gap_fingerprint::measure) struct PreWindowLadderInput<'a> {
+    pub(in crate::application::gap_fingerprint::measure) a_samples: &'a [f32],
+    pub(in crate::application::gap_fingerprint::measure) channels: usize,
+    pub(in crate::application::gap_fingerprint::measure) refined: RefinedGapFrames,
+    pub(in crate::application::gap_fingerprint::measure) b_mono: &'a [f64],
+    pub(in crate::application::gap_fingerprint::measure) b_mapped_start: usize,
+    pub(in crate::application::gap_fingerprint::measure) cfg: &'a FingerprintConfig,
+    pub(in crate::application::gap_fingerprint::measure) sample_rate: u32,
+}
+
+/// Re-lock the **pre** seam at a fixed ladder of window widths, all ending at the refined gap
+/// start, envelope off, ±[`SEAM_LOCAL_SEARCH_MS`] (`docs/dev/TEMP-dual-fit-pre-window-ladder-plan.md`).
+/// Mirror of [`post_window_ladder_at`] with the shoulder flipped — see that function's doc for the
+/// shared caveats (the collar-length-vs-`fill_seam_search_secs` note, the omit-not-fake-zero rule).
+///
+/// The post collar stays at production's actual `cfg.fill_seam_search_secs` lock (envelope off),
+/// via [`nominal_first_seam_locks`] — never grown; this probe only widens pre.
+///
+/// **Anchor differs from the post ladder on purpose (§0 anchor note of the plan).** `pre_global_r`
+/// is scored at the true post-lock conjunct — `locks_250.b_post_seam − gap_frames − w` — not the
+/// nominal lag-0 anchor `post_window_ladder_at`'s `post_global_r` took as a shortcut. This probe's
+/// whole purpose is to test a rescued rung against post's *actual measured* lock (25/g11's
+/// `Δpre`), and `step_real` (production's own-vs-forced refusal) only means anything computed
+/// against a real anchor.
+///
+/// Returns `None` only when even the 250 ms collar cannot be measured (mirrors
+/// [`splice_dualfit_at`] / [`post_window_ladder_at`]).
+pub(in crate::application::gap_fingerprint::measure) fn pre_window_ladder_at(
+    input: &PreWindowLadderInput<'_>,
+) -> Option<Vec<PreWindowLadderRung>> {
+    let PreWindowLadderInput {
+        a_samples,
+        channels,
+        refined,
+        b_mono,
+        b_mapped_start,
+        cfg,
+        sample_rate,
+    } = *input;
+    let ch = channels.max(1);
+    let rate = f64::from(sample_rate).max(1.0);
+
+    // The post collar stays at the existing production 250 ms lock — never grown. `build` also
+    // carries the range guard this function would otherwise have to spell out for the post side.
+    let post_window = ((cfg.fill_seam_search_secs * rate).round() as usize).max(8);
+    let templates = SeamLockTemplates::build(
+        a_samples,
+        ch,
+        refined.start_frame,
+        refined.end_frame,
+        b_mapped_start,
+        post_window,
+    )?;
+    let gap_frames = templates.gap_frames();
+    let max_lag = (((SEAM_LOCAL_SEARCH_MS / 1000.0) * rate).round() as usize).max(1);
+    let locks_250 = nominal_first_seam_locks(
+        &templates,
+        b_mono,
+        max_lag,
+        EnvelopeSearch::off(),
+        sample_rate,
+        SeamGateFloors {
+            min_fill_correlation: f64::from(cfg.min_fill_correlation),
+            fill_absolute_floor: f64::from(cfg.fill_absolute_floor),
+        },
+        f64::from(cfg.min_fill_correlation),
+    )?;
+    let post_lag_ms = locks_250.post.lag as f64 * 1000.0 / rate;
+    // True conjunct: the B end-position the post lock's actual measured seam implies for the pre
+    // template, gap-length back — see the anchor note above.
+    let conj_end = locks_250.b_post_seam as i64 - gap_frames as i64;
+    let ml = ((DUALFIT_SEAM_UNIQ_LAG_MS / 1000.0) * rate).round() as i64;
+    let mlu = ml.max(0) as usize;
+
+    let mut lag_w250_ms: Option<f64> = None;
+    let mut rungs = Vec::with_capacity(PRE_WINDOW_LADDER_MS.len());
+    for &window_ms in PRE_WINDOW_LADDER_MS.iter() {
+        let w = ((f64::from(window_ms) / 1000.0) * rate).round() as usize;
+        if w < 8 || refined.start_frame < w {
+            continue;
+        }
+        let Some(anchor_start) = b_mapped_start.checked_sub(w) else {
+            continue;
+        };
+        let a_pre_w = interleaved_to_mono(
+            &a_samples[(refined.start_frame - w) * ch..refined.start_frame * ch],
+            ch,
+        );
+        let Some(peak) = seam_local_peak(&a_pre_w, b_mono, anchor_start, max_lag) else {
+            continue;
+        };
+        let pre_global_r = if conj_end >= w as i64 && (conj_end as usize) <= b_mono.len() {
+            let hi = conj_end as usize;
+            normalized_correlation(&a_pre_w, &b_mono[hi - w..hi])
+        } else {
+            f64::NAN
+        };
+        let seam_at_start = (anchor_start as i64 + peak.lag) as usize;
+        let pre_prom = (seam_at_start >= mlu && seam_at_start + w + mlu <= b_mono.len())
+            .then(|| {
+                seam_prominence(
+                    &a_pre_w,
+                    &b_mono[seam_at_start - mlu..seam_at_start + w + mlu],
+                    ml,
+                    sample_rate,
+                )
+            })
+            .flatten();
+        let step_real = peak
+            .r
+            .partial_cmp(&(pre_global_r + DUALFIT_STEP_REAL_MARGIN))
+            .map(|ord| ord != std::cmp::Ordering::Less);
+        let lag_ms = peak.lag as f64 * 1000.0 / rate;
+        let lag_minus_w250_ms = (window_ms != 250).then_some(lag_w250_ms).flatten();
+        if window_ms == 250 {
+            lag_w250_ms = Some(lag_ms);
+        }
+        let lag_minus_post_ms = lag_ms - post_lag_ms;
+        let a_pre_rms_db = Some(to_db(mono_rms(
+            a_samples,
+            ch,
+            refined.start_frame - w,
+            refined.start_frame,
+        )));
+        rungs.push(PreWindowLadderRung {
+            window_ms,
+            pre_r: peak.r,
+            pre_lag_ms: lag_ms,
+            pre_z: peak.z,
+            pre_prom,
+            pre_global_r,
+            step_real,
+            lag_minus_post_ms,
+            lag_minus_w250_ms: lag_minus_w250_ms.map(|w250| lag_ms - w250),
+            a_pre_rms_db,
+        });
+    }
+    Some(rungs)
+}
 /// Mono [`LagSummary`] for one side of a [`LagFingerprint`].
 pub(in crate::application::gap_fingerprint::measure) fn mono_lag_side(
     lag: &LagFingerprint,
@@ -1037,6 +1183,230 @@ mod tests {
             (r750.post_lag_ms - shift_ms).abs() < 1.0,
             "750ms rung (reaches the speech) should snap to the true +{shift_ms}ms shift, got {}",
             r750.post_lag_ms
+        );
+    }
+
+    /// §3.3 of `docs/dev/TEMP-dual-fit-pre-window-ladder-plan.md`: the ladder's 250 ms rung must
+    /// reproduce production's pre lock exactly, not approximately — both call
+    /// `nominal_first_seam_locks`/`seam_local_peak` with the envelope off, so on identical A/B content
+    /// (trivial gate-pass, trim 0) the two readings must agree to floating-point precision.
+    #[test]
+    fn pre_window_ladder_250ms_rung_matches_dual_fit_at_nominal() {
+        const RATE: u32 = 48_000;
+        let total = frames_at_ms(RATE, 6000);
+        let signal: Vec<f32> = (0..total).map(|i| (noise(3, i) * 0.5) as f32).collect();
+        let b_mono: Vec<f64> = signal.iter().map(|&v| f64::from(v)).collect();
+
+        let gap_start = frames_at_ms(RATE, 2000);
+        let gap_frames = frames_at_ms(RATE, 800);
+        let gap_end = gap_start + gap_frames;
+        let refined = RefinedGapFrames {
+            start_frame: gap_start,
+            end_frame: gap_end,
+        };
+
+        let cfg = FingerprintConfig::default();
+        let ladder = pre_window_ladder_at(&PreWindowLadderInput {
+            a_samples: &signal,
+            channels: 1,
+            refined,
+            b_mono: &b_mono,
+            b_mapped_start: gap_start,
+            cfg: &cfg,
+            sample_rate: RATE,
+        })
+        .expect("ladder measured");
+        let rung_250 = ladder
+            .iter()
+            .find(|r| r.window_ms == 250)
+            .expect("250ms rung present");
+
+        let rate = f64::from(RATE);
+        let seam_window_frames = ((cfg.fill_seam_search_secs * rate).round() as usize).max(8);
+        let max_lag_frames = ((SEAM_LOCAL_SEARCH_MS / 1000.0 * rate).round() as usize).max(1);
+        let templates = SeamLockTemplates::build(
+            &signal,
+            1,
+            gap_start,
+            gap_end,
+            gap_start,
+            seam_window_frames,
+        )
+        .expect("templates build");
+        let params = DualFitParams {
+            channels: 1,
+            sample_rate: RATE,
+            gap_frames: templates.gap_frames(),
+            seam_window_frames,
+            max_lag_frames,
+            min_fill_correlation: f64::from(cfg.min_fill_correlation),
+            fill_absolute_floor: f64::from(cfg.fill_absolute_floor),
+            step_real_margin: DUALFIT_STEP_REAL_MARGIN,
+            a_gap_floor_db: -60.0,
+        };
+        let dual = dual_fit_at_nominal(&templates, &b_mono, &signal, &params)
+            .expect("production dual-fit succeeds on identical A/B content");
+
+        assert!(
+            (rung_250.pre_r - dual.pre_seam_r).abs() < 1e-9,
+            "250ms rung pre_r must equal production: {} vs {}",
+            rung_250.pre_r,
+            dual.pre_seam_r
+        );
+        assert!(
+            (rung_250.pre_lag_ms - dual.pre_lag as f64 * 1000.0 / rate).abs() < 1e-9,
+            "250ms rung lag must equal production's pre_lag"
+        );
+    }
+
+    /// Quiet-then-speech pre collar: the true content ends right before the gap only after a quiet
+    /// prefix nearer the gap, so a short window's peak can lock onto whatever quiet noise floor
+    /// immediately precedes the gap while a wider window spans enough real content (further back)
+    /// to snap to the correct lag. Exercises the ladder's actual purpose — this is the shape
+    /// `docs/dev/TEMP-dual-fit-pre-window-ladder-plan.md` exists to characterize (25/g11's class).
+    #[test]
+    fn pre_window_ladder_wide_rung_snaps_where_the_250ms_rung_reads_quiet_noise() {
+        const RATE: u32 = 48_000;
+        let speech_ms = 900u64;
+        let quiet_ms = 300u64;
+        let speech_frames = frames_at_ms(RATE, speech_ms);
+        let quiet_frames = frames_at_ms(RATE, quiet_ms);
+        let pre_len = speech_frames + quiet_frames;
+
+        let gap_start = pre_len;
+        let gap_frames = frames_at_ms(RATE, 800);
+        let gap_end = gap_start + gap_frames;
+        let post_len = frames_at_ms(RATE, 2000);
+        let total = gap_end + post_len;
+
+        let mut a = vec![0.0f32; total];
+        // Pre shoulder: real (louder, distinctly-seeded) content, then a near-silent noise floor
+        // immediately before the gap.
+        for (f, slot) in a.iter_mut().enumerate().take(speech_frames) {
+            *slot = (noise(31, f) * 0.5) as f32;
+        }
+        for (f, slot) in a.iter_mut().enumerate().take(pre_len).skip(speech_frames) {
+            *slot = (noise(9, f) * 0.002) as f32;
+        }
+        write_shaped_noise(&mut a, gap_end, total, 23, false);
+
+        // B: matches A's post shoulder at nominal; everywhere else is independent background noise
+        // (same tiny scale as A's quiet prefix, but uncorrelated with it) except for the real speech,
+        // which is placed only at its true +40 ms shift. A 250 ms pre window — entirely inside the
+        // 300 ms quiet suffix — has nothing real to lock onto; a wider window that reaches the speech
+        // does.
+        let shift = frames_at_ms(RATE, 40) as i64;
+        let mut b_mono = vec![0.0f64; total + shift.unsigned_abs() as usize + 8];
+        for (i, slot) in b_mono.iter_mut().enumerate() {
+            *slot = noise(77, i) * 0.002;
+        }
+        for (i, &v) in a.iter().enumerate().take(total).skip(gap_end) {
+            b_mono[i] = f64::from(v);
+        }
+        for (f, &v) in a.iter().enumerate().take(speech_frames) {
+            let bi = (f as i64 + shift) as usize;
+            b_mono[bi] = f64::from(v);
+        }
+
+        let refined = RefinedGapFrames {
+            start_frame: gap_start,
+            end_frame: gap_end,
+        };
+        let cfg = FingerprintConfig::default();
+        let ladder = pre_window_ladder_at(&PreWindowLadderInput {
+            a_samples: &a,
+            channels: 1,
+            refined,
+            b_mono: &b_mono,
+            b_mapped_start: gap_start,
+            cfg: &cfg,
+            sample_rate: RATE,
+        })
+        .expect("ladder measured");
+
+        let rate = f64::from(RATE);
+        let shift_ms = shift as f64 * 1000.0 / rate;
+        let rung = |ms: u32| {
+            ladder
+                .iter()
+                .find(|r| r.window_ms == ms)
+                .unwrap_or_else(|| panic!("{ms}ms rung present"))
+        };
+        let r250 = rung(250);
+        let r1000 = rung(1000);
+        assert!(
+            (r250.pre_lag_ms - shift_ms).abs() > 5.0,
+            "250ms rung (all quiet) should NOT land on the true +{shift_ms}ms shift, got {}",
+            r250.pre_lag_ms
+        );
+        assert!(
+            (r1000.pre_lag_ms - shift_ms).abs() < 1.0,
+            "1000ms rung (reaches the speech) should snap to the true +{shift_ms}ms shift, got {}",
+            r1000.pre_lag_ms
+        );
+    }
+
+    /// Acceptance criterion (§5): `pre_global_r` must be the true post-lock conjunct, not lag 0 —
+    /// pin a fixture where a real step makes the two answers differ. B carries A's pre content only
+    /// at a `+step_ms` shift beyond the post lock's own (zero) offset, so scoring the pre template at
+    /// the post-lock conjunct (this rung's actual job) reads near the true correlation while a lag-0
+    /// score at the untouched nominal position would read near zero.
+    #[test]
+    fn pre_window_ladder_global_r_uses_the_post_lock_conjunct_not_lag_zero() {
+        const RATE: u32 = 48_000;
+        let pre_len = frames_at_ms(RATE, 1000);
+        let gap_frames = frames_at_ms(RATE, 800);
+        let post_len = frames_at_ms(RATE, 1000);
+        let gap_start = pre_len;
+        let gap_end = gap_start + gap_frames;
+        let post_lag = frames_at_ms(RATE, 60) as i64;
+        let total = gap_end + post_len;
+
+        let mut a = vec![0.0f32; total];
+        write_shaped_noise(&mut a, 0, gap_start, 5, true);
+        write_shaped_noise(&mut a, gap_end, total, 23, false);
+
+        // B: post shoulder's true match sits at `post_lag`, not nominal, so the post lock reports a
+        // nonzero lag and the true post-lock conjunct (b_post_seam − gap_frames = gap_start + post_lag)
+        // differs from the nominal/lag-zero position (gap_start). A's pre content is placed in B only
+        // at that shifted conjunct, so a lag-zero read of B's pre region finds nothing but noise.
+        let mut b_mono = vec![0.0f64; total + post_lag as usize + 8];
+        for (i, slot) in b_mono.iter_mut().enumerate() {
+            *slot = noise(88, i) * 0.001;
+        }
+        for (f, &v) in a.iter().enumerate().take(total).skip(gap_end) {
+            let bi = (f as i64 + post_lag) as usize;
+            b_mono[bi] = f64::from(v);
+        }
+        for (f, &v) in a.iter().enumerate().take(gap_start) {
+            let bi = (f as i64 + post_lag) as usize;
+            b_mono[bi] = f64::from(v);
+        }
+
+        let refined = RefinedGapFrames {
+            start_frame: gap_start,
+            end_frame: gap_end,
+        };
+        let cfg = FingerprintConfig::default();
+        let ladder = pre_window_ladder_at(&PreWindowLadderInput {
+            a_samples: &a,
+            channels: 1,
+            refined,
+            b_mono: &b_mono,
+            b_mapped_start: gap_start,
+            cfg: &cfg,
+            sample_rate: RATE,
+        })
+        .expect("ladder measured");
+        let r250 = ladder
+            .iter()
+            .find(|r| r.window_ms == 250)
+            .expect("250ms rung present");
+
+        assert!(
+            r250.pre_global_r > 0.8,
+            "pre_global_r must score at the true post-lock conjunct, not lag 0: got {}",
+            r250.pre_global_r
         );
     }
 

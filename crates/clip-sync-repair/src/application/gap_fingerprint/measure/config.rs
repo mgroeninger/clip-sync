@@ -32,6 +32,9 @@ pub struct DumpOptions {
     /// `--fingerprint-post-window-ladder` (`docs/dev/archive/TEMP-dual-fit-post-window-ladder-plan.md`).
     /// Independent of `diagnostics` — the ladder is dump-only and does not follow the Tier-3 split.
     pub post_window_ladder: bool,
+    /// `--fingerprint-pre-window-ladder` (`docs/dev/TEMP-dual-fit-pre-window-ladder-plan.md`).
+    /// Independent of `diagnostics` and of `post_window_ladder` — dump-only, no Tier-3 split.
+    pub pre_window_ladder: bool,
 }
 impl Default for DumpOptions {
     fn default() -> Self {
@@ -41,6 +44,7 @@ impl Default for DumpOptions {
             border_capture: BorderCapture::Narrow,
             lag_envelope_window_secs: DEFAULT_LAG_ENVELOPE_WINDOW_SECS,
             post_window_ladder: false,
+            pre_window_ladder: false,
         }
     }
 }

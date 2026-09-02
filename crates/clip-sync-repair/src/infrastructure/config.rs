@@ -198,6 +198,11 @@ pub struct RepairConfig {
     /// `post_window_ladder`. Off by default; independent of `fingerprint_diagnostics`.
     #[serde(default)]
     pub fingerprint_post_window_ladder: bool,
+    /// Pre-seam window-ladder probe (`docs/dev/TEMP-dual-fit-pre-window-ladder-plan.md`) — same
+    /// fixed widths, envelope off, recorded per gap as `pre_window_ladder`. Off by default;
+    /// independent of `fingerprint_diagnostics` and of `fingerprint_post_window_ladder`.
+    #[serde(default)]
+    pub fingerprint_pre_window_ladder: bool,
     /// Coarse envelope half-width (ms) for the nominal-first shoulder rescue. Default 2000.
     /// `0` disables it (measure at the nominal `b_mapped` only, no `envelope_*` on the wire).
     ///
@@ -662,6 +667,7 @@ impl Default for RepairConfig {
             dual_fit: true,
             fingerprint_diagnostics: false,
             fingerprint_post_window_ladder: false,
+            fingerprint_pre_window_ladder: false,
             lag_envelope_max_lag_ms: default_lag_envelope_max_lag_ms(),
             border_capture: crate::application::gap_fingerprint::BorderCapture::default(),
             lag_envelope_window_secs: default_lag_envelope_window_secs(),

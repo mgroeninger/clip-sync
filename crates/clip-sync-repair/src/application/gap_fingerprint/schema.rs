@@ -209,6 +209,11 @@ pub struct CorpusProbeRecipe {
     /// claim a sweep that did not happen.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub post_window_ladder_ms: Option<[u32; 6]>,
+    /// Frozen ladder behind `pre_window_ladder` (`docs/dev/TEMP-dual-fit-pre-window-ladder-plan.md`
+    /// §3.1): `[250, 375, 500, 625, 750, 1000]`. Same evidence-not-config rule as
+    /// `post_window_ladder_ms` above.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub pre_window_ladder_ms: Option<[u32; 6]>,
     /// Recorded rather than omitted so a reader never has to assume production's
     /// `border_standoff_secs` (0.35) applied to a measurement. Not a knob — [`CorpusProbeRecipe::for_corpus`]
     /// converts it from [`PROBE_BORDER_STANDOFF_FRAMES`](super::measure::PROBE_BORDER_STANDOFF_FRAMES),
@@ -646,6 +651,10 @@ pub struct GapFingerprint {
     /// on every other dump, including old corpora.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub post_window_ladder: Option<Vec<PostWindowLadderRung>>,
+    /// `--fingerprint-pre-window-ladder` only (does not require `--fingerprint-diagnostics`); absent
+    /// on every other dump, including old corpora.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub pre_window_ladder: Option<Vec<PreWindowLadderRung>>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub outcome: Option<GateOutcome>,
     /// Gap-equivalence classification (`docs/dev/gap-vocabulary.md` § Silence-character pre-gate): does this gap need patching?
@@ -1539,6 +1548,51 @@ pub struct PostWindowLadderRung {
     pub a_post_rms_db: Option<f32>,
 }
 
+/// One rung of the pre-window ladder probe (`docs/dev/TEMP-dual-fit-pre-window-ladder-plan.md`
+/// §3.2) — a same-end re-lock of the **pre** seam at `window_ms`, envelope off, raw
+/// `mono(refined_start − window_ms .. refined_start)` vs `B` around nominal `b_mapped_start` ±600 ms.
+/// Omitted (not recorded, not a fake `0`) when the window runs off A or the B search is OOB.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct PreWindowLadderRung {
+    /// The ladder rung this row measured — one of `{250, 375, 500, 625, 750, 1000}`.
+    pub window_ms: u32,
+    /// `seam_local_peak` of this rung's template against `B` at its own best lag.
+    #[serde(
+        serialize_with = "ser_nan_as_null",
+        deserialize_with = "de_null_as_nan"
+    )]
+    pub pre_r: f64,
+    pub pre_lag_ms: f64,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub pre_z: Option<f64>,
+    /// Prominence of this rung's placement peak over its best rival within ±30 ms — same helper
+    /// `splice_dualfit`'s `pre_seam_prom` uses. `None` when the sweep window is out of range.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub pre_prom: Option<f64>,
+    /// This rung's template vs `B` at the true post-lock conjunct (the envelope-off, 250 ms post
+    /// seam's *actual measured* offset, gap length back) — is the step necessary? Deliberately NOT
+    /// the nominal lag-0 anchor `post_window_ladder`'s `post_global_r` shortcuts to (plan §0 anchor
+    /// note). `NaN` when that window is OOB.
+    #[serde(
+        serialize_with = "ser_nan_as_null",
+        deserialize_with = "de_null_as_nan"
+    )]
+    pub pre_global_r: f64,
+    /// `pre_r` vs `pre_global_r + DUALFIT_STEP_REAL_MARGIN` (0.15), the same `partial_cmp` refusal
+    /// `try_dual_fit` uses. `None` only when that comparison is unordered (a NaN operand).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub step_real: Option<bool>,
+    /// This rung's pre lag minus the envelope-off 250 ms post lag (both vs their own nominals).
+    pub lag_minus_post_ms: f64,
+    /// This rung's pre lag minus the 250 ms rung's pre lag. `None` when the 250 ms rung itself was
+    /// omitted (window OOB).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub lag_minus_w250_ms: Option<f64>,
+    /// RMS of this rung's A template, for confirming (or not) that level does not predict `window_ms`.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub a_pre_rms_db: Option<f32>,
+}
+
 /// One side of the wide-envelope confirmer: the 100 ms-bin RMS-envelope lag peak. Its `peak_lag_ms` should
 /// agree with the fine-waveform peak lag (segment identity at macro scale; §3.6a). `prominence` is the
 /// margin over the tallest rival envelope peak.
@@ -2082,6 +2136,7 @@ mod tests {
             }),
             splice_dualfit: None,
             post_window_ladder: None,
+            pre_window_ladder: None,
             donor_interior_nominal: None,
             b_levels: None,
             outcome: Some(GateOutcome {

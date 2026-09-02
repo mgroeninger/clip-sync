@@ -248,6 +248,7 @@ pub fn spec_to_fingerprint_summary(
         // Ladder is a from-decode-loop overlay (not a spec projection, like `equivalence_*` below);
         // the projection leaves it None.
         post_window_ladder: None,
+        pre_window_ladder: None,
         outcome: Some(GateOutcome {
             plan_kind: "fillable".into(),
             dual_fit_rescue,

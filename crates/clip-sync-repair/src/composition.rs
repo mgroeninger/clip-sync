@@ -256,6 +256,7 @@ fn dump_gap_fingerprints(
             border_capture: config.repair.border_capture,
             lag_envelope_window_secs: config.repair.lag_envelope_window_secs,
             post_window_ladder: config.repair.fingerprint_post_window_ladder,
+            pre_window_ladder: config.repair.fingerprint_pre_window_ladder,
         },
         progress,
     );
