@@ -503,7 +503,14 @@ pub(in crate::application::gap_fingerprint::measure) fn post_window_ladder_at(
         };
         let seam_at = (anchor_start as i64 + peak.lag) as usize;
         let post_prom = (seam_at >= mlu && seam_at + w + mlu <= b_mono.len())
-            .then(|| seam_prominence(&a_post_w, &b_mono[seam_at - mlu..seam_at + w + mlu], ml, sample_rate))
+            .then(|| {
+                seam_prominence(
+                    &a_post_w,
+                    &b_mono[seam_at - mlu..seam_at + w + mlu],
+                    ml,
+                    sample_rate,
+                )
+            })
             .flatten();
         let step_real = peak
             .r
@@ -1123,11 +1130,21 @@ mod tests {
         let mut a = vec![0.0f32; total];
         write_shaped_noise(&mut a, 0, gap_start, 5, true);
         // Post shoulder: near-silent noise floor, then real (louder, distinctly-seeded) content.
-        for f in gap_end..gap_end + quiet_frames {
-            a[f] = (noise(9, f) * 0.002) as f32;
+        for (f, slot) in a
+            .iter_mut()
+            .enumerate()
+            .take(gap_end + quiet_frames)
+            .skip(gap_end)
+        {
+            *slot = (noise(9, f) * 0.002) as f32;
         }
-        for f in gap_end + quiet_frames..gap_end + post_len {
-            a[f] = (noise(31, f) * 0.5) as f32;
+        for (f, slot) in a
+            .iter_mut()
+            .enumerate()
+            .take(gap_end + post_len)
+            .skip(gap_end + quiet_frames)
+        {
+            *slot = (noise(31, f) * 0.5) as f32;
         }
 
         // B: matches A's pre shoulder at nominal; everywhere else is independent background noise
@@ -1143,9 +1160,14 @@ mod tests {
         for (i, &v) in a.iter().take(gap_start).enumerate() {
             b_mono[i] = f64::from(v);
         }
-        for f in gap_end + quiet_frames..gap_end + post_len {
+        for (f, &v) in a
+            .iter()
+            .enumerate()
+            .take(gap_end + post_len)
+            .skip(gap_end + quiet_frames)
+        {
             let bi = (f as i64 + shift) as usize;
-            b_mono[bi] = f64::from(a[f]);
+            b_mono[bi] = f64::from(v);
         }
 
         let refined = RefinedGapFrames {

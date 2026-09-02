@@ -232,7 +232,7 @@ fn write_stereo_sine_with_gaps(
 /// (r≈0.03 at the same shift) — needed so a shifted copy of this content is uncorrelated with the
 /// original at any lag except the true shift.
 fn hash_noise_sample(seed: u32, idx: i64, amplitude: f32) -> i16 {
-    let mut x = (idx as i64).wrapping_add(i64::from(seed)) as u64;
+    let mut x = idx.wrapping_add(i64::from(seed)) as u64;
     x = x.wrapping_mul(0x9E37_79B9_7F4A_7C15);
     x ^= x >> 30;
     x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
@@ -247,13 +247,14 @@ fn hash_noise_sample(seed: u32, idx: i64, amplitude: f32) -> i16 {
 /// `[region_start_secs + shift_secs, region_end_secs + shift_secs)`, and (if `gap` is `Some`) true
 /// silence in `[gap_start, gap_end)`.
 ///
-/// The noise value written at absolute frame `f` depends only on `f - (region_start_secs + shift_secs)
-/// * sample_rate` — so two calls sharing `seed`/`region_start_secs`/`region_end_secs` but differing
-/// `shift_secs` produce the *same* noise content, just translated in time by the difference in shift.
-/// That lets a caller build an A/B pair whose shoulders correlate strongly at a single constant lag
-/// (`shift_b - shift_a`) and not at all at lag 0 (a lag-0 comparison lines up unrelated noise samples)
-/// — a rigid constant-shift fixture, distinct from [`write_stereo_sine_with_inverted_region`]'s
-/// single-shoulder distortion (which produces a *step*, not a shared lag).
+/// The noise value written at absolute frame `f` depends only on
+/// `f - (region_start_secs + shift_secs) * sample_rate` — so two calls sharing
+/// `seed`/`region_start_secs`/`region_end_secs` but differing `shift_secs` produce the *same* noise
+/// content, just translated in time by the difference in shift. That lets a caller build an A/B pair
+/// whose shoulders correlate strongly at a single constant lag (`shift_b - shift_a`) and not at all
+/// at lag 0 (a lag-0 comparison lines up unrelated noise samples) — a rigid constant-shift fixture,
+/// distinct from [`write_stereo_sine_with_inverted_region`]'s single-shoulder distortion (which
+/// produces a *step*, not a shared lag).
 #[allow(clippy::too_many_arguments)]
 fn write_stereo_with_shifted_noise_band(
     path: &Path,
