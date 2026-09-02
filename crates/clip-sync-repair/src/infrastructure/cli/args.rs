@@ -61,6 +61,13 @@ pub struct Args {
     #[arg(long)]
     pub fingerprint_diagnostics: bool,
 
+    /// Re-lock the post seam at a fixed window ladder (250/375/500/625/750/1000 ms), envelope off,
+    /// recorded per gap as `post_window_ladder` (`docs/dev/TEMP-dual-fit-post-window-ladder-plan.md`).
+    /// Independent of `--fingerprint-diagnostics`. Requires `--gap-fingerprints DIR`.
+    #[cfg(feature = "calibration")]
+    #[arg(long)]
+    pub fingerprint_post_window_ladder: bool,
+
     /// Coarse envelope half-width (ms) for the nominal-first shoulder rescue: it recenters
     /// `lag_decision`'s ±600 ms sweep in a fingerprint dump, and the seam locks on a production
     /// repair. Default 2000. `0` disables recenter (nominal `b_mapped`, no `envelope_*` on the

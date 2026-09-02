@@ -7,3 +7,4 @@ tests/corpus/_sources/
 # crates/clip-sync-repair/tests/gap_corpus/fingerprints/ instead.
 /gap-files/
 *.sources.local.toml
+CLAUDE.md

@@ -245,6 +245,9 @@ pub fn spec_to_fingerprint_summary(
         splice,
         wide_envelope: x.wide_envelope,
         splice_dualfit,
+        // Ladder is a from-decode-loop overlay (not a spec projection, like `equivalence_*` below);
+        // the projection leaves it None.
+        post_window_ladder: None,
         outcome: Some(GateOutcome {
             plan_kind: "fillable".into(),
             dual_fit_rescue,

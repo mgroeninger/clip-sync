@@ -144,6 +144,8 @@ pub(in crate::application::gap_fingerprint::measure) struct RegionMeasurements {
         Option<WideEnvelopeFingerprint>,
     pub(in crate::application::gap_fingerprint::measure) residual: Option<ResidualInfo>,
     pub(in crate::application::gap_fingerprint::measure) lag_editorial: Option<LagFingerprint>,
+    pub(in crate::application::gap_fingerprint::measure) post_window_ladder:
+        Option<Vec<PostWindowLadderRung>>,
 }
 /// Per-gap inputs for [`compute_region_measurements`] — the geometry the caller resolved (refined throat, B
 /// extract window/offset) plus the shared config/frame params. `gap_floor_db` is `fp.levels.gap_floor_db` from
@@ -163,6 +165,7 @@ pub(in crate::application::gap_fingerprint::measure) struct RegionMeasureInput<'
     pub(in crate::application::gap_fingerprint::measure) cfg: &'a FingerprintConfig,
     pub(in crate::application::gap_fingerprint::measure) gap_floor_db: f32,
     pub(in crate::application::gap_fingerprint::measure) include_diagnostics: bool,
+    pub(in crate::application::gap_fingerprint::measure) post_window_ladder: bool,
     pub(in crate::application::gap_fingerprint::measure) context_frames: usize,
     pub(in crate::application::gap_fingerprint::measure) bin_frames: usize,
     pub(in crate::application::gap_fingerprint::measure) search_radius_frames: usize,
@@ -193,6 +196,7 @@ pub(in crate::application::gap_fingerprint::measure) fn compute_region_measureme
         cfg,
         gap_floor_db,
         include_diagnostics,
+        post_window_ladder,
         context_frames,
         bin_frames,
         search_radius_frames,
@@ -386,6 +390,22 @@ pub(in crate::application::gap_fingerprint::measure) fn compute_region_measureme
     };
     let splice = lag_decision.as_ref().and_then(splice_summary_from_lag);
 
+    // Post-seam window ladder (`docs/dev/TEMP-dual-fit-post-window-ladder-plan.md`) — independent of
+    // `include_diagnostics`, gated only on `--fingerprint-post-window-ladder`.
+    let post_window_ladder_curve = if post_window_ladder {
+        post_window_ladder_at(&PostWindowLadderInput {
+            a_samples: &a_pcm.samples,
+            channels: ch,
+            refined,
+            b_mono: &b_mono,
+            b_mapped_start,
+            cfg,
+            sample_rate,
+        })
+    } else {
+        None
+    };
+
     // Residual stays at the gate's structure throat. Reuse the throat placement from the bracket loop when the
     // throat bracket scored `Ok`; else a fresh `gate_structure_align` call.
     let throat_frame =
@@ -456,6 +476,7 @@ pub(in crate::application::gap_fingerprint::measure) fn compute_region_measureme
         wide_envelope,
         residual,
         lag_editorial,
+        post_window_ladder: post_window_ladder_curve,
     }
 }
 
@@ -669,6 +690,7 @@ mod tests {
                 max_lag_frames: Some(0),
             }),
             lag_editorial: None,
+            post_window_ladder: None,
         };
         let levels = LevelTags {
             a_gap_floor_db: -70.0,

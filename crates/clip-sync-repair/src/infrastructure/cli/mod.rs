@@ -76,6 +76,10 @@ pub fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     if args.fingerprint_diagnostics {
         config.repair.fingerprint_diagnostics = true;
     }
+    #[cfg(feature = "calibration")]
+    if args.fingerprint_post_window_ladder {
+        config.repair.fingerprint_post_window_ladder = true;
+    }
     if let Some(ms) = args.lag_envelope_max_lag_ms {
         config.repair.lag_envelope_max_lag_ms = ms;
     }
@@ -335,6 +339,9 @@ pub(crate) fn validate_fingerprint_flags(args: &Args) -> Result<(), String> {
         }
         if args.fingerprint_diagnostics {
             return Err("--fingerprint-diagnostics requires --gap-fingerprints DIR".into());
+        }
+        if args.fingerprint_post_window_ladder {
+            return Err("--fingerprint-post-window-ladder requires --gap-fingerprints DIR".into());
         }
         if args.border_capture.is_some() {
             return Err("--border-capture requires --gap-fingerprints DIR".into());
@@ -833,6 +840,21 @@ mod cli_override_tests {
             "a.wav",
             "b.wav",
             "--fingerprint-diagnostics",
+        ]);
+        let err = validate_fingerprint_flags(&args).unwrap_err();
+        assert!(err.contains("--gap-fingerprints"));
+    }
+
+    #[cfg(feature = "calibration")]
+    #[test]
+    fn fingerprint_post_window_ladder_without_dump_dir_is_rejected() {
+        use clap::Parser;
+
+        let args = Args::parse_from([
+            "clip-sync-repair",
+            "a.wav",
+            "b.wav",
+            "--fingerprint-post-window-ladder",
         ]);
         let err = validate_fingerprint_flags(&args).unwrap_err();
         assert!(err.contains("--gap-fingerprints"));

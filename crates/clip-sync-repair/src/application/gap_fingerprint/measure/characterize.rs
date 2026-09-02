@@ -202,6 +202,7 @@ pub fn characterize_gaps_from_decode(
             cfg: &cfg,
             gap_floor_db: fp.levels.gap_floor_db,
             include_diagnostics: dump.diagnostics,
+            post_window_ladder: dump.post_window_ladder,
             context_frames,
             bin_frames,
             search_radius_frames,
@@ -289,6 +290,7 @@ pub fn characterize_gaps_from_decode(
         fp.silence = silence;
         fp.contour = contour;
         fp.anchors = anchors;
+        fp.post_window_ladder = m.post_window_ladder;
         // Count only gaps that ended up with a *fabricated* block. A gap with no sweep and no scalars
         // has no `lag_decision` at all, and absence needs no disowning.
         if !lag_supplied && fp.lag_decision.is_some() {
@@ -2205,6 +2207,7 @@ mod tests {
             splice: None,
             wide_envelope: None,
             splice_dualfit: None,
+            post_window_ladder: None,
             donor_interior_nominal: None,
             b_levels: None,
             outcome: None,

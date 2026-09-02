@@ -202,6 +202,13 @@ pub struct CorpusProbeRecipe {
     /// `place_on_b` entirely.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub seam_window_secs: Option<f64>,
+    /// Frozen ladder behind `post_window_ladder` (§3.1): `[250, 375, 500, 625, 750, 1000]`. **Absent
+    /// unless some gap in the corpus actually carries a `post_window_ladder`** — the same
+    /// evidence-not-config rule as `lag_window_secs` / `seam_window_secs` above: a flag with no gap
+    /// surviving to measure it (empty selection, every gap short-circuited before the probe) must not
+    /// claim a sweep that did not happen.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub post_window_ladder_ms: Option<[u32; 6]>,
     /// Recorded rather than omitted so a reader never has to assume production's
     /// `border_standoff_secs` (0.35) applied to a measurement. Not a knob — [`CorpusProbeRecipe::for_corpus`]
     /// converts it from [`PROBE_BORDER_STANDOFF_FRAMES`](super::measure::PROBE_BORDER_STANDOFF_FRAMES),
@@ -631,6 +638,14 @@ pub struct GapFingerprint {
     /// length-reconciled fill (ledger C3/C7). Full tier, gate path.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub splice_dualfit: Option<SpliceDualfit>,
+    /// Post-seam window ladder (`docs/dev/TEMP-dual-fit-post-window-ladder-plan.md`) — same-start
+    /// re-locks of the **post** seam at `{250, 375, 500, 625, 750, 1000}` ms, envelope off, ±600 ms.
+    /// Sibling of `splice_dualfit`, not nested in it: `splice_dualfit` stays the 250 ms
+    /// production-predictor (which may envelope-rescue); this is a fixed-geometry probe curve.
+    /// `--fingerprint-post-window-ladder` only (does not require `--fingerprint-diagnostics`); absent
+    /// on every other dump, including old corpora.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub post_window_ladder: Option<Vec<PostWindowLadderRung>>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub outcome: Option<GateOutcome>,
     /// Gap-equivalence classification (`docs/dev/gap-vocabulary.md` § Silence-character pre-gate): does this gap need patching?
@@ -1481,6 +1496,49 @@ pub struct SpliceDualfit {
     pub seams_clamped: Option<bool>,
 }
 
+/// One rung of the post-window ladder probe (`docs/dev/TEMP-dual-fit-post-window-ladder-plan.md`
+/// §3.2) — a same-start re-lock of the **post** seam at `window_ms`, envelope off, raw
+/// `mono(refined_end .. refined_end + window_ms)` vs `B` around nominal `b_mapped_end` ±600 ms.
+/// Omitted (not recorded, not a fake `0`) when the window runs off A or the B search is OOB.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct PostWindowLadderRung {
+    /// The ladder rung this row measured — one of `{250, 375, 500, 625, 750, 1000}`.
+    pub window_ms: u32,
+    /// `seam_local_peak` of this rung's template against `B` at its own best lag.
+    #[serde(
+        serialize_with = "ser_nan_as_null",
+        deserialize_with = "de_null_as_nan"
+    )]
+    pub post_r: f64,
+    pub post_lag_ms: f64,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub post_z: Option<f64>,
+    /// Prominence of this rung's placement peak over its best rival within ±30 ms — same helper
+    /// `splice_dualfit`'s `post_seam_prom` uses. `None` when the sweep window is out of range.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub post_prom: Option<f64>,
+    /// This rung's template vs `B` at the (envelope-off, 250 ms) pre seam's own offset — is the step
+    /// necessary? `NaN` when that window is OOB.
+    #[serde(
+        serialize_with = "ser_nan_as_null",
+        deserialize_with = "de_null_as_nan"
+    )]
+    pub post_global_r: f64,
+    /// `post_r` vs `post_global_r + DUALFIT_STEP_REAL_MARGIN` (0.15), the same `partial_cmp` refusal
+    /// `try_dual_fit` uses. `None` only when that comparison is unordered (a NaN operand).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub step_real: Option<bool>,
+    /// This rung's post lag minus the envelope-off 250 ms pre lag (both vs their own nominals).
+    pub lag_minus_pre_ms: f64,
+    /// This rung's post lag minus the 250 ms rung's post lag. `None` when the 250 ms rung itself was
+    /// omitted (window OOB).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub lag_minus_w250_ms: Option<f64>,
+    /// RMS of this rung's A template, for confirming (or not) that level does not predict `window_ms`.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub a_post_rms_db: Option<f32>,
+}
+
 /// One side of the wide-envelope confirmer: the 100 ms-bin RMS-envelope lag peak. Its `peak_lag_ms` should
 /// agree with the fine-waveform peak lag (segment identity at macro scale; §3.6a). `prominence` is the
 /// margin over the tallest rival envelope peak.
@@ -2023,6 +2081,7 @@ mod tests {
                 post: None,
             }),
             splice_dualfit: None,
+            post_window_ladder: None,
             donor_interior_nominal: None,
             b_levels: None,
             outcome: Some(GateOutcome {

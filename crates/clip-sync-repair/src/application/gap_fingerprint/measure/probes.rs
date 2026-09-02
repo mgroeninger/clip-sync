@@ -4,7 +4,11 @@ use crate::application::gap_fingerprint::schema::*;
 
 use clip_sync::normalized_correlation;
 
+use crate::domain::dual_fit::DUALFIT_STEP_REAL_MARGIN;
+#[cfg(test)]
+use crate::domain::dual_fit::{dual_fit_at_nominal, DualFitParams};
 use crate::domain::lag_envelope::EnvelopeCfg;
+use crate::domain::pcm::interleaved_to_mono;
 use crate::domain::policies::{border_templates_for_gap, RefinedGapFrames};
 use crate::domain::seam_locks::{
     nominal_first_seam_locks, wide_a_slicer, EnvelopeSearch, SeamGateFloors, SeamLockTemplates,
@@ -397,6 +401,141 @@ pub(in crate::application::gap_fingerprint::measure) fn splice_dualfit_at(
         seams_clamped: Some(locks.clamped()),
     })
 }
+
+/// Fixed ladder of post-seam window widths (ms) probed by [`post_window_ladder_at`]
+/// (`docs/dev/TEMP-dual-fit-post-window-ladder-plan.md` §3.1). Frozen — do not add, remove, or
+/// reorder without updating the plan and any consumer that assumes this exact set/order.
+pub(in crate::application::gap_fingerprint::measure) const POST_WINDOW_LADDER_MS: [u32; 6] =
+    [250, 375, 500, 625, 750, 1000];
+
+/// Inputs for [`post_window_ladder_at`] — same anchor geometry as [`SpliceDualfitInput`].
+pub(in crate::application::gap_fingerprint::measure) struct PostWindowLadderInput<'a> {
+    pub(in crate::application::gap_fingerprint::measure) a_samples: &'a [f32],
+    pub(in crate::application::gap_fingerprint::measure) channels: usize,
+    pub(in crate::application::gap_fingerprint::measure) refined: RefinedGapFrames,
+    pub(in crate::application::gap_fingerprint::measure) b_mono: &'a [f64],
+    pub(in crate::application::gap_fingerprint::measure) b_mapped_start: usize,
+    pub(in crate::application::gap_fingerprint::measure) cfg: &'a FingerprintConfig,
+    pub(in crate::application::gap_fingerprint::measure) sample_rate: u32,
+}
+
+/// Re-lock the **post** seam at a fixed ladder of window widths, all starting at the refined gap end,
+/// envelope off, ±[`SEAM_LOCAL_SEARCH_MS`] (`docs/dev/TEMP-dual-fit-post-window-ladder-plan.md`).
+///
+/// The pre collar is built from `cfg.fill_seam_search_secs` (production's actual configured seam
+/// window) via [`nominal_first_seam_locks`] with `EnvelopeSearch::off()`. Every rung, including the
+/// literal-250ms one, is instead computed independently from its entry in [`POST_WINDOW_LADDER_MS`]
+/// via a raw A slice + a direct [`seam_local_peak`] call — the same primitive `nominal_first_seam_locks`
+/// bottoms out to with the envelope off, so the two paths agree bit-for-bit **only when
+/// `cfg.fill_seam_search_secs` is at its `0.25` (250 ms) default** (§3.3). `fill_seam_search_secs` has
+/// no CLI flag today (TOML-only override, `infrastructure/config.rs`), so this holds for every run in
+/// practice, but is not a structural guarantee — a non-default seam window would make the "250 ms"
+/// rung's window differ from production's real post-lock window while still being labeled 250. Every
+/// non-250 rung cannot reuse [`SeamLockTemplates`] regardless (its `a_pre`/`a_post` are locked to equal
+/// length by `build`), so it re-derives the raw A slice the same way.
+///
+/// Rungs are omitted, not fake-zeroed, when their window runs off A or the B search is out of range.
+/// Returns `None` only when even the 250 ms collar cannot be measured (mirrors [`splice_dualfit_at`]).
+pub(in crate::application::gap_fingerprint::measure) fn post_window_ladder_at(
+    input: &PostWindowLadderInput<'_>,
+) -> Option<Vec<PostWindowLadderRung>> {
+    let PostWindowLadderInput {
+        a_samples,
+        channels,
+        refined,
+        b_mono,
+        b_mapped_start,
+        cfg,
+        sample_rate,
+    } = *input;
+    let ch = channels.max(1);
+    let rate = f64::from(sample_rate).max(1.0);
+    let a_frames = a_samples.len() / ch;
+
+    // The pre collar stays at the existing production 250 ms lock — never grown. `build` also carries
+    // the range guard this function would otherwise have to spell out for the pre side.
+    let pre_window = ((cfg.fill_seam_search_secs * rate).round() as usize).max(8);
+    let templates = SeamLockTemplates::build(
+        a_samples,
+        ch,
+        refined.start_frame,
+        refined.end_frame,
+        b_mapped_start,
+        pre_window,
+    )?;
+    let gap_frames = templates.gap_frames();
+    let max_lag = (((SEAM_LOCAL_SEARCH_MS / 1000.0) * rate).round() as usize).max(1);
+    let locks_250 = nominal_first_seam_locks(
+        &templates,
+        b_mono,
+        max_lag,
+        EnvelopeSearch::off(),
+        sample_rate,
+        SeamGateFloors {
+            min_fill_correlation: f64::from(cfg.min_fill_correlation),
+            fill_absolute_floor: f64::from(cfg.fill_absolute_floor),
+        },
+        f64::from(cfg.min_fill_correlation),
+    )?;
+    let pre_lag = locks_250.pre.lag;
+    let anchor_start = b_mapped_start + gap_frames;
+    let ml = ((DUALFIT_SEAM_UNIQ_LAG_MS / 1000.0) * rate).round() as i64;
+    let mlu = ml.max(0) as usize;
+
+    let mut lag_w250_ms: Option<f64> = None;
+    let mut rungs = Vec::with_capacity(POST_WINDOW_LADDER_MS.len());
+    for &window_ms in POST_WINDOW_LADDER_MS.iter() {
+        let w = ((f64::from(window_ms) / 1000.0) * rate).round() as usize;
+        if w < 8 || refined.end_frame + w > a_frames {
+            continue;
+        }
+        let a_post_w = interleaved_to_mono(
+            &a_samples[refined.end_frame * ch..(refined.end_frame + w) * ch],
+            ch,
+        );
+        let Some(peak) = seam_local_peak(&a_post_w, b_mono, anchor_start, max_lag) else {
+            continue;
+        };
+        let post_global_r = if anchor_start + w <= b_mono.len() {
+            normalized_correlation(&a_post_w, &b_mono[anchor_start..anchor_start + w])
+        } else {
+            f64::NAN
+        };
+        let seam_at = (anchor_start as i64 + peak.lag) as usize;
+        let post_prom = (seam_at >= mlu && seam_at + w + mlu <= b_mono.len())
+            .then(|| seam_prominence(&a_post_w, &b_mono[seam_at - mlu..seam_at + w + mlu], ml, sample_rate))
+            .flatten();
+        let step_real = peak
+            .r
+            .partial_cmp(&(post_global_r + DUALFIT_STEP_REAL_MARGIN))
+            .map(|ord| ord != std::cmp::Ordering::Less);
+        let lag_ms = peak.lag as f64 * 1000.0 / rate;
+        let lag_minus_w250_ms = (window_ms != 250).then_some(lag_w250_ms).flatten();
+        if window_ms == 250 {
+            lag_w250_ms = Some(lag_ms);
+        }
+        let lag_minus_pre_ms = (peak.lag - pre_lag) as f64 * 1000.0 / rate;
+        let a_post_rms_db = Some(to_db(mono_rms(
+            a_samples,
+            ch,
+            refined.end_frame,
+            refined.end_frame + w,
+        )));
+        rungs.push(PostWindowLadderRung {
+            window_ms,
+            post_r: peak.r,
+            post_lag_ms: lag_ms,
+            post_z: peak.z,
+            post_prom,
+            post_global_r,
+            step_real,
+            lag_minus_pre_ms,
+            lag_minus_w250_ms: lag_minus_w250_ms.map(|w250| lag_ms - w250),
+            a_post_rms_db,
+        });
+    }
+    Some(rungs)
+}
 /// Mono [`LagSummary`] for one side of a [`LagFingerprint`].
 pub(in crate::application::gap_fingerprint::measure) fn mono_lag_side(
     lag: &LagFingerprint,
@@ -741,6 +880,163 @@ mod tests {
         assert_eq!(
             off.pre_seam_r, on.pre_seam_r,
             "the envelope must not touch a shoulder that already reads well"
+        );
+    }
+
+    /// §3.3 of `docs/dev/TEMP-dual-fit-post-window-ladder-plan.md`: the ladder's 250 ms rung must
+    /// reproduce production's post lock exactly, not approximately — both call
+    /// `nominal_first_seam_locks`/`seam_local_peak` with the envelope off, so on identical A/B content
+    /// (trivial gate-pass, trim 0) the two readings must agree to floating-point precision.
+    #[test]
+    fn post_window_ladder_250ms_rung_matches_dual_fit_at_nominal() {
+        const RATE: u32 = 48_000;
+        let total = frames_at_ms(RATE, 6000);
+        let signal: Vec<f32> = (0..total).map(|i| (noise(3, i) * 0.5) as f32).collect();
+        let b_mono: Vec<f64> = signal.iter().map(|&v| f64::from(v)).collect();
+
+        let gap_start = frames_at_ms(RATE, 2000);
+        let gap_frames = frames_at_ms(RATE, 800);
+        let gap_end = gap_start + gap_frames;
+        let refined = RefinedGapFrames {
+            start_frame: gap_start,
+            end_frame: gap_end,
+        };
+
+        let cfg = FingerprintConfig::default();
+        let ladder = post_window_ladder_at(&PostWindowLadderInput {
+            a_samples: &signal,
+            channels: 1,
+            refined,
+            b_mono: &b_mono,
+            b_mapped_start: gap_start,
+            cfg: &cfg,
+            sample_rate: RATE,
+        })
+        .expect("ladder measured");
+        let rung_250 = ladder
+            .iter()
+            .find(|r| r.window_ms == 250)
+            .expect("250ms rung present");
+
+        let rate = f64::from(RATE);
+        let seam_window_frames = ((cfg.fill_seam_search_secs * rate).round() as usize).max(8);
+        let max_lag_frames = ((SEAM_LOCAL_SEARCH_MS / 1000.0 * rate).round() as usize).max(1);
+        let templates = SeamLockTemplates::build(
+            &signal,
+            1,
+            gap_start,
+            gap_end,
+            gap_start,
+            seam_window_frames,
+        )
+        .expect("templates build");
+        let params = DualFitParams {
+            channels: 1,
+            sample_rate: RATE,
+            gap_frames: templates.gap_frames(),
+            seam_window_frames,
+            max_lag_frames,
+            min_fill_correlation: f64::from(cfg.min_fill_correlation),
+            fill_absolute_floor: f64::from(cfg.fill_absolute_floor),
+            step_real_margin: DUALFIT_STEP_REAL_MARGIN,
+            a_gap_floor_db: -60.0,
+        };
+        let dual = dual_fit_at_nominal(&templates, &b_mono, &signal, &params)
+            .expect("production dual-fit succeeds on identical A/B content");
+
+        assert!(
+            (rung_250.post_r - dual.post_seam_r).abs() < 1e-9,
+            "250ms rung post_r must equal production: {} vs {}",
+            rung_250.post_r,
+            dual.post_seam_r
+        );
+        assert!(
+            (rung_250.post_lag_ms - dual.post_lag as f64 * 1000.0 / rate).abs() < 1e-9,
+            "250ms rung lag must equal production's post_lag"
+        );
+    }
+
+    /// Quiet-then-speech post collar: the true content starts partway into the 250 ms collar, so a
+    /// short window's peak can lock onto whatever quiet noise floor precedes it while a wider window
+    /// spans enough real content to snap to the correct lag. Exercises the ladder's actual purpose —
+    /// this is the shape `docs/dev/TEMP-dual-fit-post-window-ladder-plan.md` exists to characterize.
+    #[test]
+    fn post_window_ladder_wide_rung_snaps_where_the_250ms_rung_reads_quiet_noise() {
+        const RATE: u32 = 48_000;
+        let quiet_ms = 300u64;
+        let speech_ms = 900u64;
+        let quiet_frames = frames_at_ms(RATE, quiet_ms);
+        let speech_frames = frames_at_ms(RATE, speech_ms);
+        let post_len = quiet_frames + speech_frames;
+
+        let gap_start = frames_at_ms(RATE, 2000);
+        let gap_frames = frames_at_ms(RATE, 800);
+        let gap_end = gap_start + gap_frames;
+        let total = gap_end + post_len + frames_at_ms(RATE, 200);
+
+        let mut a = vec![0.0f32; total];
+        write_shaped_noise(&mut a, 0, gap_start, 5, true);
+        // Post shoulder: near-silent noise floor, then real (louder, distinctly-seeded) content.
+        for f in gap_end..gap_end + quiet_frames {
+            a[f] = (noise(9, f) * 0.002) as f32;
+        }
+        for f in gap_end + quiet_frames..gap_end + post_len {
+            a[f] = (noise(31, f) * 0.5) as f32;
+        }
+
+        // B: matches A's pre shoulder at nominal; everywhere else is independent background noise
+        // (same tiny scale as A's quiet prefix, but uncorrelated with it) except for the real speech,
+        // which is placed only at its true +40 ms shift. A 250 ms post window — entirely inside the
+        // 300 ms quiet prefix — has nothing real to lock onto; a wider window that reaches the speech
+        // does.
+        let shift = frames_at_ms(RATE, 40) as i64;
+        let mut b_mono = vec![0.0f64; total + shift.unsigned_abs() as usize + 8];
+        for (i, slot) in b_mono.iter_mut().enumerate() {
+            *slot = noise(77, i) * 0.002;
+        }
+        for (i, &v) in a.iter().take(gap_start).enumerate() {
+            b_mono[i] = f64::from(v);
+        }
+        for f in gap_end + quiet_frames..gap_end + post_len {
+            let bi = (f as i64 + shift) as usize;
+            b_mono[bi] = f64::from(a[f]);
+        }
+
+        let refined = RefinedGapFrames {
+            start_frame: gap_start,
+            end_frame: gap_end,
+        };
+        let cfg = FingerprintConfig::default();
+        let ladder = post_window_ladder_at(&PostWindowLadderInput {
+            a_samples: &a,
+            channels: 1,
+            refined,
+            b_mono: &b_mono,
+            b_mapped_start: gap_start,
+            cfg: &cfg,
+            sample_rate: RATE,
+        })
+        .expect("ladder measured");
+
+        let rate = f64::from(RATE);
+        let shift_ms = shift as f64 * 1000.0 / rate;
+        let rung = |ms: u32| {
+            ladder
+                .iter()
+                .find(|r| r.window_ms == ms)
+                .unwrap_or_else(|| panic!("{ms}ms rung present"))
+        };
+        let r250 = rung(250);
+        let r750 = rung(750);
+        assert!(
+            (r250.post_lag_ms - shift_ms).abs() > 5.0,
+            "250ms rung (all quiet) should NOT land on the true +{shift_ms}ms shift, got {}",
+            r250.post_lag_ms
+        );
+        assert!(
+            (r750.post_lag_ms - shift_ms).abs() < 1.0,
+            "750ms rung (reaches the speech) should snap to the true +{shift_ms}ms shift, got {}",
+            r750.post_lag_ms
         );
     }
 
