@@ -923,7 +923,7 @@ than being computed against a clipped template.
 
 **`splice_dualfit` stays frozen at the 250 ms `w`, envelope off — production does not.** Production
 dual-fit may re-lock a weak post shoulder at a longer same-start window
-(`docs/dev/TEMP-dual-fit-grow-post-plan.md`; [gap-fill-modes.md](../gap-fill-modes.md) § Fit unified
+(`docs/dev/archive/TEMP-dual-fit-grow-post-plan.md`; [gap-fill-modes.md](../gap-fill-modes.md) § Fit unified
 search) and stamp the patch's `dual_fit_post_window_ms`. This block predicts only the 250 ms case, so
 it under-predicts a gap that production rescues by growing the post window — that gap shows
 `gate_pass: false` here and a patch in the report. The ladder diagnostic

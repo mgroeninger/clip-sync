@@ -1,20 +1,21 @@
 # TEMP — Dual-fit grow post (production)
 
-**Status:** Implemented and eared 2026-09-02 (Phase 0 + Phase 1 done, all three of 8/g4,
-20/g3, 22/g13 confirmed good by ear). **Phase 2 safety spot-check still open** — see §4.
-One deliverable: when the 250 ms post lock is uninformative, re-lock post at a longer
-same-start window, then assemble and stamp as today. Keep path and `fill_seam_search_secs`
-do not change. Do not grow pre.
+**Status:** archived 2026-09-02. **Shipped.** One deliverable: when the 250 ms post lock is
+uninformative, re-lock post at a longer same-start window, then assemble and stamp as
+today. Keep path and `fill_seam_search_secs` do not change. Do not grow pre. All § 6
+checklist items done; § 5 acceptance met (Phase 1 ear 2026-09-02; Phase 2 `--patch-only`
+spot-check the same day). Verdict: [settled.md](../settled.md) § E.
 
-**Tracked as:** [BACKLOG.md](../../BACKLOG.md) § *Fill placement* → *Dual-fit grow post*.
+**Tracked as:** [settled.md](../settled.md) § E — *G6 post grow admits on lock `post_r <
+0.5`*. Growing **pre** stays a dump: [TEMP-dual-fit-pre-window-ladder-plan.md](../TEMP-dual-fit-pre-window-ladder-plan.md).
 
 **Companions:** measurement
-[TEMP-dual-fit-post-window-ladder-plan.md](archive/TEMP-dual-fit-post-window-ladder-plan.md)
+[TEMP-dual-fit-post-window-ladder-plan.md](TEMP-dual-fit-post-window-ladder-plan.md)
 (Phase 2 **go**); dump `gap-files/2026-09-01-dual-fit-ladder-corpus`; G6
-[seam-scoring.md](../seam-scoring.md) § 6; rigid-fill (the other G6 error)
-[archive/TEMP-seam-lock-rigid-fill-plan.md](archive/TEMP-seam-lock-rigid-fill-plan.md).
+[seam-scoring.md](../../seam-scoring.md) § 6; rigid-fill (the other G6 error)
+[TEMP-seam-lock-rigid-fill-plan.md](TEMP-seam-lock-rigid-fill-plan.md).
 Pre-side *question* is a dump, not this Change:
-[TEMP-dual-fit-pre-window-ladder-plan.md](TEMP-dual-fit-pre-window-ladder-plan.md).
+[TEMP-dual-fit-pre-window-ladder-plan.md](../TEMP-dual-fit-pre-window-ladder-plan.md).
 
 **Media hygiene:** pair index + gap index only. `gap-files/` is gitignored; numbers below
 are the durable record.
@@ -80,7 +81,7 @@ program that Pearson agrees with pre, then take `pre+G`.**
 
 ## 1. Why this, not always-625 and not `|Δpre|` as extract
 
-Phase 2 ([TEMP-dual-fit-post-window-ladder-plan.md](archive/TEMP-dual-fit-post-window-ladder-plan.md)):
+Phase 2 ([TEMP-dual-fit-post-window-ladder-plan.md](TEMP-dual-fit-post-window-ladder-plan.md)):
 
 - 8/g4 250 ms: r 0.390 @ −213 ms, `Δpre` −286 ms (the −286 ms trim). 375 ms snaps lag to
   +75 (`Δpre` +1.8). 500 ms r 0.682. 625 ms r 0.873. Implied production `step_real` false
@@ -142,7 +143,7 @@ Shortest `w` in `{375, 500, 625, 750, 1000}` such that `post_r ≥ 0.5`, **and**
 
 `dual_fit_used` unchanged. When a grown `w` was adopted: JSON `status.patched.dual_fit_post_window_ms`
 (absent = 250). Human `-v` may say `dual-fit post 500ms`. Follow
-[json-output.md](../json-output.md) § *Revision procedure*.
+[json-output.md](../../json-output.md) § *Revision procedure*.
 
 ### 3.4 Feature docs (standing, present tense)
 
@@ -170,13 +171,13 @@ Homes (edit, do not add a new page):
 
 | Doc | What to add |
 |---|---|
-| [gap-fill-modes.md](../gap-fill-modes.md) § Dual-fit rescue (G6) | One step on the ASCII visit + a short paragraph. This is the operator “how G6 works.” |
-| [seam-scoring.md](../seam-scoring.md) § 6 | Wire spec: after the 250 ms per-shoulder lock, optional same-start post grow, then reconcile. Canonical mechanism. |
-| [gap-repair-guide.md](../gap-repair-guide.md) § Dual-fit rescue (W7) | Operator: a weak post join can still patch if a longer same-start template locks. |
-| [cli-output.md](../cli-output.md) dual-fit metadata | Stamp / optional `-v`. Point at G6, do not retell the stop rule. |
-| [json-output.md](../json-output.md) | The field (§3.3). Contract, not the process write-up. |
+| [gap-fill-modes.md](../../gap-fill-modes.md) § Dual-fit rescue (G6) | One step on the ASCII visit + a short paragraph. This is the operator “how G6 works.” |
+| [seam-scoring.md](../../seam-scoring.md) § 6 | Wire spec: after the 250 ms per-shoulder lock, optional same-start post grow, then reconcile. Canonical mechanism. |
+| [gap-repair-guide.md](../../gap-repair-guide.md) § Dual-fit rescue (W7) | Operator: a weak post join can still patch if a longer same-start template locks. |
+| [cli-output.md](../../cli-output.md) dual-fit metadata | Stamp / optional `-v`. Point at G6, do not retell the stop rule. |
+| [json-output.md](../../json-output.md) | The field (§3.3). Contract, not the process write-up. |
 
-[pipeline.md](../pipeline.md) already defers phase 4 to those pages — no extra dual-fit
+[pipeline.md](../../pipeline.md) already defers phase 4 to those pages — no extra dual-fit
 section there.
 
 ### 3.5 Not this Change
@@ -208,19 +209,29 @@ Feature docs as §3.4 (same commit as the code).
 **Result: all three good.** 8/g4 — last syllable now included. 20/g3 — good patch (loud
 noise in silence, previously unheard). 22/g13 — converted from skip and patches clean.
 
-### Phase 2 — safety spot-check
+### Phase 2 — safety spot-check (done, 2026-09-02)
 
-Not a full 51-pair re-fingerprint. Confirm a handful of high-r 250 ms dual-fit patches
-still report no `dual_fit_post_window_ms` and unchanged seams. 25/g11 still skip / still
-weak pre.
+Not a full 51-pair re-fingerprint. `--patch-only --format json --only-gaps` via
+`measure-patch-outcomes.ps1`, dump `gap-files/2026-09-02-grow-post-phase2`.
+
+| Gap | Result |
+|---|---|
+| 1/g1 | patched dual-fit, `!step_real`, post 0.9852, **no** `dual_fit_post_window_ms` |
+| 22/g5 | patched dual-fit, `!step_real`, post 0.9825, stamp absent |
+| 38/g1 | patched dual-fit, `step_real` true, post 0.9821, stamp absent |
+| 31/g9 | patched dual-fit, `step_real` true, pre 0.971721 / post 0.903805 — **identical** to 08-31; stamp absent (envelope-rescued 250 ms post did not grow) |
+| 25/g11 | **not converted.** Production `not_planned` / `not_fillable` (`b_has_energy` false), same as 08-31. Fingerprint overlay still pre 0.410 / post 0.999 / `waveform_floor`; dual-fit never runs |
+
+High-r 250 ms dual-fit patches unstamped. 25/g11 not converted.
 
 ---
 
 ## 5. Acceptance
 
 - [x] 8/g4 patched, ear: no missing syllable, no new hole at the end (2026-09-02).
-- [ ] High-r dual-fit gaps unchanged (no grown window stamp) — Phase 2, not yet run.
-- [ ] 25/g11 not converted by this Change — Phase 2, not yet run.
+- [x] High-r dual-fit gaps unchanged (no grown window stamp) — Phase 2, 2026-09-02
+      (`gap-files/2026-09-02-grow-post-phase2`: 1/g1, 22/g5, 38/g1, 31/g9).
+- [x] 25/g11 not converted by this Change — still `not_fillable` (same as 08-31).
 - [x] `--no-dual-fit` still byte-identical to today (implementation-time check).
 - [x] G6 operator/wire docs describe the post-grow as current dual-fit behaviour (§3.4).
 

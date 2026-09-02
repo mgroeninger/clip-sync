@@ -4,7 +4,7 @@
 re-locks the **pre** seam at several lengths, all ending at the refined start, and writes
 the curve. No production fill change. Mirror of
 [TEMP-dual-fit-post-window-ladder-plan.md](archive/TEMP-dual-fit-post-window-ladder-plan.md), not of
-[TEMP-dual-fit-grow-post-plan.md](TEMP-dual-fit-grow-post-plan.md).
+[TEMP-dual-fit-grow-post-plan.md](archive/TEMP-dual-fit-grow-post-plan.md).
 
 **Tracked as:** [BACKLOG.md](../../BACKLOG.md) § *Fill placement* → *Dual-fit pre window
 ladder*.

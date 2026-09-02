@@ -394,7 +394,7 @@ pub fn nominal_first_seam_locks(
     })
 }
 
-/// Frozen post-grow ladder (ms) — `docs/dev/TEMP-dual-fit-grow-post-plan.md` §3.2. Do not add, remove,
+/// Frozen post-grow ladder (ms) — `docs/dev/archive/TEMP-dual-fit-grow-post-plan.md` §3.2. Do not add, remove,
 /// or reorder without updating the plan and [`grow_post_lock`]'s callers.
 pub const POST_GROW_LADDER_MS: [u32; 5] = [375, 500, 625, 750, 1000];
 
@@ -425,7 +425,7 @@ pub struct GrownPostLock {
 }
 
 /// Re-lock the **post** seam at the shortest window in [`POST_GROW_LADDER_MS`] that stops the ladder
-/// (`docs/dev/TEMP-dual-fit-grow-post-plan.md` §3.2), envelope OFF, same start (`end_frame`) as the
+/// (`docs/dev/archive/TEMP-dual-fit-grow-post-plan.md` §3.2), envelope OFF, same start (`end_frame`) as the
 /// 250 ms lock. The caller decides *whether* to grow (the 250 ms `post.r < 0.5` admission test lives in
 /// `skip_or_dual_fit`, not here) — this function is a pure measurement, mirroring the fingerprint's
 /// `post_window_ladder_at` (`application/gap_fingerprint/measure/probes.rs`) with the same primitive
@@ -816,7 +816,7 @@ mod tests {
     /// before `end_frame` at zero, since the pre shoulder plays no part in this function.
     ///
     /// Quiet-then-speech post collar (mirrors `post_window_ladder`'s fixture in
-    /// `application/gap_fingerprint/measure/probes.rs`, `docs/dev/TEMP-dual-fit-grow-post-plan.md`
+    /// `application/gap_fingerprint/measure/probes.rs`, `docs/dev/archive/TEMP-dual-fit-grow-post-plan.md`
     /// §3.2): the 250 ms rung (below the ladder's own floor) and the 375/500 ms rungs sit entirely in
     /// a quiet noise floor that never correlates with B; only once a rung reaches far enough to
     /// include the real, B-matching content does `post_r` clear the admit line. The ladder must stop

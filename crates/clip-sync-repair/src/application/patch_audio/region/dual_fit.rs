@@ -168,7 +168,7 @@ fn measure_dual_fit_residual_verdict(
     let max_lag_frames =
         crate::domain::residual_max_lag_frames(df.params.sample_rate, request.residual_lag_secs);
     let window = df.params.seam_window_frames;
-    // Plan lock 2 (`docs/dev/TEMP-dual-fit-grow-post-plan.md` §3.2) grows the residual **window** to
+    // Plan lock 2 (`docs/dev/archive/TEMP-dual-fit-grow-post-plan.md` §3.2) grows the residual **window** to
     // match the locked template, not the floor-search **stride**: `step_frames` stays the 250 ms gate
     // window on both shoulders, so a grown post residual still walks the same density
     // (`max_walk_frames / seam_window_frames` tiles) rather than a coarser one just because the
@@ -274,7 +274,7 @@ pub(in crate::application::patch_audio::region) fn skip_or_dual_fit(
             // Grow the post seam window before the fit is attempted (§0 lock 3 — grow before the
             // gate rejects, not on the result): a 250 ms post lock below the admit line is re-locked
             // at the shortest window in `POST_GROW_LADDER_MS` that stops the ladder
-            // (`docs/dev/TEMP-dual-fit-grow-post-plan.md` §3.2). The whole `GrownPostLock` is handed
+            // (`docs/dev/archive/TEMP-dual-fit-grow-post-plan.md` §3.2). The whole `GrownPostLock` is handed
             // to `dual_fit_from_locks_with_grown_post`, which applies the post-lock swap
             // (`b_post_seam`/`bridge_frames`/`gate_pass`) and threads its `a_post`/`window_frames`
             // itself — this caller never builds a parallel `(locks, a_post)` pair by hand, so it

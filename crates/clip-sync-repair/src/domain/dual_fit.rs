@@ -133,7 +133,7 @@ pub fn dual_fit_from_locks(
 }
 
 /// [`dual_fit_from_locks`] with an optional grown post lock
-/// (`docs/dev/TEMP-dual-fit-grow-post-plan.md` §0 lock 2) — the caller passes the whole
+/// (`docs/dev/archive/TEMP-dual-fit-grow-post-plan.md` §0 lock 2) — the caller passes the whole
 /// [`GrownPostLock`] `grow_post_lock` produced, and this function applies the post-shoulder swap
 /// (`SeamLocks::post`/`b_post_seam`/`bridge_frames`/`gate_pass`, recomputed against `p`'s floors) and
 /// threads its `a_post`/`window_frames` into [`try_dual_fit`]'s `post@pre` / `step_real` computation
@@ -219,7 +219,7 @@ pub fn try_dual_fit(
 }
 
 /// [`try_dual_fit`] with an optional grown post template
-/// (`docs/dev/TEMP-dual-fit-grow-post-plan.md` §0 lock 2): `grown_post` is `(a_post, window_frames)`
+/// (`docs/dev/archive/TEMP-dual-fit-grow-post-plan.md` §0 lock 2): `grown_post` is `(a_post, window_frames)`
 /// from [`crate::domain::seam_locks::grow_post_lock`], used ONLY for the `post_global` (`post@pre`,
 /// the step-real denominator) computation below — the one place this function reads `a_post`/`w`
 /// before extraction. Everything else (the interior-trim edge guard, the `debug_assert_eq!` against
