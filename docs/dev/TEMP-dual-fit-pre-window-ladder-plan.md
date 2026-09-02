@@ -43,6 +43,14 @@ existing splice_dualfit (unchanged, 250 ms, may envelope-rescue)
 `post_global_r` at nominal `b_mapped_end`; do not copy that. Production `try_dual_fit`
 uses `b_pre_seam + G` for post@pre; this probe's symmetric is `b_post_seam − G − w`.
 
+**Anchor note:** the shipped post ladder's `post_global_r` took a nominal lag-0 anchor as a
+shortcut, not the true `b_pre_seam + G` conjunct its own architecture called for (see its
+Phase 2 notes). Do not mirror that shortcut here. `pre_global_r` must use the true
+conjunct (`b_post_250 − G − w`, the position implied by post's *actual measured* lock),
+not nominal — `step_real` only tells us whether production's own-vs-forced gate would
+accept a rescued rung if it is computed against the real post lag. A nominal anchor would
+make Phase 2's go/no-go read a rescue that production's actual gate might not.
+
 `--no-dual-fit` is irrelevant: dump-only. Flag off → field absent, default dumps
 byte-stable.
 
