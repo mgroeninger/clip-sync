@@ -601,13 +601,12 @@ Do not cite the old table either — it described defects that no longer exist:
 | donor predicate | **converged** (I3) | the diagnostic path now applies scan's `b.silent ‖ rms < floor` disjunction |
 | noise-floor context | **converged** | both ±2.0 s (`EQUIVALENCE_CONTEXT_SECS`). The diagnostic path had briefly used `gap_signature_context_secs` = 3.0 by inheritance from the signature job, never by choice for this one |
 | **bin lattice phase** | **open, not convergeable by parameter** | scan bins on its media-absolute timeline; the overlay bins from `gap_start − context_frames` (A) and the donor window start (B), with a ragged final bin at full weight. Equal spans, counts and floors still disagree by a block |
-| **donor window** | **open, small** | scan maps the **core**, the diagnostic path the **nominal** `b_mapped` span. Median `donor_silence_fraction` delta 0.008 (max 0.067), every gap within ±1 block, mixed signs |
+| donor window | **converged** (2026-08-01) | the diagnostic path used to re-derive a **nominal** `b_mapped` span instead of reading scan's **core**. A pre-fix, 39-pair / 802-gap corpus (v0.5.0) had put that at 100% of gaps differing, 42% by more than one block, `donor_silence_fraction` Δ median 0.025 / max 0.333, and 10 dangerous divergences (vs. 0 on the 17-pair predecessor over the same media) — do not quote those as a current bound, they are the evidence the fix was needed, not a residual. The overlay now takes `a_span_secs` / `donor_span_secs` straight off the scan verdict, so the two spans agree **by construction**; see `EQUIVALENCE_DIAGNOSTIC_CONTRACT.placement` |
 
-So the diagnostic path is still the **more aggressive** side, but only by the last two rows, and only
-**one** of them is one-signed — the donor window is mixed-sign, so do not say *both* open differences
-bias toward `drop` (that sentence was true of the F15-era pair and silently re-pointed when they
-converged). Sizes are medians over **one pair, ten gaps** — they bound the axes on that pair, not on
-the corpus.
+So the diagnostic path is still the **more aggressive** side, but only by the remaining open row —
+the bin lattice phase, which is one-signed in the dangerous direction (do not say *both* open
+differences bias toward `drop`; that sentence was true of the F15-era pair and of the donor window
+before its 2026-08-01 fix, and is now stale on both counts).
 
 **Measured population (2026-07-30):** 5 divergent / 297 gaps (1.7 %) across a 17-pair corpus, **0 in the
 dangerous direction**. Still exactly correct *as a historical measurement*, but do not quote it as a
@@ -639,7 +638,7 @@ reading source. Provenance only — nothing classifies on it. Spec:
 | `bin_ms` | bin width **actually measured** (from the level stream on scan; `scan_block_ms` on diagnostic) |
 | `reduction` | `interleaved` on both paths today |
 | `a_span` | `core` on both today (block-confirmed / raw gap) |
-| `donor_span` | `core` (scan, offset-mapped) vs `nominal` (diagnostic `b_mapped`) — the remaining donor-window residual |
+| `donor_span` | `core` (scan, offset-mapped) on both, **since 2026-08-01** — the diagnostic path adopts the scan verdict's `donor_span_secs` rather than re-deriving a `nominal` `b_mapped` span; see § *`equivalence_diagnostic` vs `equivalence_production`* |
 
 Also flat beside the signals: `a_gap_silent_blocks` / `a_gap_total_blocks` and the donor pair. The
 bin-divergence check is `a_gap_total_blocks × measurement.bin_ms ≈ span_secs` (I1 class). Absent

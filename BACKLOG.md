@@ -4,7 +4,7 @@ Open follow-up work for `clip-sync`. Architecture: [PLAN.md](PLAN.md). Repair pi
 [docs/pipeline.md](docs/pipeline.md). Test corpus: [docs/dev/corpus-validation.md](docs/dev/corpus-validation.md).
 Error handling: [docs/error-mapping.md](docs/error-mapping.md).
 
-Last updated: 2026-08-27.
+Last updated: 2026-09-03.
 
 **How this doc works**
 
@@ -20,9 +20,9 @@ Last updated: 2026-08-27.
 - Shipped work is recorded in `docs/dev/archive/*` and git history.
 - Out of scope: [PLAN.md](PLAN.md) § Out of scope.
 
-**Next:** [Reconcile the donor-window numbers](#donor-registration). The highest-priority *defect*
-on the board is [50/g10's audible post join](#post-join-defects-pairs-31-and-50) — confirmed by
-ear, no causal model.
+**Next:** the highest-priority *defect* on the board is
+[50/g10's audible post join](#post-join-defects-pairs-31-and-50) — confirmed by ear, no causal
+model.
 
 ---
 
@@ -55,7 +55,7 @@ gap that sits in the end-clip window). Hole 1 stays n=1.
 | **Post-splice introduced-silence collapse** | [TEMP-post-splice-introduced-silence-collapse-plan.md](docs/dev/TEMP-post-splice-introduced-silence-collapse-plan.md) — fill `visit_shoulders_abut`: concat-confirm, **warn by default**, drain only under `--collapse-introduced-silence`; current mux. Starts the day the skip-gate row ships. **Carries a drain hazard (2026-08-30)**: the captured list is 2 gaps and **11/g9 is a false positive** — no downstream trail, 1 s probe locks both shoulders at nominal — so draining it would delete 599 ms of A that was never introduced silence. It wears no lookalike tag (`clamped` / `edge_pinned` / `program_quiet` are zero corpus-wide), so it arrives looking like 31/g7 | Default 31/g7 is `shoulders_abut` + warning, A length unchanged; flag on is `collapsed` (hole gone); fills never reindexed; **and 11/g9 does not drain**, refused attributably — either `join_dead` from the concat-confirm on an 11/g9-shaped fixture, or an explicit step-agreement admission filter (§1 of the plan has both, with numbers) |
 | **47/g14 — failure-to-move** | Ear-label as its own question. Did a licensed landmark say move, and search stay put? | Labelled. **Yes** → its own fork (not 26's "moved to the wrong tooth"). **No / cannot tell** → drop or re-categorize |
 | **31/g8 — Narrow-capture pre miss** | Capture, not the tree above. Write a TEMP. Shipped default `BorderCapture::Narrow` declines the pre at envelope +800 ms / r 0.816; Wide keeps −1146.1 / r 0.974 because the shared capture's 12% trim puts `D` at 1984 ms vs Narrow's 13 ms. Numbers: [archive/TEMP-envelope-adaptive-widen-plan.md](docs/dev/archive/TEMP-envelope-adaptive-widen-plan.md) deciding measurement 2 | A decision exists that is not "flip the default" ([settled.md](docs/dev/settled.md) § B) |
-| **Rigid shoulder-offset remainder: 11/g9 still skip** | Trim-0 G6 arm shipped 2026-09-01 ([archive/TEMP-seam-lock-rigid-fill-plan.md](docs/dev/archive/TEMP-seam-lock-rigid-fill-plan.md)) and converted six ([settled.md](docs/dev/settled.md) § E). **11/g9** fails `bridge_frames > 0` (`shoulders_abut`) — collapse row above. **22/g13** converted by grow-post ([archive/TEMP-dual-fit-grow-post-plan.md](docs/dev/archive/TEMP-dual-fit-grow-post-plan.md)), eared clean 2026-09-02 | 11/g9 either drains under the collapse row above or stays skip |
+| **Rigid shoulder-offset remainder: 11/g9 still skip** | G6 (trim-0 arm plus post-grow) shipped and converted the rest of the cohort — history in [settled.md](docs/dev/settled.md) § E. **11/g9** fails `bridge_frames > 0` (`shoulders_abut`) — collapse row above | 11/g9 either drains under the collapse row above or stays skip |
 | **α / `border_standoff_secs`** | Not Hole 1's 1.45 s. Fill sits ~25 ms late vs both shoulders; hypothesis is production's 0.35 s standoff. Run existing arms through `scripts/measure/diff-patch-adjustments.ps1`, or drop the item | Confirmed, or dropped |
 
 ## Post-join defects (pairs 31 and 50)
@@ -129,7 +129,6 @@ shipped. The conditional donor test is **blocked on a count** — [settled.md](d
 
 | Item | Next action | Done when |
 |------|-------------|-----------|
-| **Reconcile the donor-window numbers in `gap-fingerprint.md`** | Its open-differences table still reads "open, small — median Δ 0.008, max 0.067, every gap within ±1 block" from **one pair / ten gaps**. The 39-pair corpus contradicts all three: 100% differ, 42% by more than one block, max **0.333**, **10 / 802 dangerous**. Root cause traced: scan windows on the silent **core** (`scan_gaps.rs:278`), the diagnostic path on the **raw** hold-bridged run (`measure.rs`) | The table states the corpus numbers and names the core-vs-raw cause |
 | **`equivalence-calibration --replay` reads `GapScanJson`** | Today `--replay` loads only fingerprint `corpus.json` / `GapCorpus`, but plain scan JSON already carries the same registration + envelope fields on every gap (`scripts/measure/scan-registration.ps1`). Teach the reader the scan shape. Small reader change, no new measurement | Apply flip/abstain counts come from the production classifier, not a hand reconstruction |
 | **33/17 placement-path investigation** | Which path placed 33/17's fill is **unrecorded** — the dump's `brackets` array is the oracle enumeration, not the candidate production selected. Instrument the selected candidate / fit path | The path is recorded. If anything is then tuned, the likely site is the **acceptance floor**, not the comparator |
 | **33/17 is a real-but-inaudible dropout whose patch is a defect** | A hits digital zero, B keeps a −68 dB click bed; the patch lands 8 dB above its own surroundings, 36 ms misplaced, writing 380 ms past the gap end. Seam/splice path, independent of the equivalence band | Characterized |
