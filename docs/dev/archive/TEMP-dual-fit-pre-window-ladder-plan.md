@@ -1,6 +1,8 @@
 # TEMP — Dual-fit pre window ladder (fingerprint)
 
-**Status:** Change plan, 2026-09-02. **Startable.** One deliverable: a fingerprint probe that
+**Status:** Closed, 2026-09-03 — **no-go** (§7.5). Probe shipped and stays as a diagnostic;
+grow-pre production Change is refuted by the full 51-pair corpus. See
+[settled.md](settled.md) § A. One deliverable: a fingerprint probe that
 re-locks the **pre** seam at several lengths, all ending at the refined start, and writes
 the curve. No production fill change. Mirror of
 [TEMP-dual-fit-post-window-ladder-plan.md](archive/TEMP-dual-fit-post-window-ladder-plan.md), not of
@@ -185,11 +187,66 @@ stays. No-go: never snaps, or high-r pres move.
 
 ## 6. Checklist (implement)
 
-- [ ] CLI `--fingerprint-pre-window-ladder` requires `--gap-fingerprints`.
-- [ ] `probe_recipe.pre_window_ladder_ms` stamped only when the flag is on.
-- [ ] Schema sibling of `post_window_ladder`; serde skip when `None`.
-- [ ] Envelope-off post 250 + per-`w` `seam_local_peak` pre; `pre_global_r` at `b_post − G − w`.
-- [ ] 250 ms identity vs `dual_fit_at_nominal` pre; lag-0 ≠ pre@post fixture.
-- [ ] Quiet-before-gap fixture snaps.
-- [ ] Phase 1 dump; non-ladder identity.
-- [ ] Phase 2 tables + go / no-go.
+- [x] CLI `--fingerprint-pre-window-ladder` requires `--gap-fingerprints`.
+- [x] `probe_recipe.pre_window_ladder_ms` stamped only when the flag is on.
+- [x] Schema sibling of `post_window_ladder`; serde skip when `None`.
+- [x] Envelope-off post 250 + per-`w` `seam_local_peak` pre; `pre_global_r` at `b_post − G − w`.
+- [x] 250 ms identity vs `dual_fit_at_nominal` pre; lag-0 ≠ pre@post fixture.
+- [x] Quiet-before-gap fixture snaps.
+- [x] Phase 1 dump; non-ladder identity.
+- [x] Phase 2 tables + go / no-go.
+
+---
+
+## 7. Phase 2 results (2026-09-03, 51-pair corpus, 971 gaps carrying `pre_window_ladder`)
+
+**Seam-scale line: 10 ms** (same line the grow-post plan used).
+
+### 7.1 25/g11
+
+| `w` (ms) | `pre_r` | `lag_minus_post_ms` |
+|---|---|---|
+| 250 | 0.410 | −599.9 |
+| 375 | 0.214 | −727.0 |
+| 500 | 0.187 | −727.0 |
+| 625 | 0.168 | −727.0 |
+| 750 | 0.127 | −727.0 |
+| 1000 | 0.209 | **+5.75** (seam-scale) |
+
+At `w = 1000` the lag snaps to seam-scale agreement with post, but `pre_r` (0.209) never
+re-enters `[0.35, 0.5)` from above — it's still *below* 0.35, worse than the 250 ms
+baseline. No rung both snaps the lag and clears the band upward. Matches the 1 s prior
+(0.209) exactly. Independently corroborated: `contour.pre_flatness = 1.0` over the 3 s
+pre-collar, no `energy_peak` anchor candidate on the pre side at all, and
+`equivalence_production`/`equivalence_diagnostic` both classify this gap `shared_silence`
+— A and B are both quiet here, not a recoverable dropout. **No-go on 25/g11.**
+
+### 7.2 Safety set — 110 gaps (dual-fit-rescued skips, 250 ms pre `r ≥ 0.5`)
+
+| `w` | n | p50 `\|Δw250\|` | p95 | max | movers (> 10 ms) |
+|---|---|---|---|---|---|
+| 625 | 110 | 0.000 ms | 0.021 ms | 0.104 ms | 0 |
+| 1000 | 110 | 0.000 ms | 0.021 ms | 0.167 ms | 0 |
+
+Already-good locks do not move — max drift across the entire safety set is 0.167 ms, two
+orders of magnitude under the seam-scale line. **Safety set holds cleanly.**
+
+### 7.3 Band — every gap with 250 ms pre `r ∈ [0.35, 0.5)` and `gate_pass`
+
+**Size: 1.** 25/g11 is the entire population — not a sample of a larger effect, the whole
+effect. It does not snap (§7.1). **Band does not rescue.**
+
+### 7.4 RMS vs r
+
+Pearson(`a_pre_rms_db`, `pre_r`) over all rungs/gaps = **−0.058** (n = 5826) — no
+relationship. 2259 rungs are quiet (< −60 dB) yet strongly locked (`r > 0.7`); only 6 are
+loud (> −40 dB) yet weakly locked (`r < 0.3`). **RMS is confirmed not a stop rule** —
+level does not predict, and should not be used to predict, lock quality.
+
+### 7.5 Verdict: **NO-GO**
+
+Neither 25/g11 nor the band (its only member) snaps into `[0.5, 1.0]` at any ladder width,
+so the plan's go condition is not met. The safety set result is a genuine positive (widening
+would not have destabilized existing good locks), but it is moot without a rescue to weigh
+it against. **Do not open a grow-pre production Change.** The `--fingerprint-pre-window-ladder`
+probe stays as a diagnostic; this plan is closed.

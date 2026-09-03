@@ -32,7 +32,7 @@ pub struct DumpOptions {
     /// `--fingerprint-post-window-ladder` (`docs/dev/archive/TEMP-dual-fit-post-window-ladder-plan.md`).
     /// Independent of `diagnostics` — the ladder is dump-only and does not follow the Tier-3 split.
     pub post_window_ladder: bool,
-    /// `--fingerprint-pre-window-ladder` (`docs/dev/TEMP-dual-fit-pre-window-ladder-plan.md`).
+    /// `--fingerprint-pre-window-ladder` (`docs/dev/archive/TEMP-dual-fit-pre-window-ladder-plan.md`).
     /// Independent of `diagnostics` and of `post_window_ladder` — dump-only, no Tier-3 split.
     pub pre_window_ladder: bool,
 }

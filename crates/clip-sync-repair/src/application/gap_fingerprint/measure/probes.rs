@@ -544,7 +544,7 @@ pub(in crate::application::gap_fingerprint::measure) fn post_window_ladder_at(
     Some(rungs)
 }
 /// Fixed ladder of pre-seam window widths (ms) probed by [`pre_window_ladder_at`]
-/// (`docs/dev/TEMP-dual-fit-pre-window-ladder-plan.md` §3.1). Frozen — do not add, remove, or
+/// (`docs/dev/archive/TEMP-dual-fit-pre-window-ladder-plan.md` §3.1). Frozen — do not add, remove, or
 /// reorder without updating the plan and any consumer that assumes this exact set/order.
 pub(in crate::application::gap_fingerprint::measure) const PRE_WINDOW_LADDER_MS: [u32; 6] =
     [250, 375, 500, 625, 750, 1000];
@@ -561,7 +561,7 @@ pub(in crate::application::gap_fingerprint::measure) struct PreWindowLadderInput
 }
 
 /// Re-lock the **pre** seam at a fixed ladder of window widths, all ending at the refined gap
-/// start, envelope off, ±[`SEAM_LOCAL_SEARCH_MS`] (`docs/dev/TEMP-dual-fit-pre-window-ladder-plan.md`).
+/// start, envelope off, ±[`SEAM_LOCAL_SEARCH_MS`] (`docs/dev/archive/TEMP-dual-fit-pre-window-ladder-plan.md`).
 /// Mirror of [`post_window_ladder_at`] with the shoulder flipped — see that function's doc for the
 /// shared caveats (the collar-length-vs-`fill_seam_search_secs` note, the omit-not-fake-zero rule).
 ///
@@ -1208,7 +1208,7 @@ mod tests {
         );
     }
 
-    /// §3.3 of `docs/dev/TEMP-dual-fit-pre-window-ladder-plan.md`: the ladder's 250 ms rung must
+    /// §3.3 of `docs/dev/archive/TEMP-dual-fit-pre-window-ladder-plan.md`: the ladder's 250 ms rung must
     /// reproduce production's pre lock exactly, not approximately — both call
     /// `nominal_first_seam_locks`/`seam_local_peak` with the envelope off, so on identical A/B content
     /// (trivial gate-pass, trim 0) the two readings must agree to floating-point precision.
@@ -1285,7 +1285,7 @@ mod tests {
     /// prefix nearer the gap, so a short window's peak can lock onto whatever quiet noise floor
     /// immediately precedes the gap while a wider window spans enough real content (further back)
     /// to snap to the correct lag. Exercises the ladder's actual purpose — this is the shape
-    /// `docs/dev/TEMP-dual-fit-pre-window-ladder-plan.md` exists to characterize (25/g11's class).
+    /// `docs/dev/archive/TEMP-dual-fit-pre-window-ladder-plan.md` exists to characterize (25/g11's class).
     #[test]
     fn pre_window_ladder_wide_rung_snaps_where_the_250ms_rung_reads_quiet_noise() {
         const RATE: u32 = 48_000;

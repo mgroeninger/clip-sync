@@ -209,7 +209,7 @@ pub struct CorpusProbeRecipe {
     /// claim a sweep that did not happen.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub post_window_ladder_ms: Option<[u32; 6]>,
-    /// Frozen ladder behind `pre_window_ladder` (`docs/dev/TEMP-dual-fit-pre-window-ladder-plan.md`
+    /// Frozen ladder behind `pre_window_ladder` (`docs/dev/archive/TEMP-dual-fit-pre-window-ladder-plan.md`
     /// §3.1): `[250, 375, 500, 625, 750, 1000]`. Same evidence-not-config rule as
     /// `post_window_ladder_ms` above.
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -1548,7 +1548,7 @@ pub struct PostWindowLadderRung {
     pub a_post_rms_db: Option<f32>,
 }
 
-/// One rung of the pre-window ladder probe (`docs/dev/TEMP-dual-fit-pre-window-ladder-plan.md`
+/// One rung of the pre-window ladder probe (`docs/dev/archive/TEMP-dual-fit-pre-window-ladder-plan.md`
 /// §3.2) — a same-end re-lock of the **pre** seam at `window_ms`, envelope off, raw
 /// `mono(refined_start − window_ms .. refined_start)` vs `B` around nominal `b_mapped_start` ±600 ms.
 /// Omitted (not recorded, not a fake `0`) when the window runs off A or the B search is OOB.

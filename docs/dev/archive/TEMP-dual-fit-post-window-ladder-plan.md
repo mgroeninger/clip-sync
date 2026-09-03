@@ -13,7 +13,7 @@ disagreement on 8/g4 in [settled.md](settled.md) § B (`[0.35, 0.5)` band). Dual
 construction [archive/TEMP-seam-splice-dualfit-plan.md](archive/TEMP-seam-splice-dualfit-plan.md)
 § 0. Successors: [TEMP-dual-fit-grow-post-plan.md](TEMP-dual-fit-grow-post-plan.md)
 (shipped and archived 2026-09-02),
-[TEMP-dual-fit-pre-window-ladder-plan.md](../TEMP-dual-fit-pre-window-ladder-plan.md).
+[TEMP-dual-fit-pre-window-ladder-plan.md](TEMP-dual-fit-pre-window-ladder-plan.md).
 
 **Media hygiene:** pair index + gap index only. `gap-files/` is gitignored; numbers below
 are the durable record.
@@ -269,7 +269,7 @@ untested (Phase 3 / ear on 8/g4).
 
 Production grow-post: [TEMP-dual-fit-grow-post-plan.md](TEMP-dual-fit-grow-post-plan.md)
 (shipped 2026-09-02).
-Pre collar dump: [TEMP-dual-fit-pre-window-ladder-plan.md](../TEMP-dual-fit-pre-window-ladder-plan.md).
+Pre collar dump: [TEMP-dual-fit-pre-window-ladder-plan.md](TEMP-dual-fit-pre-window-ladder-plan.md).
 
 ---
 

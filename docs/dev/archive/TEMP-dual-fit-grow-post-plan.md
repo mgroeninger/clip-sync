@@ -7,7 +7,7 @@ checklist items done; § 5 acceptance met (Phase 1 ear 2026-09-02; Phase 2 `--pa
 spot-check the same day). Verdict: [settled.md](../settled.md) § E.
 
 **Tracked as:** [settled.md](../settled.md) § E — *G6 post grow admits on lock `post_r <
-0.5`*. Growing **pre** stays a dump: [TEMP-dual-fit-pre-window-ladder-plan.md](../TEMP-dual-fit-pre-window-ladder-plan.md).
+0.5`*. Growing **pre** stays a dump: [TEMP-dual-fit-pre-window-ladder-plan.md](TEMP-dual-fit-pre-window-ladder-plan.md).
 
 **Companions:** measurement
 [TEMP-dual-fit-post-window-ladder-plan.md](TEMP-dual-fit-post-window-ladder-plan.md)
@@ -15,7 +15,7 @@ spot-check the same day). Verdict: [settled.md](../settled.md) § E.
 [seam-scoring.md](../../seam-scoring.md) § 6; rigid-fill (the other G6 error)
 [TEMP-seam-lock-rigid-fill-plan.md](TEMP-seam-lock-rigid-fill-plan.md).
 Pre-side *question* is a dump, not this Change:
-[TEMP-dual-fit-pre-window-ladder-plan.md](../TEMP-dual-fit-pre-window-ladder-plan.md).
+[TEMP-dual-fit-pre-window-ladder-plan.md](TEMP-dual-fit-pre-window-ladder-plan.md).
 
 **Media hygiene:** pair index + gap index only. `gap-files/` is gitignored; numbers below
 are the durable record.

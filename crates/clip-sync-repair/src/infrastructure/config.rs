@@ -198,7 +198,7 @@ pub struct RepairConfig {
     /// `post_window_ladder`. Off by default; independent of `fingerprint_diagnostics`.
     #[serde(default)]
     pub fingerprint_post_window_ladder: bool,
-    /// Pre-seam window-ladder probe (`docs/dev/TEMP-dual-fit-pre-window-ladder-plan.md`) — same
+    /// Pre-seam window-ladder probe (`docs/dev/archive/TEMP-dual-fit-pre-window-ladder-plan.md`) — same
     /// fixed widths, envelope off, recorded per gap as `pre_window_ladder`. Off by default;
     /// independent of `fingerprint_diagnostics` and of `fingerprint_post_window_ladder`.
     #[serde(default)]

@@ -410,7 +410,7 @@ pub(in crate::application::gap_fingerprint::measure) fn compute_region_measureme
         None
     };
 
-    // Pre-seam window ladder (`docs/dev/TEMP-dual-fit-pre-window-ladder-plan.md`) — independent of
+    // Pre-seam window ladder (`docs/dev/archive/TEMP-dual-fit-pre-window-ladder-plan.md`) — independent of
     // `include_diagnostics` and of the post ladder, gated only on `--fingerprint-pre-window-ladder`.
     let pre_window_ladder_curve = if pre_window_ladder {
         pre_window_ladder_at(&PreWindowLadderInput {
