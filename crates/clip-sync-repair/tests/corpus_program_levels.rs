@@ -1,6 +1,12 @@
-//! Tier 2 of the program-level validation ladder: a known gain over **real** audio.
+//! Known-gain program-level checks on **real** audio (validation ladder rung 2).
 //!
-//! Tier 1 (`cli_program_levels.rs`) proves the wiring on a synthetic chirp, and that is all it can
+//! Tier: **validation**. All rows `#[ignore]` (needs `ffmpeg` on PATH and
+//! `.\scripts\fetch_corpus_sources.ps1`). No `validation-tests` feature — the binary always
+//! compiles; the ignore flag is the gate.
+//!
+//! PR: **no** — `.\scripts\test-tier.ps1 -Tier validation -Package clip-sync-repair`.
+//!
+//! `cli_program_levels.rs` (rung 1) proves the wiring on a synthetic chirp, and that is all it can
 //! prove — a constant-amplitude chirp is maximally steady, so the steadiness filter never rejects
 //! anything, and at 120 s it sits inside a single 600 s chunk, so chunking never engages. This tier
 //! puts a known answer on material that has neither property.

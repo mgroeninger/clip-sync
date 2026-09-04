@@ -77,7 +77,8 @@ pub use crate::domain::lag_envelope::{
 /// `LAG_EDGE_TOL_MS` and the `lag_is_edge_pinned` predicate moved with them: `SeamPeak::edge_pinned` and
 /// `LagSummary::edge_pinned` are the same test, so it is one function in `domain`, not one per path.
 pub use crate::domain::seam_local::{
-    lag_correlation_curve, lag_correlation_curve_auto, lag_is_edge_pinned, seam_local_peak,
+    lag_correlation_curve, lag_correlation_curve_auto, lag_is_edge_pinned,
+    phat_lag_correlation_curve, seam_local_peak,
 };
 /// Summarize a lag curve: lag-0 value, integer peak, parabolic-interpolated (fractional) peak, and a
 /// [`LagVerdict`]. `None` for an empty curve.

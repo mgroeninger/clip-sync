@@ -418,6 +418,18 @@ pub(in crate::application::patch_audio::region) fn skip_or_dual_fit(
                             post_seam_prom: None,
                             pre_seam_z: None,
                             post_seam_z: None,
+                            // GCC-PHAT experiment (`TEMP-phat-seam-scoring-plan.md`): diagnostic-only, never
+                            // computed on the production patch path.
+                            pre_seam_phat_r: None,
+                            post_seam_phat_r: None,
+                            pre_seam_phat_prom: None,
+                            post_seam_phat_prom: None,
+                            pre_seam_phat_z: None,
+                            post_seam_phat_z: None,
+                            pre_seam_lag_ms: None,
+                            post_seam_lag_ms: None,
+                            pre_seam_phat_lag_ms: None,
+                            post_seam_phat_lag_ms: None,
                             // Provenance IS available on this path — the locks the fit was built from.
                             // Recording it here is what lets a projected dump answer "was this shoulder
                             // rescued / pinned at the search boundary?" without a decode.

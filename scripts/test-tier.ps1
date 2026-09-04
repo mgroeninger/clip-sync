@@ -61,6 +61,7 @@ try {
             '--test', 'config_roundtrip',
             '--test', 'scan_gaps_integration',
             '--test', 'cli_wav_integration',
+            '--test', 'cli_program_levels',
             '--test', 'query_reference_integration',
             '--test', 'integration_residual_gate_smoke',
             '--test', 'integration_floor_oracle_smoke',
@@ -110,7 +111,11 @@ try {
 
     function Invoke-RepairPrRepairExtended {
         Invoke-RepairPrRepair
-        Invoke-CargoTest @('-p', 'clip-sync-repair', '--test', 'patch_audio_integration')
+        Invoke-CargoTest @(
+            '-p', 'clip-sync-repair',
+            '--test', 'patch_audio_integration',
+            '--test', 'abut_skip_integration'
+        )
     }
 
     function Invoke-RepairIntegrationOnly {
@@ -119,8 +124,10 @@ try {
             '--test', 'config_roundtrip',
             '--test', 'scan_gaps_integration',
             '--test', 'patch_audio_integration',
+            '--test', 'abut_skip_integration',
             '--test', 'query_reference_integration',
             '--test', 'cli_wav_integration',
+            '--test', 'cli_program_levels',
             '--test', 'integration_energy_smoke',
             '--test', 'integration_energy_patch',
             '--test', 'integration_floor_oracle_smoke',
@@ -181,6 +188,13 @@ try {
         } else {
             Write-Host '>> skip cli_mux_integration ignored e2e (ffmpeg not on PATH)' -ForegroundColor DarkYellow
         }
+        # Known-gain program-level checks on SHA-pinned public-domain masters. Every row is
+        # #[ignore]; cases skip loudly without ffmpeg or a fetched source.
+        Invoke-CargoTest @(
+            '-p', 'clip-sync-repair',
+            '--test', 'corpus_program_levels',
+            '--', '--ignored'
+        )
     }
 
     function Invoke-RepairDiagnostic {

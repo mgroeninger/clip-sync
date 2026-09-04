@@ -1481,6 +1481,40 @@ pub struct SpliceDualfit {
     pub pre_seam_z: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub post_seam_z: Option<f64>,
+    /// **Experiment, `TEMP-phat-seam-scoring-plan.md`.** Phase-transform (GCC-PHAT) equivalent of
+    /// `pre_seam_r`/`pre_seam_prom`/`pre_seam_z`, computed over the exact same ±30 ms seam-uniqueness
+    /// window (own peak, own prominence over its best rival, own whole-window z-score) but with the
+    /// cross-power spectrum whitened by phase instead of Pearson-normalized. **Diagnostic-only: nothing
+    /// gates on this.** Not comparable numerically to `pre_seam_r` (phase-only normalization has no
+    /// `[-1, 1]` scale) — compare curve shape (prominence, z), not magnitude. `None` when the sweep
+    /// window is out of range, same as the Pearson triplet; also `None` on any dump written before this
+    /// field existed (not the same as a measured, uninformative reading).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub pre_seam_phat_r: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub post_seam_phat_r: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub pre_seam_phat_prom: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub post_seam_phat_prom: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub pre_seam_phat_z: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub post_seam_phat_z: Option<f64>,
+    /// **Same-lag agreement, `TEMP-phat-seam-scoring-plan.md`.** Fractional-interpolated peak lag (ms)
+    /// of each curve's own chosen peak — the Pearson pair mirrors `pre_seam_r`'s own search, the PHAT
+    /// pair mirrors `pre_seam_phat_r`'s. Lets a reader check whether PHAT sharpens the *same* lag
+    /// Pearson already favors (agreement) or promotes a different one (disagreement) — prominence alone
+    /// can't distinguish those, since the two curves aren't on a comparable scale. `None` under the same
+    /// conditions as the corresponding `*_r`/`*_prom`/`*_z` field.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub pre_seam_lag_ms: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub post_seam_lag_ms: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub pre_seam_phat_lag_ms: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub post_seam_phat_lag_ms: Option<f64>,
     /// **Envelope rescue** — the coarse wide-lag envelope moved this shoulder off its nominal center
     /// before the fine search re-ran there. A shoulder only becomes a candidate when it reads below
     /// `min_fill_correlation` at nominal, so `true` means "this seam's `r` was earned somewhere the
@@ -1821,6 +1855,16 @@ mod tests {
             post_seam_prom: None,
             pre_seam_z: None,
             post_seam_z: None,
+            pre_seam_phat_r: None,
+            post_seam_phat_r: None,
+            pre_seam_phat_prom: None,
+            post_seam_phat_prom: None,
+            pre_seam_phat_z: None,
+            post_seam_phat_z: None,
+            pre_seam_lag_ms: None,
+            post_seam_lag_ms: None,
+            pre_seam_phat_lag_ms: None,
+            post_seam_phat_lag_ms: None,
             pre_seam_rescued: None,
             post_seam_rescued: None,
             pre_seam_edge_pinned: None,

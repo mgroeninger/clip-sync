@@ -359,28 +359,63 @@ pub(in crate::application::gap_fingerprint::measure) fn splice_dualfit_at(
     // best rival within ±30 ms.
     let ml = ((DUALFIT_SEAM_UNIQ_LAG_MS / 1000.0) * rate).round() as i64;
     let mlu = ml.max(0) as usize;
-    let pre_seam_prom =
-        (window >= 8 && b_pre_seam >= window + mlu && b_pre_seam + mlu <= b_mono.len())
-            .then(|| {
-                seam_prominence(
-                    &a_pre,
-                    &b_mono[b_pre_seam - window - mlu..b_pre_seam + mlu],
-                    ml,
-                    sample_rate,
-                )
-            })
-            .flatten();
-    let post_seam_prom =
-        (window >= 8 && b_post_seam >= mlu && b_post_seam + window + mlu <= b_mono.len())
-            .then(|| {
-                seam_prominence(
-                    &a_post,
-                    &b_mono[b_post_seam - mlu..b_post_seam + window + mlu],
-                    ml,
-                    sample_rate,
-                )
-            })
-            .flatten();
+    // Same window as the PHAT probes below, over the Pearson curve — kept as a full `LagSummary`
+    // (not routed through `seam_prominence`, which only returns `.prominence`) so `frac_lag_ms` is
+    // available for the same-lag-agreement comparison against PHAT (`pre_seam_lag_ms` et al.).
+    let pre_seam_pearson = (window >= 8
+        && b_pre_seam >= window + mlu
+        && b_pre_seam + mlu <= b_mono.len())
+    .then(|| {
+        let curve = lag_correlation_curve(
+            &a_pre,
+            &b_mono[b_pre_seam - window - mlu..b_pre_seam + mlu],
+            ml,
+        );
+        summarize_lag_curve(&curve, sample_rate, 0, 0, LagChannel::Mono)
+    });
+    let post_seam_pearson = (window >= 8
+        && b_post_seam >= mlu
+        && b_post_seam + window + mlu <= b_mono.len())
+    .then(|| {
+        let curve = lag_correlation_curve(
+            &a_post,
+            &b_mono[b_post_seam - mlu..b_post_seam + window + mlu],
+            ml,
+        );
+        summarize_lag_curve(&curve, sample_rate, 0, 0, LagChannel::Mono)
+    });
+    let pre_seam_pearson = pre_seam_pearson.flatten();
+    let post_seam_pearson = post_seam_pearson.flatten();
+    let pre_seam_prom = pre_seam_pearson.as_ref().and_then(|s| s.prominence);
+    let post_seam_prom = post_seam_pearson.as_ref().and_then(|s| s.prominence);
+
+    // GCC-PHAT experiment (`TEMP-phat-seam-scoring-plan.md`): the phase-transform equivalent of the
+    // prominence probes above, over the exact same windows — same call sites, same `Option` gating, only
+    // the curve function differs. Diagnostic-only; `seam_locks.rs` (the production gate) never calls this.
+    let pre_seam_phat = (window >= 8
+        && b_pre_seam >= window + mlu
+        && b_pre_seam + mlu <= b_mono.len())
+    .then(|| {
+        let curve = phat_lag_correlation_curve(
+            &a_pre,
+            &b_mono[b_pre_seam - window - mlu..b_pre_seam + mlu],
+            ml,
+        );
+        summarize_lag_curve(&curve, sample_rate, 0, 0, LagChannel::Mono)
+    });
+    let post_seam_phat = (window >= 8
+        && b_post_seam >= mlu
+        && b_post_seam + window + mlu <= b_mono.len())
+    .then(|| {
+        let curve = phat_lag_correlation_curve(
+            &a_post,
+            &b_mono[b_post_seam - mlu..b_post_seam + window + mlu],
+            ml,
+        );
+        summarize_lag_curve(&curve, sample_rate, 0, 0, LagChannel::Mono)
+    });
+    let pre_seam_phat = pre_seam_phat.flatten();
+    let post_seam_phat = post_seam_phat.flatten();
 
     Some(SpliceDualfit {
         pre_seam_r,
@@ -394,6 +429,16 @@ pub(in crate::application::gap_fingerprint::measure) fn splice_dualfit_at(
         post_seam_prom,
         pre_seam_z,
         post_seam_z,
+        pre_seam_phat_r: pre_seam_phat.as_ref().map(|s| s.peak_r),
+        post_seam_phat_r: post_seam_phat.as_ref().map(|s| s.peak_r),
+        pre_seam_phat_prom: pre_seam_phat.as_ref().and_then(|s| s.prominence),
+        post_seam_phat_prom: post_seam_phat.as_ref().and_then(|s| s.prominence),
+        pre_seam_phat_z: pre_seam_phat.as_ref().and_then(|s| s.peak_z),
+        post_seam_phat_z: post_seam_phat.as_ref().and_then(|s| s.peak_z),
+        pre_seam_lag_ms: pre_seam_pearson.as_ref().map(|s| s.frac_lag_ms),
+        post_seam_lag_ms: post_seam_pearson.as_ref().map(|s| s.frac_lag_ms),
+        pre_seam_phat_lag_ms: pre_seam_phat.as_ref().map(|s| s.frac_lag_ms),
+        post_seam_phat_lag_ms: post_seam_phat.as_ref().map(|s| s.frac_lag_ms),
         pre_seam_rescued: Some(locks.pre.rescued),
         post_seam_rescued: Some(locks.post.rescued),
         pre_seam_edge_pinned: Some(locks.pre.edge_pinned),

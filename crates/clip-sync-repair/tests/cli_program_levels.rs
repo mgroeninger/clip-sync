@@ -1,5 +1,11 @@
 //! End-to-end known answer for the whole-program A/B level offset.
 //!
+//! Tier: **integration**. Synthetic chirp pair (no ffmpeg, no licensed media).
+//!
+//! PR: **yes** — `pr-repair`.
+//!
+//! Run: `cargo test -p clip-sync-repair --test cli_program_levels`
+//!
 //! The estimator's unit tests (`domain::program_levels`) feed `BlockLevel` values in directly, which
 //! leaves everything between the container and the reduce untested: the decoder, the block-level
 //! scanner, the dB conversion, the recipe-derived active threshold, and the mapping from A's

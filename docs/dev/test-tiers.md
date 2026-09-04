@@ -101,11 +101,11 @@ flowchart TB
 | **`pr`** | `workspace` only | `pr-align` + `pr-repair` + `clip-sync-cli` tests |
 | **`pr-align`** | `clip-sync` | `corpus_committed` (alignment committed corpus) |
 | **`pr-repair`** | `clip-sync-repair` | Repair lib + fixtures lib + harness lib + integration smokes (see below) + curated gap-fixture tests (`gap_cell_fixtures`, `golden_baseline_invariance`, `gap_repair_spec_diff`) |
-| **`pr-repair-extended`** | `clip-sync-repair` | `pr-repair` + `patch_audio_integration` (~15 min) |
+| **`pr-repair-extended`** | `clip-sync-repair` | `pr-repair` + `patch_audio_integration` (~15 min) + `abut_skip_integration` |
 
-**`pr-repair` integration binaries:** `config_roundtrip`, `scan_gaps_integration`, `cli_wav_integration`, `query_reference_integration`, `integration_residual_gate_smoke`, `integration_floor_oracle_smoke`, `integration_gap_corpus` (non-ignored rows), `integration_energy_smoke`, `oracle_energy` (non-ignored rows), `seam_residual_corpus`, `wav_bit_depth_integration`, `gap_cell_fixtures`, `golden_baseline_invariance`, `gap_repair_spec_diff`, `curated_fixture_backfill`, `decode_path_projection`, `equivalence_divergence`, `w5_timing_offset`, `cli_mux_integration` (non-ignored, when `ffmpeg` on PATH).
+**`pr-repair` integration binaries:** `config_roundtrip`, `scan_gaps_integration`, `cli_wav_integration`, `cli_program_levels`, `query_reference_integration`, `integration_residual_gate_smoke`, `integration_floor_oracle_smoke`, `integration_gap_corpus` (non-ignored rows), `integration_energy_smoke`, `oracle_energy` (non-ignored rows), `seam_residual_corpus`, `wav_bit_depth_integration`, `gap_cell_fixtures`, `golden_baseline_invariance`, `gap_repair_spec_diff`, `curated_fixture_backfill`, `decode_path_projection`, `equivalence_divergence`, `w5_timing_offset`, `cli_mux_integration` (non-ignored, when `ffmpeg` on PATH).
 
-**Not in PR** (run via `integration` or `oracle` tiers): `patch_audio_integration`, `integration_energy_patch`, `anchor_seam_oracle`, `oracle_energy --ignored`.
+**Not in PR** (run via `integration`, `pr-repair-extended`, or `oracle` tiers): `patch_audio_integration`, `abut_skip_integration`, `integration_energy_patch`, `anchor_seam_oracle`, `oracle_energy --ignored`.
 
 ### Execution-tier runners
 
@@ -114,10 +114,10 @@ flowchart TB
 | **`unit`** | `workspace`, `clip-sync-repair`, `clip-sync` | `clip-sync-repair --lib`, `clip-sync-repair-fixtures --lib`, and/or `clip-sync --lib` |
 | **`integration`** | `workspace`, `clip-sync-repair`, `clip-sync-cli` | Repair integration + oracle **binaries only** (no `--lib`, no `validate_*` / `diag_*`) |
 | **`oracle`** | `workspace`, `clip-sync-repair` | `oracle_energy` then `oracle_energy -- --ignored` |
-| **`validation`** | `workspace`, per-crate | Repair: `validate_*`, gap corpus `#[ignore]` filters, mux e2e `#[ignore]`; align: `clip-sync` corpus `#[ignore]` filters |
+| **`validation`** | `workspace`, per-crate | Repair: `validate_*`, gap corpus `#[ignore]` filters, mux e2e `#[ignore]`, `corpus_program_levels --ignored`; align: `clip-sync` corpus `#[ignore]` filters |
 | **`diagnostic`** | `workspace`, per-crate | Repair: all `diag_*` + `seam_residual_oracle` + named slow `#[ignore]` rows; align: fixture regen, slow PCM, etc. |
 
-**`integration` repair binaries** (superset of PR integration tests): all `pr-repair` integration binaries **plus** `patch_audio_integration`, `integration_energy_patch`, `anchor_seam_oracle`. Omits lib units, harness lib, and the curated gap-fixture tests (those are in `pr-repair` / `unit`).
+**`integration` repair binaries** (superset of PR integration tests): all `pr-repair` integration binaries **plus** `patch_audio_integration`, `abut_skip_integration`, `integration_energy_patch`, `anchor_seam_oracle`. Omits lib units, harness lib, and the curated gap-fixture tests (those are in `pr-repair` / `unit`).
 
 ### Stubs (not implemented)
 

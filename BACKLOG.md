@@ -21,8 +21,8 @@ Last updated: 2026-09-03.
 - Out of scope: [PLAN.md](PLAN.md) § Out of scope.
 
 **Next:** the highest-priority *defect* on the board is
-[50/g10's audible post join](#post-join-defects-pairs-31-and-50) — confirmed by ear, no causal
-model.
+[50/g10 — echo + stutter at the anchor-seam join](#post-join-defects-pairs-31-and-50) — mechanism
+explained 2026-09-03, three fix approaches ruled out, no working fix yet.
 
 ---
 
@@ -65,13 +65,15 @@ them. Promoted 2026-08-24 from the census and pair-50 notes, both now archived:
 [archive/TEMP-collapsed-bridge-census-2026-08-20.md](docs/dev/archive/TEMP-collapsed-bridge-census-2026-08-20.md)
 Q7 / Q11 and
 [archive/TEMP-pair50-anchor-seam-outcomes-2026-08-21.md](docs/dev/archive/TEMP-pair50-anchor-seam-outcomes-2026-08-21.md)
-Q1 / Q2. Both pairs' steps have opposite signs (−1.15 s vs +2.789 s) and share nothing else — same
-tree step 3/4 as above, not a shared class until a remnant comparison says so.
+Q1 (mechanism explained 2026-09-03, fix still open — see row below / [settled.md](docs/dev/settled.md) § A for
+ruled-out approaches) / Q2. Both pairs' steps have opposite signs
+(−1.15 s vs +2.789 s) and share nothing else — same tree step 3/4 as above, not a shared class until
+a remnant comparison says so.
 
 | Item | Next action | Done when |
 |------|-------------|-----------|
-| **50/g10 — audible post join at the correct offset** (High) | Category: right when, bad join (`anchor_seam_used`, ~2.8 s). Live lead: overlap-only remnant locks at **13.2 ms**, not 0 — same size as g10's plateau split (2.805 vs 2.831 s; 50/g8 splits the same way, 2.767 vs 2.809). Test that residual as the echo. Silent-onset and unreached-region are dead ([archive/TEMP-pair50-anchor-seam-outcomes-2026-08-21.md](docs/dev/archive/TEMP-pair50-anchor-seam-outcomes-2026-08-21.md)) | **Confirmed** → splice-residual Change in scope. **Excluded** → this lead is dead; name the next mechanism or drop the item |
 | **31/g10 — audible blip where g8 and g11 are clean** (Medium) | First: re-listen and pin locus — **post join** vs the fill's own end boundary. Then: overlap-only post remnant for g10 **and** g11 (pair-50 technique), compare residual lags. 31/g8's Narrow miss is the capture row above, not this | Locus pinned. **Same remnant as 50/g10** → one join class. **Different** → keep separate. **Cannot tell** → stop (n=1 vs two clean twins) |
+| **50/g10 — echo (post join) + stutter (pre join), quiet-dialogue-over-noise gap** (High) | Mechanism explained 2026-09-03: production's rigid anchor offset (2.821 s) sits 16 ms from the true pre plateau and 10 ms from the true post plateau — a real two-sided registration compromise, not a single bad seam. Dual-fit (the mechanism designed for exactly this split-lag shape) declines because the post seam is locally ambiguous (`post_seam_r` 0.248, `post_seam_prom` 0.0049 despite `post_seam_z` 5.61 — many candidate lags correlate about equally). **Ruled out:** sub-frame waveform-lag refinement (search is already sample-accurate exhaustive — settled.md § A); widening dual-fit's post-grow ladder to 1000 ms (already tried, still declines); a drift/time-warp model (refuted against real corpus 2026-06-29, archived). **Open to explore:** phase-transform (GCC-PHAT-style) seam scoring, diagnostic-only via the fingerprint path first — see [TEMP-phat-seam-scoring-plan.md](docs/dev/TEMP-phat-seam-scoring-plan.md); if it doesn't sharpen the seam, the fallback is an explicit decision to flag this gap shape for manual review instead of auto-patching | Either the plan's corpus comparison leads to a working gate Change and 50/g10 patches clean by ear, or the plan is closed with a refuted verdict and a documented flagging decision replaces it |
 | **50/g11–g13 — skips between two correctly-resolved flanks** | First question only: at the true +2.8 s, `donor_interior_aligned.continuous` is `false` on g11/g12 (strict count two; g13/g17 gain an aligned donor that also reads discontinuous) while flanks g10/g14 stay continuous and `nominal` stays `true`. If that donor reading explains the skip, stop. Only if the donor **does** bridge: g11/g12 have no `best_attempt` — "no A-side candidate" vs "none beat baseline". Gate numbers if needed: g11 −0.018/0.393, g12 −0.072/0.567, g13 anchor attempt 0.188/0.226 | **Donor fails to bridge** → honest skip, close. **Donor bridges** → missing `best_attempt` attributed |
 
 ## Fill normalize boosts against a non-local reference

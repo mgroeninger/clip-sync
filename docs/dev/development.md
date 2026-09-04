@@ -205,6 +205,7 @@ means included in `.\scripts\test-tier.ps1 -Tier pr-repair` (and therefore `-Tie
 | `config_roundtrip` | integration | — | yes | TOML fixture deserialize + validate |
 | `scan_gaps_integration` | integration | — | yes | Chirp/silence `ScanGaps` |
 | `cli_wav_integration` | integration | — | yes | CLI `--wav` scan + patch |
+| `cli_program_levels` | integration | — | yes | Whole-program A/B level-offset wiring through the real binary (synthetic chirp) |
 | `query_reference_integration` | integration | — | yes | Query-ref gap inside/outside mapped region |
 | `wav_bit_depth_integration` | integration | — | yes | Source-driven WAV output bit depth |
 | `integration_gap_corpus` | integration | — | yes (committed scan + `gap_corpus_w5_anchor_seam`) | Gap scan corpus manifest; timing/external/generated `#[ignore]` |
@@ -223,7 +224,9 @@ means included in `.\scripts\test-tier.ps1 -Tier pr-repair` (and therefore `-Tie
 | `equivalence_divergence` | integration | — | yes | Scan-vs-diagnostic equivalence contract (media-free fixtures) |
 | `w5_timing_offset` | integration | — | yes | W5 timing-offset fixture reproduces g003 signature |
 | `patch_audio_integration` | integration | — | **extended only** | Sine seam grid (~15 min); SP04 (`i4_f3`); `pr-repair-extended` |
+| `abut_skip_integration` | integration | — | **extended only** | Introduced-silence `shoulders_abut` skip on the production `PatchAudio` path; `pr-repair-extended` / `integration` |
 | `cli_mux_integration` | integration | `ffmpeg-mux` | compile on PR† | Mux CLI; e2e mux `#[ignore]` — **validation** tier when ffmpeg on PATH |
+| `corpus_program_levels` | validation | — | no | Known-gain program levels on SHA-pinned public-domain masters (`#[ignore]`; ffmpeg + `fetch_corpus_sources`) |
 | `validate_floor_oracle` | validation | `validation-tests` | no | Floor oracle codec matrix (ffmpeg + `fetch_corpus_sources`) |
 | `validate_residual_gate` | validation | `validation-tests` | no | RG catalog rows + EC06 patch discrimination |
 | `validate_patch_audio` | validation | `validation-tests` | no | SP05 — production-default fit smoke |
@@ -346,6 +349,7 @@ How `test-tier.ps1` runs `#[ignore]` rows (repair crate). Source of truth: `scri
 | **oracle** | `--test oracle_energy` then `-- --ignored` on same binary | All ignored rows in `oracle_energy.rs` (EC01/EC02 production, patch control/smoke, haystack, EC06 search) |
 | **validation** | `validate_*` feature binaries (no `#[ignore]`) + gap_corpus **substring** filters + `--ignored` **`--release`** | `gap_corpus_generated`, `gap_corpus_external`, `gap_corpus_patch_timing_*` — **not** `gap_corpus_regenerate_*` (manual only) |
 | **validation** | `--test cli_mux_integration -- --ignored` when ffmpeg on PATH | `mux_writes_video`, `mux_24bit_source_pipe_completes_successfully` |
+| **validation** | `--test corpus_program_levels -- --ignored` | All rows (known-gain + calibration controls; skip without ffmpeg / fetched sources) |
 | **diagnostic** | `diag_*` + `seam_residual_oracle` (no `#[ignore]` in those binaries) | — |
 | **diagnostic** | Named `--ignored` filters (not blanket `--lib --ignored`) | `broadband_oracle_veto_rescue_patches_marginal`, `write_full_surface_repair_golden`, `mux_reports_progress_for_short_fixture` |
 

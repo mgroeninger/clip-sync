@@ -193,6 +193,21 @@ pub fn spec_to_fingerprint_summary(
         post_seam_prom: sl.post_seam_prom,
         pre_seam_z: sl.pre_seam_z,
         post_seam_z: sl.post_seam_z,
+        // GCC-PHAT experiment (`TEMP-phat-seam-scoring-plan.md`): passed through from the tag, not
+        // fabricated. `SeamLocalTags` only ever carries `Some` here when `sl` came from the live
+        // fingerprint scan's own oracle measurement — production's real patch metadata
+        // (`dual_fit.rs`) never sets these, so a from-decode replay of an actual patch reads `None`
+        // here exactly as it should, with no separate override needed.
+        pre_seam_phat_r: sl.pre_seam_phat_r,
+        post_seam_phat_r: sl.post_seam_phat_r,
+        pre_seam_phat_prom: sl.pre_seam_phat_prom,
+        post_seam_phat_prom: sl.post_seam_phat_prom,
+        pre_seam_phat_z: sl.pre_seam_phat_z,
+        post_seam_phat_z: sl.post_seam_phat_z,
+        pre_seam_lag_ms: sl.pre_seam_lag_ms,
+        post_seam_lag_ms: sl.post_seam_lag_ms,
+        pre_seam_phat_lag_ms: sl.pre_seam_phat_lag_ms,
+        post_seam_phat_lag_ms: sl.post_seam_phat_lag_ms,
         // Passed through, not fabricated: `SeamLocalTags` carries the writer's provenance or `None`,
         // and `None` still means "this path cannot say" — never `false`. (Before 2026-08-28 the tags
         // stopped here, so a from-decode dump lost the probe's own flags on the way to the wire.)
@@ -497,6 +512,16 @@ pub(crate) fn tags_from_fields(
         post_seam_prom: d.post_seam_prom,
         pre_seam_z: d.pre_seam_z,
         post_seam_z: d.post_seam_z,
+        pre_seam_phat_r: d.pre_seam_phat_r,
+        post_seam_phat_r: d.post_seam_phat_r,
+        pre_seam_phat_prom: d.pre_seam_phat_prom,
+        post_seam_phat_prom: d.post_seam_phat_prom,
+        pre_seam_phat_z: d.pre_seam_phat_z,
+        post_seam_phat_z: d.post_seam_phat_z,
+        pre_seam_lag_ms: d.pre_seam_lag_ms,
+        post_seam_lag_ms: d.post_seam_lag_ms,
+        pre_seam_phat_lag_ms: d.pre_seam_phat_lag_ms,
+        post_seam_phat_lag_ms: d.post_seam_phat_lag_ms,
         pre_seam_rescued: d.pre_seam_rescued,
         post_seam_rescued: d.post_seam_rescued,
         pre_seam_edge_pinned: d.pre_seam_edge_pinned,
@@ -750,6 +775,16 @@ mod tests {
                 post_seam_prom: None,
                 pre_seam_z: None,
                 post_seam_z: None,
+                pre_seam_phat_r: None,
+                post_seam_phat_r: None,
+                pre_seam_phat_prom: None,
+                post_seam_phat_prom: None,
+                pre_seam_phat_z: None,
+                post_seam_phat_z: None,
+                pre_seam_lag_ms: None,
+                post_seam_lag_ms: None,
+                pre_seam_phat_lag_ms: None,
+                post_seam_phat_lag_ms: None,
                 // A projected skip whose writer recorded provenance: the pinned post shoulder is the
                 // tag that separates a real abut from a search that ran out of lags.
                 pre_seam_rescued: Some(false),

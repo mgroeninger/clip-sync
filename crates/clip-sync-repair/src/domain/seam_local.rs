@@ -141,6 +141,74 @@ pub fn lag_correlation_curve_auto(a: &[f64], b_ctx: &[f64], max_lag: i64) -> Vec
     }
 }
 
+/// **GCC-PHAT experiment** (`TEMP-phat-seam-scoring-plan.md`): phase-transform-whitened equivalent of
+/// [`lag_correlation_curve_fft`], same lag convention and edge mask (entry-for-entry comparable), but the
+/// cross-power spectrum is normalized to unit magnitude per frequency bin *before* the inverse FFT, instead
+/// of the Pearson-style sliding-mean/variance normalization. Frequencies contribute to the lag estimate by
+/// phase agreement alone, not by how much energy they carry — the standard GCC-PHAT construction from
+/// acoustic time-delay-of-arrival estimation, built to keep a dominant, stationary, broadband/colored noise
+/// component from swamping the correlation curve. Diagnostic-only: no caller in `seam_locks.rs` reads this
+/// yet, and it must not gate anything until a corpus comparison (plan §3) says so.
+///
+/// Values are not bounded to `[-1, 1]` the way Pearson `r` is (phase-only normalization has no natural
+/// amplitude scale), so this curve is only comparable to itself (peak/prominence/z, computed the same way
+/// as the Pearson curve) — never numerically to `lag_correlation_curve`'s `r`.
+pub fn phat_lag_correlation_curve(a: &[f64], b_ctx: &[f64], max_lag: i64) -> Vec<(i64, f64)> {
+    let n = a.len();
+    let nb = b_ctx.len();
+    if n == 0 || max_lag < 0 || nb < n {
+        return Vec::new();
+    }
+
+    let m = (n + nb).next_power_of_two();
+    let mut a_buf: Vec<Complex<f64>> = (0..m)
+        .map(|i| Complex::new(if i < n { a[i] } else { 0.0 }, 0.0))
+        .collect();
+    let mut b_buf: Vec<Complex<f64>> = (0..m)
+        .map(|i| Complex::new(if i < nb { b_ctx[i] } else { 0.0 }, 0.0))
+        .collect();
+
+    let mut planner = FftPlanner::new();
+    let fft = planner.plan_fft_forward(m);
+    let ifft = planner.plan_fft_inverse(m);
+    fft.process(&mut a_buf);
+    fft.process(&mut b_buf);
+
+    let mut prod: Vec<Complex<f64>> = a_buf
+        .iter()
+        .zip(b_buf.iter())
+        .map(|(x, y)| x.conj() * y)
+        .collect();
+    // Phase-transform whitening: normalize each bin to unit magnitude. Near-zero bins are left at zero
+    // rather than divided (standard PHAT-ε regularization) — otherwise numerical noise in a silent bin
+    // gets amplified to unit magnitude and injects spurious phase into every lag.
+    for c in prod.iter_mut() {
+        let mag = c.norm();
+        *c = if mag > 1e-12 {
+            *c / mag
+        } else {
+            Complex::new(0.0, 0.0)
+        };
+    }
+    ifft.process(&mut prod);
+    let scale = 1.0 / m as f64;
+
+    let max_base = nb - n;
+    let mut out = Vec::with_capacity((2 * max_lag + 1).max(0) as usize);
+    for lag in -max_lag..=max_lag {
+        let base_i = max_lag + lag;
+        if base_i < 0 {
+            continue;
+        }
+        let base = base_i as usize;
+        if base > max_base {
+            continue;
+        }
+        out.push((lag, finite(prod[base].re * scale)));
+    }
+    out
+}
+
 /// **Lever 1 foundation** (TEMP-production-repair-perf-plan.md §2.5): the seam correlation of a fixed template
 /// `a` (length `n`) against every contiguous window `b[base..base + n]` for `base` in `[base_lo, base_hi]`,
 /// returned as a dense `Vec<f64>` where entry `i` corresponds to `base = base_lo + i`. Each entry equals
@@ -350,6 +418,88 @@ mod tests {
             "precondition: the naive `lag.abs() == max_lag` test would miss this"
         );
         assert!(peak.edge_pinned(48_000), "but it IS exhausted: {peak:?}");
+    }
+
+    /// **GCC-PHAT experiment, `TEMP-phat-seam-scoring-plan.md` §0 hypothesis.** Operationalizes the failure
+    /// mode read off 50/g10's post seam: real whole-curve correlation (`post_seam_z = 5.61`) but no
+    /// distinguishable peak (`post_seam_prom = 0.0049`) — many candidate lags score about equally, because a
+    /// dominant, stationary, low-frequency component (the "constant background noise" ear label) rides at
+    /// every lag almost as well as the true one. Simulated here as a strong shared tone plus a much quieter
+    /// broadband "content" signal that only truly matches at `true_lag`; the tone's own broad, oscillating
+    /// autocorrelation ridge suppresses the Pearson peak's prominence without moving its argmax.
+    ///
+    /// Whitening the spectrum (PHAT) discounts the tone's dominant magnitude and lets the broadband content's
+    /// phase agreement compete on equal footing — both curves should still find `true_lag`, but PHAT's peak
+    /// should stand out further above its neighbors than Pearson's does. This is the concrete, cheap test of
+    /// the plan's hypothesis; it does not touch the fingerprint path or any real corpus gap.
+    #[test]
+    fn phat_curve_sharpens_the_peak_under_a_shared_dominant_tone() {
+        let n = 2000usize;
+        let true_lag = 300i64;
+        let max_lag = 900i64;
+        let total = n + 2 * max_lag as usize + 50;
+
+        let tone_period = 137.0; // samples; not a divisor of n or max_lag, so it doesn't alias onto exact repeats
+        let tone_amp = 1.0; // dominant: far louder than the shared content below
+        let tone =
+            |t: usize| tone_amp * (2.0 * std::f64::consts::PI * t as f64 / tone_period).sin();
+
+        // `tone` is anchored to one absolute coordinate frame shared by `a` and `b_ctx` (both indexed as if
+        // `a` already sits at its true embed position `start`) — otherwise `a`'s tone phase and the ambient
+        // tone's phase disagree even at the true lag, and the tone's own near-periodic realignment elsewhere
+        // in `b_ctx` can outscore the true match instead of merely competing with it.
+        let start = (max_lag + true_lag) as usize;
+
+        // Shared broadband content: only genuinely present at the true lag; independent noise everywhere else.
+        let content = noise(0xC0FF_EE01, n, 0.05);
+        let a: Vec<f64> = (0..n).map(|i| content[i] + tone(start + i)).collect();
+
+        let mut b_ctx: Vec<f64> = (0..total)
+            .map(|t| noise_at(0xB0B0_0002, t, 0.05) + tone(t))
+            .collect();
+        for i in 0..n {
+            b_ctx[start + i] = content[i] + tone(start + i);
+        }
+
+        let pearson = lag_correlation_curve_auto(&a, &b_ctx, max_lag);
+        let phat = phat_lag_correlation_curve(&a, &b_ctx, max_lag);
+        assert_eq!(pearson.len(), phat.len(), "same lag convention/edge mask");
+
+        let (pearson_lag, pearson_prom) = peak_and_prominence(&pearson);
+        let (phat_lag, phat_prom) = peak_and_prominence(&phat);
+
+        assert_eq!(pearson_lag, true_lag, "pearson still finds the true lag");
+        assert_eq!(phat_lag, true_lag, "phat still finds the true lag");
+        assert!(
+            phat_prom > pearson_prom * 1.5,
+            "phat should sharpen the peak well past pearson's under a dominant shared tone: \
+             pearson_prom={pearson_prom}, phat_prom={phat_prom}"
+        );
+    }
+
+    /// Peak lag and its prominence over the best rival at least 50 lags away (outside the tone's own
+    /// autocorrelation ridge, so a nearby shoulder of the true peak is never counted as the rival).
+    fn peak_and_prominence(curve: &[(i64, f64)]) -> (i64, f64) {
+        let &(peak_lag, peak_r) = curve
+            .iter()
+            .max_by(|(_, x), (_, y)| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal))
+            .expect("non-empty curve");
+        let rival = curve
+            .iter()
+            .filter(|(lag, _)| (lag - peak_lag).abs() > 50)
+            .map(|(_, r)| *r)
+            .fold(f64::NEG_INFINITY, f64::max);
+        (peak_lag, peak_r - rival)
+    }
+
+    /// Same PRNG as [`noise`], but addressable by absolute index `t` rather than a 0-based buffer — lets the
+    /// "ambient" fill and the embedded copy share one noise field indexed consistently by position.
+    fn noise_at(seed: u64, t: usize, scale: f64) -> f64 {
+        let mut seed = (seed | 1).wrapping_add((t as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (((seed >> 33) as f64 / (1u64 << 30) as f64) - 1.0) * scale
     }
 
     fn noise(seed: u64, n: usize, scale: f64) -> Vec<f64> {

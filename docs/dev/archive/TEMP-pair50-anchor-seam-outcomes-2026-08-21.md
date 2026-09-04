@@ -234,13 +234,102 @@ limitation to mean the region could never be corrected, and predicted the wrong 
 **Any future theory about wide map steps must check both mechanisms before predicting an outcome —
 and check it against real patch output, not against the mechanism alone.**
 
+## Result 3 — Question 1 confirmed: production's anchor offset sits *between* g10's two true plateaus, not on either
+
+Tested the live lead directly (2026-09-03): re-ran a fresh `--gap-fingerprints --gap-listen
+--fingerprint-diagnostics` export for 50/g8 and 50/g10 and re-derived the overlap-only remnant lock
+with `scratch_sliver_check.py` + a lag sweep, reproducing Result 1's sliver-check table exactly —
+50/g10's true content still locks at **r = 0.9999995 at lag = −13.21 ms** relative to the
+`EXTRA_OFFSET_BY_GAP` baseline (2.818 s), matching the archived 13.2 ms figure to four significant
+figures on independently re-decoded media.
+
+The decisive comparison does not even need the new remnant run — it is already in Result 2's own
+table, read against the plateau-split figures this note already had:
+
+| gap | production's actual offset (`align_adjustment_secs`) | plateau A | plateau B | distance to nearer plateau |
+|---|---|---|---|---|
+| 50/g8 (clean, no ear defect) | 2.771 s | 2.767 s | 2.809 s | **4 ms** |
+| 50/g10 (audible echo) | 2.821 s | 2.805 s | 2.831 s | **10 ms** (16 ms to the other) |
+
+g8's actual placement sits almost exactly on its nearer plateau (4 ms). g10's sits **between** its two
+plateaus, 10–16 ms from either — it never locks cleanly to the true fine registration of *either*
+shoulder. That is the mechanism the open question asked for: the anchor-seam bracket search's grid is
+coarse (the fingerprint's own `brackets` dump for g10 steps in ~400 ms increments, `move_frames` 0 /
+19200 / 26400 / 43200 / …), so it selects the right ~2.8 s bracket but does no sub-frame refinement
+within it. On g8 that coarse pick happened to land within 4 ms of the true lock by chance; on g10 it
+landed in the 10–16 ms gap between two real, independently-correct shoulder registrations — splicing
+donor content that is simultaneously ~13 ms off true for the post shoulder, close enough to pass the
+marginal anchor-seam gate (`pre=0.30 post=0.32 min=0.35`, this run) but far enough to beat against the
+real A/B content at the join and read as a slap-echo.
+
+**Question 1 is confirmed**, not merely "a plausible mechanism, untested." ~~The fix is a splice-residual
+correction — a sub-frame (sample-accurate) waveform-lag refinement step *within* the anchor-seam
+bracket the search already selects, not a change to which bracket gets picked. Scoped as a BACKLOG
+item below.~~ **Superseded by Result 4** — that fix premise is wrong; there is no missing refinement
+step to add.
+
+## Result 4 — the fix premise is wrong; the real cause is upstream in dual-fit, and it is not fixable by refinement
+
+Corrected 2026-09-03, before any code was written against Result 3. Two things send Result 3's
+diagnosis back for revision:
+
+1. **The anchor-seam path already refines at sample accuracy.** Reading
+   `domain/gap_fill_fit.rs::unified_search_best_fill_start` end to end: it runs a sparse naive coarse
+   pass across the full `±search_radius_frames` window, then a **dense, per-frame refine pass** across
+   `[coarse_winner ± coarse_step]` — far wider than g10's 10–16 ms residual — jointly scoring
+   structure + waveform the whole way, then a final small `unified_fine_polish_start` pass. There is no
+   coarser-than-sample-level gap in that pipeline for a "sub-frame refinement step" to fill.
+2. **The single-rigid-offset diagnosis is real but the fix target is the wrong mechanism.** g10 genuinely
+   has two different true per-shoulder registrations (2.805 s / 2.831 s, Result 3's own table), so no
+   single anchor-seam offset can satisfy both — but the mechanism built for exactly that shape is
+   **dual-fit** (independent per-seam lock + length reconciliation), not the anchor-seam bracket search.
+   Production only falls through to the rigid anchor-seam path *because* dual-fit's own gate already
+   declined this gap (`splice_dualfit.gate_pass: false`).
+
+**Why dual-fit declined, checked directly** (fresh `--gap-fingerprints` dump, current HEAD, 2026-09-03):
+
+| | `pre_seam_r` | `pre_seam_prom` | `pre_seam_z` | | `post_seam_r` | `post_seam_prom` | `post_seam_z` |
+|---|---|---|---|---|---|---|---|
+| g10 | 0.445 | 0.1155 | 7.41 | | 0.248 | 0.0049 | 5.61 |
+
+The pre seam is a genuine, if modest, lock — it clears the `min_fill_correlation` floor (0.35) with a
+real, distinguishable peak. The post seam fails on every axis, and the *pattern* is diagnostic: r and
+prominence are both near the floor/zero, yet the whole-curve z-score (5.61) is still fairly high. Per
+the schema's own doc comments (`*_seam_prom` flags "correct-but-periodic content"; `*_seam_z` is
+"periodicity-robust"), high z with near-zero local prominence is the signature of **locally ambiguous
+content** — many candidate lags correlate about equally well, so there is no single distinguishable
+peak to lock onto. That is different from silence (which would kill z too) and different from the
+drift/clock-skew model (already refuted independently, `archive/TEMP-w5-timing-offset-rescue-plan.md`).
+Ear-check of the gap's own soundtrack corroborates it directly: quiet dialogue over constant background
+noise — exactly the kind of broadly-correlating, low-distinctiveness content that signature describes.
+
+**Grow-post already tried the obvious next lever and failed.** The shipped grow-post mechanism
+(`domain/seam_locks.rs::grow_post_lock`, ladder up to 1000 ms) re-locks a weak post seam at
+progressively wider windows; g10's dump carries no `dual_fit_post_window_ms` stamp, meaning it ran and
+found nothing better at any rung. A locally-ambiguous seam does not sharpen with a wider window — it
+just samples more of the same ambiguous content.
+
+**Corroborating ear label (2026-09-03):** a re-listen also reports a slight *stutter at the start* of
+the fill, distinct from the echo at its end. That fits the split this note already measured — production's
+2.821 s offset sits 16 ms from the pre plateau (2.805 s) but only 10 ms from the post plateau (2.831 s),
+so the pre join carries the *larger* registration error of the two. A stutter at the (more mismatched)
+start and an echo at the (less mismatched) end is the two-sided symptom the same single-offset
+compromise predicts, not a second defect.
+
+**Verdict:** three specific fix approaches are refuted or exhausted — a sub-frame refinement step
+(already exhaustive, nothing coarser exists to add), widening dual-fit's post window (grow-post already
+tried up to 1000 ms and found nothing), and a drift/clock-skew warp (refuted independently, see
+`archive/TEMP-w5-timing-offset-rescue-plan.md`). That does **not** mean the gap is unfixable — it means
+those three routes are closed. The audible defect (echo + stutter) is still live and unpatched. Tracked
+as refuted-approaches in [settled.md](../settled.md) § A; the open problem itself stays in BACKLOG § *Post-join defects*, next action open.
+
 ---
 
 ## Open questions
 
 | # | Question | Why it matters | Priority |
 |---|---|---|---|
-| 1 | **Why is 50/g10's post join audible when the post-onset remnant matches at r = 1.000?** g10 patched successfully (marginal confidence, `anchor_seam_used`, correct ~2.8 s offset), so the echo is a quality defect on a technically-successful patch. Both prior models are dead: the **silent-onset hypothesis is withdrawn** (it was n=1 inside the cluster; the envelope guesses that motivated it — pre −1600 ms, post −1800 ms — are the *wrong sign* against the true +2.789 s; all six gaps declined, so "declined" cannot single g10 out; and the pre-shoulder is not starved, reading r ≈ 0.99 at +2.8 s by `t = 2–3 s`), and the **unreached-region theory is refuted** by Result 2. One live lead: the overlap-only remnant locks at **13.2 ms**, not 0, and that is the same size as g10's own first/second-plateau split (2.805 s early-context vs 2.831 s; 50/g8 shows the same split, 2.767 vs 2.809). A seam residual of that order is a plausible echo mechanism — untested. | Only confirmed defect in the census's listen batch with no causal model at all (31/g10's blip already fits `shared_far_offset`). A defect that survives a correct offset points at the join itself, not at registration. | **High** |
+| 1 | **Mechanism explained (Result 4, 2026-09-03); fix still open.** Why is 50/g10's post join audible when the post-onset remnant matches at r = 1.000? Production's actual anchor offset (2.821 s) does sit 10–16 ms from either of g10's two independently-true plateau registrations (2.805 s / 2.831 s) — that part of Result 3 stands, and it also explains the ear-confirmed pre-side stutter (16 ms, the larger of the two). But the proposed fix (a "missing" sub-frame refinement step) was wrong — the search is already exhaustive at sample accuracy — and dual-fit (the mechanism built for this shape) independently declines g10 because its post seam is locally ambiguous (near-zero prominence despite moderate whole-curve z; ear-confirmed quiet dialogue over constant background noise); grow-post's wider windows already failed to rescue it. Three fix routes are ruled out ([settled.md](../settled.md) § A); no working fix identified yet — live in BACKLOG. | Only confirmed defect in the census's listen batch with no causal model at all (31/g10's blip already fits `shared_far_offset`). A defect that survives a correct offset points at the join itself, not at registration. | **Open — see BACKLOG** |
 | 2 | **Why do 50/g11–g13 fail when both flanks succeed at the same offset?** Three gaps *inside* the same map-step region, between the two successfully-resolved flanks, still skip. | Narrow and tractable, not a region-wide defect — but it is the only unexplained *failure* left in the region, and it sits exactly where a wide-map-step fix would be judged. | Medium |
 
 Question 2's data in hand (`2026-08-13-repeat-terms/50.json`):
@@ -299,6 +388,10 @@ durable record of what they showed.
   carries `align_adjustment_secs` / `anchor_seam_used` / `confidence`; `skipped` nests its reason one
   level deeper (`status.skipped.reason`), itself either a bare snake_case string or a single-key dict
   for data-carrying variants (`{"correlation_below_threshold": {…}}`).
+- **Result 3:** fresh `--gap-fingerprints --gap-listen --fingerprint-diagnostics --fingerprint-gap
+  9,11` export (2026-09-03, 1-based gap numbers for 0-based g8/g10), re-run through
+  `scratch_sliver_check.py` + a ±30 ms lag sweep on the overlap-only remnant. `align_adjustment_secs`
+  / `anchor_seam_used` figures reused from Result 2's existing table, no new run needed for those.
 
 ---
 

@@ -102,6 +102,25 @@ pub struct SeamLocalTags {
     pub post_seam_prom: Option<f64>,
     pub pre_seam_z: Option<f64>,
     pub post_seam_z: Option<f64>,
+    /// GCC-PHAT experiment (`TEMP-phat-seam-scoring-plan.md`), diagnostic-only: `None` on every real
+    /// patch (production `dual_fit.rs` never computes this), `Some` only on the live fingerprint
+    /// scan's own oracle measurement — so a from-decode replay of an actual patch naturally reads
+    /// `None` here without needing a separate override.
+    pub pre_seam_phat_r: Option<f64>,
+    pub post_seam_phat_r: Option<f64>,
+    pub pre_seam_phat_prom: Option<f64>,
+    pub post_seam_phat_prom: Option<f64>,
+    pub pre_seam_phat_z: Option<f64>,
+    pub post_seam_phat_z: Option<f64>,
+    /// Same-lag-agreement companions to the Pearson/PHAT triplets above (`TEMP-phat-seam-scoring-plan.md`):
+    /// each curve's own fractional peak lag (ms), not `pre_lag`/`post_lag` — those are frames relative to
+    /// the *nominal* seam center, while these are relative to the already-resolved seam placement, matching
+    /// the window the prominence/PHAT curves were actually swept over. `None` under the same diagnostic-only
+    /// rule as the PHAT fields.
+    pub pre_seam_lag_ms: Option<f64>,
+    pub post_seam_lag_ms: Option<f64>,
+    pub pre_seam_phat_lag_ms: Option<f64>,
+    pub post_seam_phat_lag_ms: Option<f64>,
     /// **Search provenance** for the two locks, carried because the fingerprint's `splice_dualfit` is
     /// rebuilt *from these tags* — anything not stored here never reaches the wire, however carefully
     /// the probe measured it. `None` means "this writer did not record it", never `false`: on a dump
@@ -765,6 +784,16 @@ mod tests {
             post_seam_prom: None,
             pre_seam_z: None,
             post_seam_z: None,
+            pre_seam_phat_r: None,
+            post_seam_phat_r: None,
+            pre_seam_phat_prom: None,
+            post_seam_phat_prom: None,
+            pre_seam_phat_z: None,
+            post_seam_phat_z: None,
+            pre_seam_lag_ms: None,
+            post_seam_lag_ms: None,
+            pre_seam_phat_lag_ms: None,
+            post_seam_phat_lag_ms: None,
             pre_seam_rescued: None,
             post_seam_rescued: None,
             pre_seam_edge_pinned: None,
