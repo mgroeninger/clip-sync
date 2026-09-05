@@ -1,6 +1,18 @@
 # TEMP — Phase-transform (GCC-PHAT) seam scoring experiment
 
-**Status:** draft, 2026-09-03. Experiment, not yet a Change. Diagnostic-only:
+**Status:** closed 2026-09-04, refuted. See [../settled.md](../settled.md) § A
+("GCC-PHAT (phase-transform) seam scoring, windowed or not, as a fix for
+50/g10's post seam"). Real-buffer scan on 50/g10 (`gap-files/2026-09-04-g010-phat-win/`):
+unwindowed PHAT pins its post-seam peak to exactly the ±30 ms search boundary
+(edge-pinning artifact, not a located seam); Hann-windowing (added mid-plan to
+test spectral leakage as the cause) moves the peak off the boundary but
+collapses prominence ~5000–7000× to noise-flat, revealing no real peak
+underneath. `domain/policies/seam_locks.rs` was never touched, per this
+plan's own scope fence in § 1. Successor: `TEMP-seam-anchor-relocation-plan.md`
+(anchor the lag several seconds from the ambiguous seam, in richer content,
+then apply the existing ±30 ms window there instead of at the seam itself).
+
+**Status (original, superseded above):** draft, 2026-09-03. Experiment, not yet a Change. Diagnostic-only:
 touches the fingerprint path (Tier-3), does **not** touch the production gate
 (`seam_locks.rs`) until/unless the corpus comparison in § 3 says so.
 
