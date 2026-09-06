@@ -8,9 +8,9 @@ unwindowed PHAT pins its post-seam peak to exactly the ±30 ms search boundary
 test spectral leakage as the cause) moves the peak off the boundary but
 collapses prominence ~5000–7000× to noise-flat, revealing no real peak
 underneath. `domain/policies/seam_locks.rs` was never touched, per this
-plan's own scope fence in § 1. Successor: `TEMP-seam-anchor-relocation-plan.md`
-(anchor the lag several seconds from the ambiguous seam, in richer content,
-then apply the existing ±30 ms window there instead of at the seam itself).
+plan's own scope fence in § 1. Successor: `TEMP-disjoint-offseam-lock-plan.md`
+(1 s Pearson on A disjoint from the seam template). The intermediate
+`TEMP-seam-anchor-relocation-plan.md` did not run that test.
 
 **Status (original, superseded above):** draft, 2026-09-03. Experiment, not yet a Change. Diagnostic-only:
 touches the fingerprint path (Tier-3), does **not** touch the production gate

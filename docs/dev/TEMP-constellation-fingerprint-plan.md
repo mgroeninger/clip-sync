@@ -12,8 +12,8 @@ constellation fingerprint*.
 **Companions:** [archive/energy-signature-plan.md](archive/energy-signature-plan.md)
 Phase 4 ("peak-picked sparse landmarks as a third `GapSignature` variant" —
 won't-do as a *production* signature; this plan does not reopen that);
-[TEMP-seam-anchor-relocation-plan.md](TEMP-seam-anchor-relocation-plan.md)
-(walk *away* from an undecidable seam; complementary, not a rename);
+[TEMP-disjoint-offseam-lock-plan.md](TEMP-disjoint-offseam-lock-plan.md)
+(1 s Pearson on A disjoint from the seam template; complementary, not a rename);
 [archive/TEMP-phat-seam-scoring-plan.md](archive/TEMP-phat-seam-scoring-plan.md)
 (refuted: rescoring the same dense window). Conversation that produced this:
 constellation matching is "do A's top-N pre-seam peaks have a matching set on

@@ -66,7 +66,7 @@ is untracked — that is a bug in the catalog, not a state a doc may sit in.
 |-------|-----------|-----------|
 | [TEMP-post-splice-introduced-silence-collapse-plan.md](TEMP-post-splice-introduced-silence-collapse-plan.md) | After splice, fill `visit_shoulders_abut`: concat-confirm → **warn by default**; `--collapse-introduced-silence` drains A PCM and the current mux takes that buffer | [BACKLOG.md](../../BACKLOG.md) § *Fill placement* |
 | [TEMP-constellation-fingerprint-plan.md](TEMP-constellation-fingerprint-plan.md) | Dump A **and** B energy-peak constellations on `--gap-fingerprints` (variable N after min-spacing). Capture only; matching is a later JSON read | [BACKLOG.md](../../BACKLOG.md) § *Fill placement* |
-| [TEMP-seam-anchor-relocation-plan.md](TEMP-seam-anchor-relocation-plan.md) | Diagnostic: lock a lag several seconds from an undecidable seam (3-stage funnel), then confirm with the existing ±30 ms window | [BACKLOG.md](../../BACKLOG.md) § *Post-join defects* → 50/g10 |
+| [TEMP-disjoint-offseam-lock-plan.md](TEMP-disjoint-offseam-lock-plan.md) | Diagnostic: 1 s Pearson lock on A **disjoint** from production’s seam template, vs a same-window on-seam control. The § 0 test the predecessor did not run | [BACKLOG.md](../../BACKLOG.md) § *Post-join defects* → 50/g10 |
 | [TEMP-flac-output-plan.md](TEMP-flac-output-plan.md) | In-process `--flac` lossless output, peer of `--wav`. Motivated by the RIFF `u32` data-chunk limit | [BACKLOG.md](../../BACKLOG.md) § *Repair R6* |
 | [TEMP-nway-donor-alignment-plan.md](TEMP-nway-donor-alignment-plan.md) | Repair one damaged copy from **multiple** donors with sparse non-overlapping damage | [settled.md](settled.md) § C — latched, no corpus |
 

@@ -1,6 +1,13 @@
 # TEMP — Seam anchor relocation experiment
 
-**Status:** draft, revised 2026-09-05 (mechanism in § 2 replaced — see note
+**Status:** archived 2026-09-06. The funnel did not test its own § 0.
+Corpus dump `gap-files/2026-09-05-seam-anchor-relocation`: 967/968
+accepted anchors were the first 250 ms stride of a 10 s envelope on the
+seam. Successor (the actual off-seam test):
+[TEMP-disjoint-offseam-lock-plan.md](../TEMP-disjoint-offseam-lock-plan.md).
+Verdict: [settled.md](../settled.md) § A.
+
+**Original status:** draft, revised 2026-09-05 (mechanism in § 2 replaced — see note
 below). Experiment, not yet a Change. Diagnostic-only: touches the
 fingerprint path (Tier-3), does **not** touch the production gate
 (`domain/seam_locks.rs`) until/unless the corpus comparison in § 3
