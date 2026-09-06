@@ -13,6 +13,7 @@ use super::build::*;
 use super::config::*;
 use super::overlay::*;
 use super::pcm::*;
+use super::probes::{ANCHOR_SEARCH_RADIUS_SECS, ANCHOR_WIDE_LAG_MS, ANCHOR_WIDE_WINDOW_SECS};
 
 /// Corpus envelope when A/B `native_channels` disagree: provenance filled, pairwise gaps refused.
 ///
@@ -91,6 +92,23 @@ pub struct CharacterizeAbPcm<'a> {
 ///
 /// Pass-1 `silence` / `contour` / `anchors` are restored after the spec projection (the projector
 /// still emits `None` for those groups). Pair-level scan alignment is stamped on `source.alignment`.
+/// §4 risk 5: bound the anchor walk short of the neighboring gap's own dropout, in the walk's own
+/// direction. `gaps` is timeline-ordered by construction (single forward pass in `scan_gaps.rs`), so
+/// `[i-1]`/`[i+1]` are genuinely the previous/next gap in A. Returns `(pre, post)`; either side is
+/// `None` when there is no neighbor on that side (first/last gap), which `anchor_relocated_lag`
+/// treats as an unbounded walk (falls back to `ANCHOR_SEARCH_RADIUS_SECS`).
+fn neighbor_walk_bounds(gaps: &[crate::domain::Gap], i: usize) -> (Option<f64>, Option<f64>) {
+    let gap = &gaps[i];
+    let pre = i
+        .checked_sub(1)
+        .and_then(|pi| gaps.get(pi))
+        .map(|prev| (gap.video_a_start_secs - prev.video_a_end_secs).max(0.0));
+    let post = gaps
+        .get(i + 1)
+        .map(|next| (next.video_a_start_secs - gap.video_a_end_secs).max(0.0));
+    (pre, post)
+}
+
 pub fn characterize_gaps_from_decode(
     report: &crate::domain::GapReport,
     pcm: &CharacterizeAbPcm<'_>,
@@ -149,14 +167,22 @@ pub fn characterize_gaps_from_decode(
         .max(1.0) as usize;
     let search_radius_frames =
         ((cfg.fill_border_search_secs.max(cfg.fill_align_margin_secs)) * rate).round() as usize;
+    // Seam-anchor relocation (`TEMP-seam-anchor-relocation-plan.md` §3, "decode cost"): the B-side
+    // pad must reach the anchor walk's far edge, not just the near-edge search radius — a candidate's
+    // window is `ANCHOR_WIDE_WINDOW_SECS` long and its lag reach is `ANCHOR_WIDE_LAG_MS`, both
+    // measured from the far side of `ANCHOR_SEARCH_RADIUS_SECS`.
+    let anchor_far_edge_secs =
+        ANCHOR_SEARCH_RADIUS_SECS + ANCHOR_WIDE_WINDOW_SECS + (ANCHOR_WIDE_LAG_MS / 1000.0);
     let pad_lead =
-        cfg.gap_signature_context_secs + cfg.fill_border_search_secs + cfg.fill_align_margin_secs;
-    let pad_tail = cfg.gap_signature_context_secs
+        (cfg.gap_signature_context_secs + cfg.fill_border_search_secs + cfg.fill_align_margin_secs)
+            .max(anchor_far_edge_secs);
+    let pad_tail = (cfg.gap_signature_context_secs
         + cfg
             .fill_extract_tail_slack_secs
             .max(cfg.fill_align_margin_secs)
         + cfg.fill_border_search_secs
-        + cfg.fill_align_margin_secs;
+        + cfg.fill_align_margin_secs)
+        .max(anchor_far_edge_secs);
 
     let total_gaps = corpus.gaps.len() as u64;
     for (gn, fp) in corpus.gaps.iter_mut().enumerate() {
@@ -189,6 +215,9 @@ pub fn characterize_gaps_from_decode(
         let b_slice = &b_samples_full[lo * ch..hi * ch];
         let b_extract_start_secs = lo as f64 / rate;
 
+        let (pre_anchor_max_walk_secs, post_anchor_max_walk_secs) =
+            neighbor_walk_bounds(&report.gaps, i);
+
         let m = compute_region_measurements(RegionMeasureInput {
             a_pcm,
             ch,
@@ -210,6 +239,8 @@ pub fn characterize_gaps_from_decode(
             rate,
             sample_rate,
             progress,
+            pre_anchor_max_walk_secs,
+            post_anchor_max_walk_secs,
         });
 
         // Decision spec: geometry + levels from the summary fp; verdict from `m.outcome` (any_ok); tags from
@@ -834,6 +865,7 @@ pub(crate) fn write_corpus_dir(
 mod tests {
     use super::*;
     use crate::domain::gap_equivalence::{ChannelReduction, SpanKind};
+    use crate::domain::Gap;
 
     fn noise(seed: u64, i: usize) -> f64 {
         let mut z = ((seed << 32) | (i as u64 & 0xffff_ffff)).wrapping_add(0x9E37_79B9_7F4A_7C15);
@@ -851,6 +883,60 @@ mod tests {
             let s = (std::f64::consts::TAU * freq * t / 48_000.0).sin();
             *slot = (env * s) as f32 * amp;
         }
+    }
+
+    fn gap_at(start: f64, end: f64) -> Gap {
+        Gap {
+            video_a_start_secs: start,
+            video_a_end_secs: end,
+            video_b_start_secs: Some(start),
+            video_b_end_secs: Some(end),
+            b_has_energy: true,
+            collar_level: None,
+        }
+    }
+
+    /// §4 risk 5: the sole gap in the report has no neighbor on either side, so both bounds must be
+    /// `None` — `anchor_relocated_lag` reads `None` as "walk the full fixed radius, unbounded."
+    #[test]
+    fn neighbor_walk_bounds_is_none_on_both_sides_with_no_neighbors() {
+        let gaps = vec![gap_at(10.0, 12.0)];
+        assert_eq!(neighbor_walk_bounds(&gaps, 0), (None, None));
+    }
+
+    /// The first gap in a multi-gap report has no previous neighbor (`pre` must stay `None`) but does
+    /// have a next one, whose near boundary bounds the post-side walk.
+    #[test]
+    fn neighbor_walk_bounds_first_gap_has_no_pre_neighbor() {
+        let gaps = vec![gap_at(10.0, 12.0), gap_at(20.0, 22.0)];
+        assert_eq!(neighbor_walk_bounds(&gaps, 0), (None, Some(8.0)));
+    }
+
+    /// The last gap in a multi-gap report has no next neighbor (`post` must stay `None`) but does have
+    /// a previous one, whose near boundary bounds the pre-side walk.
+    #[test]
+    fn neighbor_walk_bounds_last_gap_has_no_post_neighbor() {
+        let gaps = vec![gap_at(10.0, 12.0), gap_at(20.0, 22.0)];
+        assert_eq!(neighbor_walk_bounds(&gaps, 1), (Some(8.0), None));
+    }
+
+    /// A middle gap is bounded by both neighbors independently, each measured only against its own
+    /// side's boundary — the far neighbor must not leak into the near bound.
+    #[test]
+    fn neighbor_walk_bounds_middle_gap_uses_each_sides_own_neighbor() {
+        let gaps = vec![gap_at(0.0, 1.0), gap_at(10.0, 12.0), gap_at(20.0, 25.0)];
+        assert_eq!(neighbor_walk_bounds(&gaps, 1), (Some(9.0), Some(8.0)));
+    }
+
+    /// Adjacent gaps with (degenerate, but structurally possible) touching or overlapping boundaries
+    /// must clamp to `0.0`, never go negative — `Some(0.0)` unambiguously walks zero distance, whereas
+    /// a negative value read downstream would rely on `anchor_relocated_lag`'s own `.max(0.0)` as the
+    /// only thing standing between it and a corrupted `max_reach_frames`.
+    #[test]
+    fn neighbor_walk_bounds_clamps_touching_neighbors_to_zero_not_negative() {
+        let gaps = vec![gap_at(10.0, 12.0), gap_at(11.0, 15.0)];
+        assert_eq!(neighbor_walk_bounds(&gaps, 0), (None, Some(0.0)));
+        assert_eq!(neighbor_walk_bounds(&gaps, 1), (Some(0.0), None));
     }
 
     fn write_noise(buf: &mut [f32], start: usize, end: usize, seed: u64, amp: f32) {

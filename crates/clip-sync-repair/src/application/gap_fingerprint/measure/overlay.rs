@@ -176,6 +176,12 @@ pub(in crate::application::gap_fingerprint::measure) struct RegionMeasureInput<'
     pub(in crate::application::gap_fingerprint::measure) sample_rate: u32,
     pub(in crate::application::gap_fingerprint::measure) progress:
         &'a dyn clip_sync::ProgressReporter,
+    /// Seam-anchor relocation (`TEMP-seam-anchor-relocation-plan.md` §4 risk 5): the nearest
+    /// neighboring gap's near boundary, in seconds from this gap's own seam, in the pre/post walk
+    /// direction respectively — `characterize.rs` resolves these from `report.gaps[i-1]`/`[i+1]`.
+    /// `None` when there is no neighbor on that side.
+    pub(in crate::application::gap_fingerprint::measure) pre_anchor_max_walk_secs: Option<f64>,
+    pub(in crate::application::gap_fingerprint::measure) post_anchor_max_walk_secs: Option<f64>,
 }
 /// Compute one gap's gate-overlay measurements from decode — the shared per-gap measurement site the
 /// from-decode dump ([`characterize_gaps_from_decode`]) projects via [`tags_from_measurements`] (8g.3a).
@@ -207,6 +213,8 @@ pub(in crate::application::gap_fingerprint::measure) fn compute_region_measureme
         rate,
         sample_rate,
         progress,
+        pre_anchor_max_walk_secs,
+        post_anchor_max_walk_secs,
     } = inp;
 
     let geom = derive_seam_gate_geometry(
@@ -366,6 +374,8 @@ pub(in crate::application::gap_fingerprint::measure) fn compute_region_measureme
         b_mapped_start,
         cfg,
         sample_rate,
+        pre_anchor_max_walk_secs,
+        post_anchor_max_walk_secs,
     });
     // F14: now that `splice_dualfit` exists, record whether production's dual-fit would rescue this
     // skip. Deliberately the same `dual_fit_rescue_flag` the projection calls — the two paths are
@@ -705,6 +715,24 @@ mod tests {
                 pre_seam_edge_pinned: None,
                 post_seam_edge_pinned: None,
                 seams_clamped: None,
+                post_seam_anchor_lag_ms: None,
+                post_seam_anchor_distance_ms: None,
+                post_seam_anchor_r: None,
+                post_seam_anchor_prom: None,
+                post_seam_anchor_screened_count: None,
+                post_seam_anchor_confirm_r: None,
+                post_seam_anchor_confirm_prom: None,
+                post_seam_anchor_reason: None,
+                post_seam_anchor_neighbor_bounded: None,
+                pre_seam_anchor_lag_ms: None,
+                pre_seam_anchor_distance_ms: None,
+                pre_seam_anchor_r: None,
+                pre_seam_anchor_prom: None,
+                pre_seam_anchor_screened_count: None,
+                pre_seam_anchor_confirm_r: None,
+                pre_seam_anchor_confirm_prom: None,
+                pre_seam_anchor_reason: None,
+                pre_seam_anchor_neighbor_bounded: None,
             }),
             wide_envelope: None,
             residual: Some(ResidualInfo {

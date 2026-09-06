@@ -3,7 +3,7 @@
 **Status:** draft, revised 2026-09-05 (mechanism in § 2 replaced — see note
 below). Experiment, not yet a Change. Diagnostic-only: touches the
 fingerprint path (Tier-3), does **not** touch the production gate
-(`domain/policies/seam_locks.rs`) until/unless the corpus comparison in § 3
+(`domain/seam_locks.rs`) until/unless the corpus comparison in § 3
 says so.
 
 **2026-09-05 revision note:** the original § 2 re-ran the existing fine
@@ -73,12 +73,32 @@ informative point in time. Grow-post (shipped, archived) widens the same
 seam's window up to 1000 ms, same limitation. Neither one leaves the
 undecidable window.
 
-## 1. Scope note (carried over, still true)
+## 1. Scope note (carried over, still true — but see the diagnostic-run
+   exception below)
 
-This only ever applies within dual-fit's post-hoc rescue on an
+This only ever *matters* within dual-fit's post-hoc rescue on an
 already-scored-and-failed primary bracket search (`patch_audio/region/dual_fit.rs:133`)
 — most gaps resolve via the primary `fill_mode = fit` bracket search and
 never reach dual-fit, envelope rescue, grow-post, or this mechanism at all.
+That is a statement about when the mechanism would ever be **consulted** if
+it were promoted into the production gate.
+
+**It is not a statement about when the Tier-3 diagnostic computation
+runs — checked 2026-09-05, this distinction was previously left implicit
+and created a real conflict with § 5.** § 5's third comparison bullet
+requires computing the anchor-relocated lag on gaps that are *already
+confident* under the seam-local Pearson window, specifically to check
+whether relocation disagrees with a seam that already patches clean. Gaps
+like that never fail the primary bracket search and so never reach
+dual-fit rescue at all — if the diagnostic computation only ran where § 1
+says the mechanism "applies," § 5's own required comparison would have no
+data to compare against. So: for this experiment, `anchor_relocated_lag`
+must run on **every** gap that gets a `SpliceDualfit` computed at all in
+the `--gap-fingerprints` dump (confirmed this already happens
+unconditionally on every dump, § 2), regardless of `gate_pass` — the § 1
+scope restriction describes production consultation, not diagnostic
+measurement, and the two must not be conflated when implementing the
+corpus run.
 
 ## 2. Placement (normative)
 
@@ -93,14 +113,17 @@ domain/gap_energy.rs
 application/gap_fingerprint/measure/probes.rs
   wide_envelope_side(a_win, b_wave_ctx, sample_rate,
                       env_bin, wide_lag_samples)     // existing, reused (relocated + widened) — stage 2
-  seam_local_peak(...) via lag_correlation_curve_auto // existing, untouched — stage 3 (unchanged confirm)
   anchor_relocated_lag(...)                          // new — orchestrates 1→2→3 over the walk
+domain/seam_local.rs
+  seam_local_peak(...) via lag_correlation_curve_auto // existing, untouched — stage 3 (unchanged confirm), called from probes.rs
 ```
 
 (`domain/gap_signature.rs` also has a bool-mode sibling,
-`bool_bins_have_anchor_contour` — not used here. It's only reachable today
-through `effective_mode`'s own `Auto`-mode fallback, `gap_signature.rs:159-179`,
-which is a different decision than stage 1's per-candidate screen. Not
+`bool_bins_have_anchor_contour` — not used here. It's reached today only
+through `has_anchor_seam_contour` (`gap_signature.rs:53-61`), not through
+`effective_mode`'s `Auto`-mode fallback (`gap_signature.rs:159-179`, which
+calls only `energy_envelope_is_flat` to pick Bool vs. Energy mode) — a
+different decision than stage 1's per-candidate screen either way. Not
 plumbing it in is a deliberate scope cut, not an oversight: if § 5 finds
 `GapSignatureMode::Bool` gaps need a stage-1 path too, that's a follow-up,
 not a silent gap in this plan.)
@@ -143,7 +166,11 @@ Mechanism:
    shows the far edge is too permissive, shrink `ANCHOR_WIDE_WINDOW_SECS`
    or grow `ANCHOR_SEARCH_RADIUS_SECS` so the two stay consistent — right
    now they're set independently and happen not to conflict, not derived
-   from each other.
+   from each other. **This far edge must also be bounded by the nearest
+   neighboring gap in the walk direction, not just by
+   `ANCHOR_SEARCH_RADIUS_SECS` — see § 4 risk 5**: at pair 50's gap density
+   (g10's own cluster), a 15.4 s far edge can reach into a different gap's
+   dropout.
    At each stride position, take the **same** A-only window of length
    `ANCHOR_WIDE_WINDOW_SECS` that would be handed to stage 2 if this
    candidate qualifies (one segment, not two window concepts), bin it with
@@ -205,6 +232,21 @@ Mechanism:
    boundary invalidates one candidate, not the whole remaining radius. This
    is deliberately a weaker guard than `settled.md` § D's full rule — see
    § 4 risk 1 for the gap and the alternative.
+
+   **This is the only case that resumes the walk — checked 2026-09-05, an
+   earlier draft left the two failure paths ambiguous.** If a candidate
+   passes stage 1, stage 2, and this boundary guard, but stage 3 still
+   fails to lock (`confirm_failed_to_lock`, step 6), that is **terminal for
+   this seam** — do not continue the walk to try a farther candidate.
+   Reasoning: a step-boundary rejection means this specific candidate was
+   in the wrong regime, and the *next* candidate along the same walk is a
+   fresh, independent chance to be in the right one. A confirm-lock
+   failure on an otherwise-clean candidate is different — it means the
+   nearest genuinely-structured, non-boundary-crossing point still didn't
+   produce a confirmable lag, and a farther candidate only weakens the
+   negligible-drift assumption this whole mechanism is built on (§ 0)
+   further, not less — so retrying does not improve the odds, it only adds
+   risk.
 6. **No qualifying result** is a normal, named outcome, not an error — see
    § 3's `*_anchor_reason` field, now with four distinguishable cases
    (stage 1 never passed within the radius; stage 1 passed somewhere but
@@ -247,14 +289,74 @@ gate, that is the point to add real config wiring, with its own calibration
 — not before.
 
 The **only** caller in this plan is the fingerprint path, same fence as the
-predecessor:
+predecessor. But "add the fields to `schema.rs`" is not, by itself,
+sufficient to make them appear in the dump — checked 2026-09-05 against how
+the PHAT predecessor's fields actually reach `--gap-fingerprints` JSON, since
+that plan's own correction note (top of this file) records that this exact
+step was missed once already. The real chain has four touch points, two of
+them a struct that this plan's caller diagram omitted entirely:
 
 ```
-application/gap_fingerprint/measure/probes.rs  →  calls anchor_relocated_lag
-application/gap_fingerprint/schema.rs          →  new Tier-3 fields
+application/gap_fingerprint/measure/probes.rs
+  anchor_relocated_lag(...)                 // new — computes the fields (§2)
+  splice_dualfit_at(...) (probes.rs:267)    // existing — returns the schema.rs
+                                             // struct directly; new anchor fields
+                                             // are added here, on SpliceDualfit
+application/gap_fingerprint/schema.rs
+  SpliceDualfit (schema.rs:1441)            // new Tier-3 fields land here —
+                                             // this IS the measurement's own
+                                             // return type, not a separate DTO
+domain/gap_repair_spec.rs
+  SeamLocalTags (gap_repair_spec.rs:93)     // separate fixed-field struct —
+                                             // new fields must ALSO be added
+                                             // here or they are silently
+                                             // dropped before the dump, same
+                                             // as the PHAT predecessor's
+                                             // near-miss
+application/gap_fingerprint/project.rs
+  tags_from_fields (project.rs:503-530)     // wiring: SpliceDualfit → SeamLocalTags
+  spec_to_fingerprint_summary (project.rs:184-219)
+                                             // wiring: SeamLocalTags → SpliceDualfit
+                                             // (dump side) — BOTH directions must
+                                             // be updated, not just one
 ```
 
-`domain/policies/seam_locks.rs` is out of scope for this plan. Promoting
+Concretely: `splice_dualfit_at` (`probes.rs:267`) returns
+`Option<SpliceDualfit>` — the schema.rs struct is already the measurement's
+native output type, so new anchor fields land there directly, no new DTO
+needed. But the value only survives into a `GapRepairSpec` via
+`tags_from_fields` copying it field-by-field onto `SeamLocalTags`
+(`project.rs:503-530`, e.g. `pre_seam_phat_r: d.pre_seam_phat_r`), and only
+comes back out into the dumped JSON via `spec_to_fingerprint_summary`
+copying `SeamLocalTags` back onto a `SpliceDualfit` (`project.rs:184-219`,
+e.g. `pre_seam_phat_r: sl.pre_seam_phat_r`). A field added only to the
+`schema.rs` struct and forgotten on `SeamLocalTags` compiles cleanly and
+produces `null` in every dump, silently — there is no error, just an absent
+field, exactly the failure mode the PHAT plan caught late. §3 lists 8 field
+names *per seam* — implementation must add all **16** new fields (8 × {pre,
+post}, not 8 total; this is the same undercount the predecessor plan itself
+warns about, see the top of this file) in both structs and both copy sites
+in the same change.
+
+**Production stays diagnostic-only — required, not automatic.**
+`application/patch_audio/region/dual_fit.rs:409-441` constructs a real
+`SeamLocalTags` literal on every actual repair (`try_dual_fit`'s rescue-
+success arm) — this is live, on the production patch path, not diagnostic
+code. It already carries the precedent this plan must follow: the PHAT
+fields are explicitly hardcoded to `None` there
+(`dual_fit.rs:421-428`) under the comment *"GCC-PHAT experiment
+(`TEMP-phat-seam-scoring-plan.md`): diagnostic-only, never computed on the
+production patch path,"* and `SeamLocalTags`'s own doc comment
+(`gap_repair_spec.rs:105-108`) states the general invariant: `None` on
+every real patch, `Some` only on the fingerprint scan's own measurement.
+Because `SeamLocalTags` is a plain struct literal, Rust will refuse to
+compile `dual_fit.rs:409-441` once the new fields exist until they are
+explicitly set — so there is no risk of silently *omitting* this, only of
+setting them without the matching "diagnostic-only" comment. Add all
+**16** new anchor fields to that literal as explicit `None`s with the same
+annotation the PHAT fields carry.
+
+`domain/seam_locks.rs` is out of scope for this plan. Promoting
 this into the gate is a separate, later Change with its own threshold
 calibration.
 
@@ -278,16 +380,27 @@ correction note caught it):
 - `post_seam_anchor_confirm_r`, `post_seam_anchor_confirm_prom` — the
   **stage 3** seam-local ±30 ms confirmation, centered on the stage-2 lag.
 - `post_seam_anchor_reason` — populated only when no accepted anchor
-  exists (§ 2 step 6); a named reason, not a bare `None`, following the
-  existing abstention-reason convention (`SeamResidualVerdict`'s
-  `beyond_lag_reach`/`no_reference_window`/etc.). Four values, matching § 2
+  exists (§ 2 step 6); a named reason, not a bare `None`, following this
+  codebase's convention of a dedicated reason enum per mechanism (e.g.
+  `NotEvaluatedReason`, `LocalGainReason`, `GapFillSkipReason`,
+  `ProgramGainRefusal` — no mechanism in `domain/` shares its "why no
+  measurement" enum with another; `ResidualUninformative`
+  (`domain/policies/seam_residual.rs:136`) was considered as a reuse
+  candidate and rejected: its variants and the exhaustive matches over it
+  (`seam_residual.rs:749-764`, `1020-1039`) are shaped around floor-probe
+  semantics specifically, and none of this plan's four outcomes maps onto
+  them without inventing a meaningless arm). Four values, matching § 2
   step 6 exactly: `stage1_no_contour` (every stride within
   `ANCHOR_SEARCH_RADIUS_SECS` was flat); `stage2_no_correlation` (at least
   one candidate passed stage 1 but none cleared the stage-2 r floor);
   `step_boundary_rejected` (a stage-2 qualifier existed but every one
   failed the post-stage-3 step-boundary guard); `confirm_failed_to_lock`
   (the best candidate passed stages 1, 2, and the boundary guard, but
-  stage 3 did not lock).
+  stage 3 did not lock). **Must be a plain, unit-variant-only enum
+  deriving `Copy`** — `SpliceDualfit` itself derives
+  `Copy` (`schema.rs:1440`), and every field on a `Copy` struct must
+  itself be `Copy`; a `String` reason (or any variant carrying owned/boxed
+  data) will not compile here.
 - `pre_seam_anchor_lag_ms`, `pre_seam_anchor_distance_ms`,
   `pre_seam_anchor_r`, `pre_seam_anchor_prom`, `pre_seam_anchor_screened_count`,
   `pre_seam_anchor_confirm_r`, `pre_seam_anchor_confirm_prom`,
@@ -296,19 +409,63 @@ correction note caught it):
 
 Schema doc comments must say plainly that no gate reads these fields yet.
 
-**Decode cost, checked 2026-09-05 — resolved, not a blocker.** Both tracks
-are already decoded whole per pair before any seam-local probe runs: `A` as
-`a_pcm.samples` (full decode; see the `dual_fit.rs`-mirroring comment at
-`probes.rs:310`, "A is decoded whole here") and `B` as `b_samples_full`
-(`characterize.rs`). What's narrow today is only the **slice** handed down
-to the seam probes — `characterize.rs:152-159` computes `pad_lead`/`pad_tail`
-from `gap_signature_context_secs + fill_border_search_secs +
-fill_align_margin_secs`, and that sum is not guaranteed to reach
-`ANCHOR_SEARCH_RADIUS_SECS` (5 s default above). So there is no new decode
-and no new RSS cost (the ~15 GB corpus-fingerprint-run-protocol budget is
-unaffected) — implementation just needs to widen `pad_lead`/`pad_tail` (or
-thread a second, wider slice specifically for the anchor walk) so the
-already-decoded PCM is actually reachable at `search_radius_secs`.
+**Decode cost, checked 2026-09-05, re-verified 2026-09-05 — resolved, not a
+blocker.** Both tracks are already decoded whole per pair before any
+seam-local probe runs: `A` as `a_samples` (`probes.rs:271`, destructured
+from `SpliceDualfitInput.a_samples`), which is `a_pcm.samples` by reference
+all the way back to `CharacterizeAbPcm.a_pcm` (`characterize.rs:76,107,215`)
+— not a copy, not a narrowed subset — mirroring `dual_fit.rs`'s equivalent
+full-decode field (`DualFitRepairInput.a_samples`, "A's full decoded PCM");
+see the comment at `probes.rs:310`, "A is decoded whole here." `B` is
+`b_samples_full` (`characterize.rs:108`). What's narrow today is only the
+**B-side slice** handed down to the seam probes — `characterize.rs:152-159`
+computes `pad_lead`/`pad_tail` from `gap_signature_context_secs +
+fill_border_search_secs + fill_align_margin_secs` (defaults 3.0 + 10.0 +
+1.0 s), bounding `lo`/`hi` into `b_samples_full` (`characterize.rs:184-189`)
+as a zero-copy subslice reference, not a copy or re-decode. A is never
+sliced by `pad_lead`/`pad_tail` at all — the full array is passed
+everywhere unconditionally, so it needs no widening. So there is no new
+decode and no new RSS cost (the ~15 GB corpus-fingerprint-run-protocol
+budget, dominated by whole-track decodes already resident, is unaffected by
+a slice-bound change).
+
+**But the widening target is not `ANCHOR_SEARCH_RADIUS_SECS` (5 s) —
+checked 2026-09-05, this was wrong in an earlier draft of this section.**
+The B-side content a candidate actually needs reaches
+`ANCHOR_SEARCH_RADIUS_SECS + ANCHOR_WIDE_WINDOW_SECS + ANCHOR_WIDE_LAG_MS`
+= 5 + 10 + 0.4 = **15.4 s** from the seam (§ 2 step 1 already derives this
+far-edge distance for the drift check; the pad must reach the same
+far edge, not just the near-edge radius). Computed from the defaults above:
+`pad_lead` (governs the *pre*-seam, backward direction) defaults to
+3.0 + 10.0 + 1.0 = **14.0 s** — short of the 15.4 s needed, so **pre-seam
+anchors clip** under today's default and must have `pad_lead` explicitly
+widened, not just left alone. `pad_tail` (post-seam, forward direction)
+additionally includes `fill_extract_tail_slack_secs.max(fill_align_margin_secs)`
+(default 5.0 s) and so defaults to 3.0 + 5.0 + 10.0 + 1.0 = **19.0 s** —
+already past 15.4 s, so post-seam anchors need no widening by default.
+Implementation must widen both to at least
+`radius + window + lag_reach_secs`, computed from the actual constants in
+use, not hardcode 15.4 s or assume the existing defaults already suffice on
+either side.
+
+Note also: `characterize.rs` computes this same `pad_lead`/`pad_tail`
+formula **twice** — once inside `characterize_gaps` (~line 620, feeding the
+summary-fingerprint sub-step) and again at lines 152-159 (inside
+`characterize_gaps_from_decode`, which calls `characterize_gaps` internally
+and then layers the full bracket/lag detail the anchor walk needs). Both
+are part of the same `--gap-fingerprints` diagnostic path, not a
+production-vs-diagnostic split, and both currently compute identical
+values — but they are two separate literal copies of the same formula, not
+one shared function, so a widening fix applied to only one site will not
+propagate to the other. Confirm whether the summary sub-step actually needs
+the wider pad (it may not, if the anchor walk only runs in the full-detail
+step); either way, name both sites in the implementation, don't rely on
+"characterize.rs's pad computation" as if there were only one.
+
+The only new allocations from widening are the derived owned buffers built
+from the widened slice per gap-iteration (`b_mono`/`b_ch`,
+`overlay.rs:274-275`, and any new anchor-walk scratch) — transient, freed
+each iteration, sized by the widened slice length, not by corpus size.
 
 ## 4. Open risks (flag explicitly, do not paper over)
 
@@ -388,6 +545,143 @@ already-decoded PCM is actually reachable at `search_radius_secs`.
    more likely, not less (a wider search is more likely to cross a
    boundary). The plan must record how far g10 (and any other corpus
    member in this shape) actually had to search.
+4. **Confirmed 2026-09-05: production has already exhausted the exact lag
+   band stage 3's confirm will re-check at 50/g10's post seam, using the
+   same underlying primitive — a "success" there would be surprising, not
+   merely hoped-for, and needs a specific explanation if it happens.**
+   `grow_post_lock` (`domain/seam_locks.rs:442`) is called from the real
+   repair path (`patch_audio/region/dual_fit.rs:283`) with
+   `max_lag_frames = 0.6 * sample_rate` (`dual_fit.rs:109`) — a **±600 ms**
+   lag search — and internally calls `seam_local_peak`
+   (`domain/seam_local.rs:297`, imported at `seam_locks.rs:20`) — **the
+   same function** this plan's stage 3 confirm uses (§ 2's tree, "via
+   `lag_correlation_curve_auto`") — at five window widths
+   (`POST_GROW_LADDER_MS`: 375/500/625/750/1000 ms). Per
+   `archive/TEMP-pair50-anchor-seam-outcomes-2026-08-21.md` Result 4, g10's
+   post seam ran this full ladder and **no rung cleared `POST_GROW_ADMIT_R`
+   (0.5)** — the doc's own conclusion: *"A locally-ambiguous seam does not
+   sharpen with a wider window — it just samples more of the same
+   ambiguous content."*
+
+   This means: a real peak-lag search, using the identical primitive
+   stage 3 will use, has already covered every lag within ±600 ms of
+   nominal at g10's post seam (at several window widths) and found nothing
+   above 0.5 (the best known number being § 0's `post_seam_r = 0.248`).
+   § 0's own drift argument is that the anchor's carried-back lag should
+   sit within roughly a millisecond of nominal for a well-behaved case —
+   i.e., **comfortably inside the ±600 ms band grow-post already
+   exhausted.** So for 50/g10 specifically, under the plan's own stated
+   assumptions, stage 3's confirm is very likely to re-probe already-known
+   territory and reconfirm the existing non-lock, not discover something
+   new. Two things follow, and § 5/§ 6 should say both explicitly rather
+   than treat "does confirm_r lock" as a clean success signal on its own:
+   - **A failed lock at g10 is not informative by itself** — it was close
+     to the predicted outcome going in, given grow-post's prior result, and
+     doesn't distinguish "the anchor mechanism doesn't work" from "the
+     anchor mechanism works exactly as designed and correctly landed near
+     nominal, where grow-post already showed there is nothing to find."
+   - **A locked confirm at g10 would be the surprising result and needs a
+     specific explanation before being taken as validation** — most likely
+     either (a) the carried-back lag actually landed *outside* ±600 ms of
+     nominal, meaning the mechanism accidentally found a step-boundary-
+     scale correction rather than a drift correction (contradicts § 0's
+     safety premise, and should be checked against risk 1's guard rather
+     than celebrated), or (b) stage 3's specific window/instrument
+     configuration differs from grow-post's in some way that matters and
+     hasn't been identified. Either way, § 5 must report the accepted
+     candidate's `distance_ms`/lag delta from nominal alongside the
+     confirm result for g10 specifically, not just the confirm pass/fail.
+
+5. **The walk can cross into a *different* gap's own dropout, and nothing
+   currently stops it (added 2026-09-05).** § 2 step 1's far-edge distance
+   is not a few seconds — it is `ANCHOR_SEARCH_RADIUS_SECS +
+   ANCHOR_WIDE_WINDOW_SECS + ANCHOR_WIDE_LAG_MS` (5 + 10 + 0.4 = 15.4 s by
+   default, see § 3's decode-cost paragraph). Pair 50 is not sparse at that
+   scale: g10 itself sits in a documented cluster (g8–g10, g14–g16, risk 1
+   above) — gaps close enough together that a 15.4 s walk from one seam has
+   a real chance of reading into, or past, a neighboring gap's own hole
+   rather than clean A content.
+
+   This was not checked against actual gap-to-gap spacing before this
+   revision. If a candidate window overlaps another gap's `[video_a_start_secs,
+   video_a_end_secs)` span, stage 1's flatness screen does not protect
+   against it — a neighboring hole is not necessarily *flat* (it can carry
+   donor fill, residual noise, or an unpatched dropout with its own
+   spurious energy), so it can pass stage 1 and stage 2 as if it were real,
+   locatable A content, producing a confidently "found" anchor lag that is
+   actually measuring correlation against — or across — a different
+   defect entirely. This is a distinct failure mode from risk 1 (a map
+   step): it doesn't require any A↔B misregistration, just two gaps close
+   enough together in the same track.
+
+   **The data needed for a guard already exists, unthreaded.** Gap
+   detection is a single forward pass over `a_runs`
+   (`application/scan_gaps.rs:296-314`) that appends to `gaps: Vec<Gap>` in
+   increasing-`pos` order — so `report.gaps` (the full `GapReport`, already
+   in scope throughout the per-gap loop in
+   `application/gap_fingerprint/measure/characterize.rs:162-516`,
+   `let gap = &report.gaps[i];` at line 165) is timeline-ordered by
+   construction, and `report.gaps[i-1]` / `report.gaps[i+1]` are genuinely
+   the previous/next gap in A. `domain::gap::Gap`
+   (`domain/gap.rs:23-48`) carries exactly the fields a bound needs —
+   `video_a_start_secs`/`video_a_end_secs`, plain `f64` seconds directly
+   comparable to a walk position. But none of this reaches the walk as
+   currently placed: `probes.rs`'s per-seam input structs
+   (`SpliceDualfitInput`, `SeamProbeAtPlacementInput`,
+   `WideEnvelopeAtPlacementInput`) take only this gap's own `refined`
+   frame span, never `report` or a neighbor reference, and there is no
+   existing "distance to nearest gap" concept anywhere in `domain/` or
+   `application/gap_fingerprint/` to borrow (checked 2026-09-05 — every
+   "neighbor"/"adjacent" hit in this codebase means the adjacent *lag
+   sample* in a correlation curve, not an adjacent *gap*).
+
+   **Required guard:** before starting the walk for a given seam,
+   `characterize.rs` must resolve the neighboring gap in the walk's
+   direction (`report.gaps[i-1]` for a pre-seam walk, `report.gaps[i+1]`
+   for a post-seam walk) and pass its near boundary down as an explicit
+   `max_walk_secs`-style bound into the new `anchor_relocated_lag(...)`
+   input, clamping the walk (and rejecting any candidate whose window
+   would cross that boundary) short of `ANCHOR_SEARCH_RADIUS_SECS` when the
+   neighbor is closer. § 3's dump fields should record when this bound —
+   rather than the flatness screen or the fixed radius — is the reason a
+   walk stopped early, so § 5 doesn't misread "found nothing" as a stage-1
+   failure when it was actually neighbor-bounded. § 5's corpus run must
+   also report actual gap-to-gap spacing for g10's cluster (and any other
+   corpus member with a similarly tight cluster) so it's known whether
+   this guard actually engages for the plan's own motivating case, or only
+   matters for other pairs.
+
+## 4a. Funnel unit test (required before the corpus run — added 2026-09-05)
+
+Nothing in this plan currently proves the three-stage funnel's own logic is
+correct independent of what it happens to report on real media. A corpus
+run alone cannot distinguish "the mechanism is broken" from "there is
+genuinely no rescuable structure nearby" — both produce the same observed
+outcome (no qualifying anchor, or an unlocked confirm). Before spending the
+corpus run on real conclusions, add a fixture-based test (synthetic PCM,
+`clip-sync-repair-fixtures` or inline) that exercises each stage against a
+known ground truth:
+
+- A flat/silent synthetic region must be rejected by stage 1
+  (`energy_envelope_is_flat` returns true) without ever calling stage 2 —
+  assert stage 2's correlation function is not invoked (or its call count
+  is zero) on that candidate.
+- A synthetic region with real structure at a known, injected lag must
+  clear stage 2 and produce a `post_seam_anchor_lag_ms`/`_r` matching that
+  injected lag within a small tolerance.
+- Stage 3's confirm must be shown to actually re-center on the stage-2 lag
+  — construct a case where the seam's own nominal lag and the stage-2 lag
+  differ by more than the ±30 ms confirm window, so a confirm "centered on
+  nominal" and a confirm "centered on the stage-2 lag" would disagree, and
+  assert the result matches the stage-2-centered expectation.
+- A synthetic step discontinuity planted between the seam and a
+  stage-1/2-qualifying candidate must produce exactly `step_boundary_rejected`
+  (§ 2 step 5), not a locked-but-wrong-regime confirm.
+
+This is the only way to know the funnel's stages are individually correct
+before trusting what they report on 50/g10 or the wider corpus — the
+corpus run in § 5 tests whether the *idea* helps, this test proves the
+*mechanism* does what § 2 says it does.
 
 ## 5. Corpus comparison (the actual experiment)
 
@@ -408,11 +702,42 @@ Compare:
   actual before/after comparison on a shared scale is
   `post_seam_anchor_confirm_r`/`_prom` (stage 3, same fine ±30 ms
   instrument as `post_seam_r`/`post_seam_prom`) — does *that* lock where
-  the un-relocated fine window at the nominal seam did not?
-- **Anchor distance distribution**: how far from the seam did a qualifying
-  anchor have to be found, corpus-wide? A distribution concentrated at a
-  few seconds supports the plan; one that regularly needs tens of seconds
-  undercuts the "negligible drift" assumption this plan is built on.
+  the un-relocated fine window at the nominal seam did not? **See § 4
+  risk 4 before treating this as a clean pass/fail signal for g10
+  specifically** — production has already run a real peak search over
+  ±600 ms at this exact seam with the same underlying primitive and found
+  nothing above r = 0.5, so an unlocked confirm here is expected, not
+  diagnostic, unless the carried-back lag can be shown to fall outside
+  that already-searched band.
+- **Anchor distance distribution — caveat added 2026-09-05, this metric is
+  weaker than it looks.** How far from the seam did a qualifying anchor
+  have to be found, corpus-wide? Read this distribution with care: the walk
+  starts its first candidate at near-edge distance **0** (right at the
+  seam), and that first candidate's window already reads out to
+  `ANCHOR_WIDE_WINDOW_SECS` (10 s, § 2 step 1). If that immediate 10 s
+  window contains *any* non-flat content — plausible on most real gaps,
+  since "flat for a full 10 s" is a stronger condition than "ambiguous at
+  the seam's own ±30 ms window" (§ 0's g10 content is quiet dialogue-over-
+  noise, not silence, so it likely already passes stage 1's flatness test
+  at distance 0) — then `post_seam_anchor_distance_ms` and
+  `post_seam_anchor_screened_count` will both read **0** on the very first
+  try, every time. A distribution clustered near 0 is therefore not
+  automatically a success signal for "relocation found something a wider
+  window at the seam couldn't" — it may just mean the walk never had to
+  relocate at all, which makes this instrument functionally
+  indistinguishable from **grow-post's own already-tried lever** (widening
+  the window while staying centered near the seam, § 0's "why this is
+  different" argument) rather than a genuine relocation to more distant,
+  richer content. § 5 must report the distance distribution **conditioned
+  on `screened_count`** (candidates actually rejected before one qualified)
+  rather than reading `distance_ms` alone as the success metric, and should
+  separately flag cases where the accepted candidate is the walk's very
+  first try — those are not evidence the relocation idea (as opposed to
+  "a wider window near the seam") is doing anything new. A distribution
+  concentrated at a genuinely nonzero few seconds, with `screened_count`
+  &gt; 0, supports the plan; one dominated by zero-distance, zero-screened
+  hits does not, even though it would look like "success" on `distance_ms`
+  alone.
 - **Cases already confident under the seam-local Pearson window**: does the
   anchor-confirmed lag roughly agree with the seam's own lock, or does
   relocation introduce disagreement on gaps that already patch clean? (An
@@ -421,8 +746,12 @@ Compare:
 
 ## 6. Decision point
 
-- **Anchor relocation locates a real, confirmable peak at 50/g10's post seam,
-  and does not destabilize already-confident cases** → open a real Change to
+- **Anchor relocation locates a real, confirmable peak at 50/g10's post seam
+  *with an identified reason consistent with § 4 risk 4* (i.e., the
+  carried-back lag is shown to fall outside the ±600 ms band grow-post
+  already exhausted, or some other concrete explanation for why this
+  succeeds where grow-post's identical-primitive search did not), and does
+  not destabilize already-confident cases** → open a real Change to
   wire it into `seam_locks.rs`'s dual-fit gate as a fallback when the
   in-place window is prominence-flat (own threshold calibration, own corpus
   validation pass).
@@ -438,6 +767,8 @@ Compare:
 
 ## 7. Done when
 
-Either a working gate Change is scoped and BACKLOG'd, or this plan is
-archived with a refuted verdict in `settled.md` § A and BACKLOG's 50/g10 row
-is rewritten around the manual-review-flag alternative.
+§ 4a's funnel unit test passes first — it is a prerequisite for trusting
+any corpus-run result, not an optional nicety. After that, either a working
+gate Change is scoped and BACKLOG'd, or this plan is archived with a
+refuted verdict in `settled.md` § A and BACKLOG's 50/g10 row is rewritten
+around the manual-review-flag alternative.

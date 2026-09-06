@@ -438,6 +438,26 @@ pub(in crate::application::patch_audio::region) fn skip_or_dual_fit(
                             pre_seam_edge_pinned: Some(locks.pre.edge_pinned),
                             post_seam_edge_pinned: Some(locks.post.edge_pinned),
                             seams_clamped: Some(locks.clamped()),
+                            // Seam-anchor relocation (`TEMP-seam-anchor-relocation-plan.md`): diagnostic-only,
+                            // never computed on the production patch path.
+                            post_seam_anchor_lag_ms: None,
+                            post_seam_anchor_distance_ms: None,
+                            post_seam_anchor_r: None,
+                            post_seam_anchor_prom: None,
+                            post_seam_anchor_screened_count: None,
+                            post_seam_anchor_confirm_r: None,
+                            post_seam_anchor_confirm_prom: None,
+                            post_seam_anchor_reason: None,
+                            post_seam_anchor_neighbor_bounded: None,
+                            pre_seam_anchor_lag_ms: None,
+                            pre_seam_anchor_distance_ms: None,
+                            pre_seam_anchor_r: None,
+                            pre_seam_anchor_prom: None,
+                            pre_seam_anchor_screened_count: None,
+                            pre_seam_anchor_confirm_r: None,
+                            pre_seam_anchor_confirm_prom: None,
+                            pre_seam_anchor_reason: None,
+                            pre_seam_anchor_neighbor_bounded: None,
                         };
                         // Single-source invariant (§2.5.7 #2): the tag seams equal the strategy seams because
                         // both are `r.{pre,post}_seam_r` (splice_pre/splice_post are those same values, L1654).

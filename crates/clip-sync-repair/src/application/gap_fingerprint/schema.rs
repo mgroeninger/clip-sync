@@ -106,6 +106,10 @@ pub enum IncomparableReason {
     ChannelLayoutMismatch,
 }
 
+/// `AnchorReason` moved to `domain::gap_repair_spec` (`SeamLocalTags` needs it and must not depend on
+/// `application`); re-exported here since `SpliceDualfit` is the measurement's own return type.
+pub use crate::domain::gap_repair_spec::AnchorReason;
+
 /// Seam-gate floors / margins the dump's `failure_stage` values were decided against — corpus-level
 /// provenance mirroring [`crate::domain::GapEquivalenceThresholds`] for the equivalence gate.
 ///
@@ -1537,6 +1541,58 @@ pub struct SpliceDualfit {
     /// production's `shoulders_abut` skip carries the same tag. `None` on pre-2026-08-28 dumps.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub seams_clamped: Option<bool>,
+    /// **Seam-anchor relocation (`TEMP-seam-anchor-relocation-plan.md`), diagnostic-only: no gate reads
+    /// these fields yet.** The accepted candidate's stage-2 wide-envelope measurement, found by walking
+    /// outward from the seam in the mechanism's one valid direction (post: forward; pre: backward) — see
+    /// the plan's §2 for the full three-stage funnel. `None` when no candidate was accepted; see
+    /// `post_seam_anchor_reason` for why.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub post_seam_anchor_lag_ms: Option<f64>,
+    /// Distance from the seam to the accepted candidate, always positive — direction is fixed by
+    /// construction (§2), so there is nothing to sign.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub post_seam_anchor_distance_ms: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub post_seam_anchor_r: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub post_seam_anchor_prom: Option<f64>,
+    /// How many stride positions stage 1 rejected as flat before the accepted candidate (or before the
+    /// walk gave up) — independent of `post_seam_anchor_distance_ms`: a long flat run and a short one
+    /// that needed only one extra stride can both produce a small distance but very different counts.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub post_seam_anchor_screened_count: Option<u32>,
+    /// Stage 3's ±`ANCHOR_CONFIRM_WINDOW_MS` seam-local confirm, centered on the stage-2 lag (not the
+    /// nominal map lag).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub post_seam_anchor_confirm_r: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub post_seam_anchor_confirm_prom: Option<f64>,
+    /// Populated only when no accepted anchor exists (§2 step 6).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub post_seam_anchor_reason: Option<AnchorReason>,
+    /// §4 risk 5: `Some(true)` when the walk stopped at the neighboring gap's own dropout rather
+    /// than genuinely exhausting the stage `post_seam_anchor_reason` names.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub post_seam_anchor_neighbor_bounded: Option<bool>,
+    /// Identical set, pre-seam side (searches backward, per §2).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub pre_seam_anchor_lag_ms: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub pre_seam_anchor_distance_ms: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub pre_seam_anchor_r: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub pre_seam_anchor_prom: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub pre_seam_anchor_screened_count: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub pre_seam_anchor_confirm_r: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub pre_seam_anchor_confirm_prom: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub pre_seam_anchor_reason: Option<AnchorReason>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub pre_seam_anchor_neighbor_bounded: Option<bool>,
 }
 
 /// One rung of the post-window ladder probe (`docs/dev/archive/TEMP-dual-fit-post-window-ladder-plan.md`
@@ -1870,6 +1926,24 @@ mod tests {
             pre_seam_edge_pinned: None,
             post_seam_edge_pinned: None,
             seams_clamped: None,
+            post_seam_anchor_lag_ms: None,
+            post_seam_anchor_distance_ms: None,
+            post_seam_anchor_r: None,
+            post_seam_anchor_prom: None,
+            post_seam_anchor_screened_count: None,
+            post_seam_anchor_confirm_r: None,
+            post_seam_anchor_confirm_prom: None,
+            post_seam_anchor_reason: None,
+            post_seam_anchor_neighbor_bounded: None,
+            pre_seam_anchor_lag_ms: None,
+            pre_seam_anchor_distance_ms: None,
+            pre_seam_anchor_r: None,
+            pre_seam_anchor_prom: None,
+            pre_seam_anchor_screened_count: None,
+            pre_seam_anchor_confirm_r: None,
+            pre_seam_anchor_confirm_prom: None,
+            pre_seam_anchor_reason: None,
+            pre_seam_anchor_neighbor_bounded: None,
         }
     }
 

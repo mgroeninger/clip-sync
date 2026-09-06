@@ -19,6 +19,8 @@
 //!   cells — no `Option`, no catch-all. `cell_for_skip_reason` is wildcard-free so a new
 //!   [`GapPatchSkipReason`] variant is a compile error until it is classified (C4b).
 
+use serde::{Deserialize, Serialize};
+
 use crate::domain::donor::DonorInterior;
 use crate::domain::gap_fill::GapFillSkipped;
 use crate::domain::gap_fill_fit::{FillConfidence, UnifiedFitBreakdown};
@@ -86,6 +88,25 @@ pub struct RegistrationTags {
     pub edge_pinned: Option<bool>,
 }
 
+/// Why no seam-anchor relocation candidate was accepted for a side (`TEMP-seam-anchor-relocation-plan.md`
+/// §2 step 6, §3). Diagnostic-only — no gate reads this. Four distinguishable cases, not collapsed into
+/// one `None`, because they imply different next steps: widen the search radius, treat the content as
+/// genuinely unlocatable, or suspect the drift assumption behind the whole mechanism.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnchorReason {
+    /// Every stride within `ANCHOR_SEARCH_RADIUS_SECS` (or the neighbor-gap bound, if closer) was flat
+    /// — stage 1 never found a candidate to hand to stage 2.
+    Stage1NoContour,
+    /// At least one candidate passed stage 1, but none cleared the stage-2 `min_fill_correlation` floor.
+    Stage2NoCorrelation,
+    /// A stage-2 qualifier existed but every one failed the post-stage-3 step-boundary guard.
+    StepBoundaryRejected,
+    /// The nearest candidate passed stages 1, 2, and the boundary guard, but stage 3's confirm did not
+    /// lock. Terminal for this seam — the walk does not continue to a farther candidate (§2 step 5).
+    ConfirmFailedToLock,
+}
+
 /// Placement = [`Placement::SeamLocal`]. From `splice_dualfit` + `DualFitResult` lags. `pre_lag`/`post_lag`
 /// make the per-shoulder B placement reconstructable (A7). Uniqueness validators are `None` on the
 /// production characterize path (Tier-3; §2.5.2a decision 1).
@@ -134,6 +155,30 @@ pub struct SeamLocalTags {
     /// The non-positive bridge exists only because both seams clamped at B frame 0
     /// ([`crate::domain::seam_locks::SeamLocks::clamped`]).
     pub seams_clamped: Option<bool>,
+    /// **Seam-anchor relocation (`TEMP-seam-anchor-relocation-plan.md`), diagnostic-only: no gate reads
+    /// these fields yet.** Same diagnostic-only rule as the PHAT fields above: `None` on every real
+    /// patch, `Some` only on the fingerprint scan's own measurement.
+    pub post_seam_anchor_lag_ms: Option<f64>,
+    pub post_seam_anchor_distance_ms: Option<f64>,
+    pub post_seam_anchor_r: Option<f64>,
+    pub post_seam_anchor_prom: Option<f64>,
+    pub post_seam_anchor_screened_count: Option<u32>,
+    pub post_seam_anchor_confirm_r: Option<f64>,
+    pub post_seam_anchor_confirm_prom: Option<f64>,
+    pub post_seam_anchor_reason: Option<AnchorReason>,
+    /// §4 risk 5: `Some(true)` when the walk stopped at the neighboring gap's own dropout rather
+    /// than genuinely exhausting the stage `post_seam_anchor_reason` names. `None` alongside
+    /// `post_seam_anchor_reason: None` (an accepted candidate, or the mechanism never ran).
+    pub post_seam_anchor_neighbor_bounded: Option<bool>,
+    pub pre_seam_anchor_lag_ms: Option<f64>,
+    pub pre_seam_anchor_distance_ms: Option<f64>,
+    pub pre_seam_anchor_r: Option<f64>,
+    pub pre_seam_anchor_prom: Option<f64>,
+    pub pre_seam_anchor_screened_count: Option<u32>,
+    pub pre_seam_anchor_confirm_r: Option<f64>,
+    pub pre_seam_anchor_confirm_prom: Option<f64>,
+    pub pre_seam_anchor_reason: Option<AnchorReason>,
+    pub pre_seam_anchor_neighbor_bounded: Option<bool>,
 }
 
 /// Placement = [`Placement::GateThroat`].
@@ -799,6 +844,24 @@ mod tests {
             pre_seam_edge_pinned: None,
             post_seam_edge_pinned: None,
             seams_clamped: None,
+            post_seam_anchor_lag_ms: None,
+            post_seam_anchor_distance_ms: None,
+            post_seam_anchor_r: None,
+            post_seam_anchor_prom: None,
+            post_seam_anchor_screened_count: None,
+            post_seam_anchor_confirm_r: None,
+            post_seam_anchor_confirm_prom: None,
+            post_seam_anchor_reason: None,
+            post_seam_anchor_neighbor_bounded: None,
+            pre_seam_anchor_lag_ms: None,
+            pre_seam_anchor_distance_ms: None,
+            pre_seam_anchor_r: None,
+            pre_seam_anchor_prom: None,
+            pre_seam_anchor_screened_count: None,
+            pre_seam_anchor_confirm_r: None,
+            pre_seam_anchor_confirm_prom: None,
+            pre_seam_anchor_reason: None,
+            pre_seam_anchor_neighbor_bounded: None,
         }
     }
 
