@@ -259,6 +259,81 @@ wrong tool and relocation stays the live experiment. If `a.n ≥ 2` and B
 shows no interval vote, the peaks are A-only (noise onsets) and the idea is
 refuted for that gap. If B votes, *then* a matcher plan is in order.
 
+50/g10's own reach caveat (§ 2.4): its ~2.8 s consensus offset sits outside
+`max_lag_ms` (2000 ms default), so a null read there is a geometry miss, not
+a refutation. Do not let 50/g10 carry the corpus-wide verdict — question 4
+is answered on the full remaining-skip set, and 50/g10 is read separately,
+subject to that caveat.
+
+---
+
+## 3a. Calibrating the vote (normative)
+
+§ 3 question 4 (does B carry a copy?) is not answerable from an eyeballed
+histogram. It needs a vote definition and a pass bar **fixed against the
+control population before the target set (remaining skips) is read** — the
+control has known-correct answers to grade against; the target does not.
+This section is that pre-registration. § 3 stays the question list; this is
+how question 4 gets scored instead of eyeballed.
+
+### 3a.1 Split
+
+- **Control:** `gate_pass` / already fine-splice-validated gaps carrying a
+  trusted `lag_decision.frac_lag_ms` / dual-fit lag (§ 3 item 5). Ground
+  truth already exists here — do not re-derive it.
+- **Target:** remaining-skip gaps (undecidable at the seam), including
+  50/g10 subject to its reach caveat above.
+
+Calibrate on control only. Read target only after the knobs below are
+frozen — tuning after seeing the target set is calibrating on the answer.
+
+### 3a.2 Vote definition
+
+Per gap, per shoulder: for every pair of kept A points, compute `Δt_A`; for
+every pair of kept B points, compute `Δt_B`. A **vote** at candidate lag `L`
+is a `(Δt_A, Δt_B)` pair with `|Δt_A − Δt_B| ≤ vote_bin_ms` and `L` inside
+`max_lag_ms`. A gap **locks** at `L` when its vote count at `L` is
+`≥ min_votes`.
+
+### 3a.3 Knobs to fix (grid search on control, before reading target)
+
+| Knob | Candidate range | Anchor / starting point |
+|------|------------------|--------------------------|
+| `vote_bin_ms` | 10, 20, 30, 50 | `DUALFIT_SEAM_UNIQ_LAG_MS` / relocation stage-3 = ±30 ms (§ 2.2's own downstream precision bar) — start here, don't grid-search blind |
+| `min_votes` | 1, 2, 3 | 1 = single-interval core (§ 2.1 "2-point core"); ≥ 2 = corroborated (§ 2.1 "3–N uncertain") |
+| prominence floor to enter the vote | 0 (dump floor) through the corpus-observed distribution (§ 3 item 2) | none a priori — read the histogram first, do not guess |
+
+### 3a.4 Metric
+
+For each grid point, over the control set:
+
+- **Hit rate** = fraction of control gaps whose lock `L` is within
+  `vote_bin_ms` of that gap's known trusted lag.
+- **Decoy rate** = fraction of control gaps that lock at a wrong `L`
+  (confident and wrong — not "no lock"). This is the quantity § 3 item 5
+  names ("a decoy rate, not a rescue") without computing it.
+
+Plot hit rate vs. decoy rate across the grid. Pick the knee: the highest
+hit rate at a decoy rate acceptable for a manual-review-flag use case. That
+acceptance is a judgment call to record, not compute away — write down the
+chosen operating point and the decoy rate it accepts.
+
+### 3a.5 Bin-size sanity check (before the grid, not after)
+
+Before trusting a full-corpus `CONSTELLATION_BIN_MS = 10` pick, confirm on a
+handful of gaps with independently known onset locations (existing
+`anchors` A-side cuts, or a synthetic fixture with an injected click at a
+known time and lag) that the local-max walk lands on the real onset rather
+than splitting it into ripple. If it doesn't, § 2.2's reopen clause fires
+**before** § 3a.3's grid runs — a contaminated bin size invalidates every
+knob choice downstream of it.
+
+### 3a.6 Lock and freeze
+
+Once § 3a.4 picks a grid point, freeze `vote_bin_ms` / `min_votes` /
+prominence floor and stamp them alongside the § 3 target-set read. Do not
+re-tune after seeing target-set results.
+
 ---
 
 ## 4. Risks
@@ -296,7 +371,8 @@ Design is § 2. This list is the Change.
       B `n` not a clone. Projector / no-B → `constellation: None`.
 - [ ] One `--gap-fingerprints` arm; § 3 questions 1–3 on remaining skips
       plus the clean control. Matching vote (question 4) is a script on that
-      dump, not a second schema Change.
+      dump, not a second schema Change — run § 3a's grid search on the
+      control split, freeze the knobs (§ 3a.6), *then* read the target set.
 
 ---
 
@@ -307,9 +383,12 @@ Design is § 2. This list is the Change.
 2. Production patch bytes are unchanged (`--no` extra flags, default repair).
 3. Remaining skips are classifiable from JSON as `a.n < 2` (no train) vs
    `a.n ≥ 2` (train exists; B match is a follow-up read).
-4. Either a matcher TEMP is opened from § 3 questions 4–5, or this plan
-   archives with a settled row: sparse lists exist and do not vote on the
-   named skips.
+4. Calibration knobs (`vote_bin_ms` / `min_votes` / prominence floor) are
+   frozen against the control split per § 3a, with a recorded hit-rate /
+   decoy-rate operating point, before the target set is read.
+5. Either a matcher TEMP is opened from § 3a's calibrated read of the
+   target set, or this plan archives with a settled row: sparse lists exist
+   and do not vote on the named skips at the calibrated threshold.
 
 **Not** done when: a production gate reads these lists; `anchors` grow a B
 side; `GapSignature` gains a third variant.
