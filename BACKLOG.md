@@ -4,7 +4,7 @@ Open follow-up work for `clip-sync`. Architecture: [PLAN.md](PLAN.md). Repair pi
 [docs/pipeline.md](docs/pipeline.md). Test corpus: [docs/dev/corpus-validation.md](docs/dev/corpus-validation.md).
 Error handling: [docs/error-mapping.md](docs/error-mapping.md).
 
-Last updated: 2026-09-03.
+Last updated: 2026-09-06.
 
 **How this doc works**
 
@@ -57,6 +57,7 @@ gap that sits in the end-clip window). Hole 1 stays n=1.
 | **31/g8 — Narrow-capture pre miss** | Capture, not the tree above. Write a TEMP. Shipped default `BorderCapture::Narrow` declines the pre at envelope +800 ms / r 0.816; Wide keeps −1146.1 / r 0.974 because the shared capture's 12% trim puts `D` at 1984 ms vs Narrow's 13 ms. Numbers: [archive/TEMP-envelope-adaptive-widen-plan.md](docs/dev/archive/TEMP-envelope-adaptive-widen-plan.md) deciding measurement 2 | A decision exists that is not "flip the default" ([settled.md](docs/dev/settled.md) § B) |
 | **Rigid shoulder-offset remainder: 11/g9 still skip** | G6 (trim-0 arm plus post-grow) shipped and converted the rest of the cohort — history in [settled.md](docs/dev/settled.md) § E. **11/g9** fails `bridge_frames > 0` (`shoulders_abut`) — collapse row above | 11/g9 either drains under the collapse row above or stays skip |
 | **α / `border_standoff_secs`** | Not Hole 1's 1.45 s. Fill sits ~25 ms late vs both shoulders; hypothesis is production's 0.35 s standoff. Run existing arms through `scripts/measure/diff-patch-adjustments.ps1`, or drop the item | Confirmed, or dropped |
+| **A/B constellation fingerprint** | [TEMP-constellation-fingerprint-plan.md](docs/dev/TEMP-constellation-fingerprint-plan.md) — dump spaced energy-peak trains on **both** A and B in `--gap-fingerprints` (variable N; min-spacing = picker bin; no matcher, no production gate) | Full from-decode dumps carry `constellation`; remaining skips classifiable as `a.n < 2` vs train-exists; production patch bytes unchanged |
 
 ## Post-join defects (pairs 31 and 50)
 
