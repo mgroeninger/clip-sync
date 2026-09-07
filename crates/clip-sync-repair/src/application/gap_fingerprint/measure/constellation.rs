@@ -52,7 +52,13 @@ fn side_from_window(
             }
         })
         .collect();
-    let times: Vec<f64> = points.iter().map(|p| p.time_secs).collect();
+    // Seam-relative, not `time_secs`: A's `time_secs` is absolute-in-`a_pcm.samples` while B's is
+    // local to the per-gap `b_slice` (origin `b_extract_start_secs`, which drifts with the gap's
+    // position in the file) — two different coordinate systems whose raw difference is dominated
+    // by `gap_offset - b_extract_start_secs`, not the fine lag `evaluate_l_histogram` is measuring.
+    // `t_seam_ms` already nets that out on both sides (each is offset from a seam pinned by the same
+    // `b_mapped_frame_in_haystack` correspondence), so it is the shared frame the histogram needs.
+    let times: Vec<f64> = points.iter().map(|p| p.t_seam_ms / 1000.0).collect();
     let side = ConstellationSide {
         span_start_secs: base_secs,
         span_end_secs: frame_hi as f64 / rate,
@@ -124,7 +130,12 @@ fn measure_shoulder(
         };
     }
 
-    let b_span = (b_lo as f64 / rate, b_hi as f64 / rate);
+    // Same seam-relative frame as `b_times` above — `b_span` bounds the histogram/redraw range in
+    // whatever coordinate system `b_times` uses, so it has to shift by `seam_b_secs` too.
+    let b_span = (
+        b_lo as f64 / rate - seam_b_secs,
+        b_hi as f64 / rate - seam_b_secs,
+    );
     let result = evaluate_l_histogram(&a_times, &b_times, b_span, hist_params, redraw_seed);
     let reason = match result.reason {
         LockReason::Locked => ConstellationReason::Locked,
@@ -651,5 +662,74 @@ mod tests {
         assert!(set.pre.b.edge_pinned, "{:?}", set.pre.b);
         assert_eq!(set.pre.b.span_start_secs, 0.0);
         assert_eq!(set.pre.b.span_end_secs, 1_000.0 / f64::from(rate));
+    }
+
+    // --- regression: `b_extract_start_secs` far from A's absolute origin (real corpus shape) ---
+
+    /// A real from-decode dump extracts `b_haystack` as a small per-gap slice whose local frame 0
+    /// sits at `b_extract_start_secs` seconds into the whole B file — a value that drifts with the
+    /// gap's own position in A, since the slice is carved out around the gap's mapped region. Using
+    /// raw (mismatched-origin) `time_secs` for the `L` histogram put A's absolute file position
+    /// directly into the recovered lag instead of the fine residual offset; this fixture reproduces
+    /// that shape (seam near A-file second 50, B slice not starting at frame 0) and pins the fix:
+    /// the recovered lag must track the injected 30ms offset, not `-50s`.
+    #[test]
+    fn measure_constellation_recovers_the_injected_lag_when_b_extract_start_is_far_from_a_origin() {
+        let rate = 8_000u32;
+        let total_a = 500_000usize;
+        let mut a = vec![0f32; total_a];
+        // Three post-shoulder onsets (12.5/50/90ms after the seam at absolute frame 400_000),
+        // non-uniformly spaced so no mismatched A×B pairing coincides with another pairing's
+        // diff — a two-onset fixture leaves only one "correct" pair among four candidates, which
+        // is too fragile a majority (a single mismatched pair can tie or beat it). 40ms (not a
+        // multiple of the 30ms vote bin) keeps the true diff off a bin boundary, where floating
+        // noise from onset detection could otherwise split its votes across two bins.
+        write_click(&mut a, 400_100, 20, 0.9);
+        write_click(&mut a, 400_400, 20, 0.9);
+        write_click(&mut a, 400_720, 20, 0.9);
+
+        let mut b = vec![0f32; 4_000];
+        // Same onsets, 40ms later, placed in B's own slice-local frame — far from frame 0 in A's
+        // coordinate system, mirroring a real per-gap extraction.
+        write_click(&mut b, 2_020, 20, 0.9);
+        write_click(&mut b, 2_320, 20, 0.9);
+        write_click(&mut b, 2_640, 20, 0.9);
+
+        let refined = RefinedGapFrames {
+            start_frame: 399_000,
+            end_frame: 400_000,
+        };
+        let c = cfg(0.1, 100); // context_frames = 800 @ 8000; max_lag_frames = 800
+        let gap_offset_secs = 0.0;
+        // The slice's local frame 0 sits 0.2s before the nominal seam in absolute A time — far from
+        // A's own origin (which the old bug used directly), reproducing the real drift.
+        let b_extract_start_secs = 400_000.0 / f64::from(rate) - 0.2;
+
+        let set = measure_constellation(
+            0,
+            &a,
+            &b,
+            1,
+            rate,
+            f64::from(rate),
+            refined,
+            total_a,
+            ctx_frames(0.1, rate),
+            &c,
+            gap_offset_secs,
+            b_extract_start_secs,
+        );
+
+        let peak_ms = set
+            .post
+            .hist_peak_lag_ms
+            .expect("three onsets on each side must reach the histogram");
+        let vote_bin_ms =
+            LagHistogramParams::first_candidate(&PickerParams::first_candidate(rate)).vote_bin_ms;
+        assert!(
+            (peak_ms - 40.0).abs() <= vote_bin_ms,
+            "expected the recovered lag near the injected 40ms, got {peak_ms}ms: {:?}",
+            set.post
+        );
     }
 }

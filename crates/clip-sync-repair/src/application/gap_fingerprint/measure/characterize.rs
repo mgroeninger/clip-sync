@@ -210,6 +210,7 @@ pub fn characterize_gaps_from_decode(
             rate,
             sample_rate,
             progress,
+            gap_index: i,
         });
 
         // Decision spec: geometry + levels from the summary fp; verdict from `m.outcome` (any_ok); tags from
@@ -288,7 +289,10 @@ pub fn characterize_gaps_from_decode(
         let silence = fp.silence.take();
         let contour = fp.contour.take();
         let anchors = fp.anchors.take();
-        let constellation = fp.constellation.take();
+        // Real, not restored: `characterize_gaps`'s Summary-tier build never reaches
+        // `measure_constellation` (gated on `DetailTier::Full`), so `fp.constellation` would be `None`
+        // here regardless — `m.constellation` above is this dump's own from-decode measurement.
+        let constellation = m.constellation;
         *fp = spec_to_fingerprint_summary(&spec, sample_rate, channels as u16, Some(x), measured);
         fp.silence = silence;
         fp.contour = contour;
@@ -1164,6 +1168,11 @@ mod tests {
             assert!(
                 g.anchors.is_some(),
                 "from-decode overlay restores pass-1 anchors (empty lists stay Some)"
+            );
+            assert!(
+                g.constellation.is_some(),
+                "from-decode measures constellation directly (Summary-tier build never reaches it, \
+                 so this must not be a restored None)"
             );
             assert!(
                 g.outcome.as_ref().is_some_and(|o| o.seam_shape.is_none()),

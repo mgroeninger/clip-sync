@@ -11,6 +11,7 @@ use crate::domain::pcm::{interleaved_to_channels, interleaved_to_mono};
 use crate::domain::policies::RefinedGapFrames;
 
 use super::config::*;
+use super::constellation::measure_constellation;
 use super::lag::*;
 use super::pcm::*;
 use super::placement::*;
@@ -148,6 +149,7 @@ pub(in crate::application::gap_fingerprint::measure) struct RegionMeasurements {
         Option<Vec<PostWindowLadderRung>>,
     pub(in crate::application::gap_fingerprint::measure) pre_window_ladder:
         Option<Vec<PreWindowLadderRung>>,
+    pub(in crate::application::gap_fingerprint::measure) constellation: Option<ConstellationSet>,
 }
 /// Per-gap inputs for [`compute_region_measurements`] — the geometry the caller resolved (refined throat, B
 /// extract window/offset) plus the shared config/frame params. `gap_floor_db` is `fp.levels.gap_floor_db` from
@@ -176,6 +178,7 @@ pub(in crate::application::gap_fingerprint::measure) struct RegionMeasureInput<'
     pub(in crate::application::gap_fingerprint::measure) sample_rate: u32,
     pub(in crate::application::gap_fingerprint::measure) progress:
         &'a dyn clip_sync::ProgressReporter,
+    pub(in crate::application::gap_fingerprint::measure) gap_index: usize,
 }
 /// Compute one gap's gate-overlay measurements from decode — the shared per-gap measurement site the
 /// from-decode dump ([`characterize_gaps_from_decode`]) projects via [`tags_from_measurements`] (8g.3a).
@@ -207,6 +210,7 @@ pub(in crate::application::gap_fingerprint::measure) fn compute_region_measureme
         rate,
         sample_rate,
         progress,
+        gap_index,
     } = inp;
 
     let geom = derive_seam_gate_geometry(
@@ -483,6 +487,25 @@ pub(in crate::application::gap_fingerprint::measure) fn compute_region_measureme
         None
     };
 
+    // Constellation `L`-histogram lock test (TEMP-constellation-fingerprint-plan.md §0/§5) — a probe,
+    // not a gate input. `total_a` from `a_pcm` directly rather than a caller-threaded frame count: this
+    // is the only site that needs it, and the decode already gives us the exact channel-interleaved length.
+    let total_a = a_pcm.samples.len() / ch;
+    let constellation = Some(measure_constellation(
+        gap_index,
+        &a_pcm.samples,
+        b_slice,
+        ch,
+        sample_rate,
+        rate,
+        refined,
+        total_a,
+        context_frames,
+        cfg,
+        gap_offset,
+        b_extract_start_secs,
+    ));
+
     RegionMeasurements {
         brackets: infos,
         outcome,
@@ -498,6 +521,7 @@ pub(in crate::application::gap_fingerprint::measure) fn compute_region_measureme
         lag_editorial,
         post_window_ladder: post_window_ladder_curve,
         pre_window_ladder: pre_window_ladder_curve,
+        constellation,
     }
 }
 
@@ -723,6 +747,7 @@ mod tests {
             lag_editorial: None,
             post_window_ladder: None,
             pre_window_ladder: None,
+            constellation: None,
         };
         let levels = LevelTags {
             a_gap_floor_db: -70.0,

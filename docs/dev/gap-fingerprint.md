@@ -274,7 +274,7 @@ approaches were refuted by measurement. Full analysis + cost hierarchy: that pla
 | `silence` | from-decode (pass-1 overlay) | collar RMS/peak ratio + relative silence test (border walk-off). `Option` whole block. Spec projector emits `None`; from-decode restores pass-1. Absence means pre-overlay dump or never pass 1 — not "this gap has no collar" |
 | `contour` | from-decode (pass-1 overlay) | `has_anchor_seam_contour`, pre/post envelope flatness. `Option` whole block. Same overlay / absence rule as `silence` |
 | `anchors` | from-decode (pass-1 overlay) | pre/post candidates `{ time, source, prominence, rms_db }`. `Some` including `{ pre: [], post: [] }` means measured, none found. `None` means unmeasured |
-| `constellation` | from-decode (pass-1 overlay), pairwise + full tier | onset-timing `L`-histogram lock test, pre/post shoulders. `Option` whole block. Same overlay / absence rule as `silence` — see *Constellation fingerprint* below |
+| `constellation` | from-decode, B present | onset-timing `L`-histogram lock test, pre/post shoulders. `Option` whole block. Measured **directly** in the from-decode per-gap loop, not a pass-1 restore — `characterize_gaps`'s Summary-tier build never reaches it, so unlike `silence`/`contour`/`anchors` there is nothing to overlay. Spec projector still emits `None`; absence means oracle-only (no PCM) or a from-decode dump that predates this wiring — see *Constellation fingerprint* below |
 | `brackets` | full | feasible brackets `{ span, move, seam_*, structure_*, failure_stage, residual_margin_db? }`; `start_frame`/`fill_frames` only on brackets that pass the gate. On `structure_floor`, scores live in `structure_*` (not overloaded onto `seam_*`); on `residual`, `residual_margin_db` carries the applied headroom margin. Gap-level `structure`/`seams` blocks remain omitted under `skip_baseline_placement` (F1) |
 | `structure` / `seams` | **omitted on the production path** | intended: baseline scores; seams carry per-channel + selected channels. Suppressed by `skip_baseline_placement`; deferred as Finding F1 (`archive/TEMP-pipeline-perf-redesign-plan.md` §8g.4a) |
 | `lag_decision` | full, B present | **decision** per-shoulder lag fingerprint registered at **`b_mapped`** (see *Registration & dual-fit*). Wire key was `baseline_lag` before 2026-08-07 (serde alias reads old corpora) |
@@ -354,11 +354,13 @@ Several fields above are questions the production path does not ask. Since 2026�
 - `residual.*_db` sides — `Option`; non-finite and the `SILENCE_FLOOR_DB` (−120) sentinel serialize
   as absent (legacy dumps that wrote bare `−120` deserialize as `None`).
 
-`silence` / `contour` / `anchors` / `constellation` are **not** on this list for a current
-from-decode dump: pass 1 measures them and the overlay copies them back after the spec projection.
-Absence on a dump still means pre-overlay (or never pass 1), never "measured none" — empty candidate
-lists serialize as `Some({ pre: [], post: [] })`. The spec projector (`spec_to_fingerprint_summary`
-alone) still emits `None` for all four.
+`silence` / `contour` / `anchors` are **not** on this list for a current from-decode dump: pass 1
+measures them and the overlay copies them back after the spec projection. Absence on a dump still
+means pre-overlay (or never pass 1), never "measured none" — empty candidate lists serialize as
+`Some({ pre: [], post: [] })`. `constellation` is also absent from this list, but for a different
+reason: it is measured **directly** inside the from-decode per-gap loop (`compute_region_measurements`),
+not restored from a Summary-tier pass 1 that never reaches it, so there is nothing to overlay. The
+spec projector (`spec_to_fingerprint_summary` alone) still emits `None` for all four groups.
 
 `NOT_MEASURED_BY_PROJECTION` is therefore empty. The only remaining fabricated stand-ins are the
 conditional `lag_decision.*` fields:
@@ -391,8 +393,10 @@ successfully** was stripped to zeros, while a gap that failed early enough to sk
 its real values. On the 2026‑07‑31 corpus that was 802 stripped and 27 intact — so "some gaps have
 anchors" was not evidence the rest lack them. Dumps from the 2026-08-03 honesty pass through
 2026-08-21 omit the three pre-constellation groups entirely (projection `None`). Fresh from-decode
-dumps restore pass-1 `silence` / `contour` / `anchors` / `constellation` after projection; the
-levels envelope and `seam_shape` stay omitted.
+dumps restore pass-1 `silence` / `contour` / `anchors` after projection, and separately carry a real,
+directly-measured `constellation` from the same per-gap loop (wired after 2026-09-07 — dumps before
+that date have `constellation: None` regardless of tier); the levels envelope and `seam_shape` stay
+omitted.
 
 Consumers should treat an omitted field as absent. Two guards keep honesty:
 
@@ -847,10 +851,13 @@ Per gap, `constellation` carries two shoulders (`pre` / `post`), each with:
   `max_lag_ms`, `vote_bin_ms`, `redraw_trials`, `redraw_percentile`.
 
 `hist_peak_lag_ms` is diagnostic only — never a production placement. Old corpora deserialize
-`constellation: None`; curated goldens stay field-absent until an intentional harvest. Like
-`silence`/`contour`/`anchors`, the spec projector emits `None` and the from-decode overlay restores
-the pass-1 value afterward — absence on a from-decode dump means pre-overlay or never pass 1, never
-"measured, found nothing" (an attempted-but-empty shoulder is `no_train`, not a missing block).
+`constellation: None`; curated goldens stay field-absent until an intentional harvest. Unlike
+`silence`/`contour`/`anchors`, this is not a pass-1-overlay field: `compute_region_measurements`
+measures it directly, once per gap, inside the from-decode per-gap loop, so a from-decode dump on or
+after the 2026-09-07 wiring should carry `Some` for every gap with B present and nonzero gap frames.
+Absence on such a dump means either the dump predates the wiring, or the oracle/spec-only path was
+used (no PCM, so nothing to measure) — never "measured, found nothing" (an attempted-but-empty
+shoulder is `no_train`, not a missing block).
 
 ## Registration & dual-fit measurements
 
