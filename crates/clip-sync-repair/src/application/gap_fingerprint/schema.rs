@@ -566,6 +566,11 @@ pub struct GapFingerprint {
     /// `Some` including `{ pre: [], post: [] }` means measured, none found; `None` means unmeasured.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub anchors: Option<AnchorSet>,
+    /// Constellation `L`-histogram lock test (TEMP-constellation-fingerprint-plan.md §0/§5). Omitted
+    /// by the spec projector; restored by the from-decode overlay. `None` means unmeasured (pairwise +
+    /// Full tier only).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub constellation: Option<ConstellationSet>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub brackets: Vec<BracketInfo>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -837,6 +842,82 @@ pub struct AnchorPoint {
 pub struct AnchorSet {
     pub pre: Vec<AnchorPoint>,
     pub post: Vec<AnchorPoint>,
+}
+
+/// One kept onset from the domain picker, wire-shaped for a constellation side
+/// (TEMP-constellation-fingerprint-plan.md §5).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConstellationPoint {
+    pub t_seam_ms: f64,
+    pub time_secs: f64,
+    pub prominence: f32,
+}
+
+/// One shoulder side's searched span + kept points (§5 "both sides" block).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConstellationSide {
+    pub span_start_secs: f64,
+    pub span_end_secs: f64,
+    pub edge_pinned: bool,
+    pub n: usize,
+    /// Prominence-desc, capped at 12 (matches `PickerParams::first_candidate`'s `cap`).
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub points: Vec<ConstellationPoint>,
+}
+
+/// `reason` (§5, §0 vocabulary). `Unmeasured` covers two distinct domain situations, both "the test
+/// didn't run": a shoulder window that doesn't exist to attempt (file-boundary A/B window, never
+/// reaches `evaluate_l_histogram`), and `domain::LockReason::RedrawInfeasible` (the null had no legal
+/// arrangement — the uniqueness test needs a legal redraw to compare against; without one there's no
+/// verdict, which is `unmeasured`, not `not_unique`). Every other `LockReason` variant maps 1:1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConstellationReason {
+    Locked,
+    NoTrain,
+    NotUnique,
+    /// The histogram mode landed on the edge of the *searched B span*, not on a `ConstellationSide`'s
+    /// own truncated window — independent of `ConstellationSide.edge_pinned` (a side's window hitting
+    /// a file/haystack boundary). The two can disagree in either direction: a well-inside-the-file
+    /// shoulder can still edge-pin here if the true lag sits outside `max_lag_ms`, and a
+    /// file-boundary-truncated side can still lock cleanly.
+    EdgePinned,
+    Unmeasured,
+}
+
+/// One shoulder's A/B sides plus the `L`-histogram test (§5 "the test" block).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConstellationShoulder {
+    pub a: ConstellationSide,
+    pub b: ConstellationSide,
+    pub n_a: usize,
+    pub n_b: usize,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub hist_peak_lag_ms: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub hist_peak_votes: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub hist_second_votes: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub redraw_p95_votes: Option<usize>,
+    pub reason: ConstellationReason,
+}
+
+/// Group name `constellation` (§5). Recipe-stamp fields live once per gap, not per shoulder.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConstellationSet {
+    pub bin_ms: f64,
+    pub min_spacing_ms: f64,
+    pub context_secs: f64,
+    pub max_lag_ms: u32,
+    pub vote_bin_ms: f64,
+    pub redraw_trials: usize,
+    pub redraw_percentile: f64,
+    /// Not `Option`: every gap that reaches this fn gets both shoulders — a not-attempted shoulder
+    /// (file-boundary window, undecodable B) is `ConstellationReason::Unmeasured`, not a missing
+    /// struct.
+    pub pre: ConstellationShoulder,
+    pub post: ConstellationShoulder,
 }
 
 /// One feasible editorial bracket and its scores (full tier).
@@ -2104,6 +2185,68 @@ mod tests {
                     rms_db: -24.0,
                 }],
                 post: vec![],
+            }),
+            constellation: Some(ConstellationSet {
+                bin_ms: 10.0,
+                min_spacing_ms: 10.0,
+                context_secs: 3.0,
+                max_lag_ms: 2000,
+                vote_bin_ms: 30.0,
+                redraw_trials: 100,
+                redraw_percentile: 95.0,
+                pre: ConstellationShoulder {
+                    a: ConstellationSide {
+                        span_start_secs: 829.3,
+                        span_end_secs: 832.304,
+                        edge_pinned: false,
+                        n: 1,
+                        points: vec![ConstellationPoint {
+                            t_seam_ms: -120.0,
+                            time_secs: 832.184,
+                            prominence: 0.02,
+                        }],
+                    },
+                    b: ConstellationSide {
+                        span_start_secs: 821.5,
+                        span_end_secs: 828.752,
+                        edge_pinned: false,
+                        n: 0,
+                        points: vec![],
+                    },
+                    n_a: 1,
+                    n_b: 0,
+                    hist_peak_lag_ms: None,
+                    hist_peak_votes: None,
+                    hist_second_votes: None,
+                    redraw_p95_votes: None,
+                    reason: ConstellationReason::NoTrain,
+                },
+                post: ConstellationShoulder {
+                    // Zero-width: this is the "not attempted" case (the post window ran off the end
+                    // of the file), not "attempted but empty" — a real `Unmeasured` shoulder's spans
+                    // collapse to a point rather than spanning the nominal context/search width.
+                    a: ConstellationSide {
+                        span_start_secs: 837.133,
+                        span_end_secs: 837.133,
+                        edge_pinned: true,
+                        n: 0,
+                        points: vec![],
+                    },
+                    b: ConstellationSide {
+                        span_start_secs: 831.581,
+                        span_end_secs: 831.581,
+                        edge_pinned: true,
+                        n: 0,
+                        points: vec![],
+                    },
+                    n_a: 0,
+                    n_b: 0,
+                    hist_peak_lag_ms: None,
+                    hist_peak_votes: None,
+                    hist_second_votes: None,
+                    redraw_p95_votes: None,
+                    reason: ConstellationReason::Unmeasured,
+                },
             }),
             brackets: vec![],
             structure: Some(StructureScores {

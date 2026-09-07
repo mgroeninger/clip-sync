@@ -40,8 +40,8 @@ pub struct FingerprintXSet {
 ///
 /// Fabricated `lag_decision` shoulders (when this is `None`) are what
 /// [`crate::application::gap_fingerprint::PROJECTED_LAG_DECISION_FIELDS`] declares. Envelope /
-/// `seam_shape` are omitted outright (`None`) rather than declared. `silence` / `contour` / `anchors`
-/// are also omitted here; the from-decode caller restores pass-1 values after projection.
+/// `seam_shape` are omitted outright (`None`) rather than declared. `silence` / `contour` / `anchors` /
+/// `constellation` are also omitted here; the from-decode caller restores pass-1 values after projection.
 #[derive(Debug, Clone, Default)]
 pub struct MeasuredDetail {
     /// Real per-bracket rows (8g.4b), else [`synth_brackets`]' reconstruction from the stored counts.
@@ -56,9 +56,9 @@ pub struct MeasuredDetail {
 /// (the A7 single-source rule): every seam/lag/donor scalar is the value characterize already computed. X-set
 /// fields are attached only when supplied.
 ///
-/// Lossy **by design** on non-decision fields: `silence`/`contour`/`anchors`/`seam_shape` and the
-/// levels envelope are omitted (`None` / skip-empty) when the spec cannot carry them — absence, not
-/// zeros. The from-decode dump restores `silence`/`contour`/`anchors` after this projection; the
+/// Lossy **by design** on non-decision fields: `silence`/`contour`/`anchors`/`constellation`/`seam_shape`
+/// and the levels envelope are omitted (`None` / skip-empty) when the spec cannot carry them — absence,
+/// not zeros. The from-decode dump restores `silence`/`contour`/`anchors`/`constellation` after this projection; the
 /// projector itself stays lossy so spec-only callers still see `None`. `outcome.tier` is `patch`/`skip` (matching the scan path, `gap_fingerprint.rs` tier logic);
 /// uniqueness validators (`*_seam_prom`/`*_seam_z`, `peak_z`) are `None` on the production path
 /// (Tier-3, tolerated by the golden diff). `brackets` and `lag_decision` are the **real** measurements
@@ -247,6 +247,7 @@ pub fn spec_to_fingerprint_summary(
         silence: None,
         contour: None,
         anchors: None,
+        constellation: None,
         brackets,
         structure,
         seams,

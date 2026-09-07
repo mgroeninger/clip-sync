@@ -29,9 +29,9 @@ rename — 50/g10 lives there);
 
 **On remaining-skip shoulders, after an event picker that lands on known
 onsets in a fixture, do A and B share enough events that a histogram of
-`L = t_B − t_A` has a unique peak, at a decoy rate measured on
-time-shuffled peaks (or random B windows), not on gaps Pearson already
-solved?**
+`L = t_B − t_A` has a unique peak, at a decoy rate measured by replacing
+B's point process (in-span redraw or a random B window), not on gaps
+Pearson already solved?**
 
 That is the whole plan. Later sections only implement it. If a later
 sentence disagrees with this one, this one wins.
@@ -40,10 +40,13 @@ sentence disagrees with this one, this one wins.
 full-band RMS local-max. “Share enough” means the **diagonal** of a rigid
 shift: votes pile at one `L`, not that two point clouds happen to share
 an interval. “Unique” means that peak stands out of **that shoulder’s
-own** decoy histogram (shuffled B times, same `n`, same span), not that
-some bin is nonempty and not that the same vote recovers
-`lag_decision.frac_lag_ms` on already-patched gaps. “Remaining-skip
-shoulders” are the population in § 1; they are a class, not a named gap.
+own** decoy histogram (a new B process, same `n`, same span — rule 4),
+not that some bin is nonempty and not that the same vote recovers
+`lag_decision.frac_lag_ms` on already-patched gaps. Permuting the
+detected B times is **not** that decoy: under all-pairs voting it is a
+no-op (same set, same histogram); a rigid circular shift is a no-op for
+peak *height* (the histogram translates). “Remaining-skip shoulders”
+are the population in § 1; they are a class, not a named gap.
 
 This plan does **not** test carrying a lag back to the seam, wiring a
 gate, or adding `GapSignature::Constellation`. A matcher TEMP is a later
@@ -52,8 +55,10 @@ above the measured decoy rate.
 
 **Not the customer.** 50/g10 is [TEMP-disjoint-offseam-lock-plan.md](TEMP-disjoint-offseam-lock-plan.md).
 Do not read this dump as a 50/g10 result. If that gap is in the
-remaining-skip set, its ~2.8 s consensus vs a 2000 ms haystack is a
-**geometry miss** — exclude it from the § 0 verdict (rule 8).
+remaining-skip set, its ~2.8 s consensus vs a 2000 ms haystack is an
+**independently known** geometry miss — exclude it from the § 0 verdict
+(rule 8). That exclusion is the documented offset, not this probe’s
+`edge_pinned` flag.
 
 ---
 
@@ -104,17 +109,21 @@ experiment; do not run it as this one.
    searched haystack. Do **not** histogram `|Δt_A − Δt_B|`. Interval
    equality does not produce `L`.
 
-4. **Unique means beats that shoulder’s shuffle.** `S = 100` trials:
-   redraw B times uniformly inside the searched B span, same `n_B`.
-   Real unique-locks iff all of: `n_A ≥ 2` and `n_B ≥ 2`; the mode bin
-   is strictly interior (not within one `vote_bin` of the histogram
-   edge); real mode count **> 95th percentile** of the shuffle mode
-   counts. That **is** the decoy measurement. A lock that appears equally
-   often on shuffled times is density, not a shared set.
+4. **Unique means beats a new B point process, not a permutation of
+   the detected times.** All-pairs `L` depends only on the two sets:
+   permuting kept B times leaves the histogram unchanged; shifting them
+   all by one offset only translates it. The null has to mint new times.
+   `S = 100` trials: draw `n_B` times uniformly inside the searched B
+   span, rejecting draws that violate min-spacing (the null is a legal
+   picker output). Real unique-locks iff all of: `n_A ≥ 2` and `n_B ≥ 2`;
+   the mode bin is strictly interior (not within one `vote_bin` of the
+   histogram edge); real mode count **> 95th percentile** of the redraw
+   mode counts. That **is** the corpus decoy. A lock that appears equally
+   often on redrawn times is density, not a shared set.
 
 5. **Random B window is a fixture negative, not a second corpus
    instrument.** B drawn from a span with no shared onsets must not
-   unique-lock. On the corpus, shuffle (rule 4) is the decoy.
+   unique-lock. On the corpus, in-span redraw (rule 4) is the decoy.
 
 6. **A windows are one-sided and longer than the seam template.** Pre:
    `[gap_start − context, gap_start)`; post:
@@ -129,13 +138,20 @@ experiment; do not run it as this one.
    decoded PCM; stamp the searched A/B spans. A peak on the span edge
    is search-exhausted (`edge_pinned`), not a measurement.
 
-8. **Geometry miss ≠ no shared events.** If the pair’s map error is
-   larger than `max_lag_ms`, B’s list cannot contain the match. Stamp
-   reach; drop those shoulders from the § 0 verdict. Do not silently
-   widen past the recipe in v1.
+8. **Geometry miss ≠ no shared events, and `edge_pinned` ≠ geometry
+   miss.** Drop a shoulder from the § 0 verdict only when **independent**
+   evidence says the pair’s map error exceeds `max_lag_ms` (documented
+   consensus offset, fill offset vs `b_mapped` — not this probe’s peak
+   location). Stamp reach. `edge_pinned` means a kept point or hist mode
+   sits within one bin of the searched edge: search-exhausted, its own
+   `reason`, a separate § 6 count. Do not infer map error from it, and
+   do not let that count “not carry” a § 7 yes. The fixture may use
+   `edge_pinned` as the out-of-reach outcome because the injected lag
+   *is* ground truth; the corpus does not get that courtesy. Do not
+   silently widen past the recipe in v1.
 
 9. **Dump the test, not a later analysis.** Wire fields are the event
-   lists (audit) **and** the histogram / shuffle summary (the lock). No
+   lists (audit) **and** the histogram / redraw summary (the lock). No
    `suggested_lag_ms` into a gate. Absence: `None` = unmeasured
    (projector / no B); `Some` with empty `points` = measured, none kept
    (same rule as `anchors`).
@@ -152,8 +168,8 @@ Three cases, same picker, same `L` histogram, same uniqueness rule.
   The picker must recover the injected times within one picker bin
   (injected onsets survive the cap; bed ripple must not displace them).
   The `L` histogram must unique-lock at the injected lag within one
-  `vote_bin`. Time-shuffled B times must **not** unique-lock. A random
-  B window with no clicks must **not** unique-lock.
+  `vote_bin`. Redrawn B times (rule 4) must **not** unique-lock. A
+  random B window with no clicks must **not** unique-lock.
 
 - **A-only onsets.** Same A clicks; B is bed without those clicks.
   Must not unique-lock.
@@ -175,7 +191,7 @@ that count; re-run the fixture. Corpus is not a picker lab.
 literals stay `None`. Schema comments: no gate reads these.
 
 Per shoulder: cut the four windows (A one-sided, B haystack, § 2.6–2.7),
-pick, vote `L`, shuffle, stamp § 5. Cost is energy bins over ~3 s A +
+pick, vote `L`, redraw, stamp § 5. Cost is energy bins over ~3 s A +
 ~7 s B per shoulder plus 100 tiny histograms — cheap vs `lag_decision`.
 
 ---
@@ -183,8 +199,8 @@ pick, vote `L`, shuffle, stamp § 5. Cost is energy bins over ~3 s A +
 ## 5. Dump (minimum)
 
 Group name `constellation`. Recipe-stamp `bin_ms`, `min_spacing_ms`,
-`context_secs`, `max_lag_ms`, `vote_bin_ms`, `shuffle_s`,
-`shuffle_percentile`.
+`context_secs`, `max_lag_ms`, `vote_bin_ms`, `redraw_s`,
+`redraw_percentile`.
 
 Per shoulder, both sides (`pre` / `post` × `a` / `b`):
 
@@ -198,7 +214,7 @@ Per shoulder, the test:
 - `n_a`, `n_b`
 - `hist_peak_lag_ms`, `hist_peak_votes`, `hist_second_votes` (`null` if
   `n_a < 2` or `n_b < 2`)
-- `shuffle_p95_votes`
+- `redraw_p95_votes`
 - `reason`: `locked` / `no_train` / `not_unique` / `edge_pinned` /
   `unmeasured`
 
@@ -215,12 +231,13 @@ One `--gap-fingerprints --features calibration,he-aac` run **after**
 § 3 is green. Compare:
 
 - **Remaining-skip shoulders (the test):** unique-lock rate (`reason =
-  locked`) vs the fraction of those same shoulders whose shuffle would
+  locked`) vs the fraction of those same shoulders whose redraw would
   have locked if we had treated the 95th percentile as a real peak
-  (should be ~5% by construction; report the realized shuffle lock
+  (should be ~5% by construction; report the realized redraw lock
   fraction as the decoy rate). A hit is a remaining-skip shoulder that
-  unique-locks. Geometry-miss shoulders (rule 8) are a separate count,
-  not misses.
+  unique-locks. Independently known geometry-miss shoulders (rule 8)
+  are a separate count, not misses. `edge_pinned` is a third count —
+  search-exhausted, not a confirmed map miss.
 
 - **`no_train` rate** on remaining skips: picker found `< 2` A events.
   Those are not constellation customers — same class of failure as
@@ -238,11 +255,12 @@ One `--gap-fingerprints --features calibration,he-aac` run **after**
 
 ## 7. Decision
 
-- **Remaining-skip unique-lock rate is clearly above the shuffle decoy
-  rate, and geometry misses are not carrying the count** → § 0 is yes.
-  Open a **separate** TEMP for a matcher (how to take `hist_peak_lag_ms`
-  to the seam). Do not promote into `seam_locks.rs` or `GapSignature`
-  from this dump.
+- **Remaining-skip unique-lock rate is clearly above the redraw decoy
+  rate, after dropping only independently known geometry misses** →
+  § 0 is yes. `edge_pinned` rows do not get dropped as misses and do
+  not get counted as locks. Open a **separate** TEMP for a matcher
+  (how to take `hist_peak_lag_ms` to the seam). Do not promote into
+  `seam_locks.rs` or `GapSignature` from this dump.
 
 - **Lock rate is at decoy, or the mass is `no_train`** → sparse onset
   sets do not pin remaining-skip shoulders. Archive with a settled row
@@ -261,7 +279,7 @@ One `--gap-fingerprints --features calibration,he-aac` run **after**
 The § 3 fixture is green, then § 6 has been read against a real dump,
 then either a matcher TEMP exists or this plan is archived with a § A
 row that refutes **L-histogram unique-lock on remaining-skip shoulders
-at the shuffle decoy** — not “dump peak lists” and not 50/g10.
+at the redraw decoy** — not “dump peak lists” and not 50/g10.
 
 Production patch bytes unchanged (`--no` extra flags, default repair).
 
@@ -274,16 +292,208 @@ B side; `GapSignature` gains a third variant.
 
 Design is § 0–§ 2. This list is the Change.
 
-- [ ] Domain helper: high-pass → 10 ms bins → neighborhood-prominence
+- [x] Domain helper: high-pass → 10 ms bins → neighborhood-prominence
       local-max → spacing → cap. Unit: fixture § 3 case 1 picker half
       (injected onsets recovered; bed ripple does not displace them).
-- [ ] `L` histogram + shuffle uniqueness. Unit: fixture § 3 all three
-      cases (lock at injected `L`; shuffle and random-B and A-only do
-      not lock; out-of-reach lag is not a lock).
-- [ ] Fingerprint measure: four windows, pick, vote, stamp § 5.
+- [x] `L` histogram + redraw uniqueness. Unit: fixture § 3 all three
+      cases (lock at injected `L`; redraw and random-B and A-only do
+      not lock; out-of-reach lag is not a lock). Also: permuting the
+      detected B times does not change `hist_peak_votes`.
+- [x] Fingerprint measure: four windows, pick, vote, stamp § 5.
       Restore-after-project if the projector would drop the group
       (same pattern as `anchors`).
-- [ ] Schema + `gap-fingerprint.md` table row + field contract
+- [x] Schema + `gap-fingerprint.md` table row + field contract
       (`measures` / `placement` / `window` / `not`: not `anchors`, not
       energy structure Pearson, not Chromaprint, not `Δt` coincidence).
 - [ ] One from-decode arm; § 6 read; § 7 decision.
+
+---
+
+## 10. Item 3 sketch (struct / function shapes, non-normative)
+
+Scratch for the "fingerprint measure" checklist item. Not a commitment —
+adjust freely while implementing; § 5 (dump fields) still governs the
+wire shape if this disagrees.
+
+### Schema (`application/gap_fingerprint/schema.rs`)
+
+Mirrors `AnchorSet` / `AnchorPoint` (schema.rs:826-840) one-for-one, plus
+a per-side test result:
+
+```rust
+/// One kept onset from the domain picker, wire-shaped for a constellation side.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConstellationPoint {
+    pub t_seam_ms: f64,
+    pub time_secs: f64,
+    pub prominence: f32,
+}
+
+/// One shoulder side's searched span + kept points (§5 "both sides" block).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConstellationSide {
+    pub span_start_secs: f64,
+    pub span_end_secs: f64,
+    pub edge_pinned: bool,
+    pub n: usize,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub points: Vec<ConstellationPoint>, // prominence-desc, cap 12
+}
+
+/// `reason` (§5, §0 vocabulary). `Unmeasured` covers two distinct domain
+/// situations, both "the test didn't run": a shoulder window that doesn't
+/// exist to attempt (file-boundary A/B window, never reaches
+/// `evaluate_l_histogram`), and `domain::LockReason::RedrawInfeasible`
+/// (the null had no legal arrangement — the uniqueness test in rule 4
+/// needs a legal redraw to compare against; without one there's no
+/// verdict, which is `unmeasured`, not `not_unique`). Every other
+/// `LockReason` variant maps 1:1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConstellationReason {
+    Locked,
+    NoTrain,
+    NotUnique,
+    EdgePinned,
+    Unmeasured,
+}
+
+/// One shoulder's A/B sides plus the `L`-histogram test (§5 "the test" block).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConstellationShoulder {
+    pub a: ConstellationSide,
+    pub b: ConstellationSide,
+    pub n_a: usize,
+    pub n_b: usize,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub hist_peak_lag_ms: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub hist_peak_votes: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub hist_second_votes: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub redraw_p95_votes: Option<usize>,
+    pub reason: ConstellationReason,
+}
+
+/// Group name `constellation` (§5). Recipe-stamp fields live once per gap, not per shoulder.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConstellationSet {
+    pub bin_ms: f64,
+    pub min_spacing_ms: f64,
+    pub context_secs: f64,
+    pub max_lag_ms: u32,
+    pub vote_bin_ms: f64,
+    pub redraw_trials: usize,
+    pub redraw_percentile: f64,
+    /// Not `Option`: every gap that reaches this fn gets both shoulders — a
+    /// not-attempted shoulder (file-boundary window, undecodable B) is
+    /// `ConstellationReason::Unmeasured`, not a missing struct. See §10 resolution
+    /// below for why this differs from the outer `Option<ConstellationSet>`.
+    pub pre: ConstellationShoulder,
+    pub post: ConstellationShoulder,
+}
+```
+
+`GapFingerprint` gains (schema.rs, alongside `anchors` at line 568):
+
+```rust
+#[serde(skip_serializing_if = "Option::is_none", default)]
+pub constellation: Option<ConstellationSet>,
+```
+
+### Measure glue (new fn, `application/gap_fingerprint/measure/`)
+
+One function, called from `build_gap_fingerprint` next to
+`list_anchor_candidates_a` (build.rs), pairwise-only (`inputs.b_haystack:
+Some`) and Full-tier-only (matches `lag_decision`'s tier gate,
+build.rs:~215):
+
+```rust
+fn measure_constellation(
+    inputs: &GapInputs<'_>,
+    refined: &RefinedGap,     // same value already used for pre_start/post_end
+    ch: u16,
+    rate: u32,
+    cfg: &RepairProfile,      // gap_signature_context_secs, lag_envelope_max_lag_ms
+) -> ConstellationSet
+```
+
+Reuses, unchanged, from build.rs's existing block (~lines 40-251):
+- `context_frames = (cfg.gap_signature_context_secs * rate).round() as usize`
+  and the `pre_start`/`post_end` one-sided A bounds pattern.
+- `b_mapped_start(a_start_frame)` closure over `b_mapped_frame_in_haystack`
+  for the nominal B anchor (rule 7).
+- `b_mono` / `b_ch` (already-decoded B haystack).
+
+New in this fn, not reused:
+- `b_search_radius_frames = (cfg.lag_envelope_max_lag_ms as f64 / 1000.0
+  * rate).round() as usize` — same one-line pattern as the existing
+  `search_radius_frames`, different config knob (rule 7 forbids
+  `SEAM_LOCAL_SEARCH_MS`).
+- Per shoulder (pre/post): slice A window samples, slice B haystack
+  window around `b_mapped_start(...) ± b_search_radius_frames` (clamped
+  to decoded PCM per rule 7), call `domain::pick_onsets` on each with
+  `PickerParams::first_candidate(rate)`, translate window-relative
+  `time_secs` → absolute `t_seam_ms`, call `domain::evaluate_l_histogram`
+  on the two kept-point sets.
+
+**`no_train` vs `unmeasured` (resolved).** `evaluate_l_histogram` already
+handles `n_a < 2 || n_b < 2` internally and returns `NoTrain` —
+confirmed at `constellation.rs:316-326`. So it is always correct to call
+`pick_onsets` + `evaluate_l_histogram` whenever both windows are
+non-degenerate (positive width, in-range of decoded PCM), even if one
+comes back with zero onsets; `NoTrain` is a real, always-reachable
+domain outcome, not a case the wire layer pre-empts. `pre`/`post` are
+therefore plain `ConstellationShoulder` (not `Option`) in the schema
+above — every gap that reaches this fn gets both. `Unmeasured` fires
+only when a shoulder's window itself doesn't exist to attempt: gap sits
+at a file boundary so the pre- or post-context window has zero width,
+or (same as `anchors`) B isn't decodable there. Rule: **attempted but
+empty → `NoTrain`; not attempted → `Unmeasured`.** The whole-group
+`Option<ConstellationSet>` on `GapFingerprint` stays for the coarser
+cases (`b_haystack: None` entirely, non-`Full` tier, or pre-overlay
+projector dump) — same two-level absence `anchors` already has
+(field `None` vs. `Some` with an empty list), just one level deeper.
+
+`domain::LockReason` has a 5th variant, `RedrawInfeasible` (the null
+has no legal arrangement — `constellation.rs:188-191`), which §5's wire
+list doesn't name. Map it to `ConstellationReason::Unmeasured`: the
+uniqueness test in rule 4 requires a legal redraw to compare against,
+and when none exists the test didn't run, which is exactly what
+`unmeasured` means elsewhere in this dump — it is not the same claim as
+`NotUnique` (test ran, lock didn't clear the bar).
+
+**`redraw_seed` (resolved).** No existing per-gap deterministic-seed
+convention exists in the codebase (checked `measure/*.rs` — every
+`seed: u64` hit is test-only noise generation). Derive one from
+`(gap.index, shoulder)` using the same multiplier `Lcg` already uses,
+so it stays in-family and needs no new constant:
+
+```rust
+fn constellation_seed(gap_index: usize, side_tag: u64) -> u64 {
+    (gap_index as u64)
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(side_tag * 2 + 1) // side_tag: 0 = pre, 1 = post
+}
+```
+
+Deterministic per gap/shoulder, reproducible across runs, distinct
+pre vs. post — the only requirements rule 4 actually has (it does not
+ask for cryptographic independence, just decoupled trials).
+
+### Overlay wiring (`characterize.rs`, mirrors `anchors` at lines ~290-296)
+
+```rust
+let constellation = fp.constellation.take();
+...
+*fp = spec_to_fingerprint_summary(...);
+fp.silence = silence;
+fp.contour = contour;
+fp.anchors = anchors;
+fp.constellation = constellation;
+```
+
+`project.rs`'s `spec_to_fingerprint_summary` gains `constellation: None,`
+next to `anchors: None,` (~line 253), plus a doc-comment mention next to
+the existing "silence/contour/anchors are also omitted" line (~line 39-65).

@@ -8,6 +8,7 @@
 mod build;
 mod characterize;
 mod config;
+mod constellation;
 mod lag;
 mod overlay;
 mod pcm;

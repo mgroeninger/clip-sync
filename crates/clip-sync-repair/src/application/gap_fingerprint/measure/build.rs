@@ -12,6 +12,7 @@ use crate::domain::pcm::{interleaved_to_channels, interleaved_to_mono};
 use crate::domain::policies::{refine_gap_frames, RefinedGapFrames};
 
 use super::config::*;
+use super::constellation::measure_constellation;
 use super::lag::*;
 use super::pcm::*;
 use super::placement::*;
@@ -172,6 +173,7 @@ pub fn build_gap_fingerprint(
     let mut seams = None;
     let mut lag_editorial = None;
     let mut lag_decision = None;
+    let mut constellation = None;
     // Per-bracket scoring in Full tier; Summary tier only needs baseline structure/seam at `b_mapped`.
     let mut brackets: Vec<BracketInfo> = raw_brackets
         .iter()
@@ -237,6 +239,21 @@ pub fn build_gap_fingerprint(
         }
 
         if tier == DetailTier::Full {
+            constellation = Some(measure_constellation(
+                index,
+                inputs.a_samples,
+                b_haystack,
+                ch,
+                inputs.sample_rate,
+                rate,
+                refined,
+                total_a,
+                context_frames,
+                cfg,
+                gap_offset_secs,
+                inputs.b_extract_start_secs,
+            ));
+
             // Decision-seam lag at `b_mapped` nominal + ±600 ms sweep (ledger A2) — not structure throat.
             lag_decision = Some(lag_at_placement(&LagAtPlacementInput {
                 a_samples: inputs.a_samples,
@@ -324,6 +341,7 @@ pub fn build_gap_fingerprint(
         silence,
         contour,
         anchors,
+        constellation,
         brackets,
         structure,
         seams,
@@ -462,6 +480,68 @@ mod tests {
         assert!(
             fp.lag_editorial.is_some(),
             "lag computed at the best speech bracket"
+        );
+
+        let constellation = fp
+            .constellation
+            .expect("constellation measured, pairwise + Full tier");
+        assert_eq!(
+            constellation.pre.a.span_end_secs, fp.geometry.a_refined_start_secs,
+            "pre A side ends at the refined gap start"
+        );
+        assert_eq!(
+            constellation.post.a.span_start_secs, fp.geometry.a_refined_end_secs,
+            "post A side starts at the refined gap end"
+        );
+        assert_ne!(
+            constellation.pre.reason,
+            ConstellationReason::Unmeasured,
+            "both windows exist for this fixture, so the pre shoulder must at least attempt the lock test: {:?}",
+            constellation.pre
+        );
+    }
+
+    /// Item 3 wiring is gated to pairwise + Full tier — A-only or Summary-tier fingerprints must not
+    /// pay for (or carry) a constellation measurement.
+    #[test]
+    fn constellation_is_gated_to_pairwise_full_tier() {
+        let rate = 48_000u32;
+        let ch = 1usize;
+        let total = (2.0 * f64::from(rate)) as usize;
+        let a = vec![0f32; total];
+        let b = vec![0f32; total];
+        let inputs_a_only = GapInputs {
+            a_samples: &a,
+            b_haystack: None,
+            channels: ch,
+            sample_rate: rate,
+            reported_start_frame: total / 3,
+            reported_end_frame: 2 * total / 3,
+            b_extract_start_secs: 0.0,
+            gap_offset_secs: 0.0,
+            config: FingerprintConfig::default(),
+        };
+        let fp = build_gap_fingerprint(0, &inputs_a_only, DetailTier::Full, false);
+        assert!(
+            fp.constellation.is_none(),
+            "A-only must not measure constellation"
+        );
+
+        let inputs_summary = GapInputs {
+            a_samples: &a,
+            b_haystack: Some(&b),
+            channels: ch,
+            sample_rate: rate,
+            reported_start_frame: total / 3,
+            reported_end_frame: 2 * total / 3,
+            b_extract_start_secs: 0.0,
+            gap_offset_secs: 0.0,
+            config: FingerprintConfig::default(),
+        };
+        let fp = build_gap_fingerprint(0, &inputs_summary, DetailTier::Summary, false);
+        assert!(
+            fp.constellation.is_none(),
+            "Summary tier must not measure constellation"
         );
     }
 }

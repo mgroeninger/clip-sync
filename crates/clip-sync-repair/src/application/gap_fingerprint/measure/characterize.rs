@@ -288,10 +288,12 @@ pub fn characterize_gaps_from_decode(
         let silence = fp.silence.take();
         let contour = fp.contour.take();
         let anchors = fp.anchors.take();
+        let constellation = fp.constellation.take();
         *fp = spec_to_fingerprint_summary(&spec, sample_rate, channels as u16, Some(x), measured);
         fp.silence = silence;
         fp.contour = contour;
         fp.anchors = anchors;
+        fp.constellation = constellation;
         fp.post_window_ladder = m.post_window_ladder;
         fp.pre_window_ladder = m.pre_window_ladder;
         // Count only gaps that ended up with a *fabricated* block. A gap with no sweep and no scalars
@@ -2172,6 +2174,7 @@ mod tests {
                 post_flatness: 0.0,
             }),
             anchors: Some(AnchorSet::default()),
+            constellation: None,
             brackets: vec![],
             structure: None,
             seams: None,

@@ -274,6 +274,7 @@ approaches were refuted by measurement. Full analysis + cost hierarchy: that pla
 | `silence` | from-decode (pass-1 overlay) | collar RMS/peak ratio + relative silence test (border walk-off). `Option` whole block. Spec projector emits `None`; from-decode restores pass-1. Absence means pre-overlay dump or never pass 1 — not "this gap has no collar" |
 | `contour` | from-decode (pass-1 overlay) | `has_anchor_seam_contour`, pre/post envelope flatness. `Option` whole block. Same overlay / absence rule as `silence` |
 | `anchors` | from-decode (pass-1 overlay) | pre/post candidates `{ time, source, prominence, rms_db }`. `Some` including `{ pre: [], post: [] }` means measured, none found. `None` means unmeasured |
+| `constellation` | from-decode (pass-1 overlay), pairwise + full tier | onset-timing `L`-histogram lock test, pre/post shoulders. `Option` whole block. Same overlay / absence rule as `silence` — see *Constellation fingerprint* below |
 | `brackets` | full | feasible brackets `{ span, move, seam_*, structure_*, failure_stage, residual_margin_db? }`; `start_frame`/`fill_frames` only on brackets that pass the gate. On `structure_floor`, scores live in `structure_*` (not overloaded onto `seam_*`); on `residual`, `residual_margin_db` carries the applied headroom margin. Gap-level `structure`/`seams` blocks remain omitted under `skip_baseline_placement` (F1) |
 | `structure` / `seams` | **omitted on the production path** | intended: baseline scores; seams carry per-channel + selected channels. Suppressed by `skip_baseline_placement`; deferred as Finding F1 (`archive/TEMP-pipeline-perf-redesign-plan.md` §8g.4a) |
 | `lag_decision` | full, B present | **decision** per-shoulder lag fingerprint registered at **`b_mapped`** (see *Registration & dual-fit*). Wire key was `baseline_lag` before 2026-08-07 (serde alias reads old corpora) |
@@ -353,11 +354,11 @@ Several fields above are questions the production path does not ask. Since 2026�
 - `residual.*_db` sides — `Option`; non-finite and the `SILENCE_FLOOR_DB` (−120) sentinel serialize
   as absent (legacy dumps that wrote bare `−120` deserialize as `None`).
 
-`silence` / `contour` / `anchors` are **not** on this list for a current from-decode dump: pass 1
-measures them and the overlay copies them back after the spec projection. Absence on a dump still
-means pre-overlay (or never pass 1), never "measured none" — empty candidate lists serialize as
-`Some({ pre: [], post: [] })`. The spec projector (`spec_to_fingerprint_summary` alone) still emits
-`None` for all three.
+`silence` / `contour` / `anchors` / `constellation` are **not** on this list for a current
+from-decode dump: pass 1 measures them and the overlay copies them back after the spec projection.
+Absence on a dump still means pre-overlay (or never pass 1), never "measured none" — empty candidate
+lists serialize as `Some({ pre: [], post: [] })`. The spec projector (`spec_to_fingerprint_summary`
+alone) still emits `None` for all four.
 
 `NOT_MEASURED_BY_PROJECTION` is therefore empty. The only remaining fabricated stand-ins are the
 conditional `lag_decision.*` fields:
@@ -389,15 +390,16 @@ Note the inversion this creates on **pre-omission** corpora: a gap that the pipe
 successfully** was stripped to zeros, while a gap that failed early enough to skip projection kept
 its real values. On the 2026‑07‑31 corpus that was 802 stripped and 27 intact — so "some gaps have
 anchors" was not evidence the rest lack them. Dumps from the 2026-08-03 honesty pass through
-2026-08-21 omit the three groups entirely (projection `None`). Fresh from-decode dumps restore
-pass-1 `silence` / `contour` / `anchors` after projection; the levels envelope and `seam_shape`
-stay omitted.
+2026-08-21 omit the three pre-constellation groups entirely (projection `None`). Fresh from-decode
+dumps restore pass-1 `silence` / `contour` / `anchors` / `constellation` after projection; the
+levels envelope and `seam_shape` stay omitted.
 
 Consumers should treat an omitted field as absent. Two guards keep honesty:
 
 - a unit test (`production_dump_omits_unmeasured_option_fields`) asserts the production builder
-  omits the levels envelope and `seam_shape`, restores the three pass-1 groups, and leaves
-  `not_measured` empty when lag was measured;
+  omits the levels envelope and `seam_shape`, restores the three original pass-1 groups
+  (`silence`/`contour`/`anchors`; this fixture predates `constellation` and does not assert it), and
+  leaves `not_measured` empty when lag was measured;
 - `--check` (harness) warns a corpus whose gaps still show the legacy tell-tale constants without a
   declaration, and fails one that declares a field it actually measured.
 
@@ -791,6 +793,64 @@ This is what distinguishes a sub-sample/timing offset (recoverable) from genuine
 
 The diagnostic `lag_editorial` field (Tier-3) is emitted only with `--fingerprint-diagnostics`. Decision
 registration is always in `lag_decision` below.
+
+## Constellation fingerprint
+
+`constellation` (pairwise + `DetailTier::Full` only) is a **probe**, not a placement or a gate input:
+[TEMP-constellation-fingerprint-plan.md](TEMP-constellation-fingerprint-plan.md) §0 asks whether A and
+B share enough timed onsets, on shoulders where dense Pearson (`lag_decision` / `splice_dualfit`)
+already failed, that a histogram of `L = t_B − t_A` has a unique peak at a decoy rate measured against
+that shoulder's own redraw — not whether some bin is merely nonempty, and not whether the peak
+recovers a Pearson lag Pearson already found. Nothing in the fingerprint or the repair path reads
+`constellation` today; no gate, matcher, or `GapSignature` variant consumes it.
+
+**Not** `anchors` (candidate list only, no cross-file histogram), **not** energy-structure Pearson
+(`lag_decision` / `splice` / `splice_dualfit` — dense correlation, not discrete onset voting), **not**
+Chromaprint (no perceptual hash anywhere in this codebase), and **not** the retired `Δt`-coincidence
+predecessor (full-band RMS local-maxima + pairwise interval-multiset overlap — see the plan's own
+"Predecessor (do not implement)" note). Read each field family at the placement it defines; do not
+cross-compare `constellation`'s `hist_peak_lag_ms` against `lag_decision.frac_lag_ms` — they are
+different questions on different windows, and the plan explicitly excludes "does the vote rediscover
+a lag Pearson already found" from its own success criterion.
+
+Per gap, `constellation` carries two shoulders (`pre` / `post`), each with:
+
+- **Two windows**, `a` and `b`, each a `ConstellationSide { span_start_secs, span_end_secs,
+  edge_pinned, n, points[] }`. `points[]` are prominence-desc, capped at 12, each
+  `{ t_seam_ms, time_secs, prominence }` — `t_seam_ms` signed against that shoulder's own seam (the
+  refined gap edge on `a`, that edge's `b_mapped` nominal on `b`), not the window start.
+  - `a`'s window is one-sided context off the refined gap edge (`gap_signature_context_secs`, the
+    same `context_frames` the intrinsic A-side measurements use — threaded in, not recomputed a
+    second time).
+  - `b`'s window is `a`'s own `b_mapped` nominal span, widened by `lag_envelope_max_lag_ms` on both
+    ends and clamped to the haystack (plan §2 rule 7) — **not** `fill_border_search_secs` /
+    `SEAM_LOCAL_SEARCH_MS` (a different, already-refuted-for-this-population search band).
+  - **`edge_pinned`** here means *this side's own window* hit a file/haystack boundary and was
+    clamped — it says nothing about where the histogram's mode landed. See below for the
+    same-named but independent `reason: edge_pinned`.
+- **The lock test**: `n_a`, `n_b`, `hist_peak_lag_ms` / `hist_peak_votes` / `hist_second_votes` /
+  `redraw_p95_votes` (all `None` together whenever the test didn't run), and `reason`:
+  - `locked` — a unique `L` peak above the redraw's p95 vote count.
+  - `no_train` — both windows existed and were attempted, but yielded too few onsets to vote
+    (`n_a < 2` or `n_b < 2`), or no peak cleared the redraw bar.
+  - `not_unique` — a peak exists but a rival is too close to call.
+  - `edge_pinned` — the histogram's mode landed on the edge of the **searched B span**, not on a
+    side's own truncated window. Independent of the two sides' own `edge_pinned` flags above: a
+    shoulder well inside both files can still edge-pin here if the true lag sits outside
+    `max_lag_ms`, and a file-boundary-truncated side can still lock cleanly.
+  - `unmeasured` — covers two distinct "the test didn't run" cases: a shoulder whose `a` or `b`
+    window is truly zero-width (never reaches the histogram at all — the file-boundary case), and
+    the domain's `RedrawInfeasible` (the uniqueness redraw had no legal arrangement to compare
+    against, so there is no verdict to report). Both differ from `no_train`, which means the test
+    *did* run and found too little to vote on.
+- Recipe scalars repeated per gap (not per shoulder): `bin_ms`, `min_spacing_ms`, `context_secs`,
+  `max_lag_ms`, `vote_bin_ms`, `redraw_trials`, `redraw_percentile`.
+
+`hist_peak_lag_ms` is diagnostic only — never a production placement. Old corpora deserialize
+`constellation: None`; curated goldens stay field-absent until an intentional harvest. Like
+`silence`/`contour`/`anchors`, the spec projector emits `None` and the from-decode overlay restores
+the pass-1 value afterward — absence on a from-decode dump means pre-overlay or never pass 1, never
+"measured, found nothing" (an attempted-but-empty shoulder is `no_train`, not a missing block).
 
 ## Registration & dual-fit measurements
 

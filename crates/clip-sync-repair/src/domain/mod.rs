@@ -1,4 +1,5 @@
 pub mod align;
+pub mod constellation;
 pub mod cross_check;
 pub mod diagnostics;
 pub mod donor;
@@ -36,6 +37,11 @@ pub mod seam_robust;
 pub mod track_match;
 
 pub use align::{AlignedClip, AudioTimelineSkew, ClipRole, ScanAlignment, TimelineOverlap};
+
+pub use constellation::{
+    evaluate_l_histogram, pick_onsets, LagHistogramParams, LagLockResult, LockReason, OnsetEvent,
+    PickerParams,
+};
 
 pub use fill_level::{
     measure_fill_level, FillLevelCheck, FillLevelParams, DEFAULT_FILL_LEVEL_BIN_MS,
