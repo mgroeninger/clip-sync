@@ -7,15 +7,18 @@ use clip_sync::normalized_correlation;
 use crate::domain::dual_fit::DUALFIT_STEP_REAL_MARGIN;
 #[cfg(test)]
 use crate::domain::dual_fit::{dual_fit_at_nominal, DualFitParams};
+use crate::domain::lag_decision::{seam_prominence, secondary_peak, summarize_lag_curve};
 use crate::domain::lag_envelope::EnvelopeCfg;
 use crate::domain::pcm::interleaved_to_mono;
 use crate::domain::policies::{border_templates_for_gap, RefinedGapFrames};
+use crate::domain::seam_local::{
+    lag_correlation_curve, phat_lag_correlation_curve, seam_local_peak,
+};
 use crate::domain::seam_locks::{
     nominal_first_seam_locks, wide_a_slicer, EnvelopeSearch, SeamGateFloors, SeamLockTemplates,
 };
 
 use super::config::*;
-use super::lag::*;
 use super::pcm::*;
 
 /// ± lag sweep (ms) used to gauge each dual-fit seam's peak uniqueness (the periodicity/alias guard).

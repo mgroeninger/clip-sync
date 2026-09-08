@@ -660,6 +660,10 @@ pub struct PatchSummary {
     /// does not carry.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shoulders_abut: Option<Vec<ShouldersAbutSkip>>,
+    /// File-level injected-time finding (A4). Omitted when the pre-pass does not flag, so existing
+    /// goldens stay byte-identical until a run actually warns.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub injected_time: Option<crate::domain::injected_time::InjectedTimeReport>,
 }
 
 impl PatchSummary {
@@ -700,6 +704,7 @@ impl PatchSummary {
             fill_geometry: None,
             program_gain: None,
             shoulders_abut: None,
+            injected_time: None,
         }
     }
 
@@ -718,6 +723,15 @@ impl PatchSummary {
     /// Stamp the run's `shoulders_abut` refusals. See [`Self::shoulders_abut`]; empty stays `None`.
     pub fn with_shoulders_abut(mut self, skips: Vec<ShouldersAbutSkip>) -> Self {
         self.shoulders_abut = (!skips.is_empty()).then_some(skips);
+        self
+    }
+
+    /// Stamp the injected-time pre-pass. See [`Self::injected_time`]; `None` stays omitted.
+    pub fn with_injected_time(
+        mut self,
+        report: Option<crate::domain::injected_time::InjectedTimeReport>,
+    ) -> Self {
+        self.injected_time = report;
         self
     }
 

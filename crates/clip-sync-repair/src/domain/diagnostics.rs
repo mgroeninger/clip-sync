@@ -104,6 +104,52 @@ pub fn format_mux_duration_error(pcm_secs: f64, video_secs: f64) -> String {
     )
 }
 
+/// A4 human line. Not part of [`collect_repair_warnings`] — that loop `tracing::warn`s A1–A3,
+/// and mid-run A4 is already a `phase()` line. Stdout appends this the same way as
+/// `not_applied_count`: report text only.
+pub fn format_injected_time_warning(
+    report: &crate::domain::injected_time::InjectedTimeReport,
+    verbose: bool,
+) -> String {
+    let spans: Vec<String> = report
+        .runs
+        .iter()
+        .map(|run| format_injected_time_span(run, verbose))
+        .collect();
+    let around = match spans.as_slice() {
+        [] => "around an unknown span".to_string(),
+        [one] => format!("around {one}"),
+        [a, b] => format!("around {a} and {b}"),
+        rest => {
+            let (last, head) = rest.split_last().expect("len ≥ 3");
+            format!("around {}, and {last}", head.join(", "))
+        }
+    };
+    format!(
+        "Warning: this pair looks like it has injected time (extra or missing program in a bounded span) {around} — filling those gaps can fail or sound wrong; the run continues (Ctrl-C to stop before the long search)"
+    )
+}
+
+fn format_injected_time_span(
+    run: &crate::domain::injected_time::InjectedTimeRun,
+    verbose: bool,
+) -> String {
+    let span = if run.first_gap_index == run.last_gap_index {
+        format!("gap #{}", run.first_gap_index + 1)
+    } else {
+        format!(
+            "gap #{}–#{}",
+            run.first_gap_index + 1,
+            run.last_gap_index + 1
+        )
+    };
+    if verbose {
+        format!("{span} ({:.1}s–{:.1}s)", run.a_start_secs, run.a_end_secs)
+    } else {
+        span
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

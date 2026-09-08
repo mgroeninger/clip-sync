@@ -215,9 +215,12 @@ pub(in crate::application::gap_fingerprint::measure) fn b_mapped_frame_in_haysta
     gap_offset_secs: f64,
     b_extract_start_secs: f64,
 ) -> usize {
-    (((a_start_frame as f64 / sample_rate + gap_offset_secs - b_extract_start_secs) * sample_rate)
-        .round()
-        .max(0.0)) as usize
+    crate::domain::lag_decision::b_mapped_frame_in_haystack(
+        a_start_frame,
+        sample_rate,
+        gap_offset_secs,
+        b_extract_start_secs,
+    )
 }
 
 #[cfg(test)]

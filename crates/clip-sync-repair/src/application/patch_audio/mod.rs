@@ -17,6 +17,7 @@ use crate::domain::{
 mod anchor_retry;
 mod decode;
 mod geometry;
+mod injected_time;
 mod log;
 mod region;
 mod request;
@@ -30,6 +31,7 @@ use anchor_retry::{
 pub(crate) use decode::{decode_ab, DecodedAb};
 pub use decode::{AbSources, SourceDescriptor};
 use geometry::repair_patch_config_view;
+use injected_time::detect_injected_time;
 use log::{format_patch_characterize_verbose_line, log_gap_tags_verbose, new_patch_gap_span};
 use region::{
     characterize_region, execute_region_spec, outcome_from_spec, outcomes_in_report_order,
@@ -363,6 +365,21 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
 
         self.progress.phase(&format_align_fill_regions_phase(&plan));
 
+        let injected_time = detect_injected_time(
+            &plan,
+            &request,
+            &a_pcm,
+            &b_samples_full,
+            channels,
+            sample_rate,
+        );
+        if let Some(report) = &injected_time {
+            self.progress
+                .phase(&crate::domain::diagnostics::format_injected_time_warning(
+                    report, false,
+                ));
+        }
+
         // 6c: two passes — characterize ALL regions (decisions), then execute ALL patches (PCM) — instead
         // of the per-region `prepare_region_patch` shim. Same components (`characterize_region` +
         // `execute_region_spec`), byte-identical output; the per-gap tracing/progress reorders (char pass
@@ -438,7 +455,8 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             .with_program_gain(program_gain_report(&request))
             // Preview stamps the list and runs no visit: nothing was spliced, so there is no
             // post-splice A to visit (plan §3).
-            .with_shoulders_abut(shoulders_abut);
+            .with_shoulders_abut(shoulders_abut)
+            .with_injected_time(injected_time);
             return Ok(PatchAudioResult {
                 pcm: None,
                 summary,
@@ -652,7 +670,8 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         ))
         .with_fill_geometry(fill_geometry_for(&request))
         .with_program_gain(program_gain_report(&request))
-        .with_shoulders_abut(shoulders_abut);
+        .with_shoulders_abut(shoulders_abut)
+        .with_injected_time(injected_time);
         if let Some(anchors) = patch_anchors_used {
             summary = summary.with_patch_anchors(anchors);
         }
@@ -682,6 +701,16 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             source_audio_bitrate_b_bps,
             pcm_container_skew,
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn preview_with_decoded(
+        &self,
+        request: PatchAudioRequest,
+        plan: crate::domain::gap_fill::GapFillPlan,
+        decoded: DecodedAb,
+    ) -> Result<PatchAudioResult, RepairError> {
+        self.run_with_decoded(request, plan, PatchRunKind::Preview, decoded)
     }
 }
 

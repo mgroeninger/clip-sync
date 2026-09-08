@@ -253,19 +253,23 @@ Search:     3 window(s) @ 60s stride
 
 #### Timeline / duration warnings
 
-Up to three `Warning:` lines may appear after the alignment block and before the gap table. Each is also emitted on stderr via `tracing::warn`. Thresholds are fixed in `crates/clip-sync-repair/src/domain/diagnostics.rs` (not configurable today).
+Up to four `Warning:` lines may appear after the alignment block and before the gap table. A1–A3 are also emitted on stderr via `tracing::warn`. **A4 is not** — it is formatted separately and appended on stdout like `not_applied_count`, because the mid-run abort line is already a `phase()` on stderr and a second `tracing::warn` would print it twice. Thresholds for A1–A3 are fixed in `crates/clip-sync-repair/src/domain/diagnostics.rs` (not configurable today). A4 is pinned at T = 150 ms, N = 2.
 
 | ID | When | Condition | Example stdout line |
 |----|------|-----------|---------------------|
 | **A1** | Report (symmetric mode only) | `overlap.video_a_start_secs > 1.0` | `Warning: video A shared overlap starts at 5.0s (not 0:00) — gap times are on the decoded-sample clock and may not match ffmpeg/container timestamps; prefer a clean source file or MKV` |
 | **A2** | Report + scan | Gap scan on A measures max \|PTS − sample-clock\| `> 1.0` s | `Warning: audio timeline mismatch on video A (PTS 0.0s vs decoded-sample clock 4.9s, Δ 4.9s) — gap positions may be shifted relative to ffmpeg silencedetect` |
 | **A3** | Report (write mode, after patch) | `\|patched_pcm_secs − container_secs\| > 2.0` | `Warning: patched audio length 10210.0s differs from container duration 10205.0s by 5.0s — mux may fail or truncate` |
+| **A4** | After A+B decode, **before** characterize, on write / `--repair-preview` / `--patch-only` / calibration `--gap-listen`. Not scan-only (no PCM). | Two or more consecutive planned gaps disagree by >150 ms at the alignment-mapped (`b_mapped`) position | `Warning: this pair looks like it has injected time (extra or missing program in a bounded span) around gap #8–#9 — filling those gaps can fail or sound wrong; the run continues (Ctrl-C to stop before the long search)` |
 
-**Why these fire:** gap scan timestamps audio by **sequential decoded-sample count**; patch extract maps samples by **packet PTS**. Sloppy remuxes (e.g. `ffmpeg -ss … -c copy` MKV→MP4) can desync those clocks. A1 is a cheap proxy (alignment overlap not starting at 0:00); A2 is the direct measurement. A3 catches decode length vs declared container duration before mux.
+**Why these fire:** gap scan timestamps audio by **sequential decoded-sample count**; patch extract maps samples by **packet PTS**. Sloppy remuxes (e.g. `ffmpeg -ss … -c copy` MKV→MP4) can desync those clocks. A1 is a cheap proxy (alignment overlap not starting at 0:00); A2 is the direct measurement. A3 catches decode length vs declared container duration before mux. A4 is a **bounded extra/missing-program island** on one file relative to the other (not A2's same-file remux skew, and not whole-file start/end-clip drift). Filling the named gaps can fail or sound wrong; the run does not stop on its own.
 
-**What to do:** prefer the original MKV; remux with timestamp cleanup (`-avoid_negative_ts make_zero`); validate with `--wav` before `--mux`; compare gap times against `ffmpeg silencedetect` on the same file.
+**What to do:**
 
-**JSON:** structured skew is available as `scan.audio_timeline_skew` (see [json-output.md](json-output.md)). Human warning lines are not duplicated as a JSON array; A1 is derived from `scan.overlap`, A3 from patch diagnostics (not in JSON today).
+- A1–A3: prefer the original MKV; remux with timestamp cleanup (`-avoid_negative_ts make_zero`); validate with `--wav` before `--mux`; compare gap times against `ffmpeg silencedetect` on the same file.
+- A4, interactive (stderr still live): **Ctrl-C** if this pair should not spend characterize time. Inspect the named gaps with `--gap-listen` or `--only-gaps` (gap numbers match the table `#` column). Do not remux to “fix timestamps.” `--quiet` / `--format json --quiet` still pay the pre-pass and still record A4 on the final document; they do **not** get a mid-run abort chance (`phase()` is a no-op in Quiet).
+
+**JSON:** structured skew is available as `scan.audio_timeline_skew` (see [json-output.md](json-output.md)). Human warning lines are not duplicated as a JSON array; A1 is derived from `scan.overlap`, A3 from patch diagnostics (not in JSON today). A4 is `patch.injected_time` (absent when the pass does not flag).
 
 #### Mux failures (`--mux`)
 

@@ -3,477 +3,16 @@
 use crate::application::gap_fingerprint::schema::*;
 
 use crate::domain::policies::{
-    border_edge_displacement_frames, border_templates_for_gap,
-    border_templates_per_channel_for_gap, RefinedGapFrames,
+    border_edge_displacement_frames, border_templates_per_channel_for_gap, RefinedGapFrames,
 };
 
 use super::config::*;
-use super::pcm::*;
 
-/// Search knobs for a per-shoulder lag correlation sweep (`lag_side_sweep` / [`lag_pair`]).
-#[derive(Debug, Clone, Copy)]
-pub(in crate::application::gap_fingerprint::measure) struct LagSweepParams {
-    pub(in crate::application::gap_fingerprint::measure) window: usize,
-    pub(in crate::application::gap_fingerprint::measure) max_lag: i64,
-    pub(in crate::application::gap_fingerprint::measure) sample_rate: u32,
-    pub(in crate::application::gap_fingerprint::measure) channel: LagChannel,
-}
-impl LagSweepParams {
-    fn win_ms(self) -> u32 {
-        ((self.window as f64) * 1000.0 / f64::from(self.sample_rate.max(1))) as u32
-    }
-
-    fn max_lag_ms(self) -> u32 {
-        let ml = self.max_lag.max(0) as usize;
-        ((ml as f64) * 1000.0 / f64::from(self.sample_rate.max(1))) as u32
-    }
-
-    fn ml(self) -> usize {
-        self.max_lag.max(0) as usize
-    }
-}
-/// One shoulder of a [`lag_pair`] sweep: an A border template vs the B haystack around `anchor_frame`.
-///
-/// [`rescue_shoulder`] / [`envelope_shoulder`] reuse this bag. For rescue, `anchor_frame` is the
-/// **unchained** envelope/nominal center (`post_nominal`, not `post_nominal + pre_shift`) and
-/// `gross_lag_shift` is the sequential chain applied on top of that center — passing the already
-/// chained post `LagSideSweep` from the nominal sweep would double-count `pre_shift`.
-#[derive(Debug, Clone, Copy)]
-pub(in crate::application::gap_fingerprint::measure) struct LagSideSweep<'a> {
-    pub(in crate::application::gap_fingerprint::measure) a_border: &'a [f64],
-    pub(in crate::application::gap_fingerprint::measure) b_signal: &'a [f64],
-    pub(in crate::application::gap_fingerprint::measure) anchor_frame: usize,
-    /// `true` for the pre shoulder (last `window` samples of `a_border`); `false` for post (first `window`).
-    pub(in crate::application::gap_fingerprint::measure) pre_shoulder: bool,
-    /// Samples added to each lag bin in the returned summary (sequential post: gross map to `b_mapped_end`).
-    pub(in crate::application::gap_fingerprint::measure) gross_lag_shift: i64,
-    /// This shoulder's template-edge displacement from the gap edge (`border_edge_displacement_frames`),
-    /// recorded as `LagSummary::border_displacement_ms`. `None` where the caller builds no border
-    /// templates (seam-local / dual-fit windows), which is what an absent field then means.
-    pub(in crate::application::gap_fingerprint::measure) border_displacement_frames: Option<usize>,
-}
-/// Prominence of a seam's placement peak over its tallest rival within ±`max_lag`. `b_ctx` must be laid
-/// out so lag 0 aligns `a_win` at the placement (`b_ctx[max_lag .. max_lag + a_win.len()]`). Low prominence
-/// ⇒ the seam matches at many lags (periodic) ⇒ the dual-fit placement is not a unique registration.
-pub(in crate::application::gap_fingerprint::measure) fn seam_prominence(
-    a_win: &[f64],
-    b_ctx: &[f64],
-    max_lag: i64,
-    sample_rate: u32,
-) -> Option<f64> {
-    let curve = lag_correlation_curve(a_win, b_ctx, max_lag);
-    summarize_lag_curve(&curve, sample_rate, 0, 0, LagChannel::Mono).and_then(|s| s.prominence)
-}
-/// The coarse-envelope primitives moved to the shared `domain::lag_envelope` for the same reason
-/// `seam_local` did: the production patch path and this diagnostic scan must use one implementation
-/// (no drift). Re-exported here so the existing call sites / tests keep their paths.
-pub use crate::domain::lag_envelope::{
-    envelope_recenter_frames, envelope_shoulder, EnvelopeCfg, EnvelopePeak, EnvelopeSide,
-    LAG_DECISION_RECOVERABLE_R,
+use crate::domain::lag_decision::{
+    lag_decision_geometry, lag_pair, probe_lag_border_spec, shoulder_lags_at_b_mapped,
+    LagPairInput, LagSweepParams, ShoulderLagKnobs,
 };
-/// `lag_correlation_curve` + `seam_local_peak` moved to the shared `domain::seam_local` so the production
-/// dual-fit repair (A3) and this diagnostic scan use one implementation (no drift). Re-exported here so the
-/// existing call sites / tests keep their paths.
-/// `LAG_EDGE_TOL_MS` and the `lag_is_edge_pinned` predicate moved with them: `SeamPeak::edge_pinned` and
-/// `LagSummary::edge_pinned` are the same test, so it is one function in `domain`, not one per path.
-pub use crate::domain::seam_local::{
-    lag_correlation_curve, lag_correlation_curve_auto, lag_is_edge_pinned,
-    phat_lag_correlation_curve, seam_local_peak,
-};
-/// Summarize a lag curve: lag-0 value, integer peak, parabolic-interpolated (fractional) peak, and a
-/// [`LagVerdict`]. `None` for an empty curve.
-pub fn summarize_lag_curve(
-    curve: &[(i64, f64)],
-    sample_rate: u32,
-    window_ms: u32,
-    max_lag_ms: u32,
-    channel: LagChannel,
-) -> Option<LagSummary> {
-    if curve.is_empty() {
-        return None;
-    }
-    // Correlation at gross lag 0 only when that sample was actually searched. A missing bin is
-    // not 0.0 (`finite_corr(NaN)` used to fabricate a dead lag-0 on far recenter / chained post).
-    let lag0_r = curve
-        .iter()
-        .find(|(l, _)| *l == 0)
-        .map(|(_, r)| finite_corr(*r));
-    let (pi, &(peak_lag, peak_r)) = curve
-        .iter()
-        .enumerate()
-        .max_by(|(_, (_, x)), (_, (_, y))| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal))?;
 
-    // Parabolic vertex through the integer peak and its two neighbours (when interior).
-    let (frac_lag, frac_r) = if pi > 0 && pi < curve.len() - 1 {
-        let y0 = curve[pi - 1].1;
-        let y1 = peak_r;
-        let y2 = curve[pi + 1].1;
-        let denom = y0 - 2.0 * y1 + y2;
-        if denom.abs() > 1e-12 {
-            let xstar = (y0 - y2) / (2.0 * denom);
-            let peak = y1 - (y2 - y0) * (y2 - y0) / (8.0 * denom);
-            (peak_lag as f64 + xstar, peak)
-        } else {
-            (peak_lag as f64, peak_r)
-        }
-    } else {
-        (peak_lag as f64, peak_r)
-    };
-
-    let rate = f64::from(sample_rate).max(1.0);
-    // Robust uniqueness from curve shape: prominence + spacing to the tallest rival, and the peak's
-    // z-score over the whole curve (§3.6a — the metric that separates registration from periodicity).
-    let second = secondary_peak(curve, pi);
-    let n = curve.len() as f64;
-    let mean = curve.iter().map(|(_, r)| *r).sum::<f64>() / n.max(1.0);
-    let std = (curve.iter().map(|(_, r)| (r - mean).powi(2)).sum::<f64>() / n.max(1.0)).sqrt();
-    // Edge-pin: the peak lands at (or within tol of) the boundary of the *searched* lags. Read the
-    // boundary from the curve itself (`lag_correlation_curve` masks high-side lags where the window runs
-    // past B), so this is the true searched extent, not the nominal `±max_lag`. The predicate itself is
-    // `domain::seam_local`'s, shared with `SeamPeak::edge_pinned` — one definition of "pinned".
-    let lo_lag = curve.first().map(|(l, _)| *l).unwrap_or(peak_lag);
-    let hi_lag = curve.last().map(|(l, _)| *l).unwrap_or(peak_lag);
-    let edge_pinned = lag_is_edge_pinned(peak_lag, lo_lag, hi_lag, sample_rate);
-    Some(LagSummary {
-        window_ms,
-        max_lag_ms,
-        channel,
-        lag0_r,
-        peak_r: finite_corr(peak_r),
-        second_peak_r: second.map(|(_, r)| r),
-        peak_z: (std > 1e-9).then(|| (peak_r - mean) / std),
-        prominence: second.map(|(_, r)| peak_r - r),
-        top2_spacing_ms: second
-            .map(|(lag, _)| (peak_lag - lag).unsigned_abs() as f64 * 1000.0 / rate),
-        peak_lag_samples: peak_lag,
-        frac_lag_samples: frac_lag,
-        frac_lag_ms: frac_lag * 1000.0 / rate,
-        edge_pinned: Some(edge_pinned),
-        // Stamped by the caller that owns the border templates (`lag_side_sweep`); the curve alone
-        // cannot know how far the template edge sits from the gap.
-        border_displacement_ms: None,
-        // Nominal sweep: the envelope has not run, so there is no template length to report. Set by
-        // `stamp_rescue` on the paths that do consult it.
-        envelope_window_ms: None,
-        envelope_lag_ms: None,
-        envelope_peak_r: None,
-        envelope_edge_pinned: None,
-        envelope_rescue: None,
-        verdict: classify_lag(lag0_r, frac_r, peak_lag),
-    })
-}
-/// The tallest **competing** local maximum `(lag, r)` that is not the main peak at `peak_index`. Within
-/// the main peak's lobe the curve falls off monotonically (no local maxima), so a separate local maximum
-/// is a genuine rival lag — the periodicity / ambiguity signal. `None` when the peak is unrivalled.
-pub(in crate::application::gap_fingerprint::measure) fn secondary_peak(
-    curve: &[(i64, f64)],
-    peak_index: usize,
-) -> Option<(i64, f64)> {
-    let mut best: Option<(i64, f64)> = None;
-    for i in 1..curve.len().saturating_sub(1) {
-        if i == peak_index {
-            continue;
-        }
-        let (lag, r) = curve[i];
-        // Local maximum: ≥ both neighbours (≥ tolerates plateaus without double-counting the main lobe).
-        if r >= curve[i - 1].1 && r >= curve[i + 1].1 {
-            best = Some(match best {
-                Some((_, br)) if br >= r => best.unwrap(),
-                _ => (lag, r),
-            });
-        }
-    }
-    best
-}
-/// Verdict thresholds (see plan §4). `peak` is the parabolic-interpolated peak correlation.
-/// `lag0_r` is `None` when lag 0 was not on the searched curve; offset-away then rests on
-/// `peak_lag` alone (a far recenter always has `|peak_lag| ≫ 1`).
-pub(in crate::application::gap_fingerprint::measure) fn classify_lag(
-    lag0_r: Option<f64>,
-    peak: f64,
-    peak_lag: i64,
-) -> LagVerdict {
-    let recoverable = peak >= 0.5;
-    let offset_away = peak_lag.abs() > 1 || lag0_r.is_some_and(|l0| (peak - l0) > 0.2);
-    if recoverable && offset_away {
-        LagVerdict::TimingOffset
-    } else if peak < 0.3 {
-        LagVerdict::Decorrelated
-    } else {
-        LagVerdict::Ambiguous
-    }
-}
-
-// ---------------------------------------------------------------------------------------------
-// Builder — assembles a fingerprint from decoded windows using public domain functions only
-// (no patch-path coupling). Mirrors `tests/diag_anchor_quiet_gap.rs`.
-// ---------------------------------------------------------------------------------------------
-/// Correlate one A border shoulder against B over ±`params.max_lag` around `side.anchor_frame`.
-pub(in crate::application::gap_fingerprint::measure) fn lag_side_sweep(
-    side: LagSideSweep<'_>,
-    params: LagSweepParams,
-) -> Option<LagSummary> {
-    let ml = params.ml();
-    let w = params.window.min(side.a_border.len());
-    let in_range = if side.pre_shoulder {
-        w >= 8 && side.anchor_frame >= w + ml
-    } else {
-        w >= 8 && side.anchor_frame >= ml
-    };
-    if !in_range {
-        return None;
-    }
-    let (lo, hi) = if side.pre_shoulder {
-        let lo = side.anchor_frame - w - ml;
-        let hi = (side.anchor_frame + ml).min(side.b_signal.len());
-        (lo, hi)
-    } else {
-        let lo = side.anchor_frame - ml;
-        let hi = (side.anchor_frame + w + ml).min(side.b_signal.len());
-        (lo, hi)
-    };
-    if hi <= lo {
-        return None;
-    }
-    let a_win = if side.pre_shoulder {
-        &side.a_border[side.a_border.len() - w..]
-    } else {
-        &side.a_border[..w]
-    };
-    let curve = lag_correlation_curve_auto(a_win, &side.b_signal[lo..hi], params.max_lag);
-    let mut summary = if side.gross_lag_shift == 0 {
-        summarize_lag_curve(
-            &curve,
-            params.sample_rate,
-            params.win_ms(),
-            params.max_lag_ms(),
-            params.channel,
-        )
-    } else {
-        let gross_curve: Vec<(i64, f64)> = curve
-            .into_iter()
-            .map(|(l, r)| (l + side.gross_lag_shift, r))
-            .collect();
-        summarize_lag_curve(
-            &gross_curve,
-            params.sample_rate,
-            params.win_ms(),
-            params.max_lag_ms(),
-            params.channel,
-        )
-    };
-    if let (Some(s), Some(frames)) = (summary.as_mut(), side.border_displacement_frames) {
-        s.border_displacement_ms = Some(frames as f64 * 1000.0 / f64::from(params.sample_rate));
-    }
-    summary
-}
-/// A shoulder is recoverable — and therefore untouchable by the envelope rescue — once its own
-/// fine sweep clears `peak_r ≥ 0.5` (`classify_lag`'s recoverable line, `measure.rs:418`; the
-/// nominal-first plan's triage predicate, **not** `LagSummary::is_landmark` — see "The
-/// `is_landmark` trap", `docs/dev/archive/TEMP-lag-nominal-first-plan.md`).
-pub(in crate::application::gap_fingerprint::measure) fn is_recoverable(s: &LagSummary) -> bool {
-    s.peak_r >= LAG_DECISION_RECOVERABLE_R
-}
-pub(in crate::application::gap_fingerprint::measure) fn stamp_rescue(
-    mut s: LagSummary,
-    peak: Option<EnvelopePeak>,
-    rescue: EnvelopeRescue,
-    window_ms: f64,
-) -> LagSummary {
-    s.envelope_window_ms = Some(window_ms);
-    if let Some(p) = peak {
-        s.envelope_lag_ms = Some(p.lag_ms);
-        s.envelope_peak_r = Some(p.peak_r);
-        s.envelope_edge_pinned = Some(p.edge_pinned);
-    }
-    s.envelope_rescue = Some(rescue);
-    s
-}
-/// Measure → triage → rescue → accept for one shoulder (`docs/dev/archive/TEMP-lag-nominal-first-plan.md`
-/// § Change). `nominal` is that shoulder's zero-envelope-shift fine sweep, already run by the
-/// caller. Alive shoulders (`is_recoverable`) are returned untouched — the envelope is never
-/// consulted, so it can never move them. A dead shoulder is rescued only if the coarse envelope
-/// proposes a center (`envelope_recenter_frames`'s guard) *and* the retry there is itself
-/// recoverable; otherwise the honest nominal reading is kept with the declined candidate stamped
-/// on the `envelope_*` fields.
-///
-/// `side.anchor_frame` is the unchained envelope center; `side.gross_lag_shift` is the sequential
-/// chain (see [`LagSideSweep`]).
-///
-/// `wide_a_border` lazily supplies a *wider* A-side capture for the envelope peak search only —
-/// called only once a shoulder is confirmed dead at nominal, never up front
-/// (`docs/dev/archive/TEMP-lag-nominal-first-plan.md` § Change). The narrow nominal capture in `side.a_border`
-/// is enough for the fine ±`max_lag` sweep (both here and the retry below); only
-/// `envelope_shoulder`'s coarse search needs the wider reach. `None` — env off, no source supplied
-/// (e.g. direct test calls), or the source returns nothing usable — falls back to `side.a_border`.
-pub(in crate::application::gap_fingerprint::measure) fn rescue_shoulder(
-    nominal: Option<LagSummary>,
-    envelope: Option<EnvelopeCfg>,
-    side: LagSideSweep<'_>,
-    params: LagSweepParams,
-    wide_a_border: Option<&dyn Fn() -> Option<Vec<f64>>>,
-) -> Option<LagSummary> {
-    let nominal = nominal?;
-    let Some(env_cfg) = envelope else {
-        return Some(nominal);
-    };
-    if is_recoverable(&nominal) {
-        return Some(LagSummary {
-            envelope_rescue: Some(EnvelopeRescue::NotConsulted),
-            ..nominal
-        });
-    }
-    let wide_border = wide_a_border.and_then(|f| f());
-    let envelope_side = LagSideSweep {
-        a_border: wide_border.as_deref().unwrap_or(side.a_border),
-        ..side
-    };
-    // What the envelope will actually correlate — `envelope_shoulder` clamps the requested window
-    // to the trimmed border, and on the `shared_covers_wide` path that border is the shared capture
-    // rather than one cut to `wide_need`. Recorded on every path below so a reader never has to
-    // infer it from the recipe (which cannot express either adjustment).
-    let env_window_ms = (env_cfg.window.min(envelope_side.a_border.len()) as f64) * 1000.0
-        / f64::from(params.sample_rate).max(1.0);
-    let peak = envelope_shoulder(
-        EnvelopeSide {
-            a_border: envelope_side.a_border,
-            b_signal: envelope_side.b_signal,
-            anchor_frame: envelope_side.anchor_frame,
-            pre_shoulder: envelope_side.pre_shoulder,
-        },
-        env_cfg,
-        params.sample_rate,
-    );
-    let env_frames = envelope_recenter_frames(peak, params.sample_rate);
-    if env_frames == 0 {
-        return Some(stamp_rescue(
-            nominal,
-            peak,
-            EnvelopeRescue::Declined,
-            env_window_ms,
-        ));
-    }
-    let rescued = lag_side_sweep(
-        LagSideSweep {
-            anchor_frame: (side.anchor_frame as i64 + side.gross_lag_shift + env_frames).max(0)
-                as usize,
-            gross_lag_shift: side.gross_lag_shift + env_frames,
-            ..side
-        },
-        params,
-    );
-    match rescued {
-        Some(r) if is_recoverable(&r) => Some(stamp_rescue(
-            r,
-            peak,
-            EnvelopeRescue::Rescued,
-            env_window_ms,
-        )),
-        _ => Some(stamp_rescue(
-            nominal,
-            peak,
-            EnvelopeRescue::Declined,
-            env_window_ms,
-        )),
-    }
-}
-/// Inputs for [`lag_pair`] — one A pre/post template pair vs a B haystack, plus the envelope
-/// rescue knobs. Same grouping idea as [`LagAtPlacementInput`].
-#[derive(Clone, Copy)]
-pub(in crate::application::gap_fingerprint::measure) struct LagPairInput<'a> {
-    pub(in crate::application::gap_fingerprint::measure) a_pre: &'a [f64],
-    pub(in crate::application::gap_fingerprint::measure) a_post: &'a [f64],
-    pub(in crate::application::gap_fingerprint::measure) b_signal: &'a [f64],
-    pub(in crate::application::gap_fingerprint::measure) start_frame: usize,
-    pub(in crate::application::gap_fingerprint::measure) gap_frames: usize,
-    pub(in crate::application::gap_fingerprint::measure) params: LagSweepParams,
-    pub(in crate::application::gap_fingerprint::measure) displacement: Option<(usize, usize)>,
-    pub(in crate::application::gap_fingerprint::measure) envelope: Option<EnvelopeCfg>,
-    /// Lazy wide-capture sources for [`rescue_shoulder`]'s envelope search — see its doc comment.
-    /// `None` (env off, or a caller that never rescues, e.g. tests) falls back to the narrow
-    /// `a_pre`/`a_post` already above.
-    pub(in crate::application::gap_fingerprint::measure) pre_wide:
-        Option<&'a dyn Fn() -> Option<Vec<f64>>>,
-    pub(in crate::application::gap_fingerprint::measure) post_wide:
-        Option<&'a dyn Fn() -> Option<Vec<f64>>>,
-}
-/// Measure → triage → rescue → accept ordering for one shoulder pair
-/// (`docs/dev/archive/TEMP-lag-nominal-first-plan.md` § Change). Both shoulders are always swept at their
-/// nominal (zero envelope shift) center first; `envelope` gates whether either may be rescued from
-/// there. Only a dead shoulder (`peak_r < 0.5` at nominal) ever pays the coarse envelope pass.
-pub(in crate::application::gap_fingerprint::measure) fn lag_pair(
-    input: &LagPairInput<'_>,
-) -> (Option<LagSummary>, Option<LagSummary>) {
-    let LagPairInput {
-        a_pre,
-        a_post,
-        b_signal,
-        start_frame,
-        gap_frames,
-        params,
-        displacement,
-        envelope,
-        pre_wide,
-        post_wide,
-    } = *input;
-    // Map coordinates (docs/dev/archive/TEMP-lag-decision-map-coordinates-plan.md § Change, point 1): each
-    // template's gap-facing edge sits `D` frames outward of the raw gap edge (walk-off + trim), so
-    // the haystack anchor is shifted by that same `D` — pre anchor at `gap_start - D_pre`, post
-    // (nominal, pre-chain) at `gap_end + D_post`. A perfectly registered pair then reads
-    // `frac_lag_ms ≈ 0` on both shoulders instead of `∓D`.
-    let (d_pre, d_post) = displacement.unwrap_or((0, 0));
-    let pre_side = LagSideSweep {
-        a_border: a_pre,
-        b_signal,
-        anchor_frame: (start_frame as i64 - d_pre as i64).max(0) as usize,
-        pre_shoulder: true,
-        gross_lag_shift: 0,
-        border_displacement_frames: displacement.map(|(pre, _)| pre),
-    };
-    let pre_nominal = lag_side_sweep(pre_side, params);
-    // Sequential per-shoulder registration (ledger A2): center the post search on
-    // `post_nominal + round(L_pre)`, not the naive `post_nominal`, but only when the pre lock
-    // clears the findings-§8 landmark bar (`LagSummary::is_landmark`) — a weak or ambiguous pre
-    // must not become the prior for the post search (fail open to `post_nominal` otherwise). This
-    // chain is always read from the **nominal** pre — never a rescued one
-    // (`docs/dev/archive/TEMP-lag-nominal-first-plan.md` § Change, "Landmark chain stays anchored to the
-    // nominal pass") — so a rescue on either shoulder can never move the other's search center.
-    let post_nominal = start_frame + gap_frames + d_post;
-    let pre_shift = pre_nominal
-        .filter(LagSummary::is_landmark)
-        .map(|p| p.frac_lag_samples.round() as i64)
-        .unwrap_or(0);
-    let post_base_nominal = (post_nominal as i64 + pre_shift).max(0) as usize;
-    let post_nominal_summary = lag_side_sweep(
-        LagSideSweep {
-            a_border: a_post,
-            b_signal,
-            anchor_frame: post_base_nominal,
-            pre_shoulder: false,
-            gross_lag_shift: pre_shift,
-            border_displacement_frames: displacement.map(|(_, post)| post),
-        },
-        params,
-    );
-
-    // Rescue post uses the *unchained* `post_nominal` as `anchor_frame` (see [`LagSideSweep`]).
-    let pre = rescue_shoulder(pre_nominal, envelope, pre_side, params, pre_wide);
-    let post = rescue_shoulder(
-        post_nominal_summary,
-        envelope,
-        LagSideSweep {
-            a_border: a_post,
-            b_signal,
-            anchor_frame: post_nominal,
-            pre_shoulder: false,
-            gross_lag_shift: pre_shift,
-            border_displacement_frames: displacement.map(|(_, post)| post),
-        },
-        params,
-        post_wide,
-    );
-    (pre, post)
-}
 /// Inputs for [`lag_at_placement`] — A/B windows + gate placement for a single lag fingerprint.
 pub(in crate::application::gap_fingerprint::measure) struct LagAtPlacementInput<'a> {
     pub(in crate::application::gap_fingerprint::measure) a_samples: &'a [f32],
@@ -502,90 +41,16 @@ pub(in crate::application::gap_fingerprint::measure) fn lag_at_placement(
         cfg,
         sample_rate,
     } = *input;
-    let ch = channels.max(1);
-    let gap_frames = refined.end_frame.saturating_sub(refined.start_frame);
-    let rate = f64::from(sample_rate).max(1.0);
-    // §3.6a: uniqueness needs a ~1 s window. Discover that much border (plus the lag-search slack) so the
-    // template isn't capped to the ~150 ms `bin_frames*3` used for the structure probe.
-    let window = ((cfg.lag_window_secs * rate).round() as usize).max(8);
-    let max_lag = ((cfg.lag_max_lag_ms as f64 / 1000.0) * rate).round() as i64;
-    // One construction, shared with the patch path (`EnvelopeCfg::from_knobs`). `geometry` is the
-    // same numbers on the disabled arm, which `wide_need` below still needs to size a capture.
-    let envelope_cfg = EnvelopeCfg::from_knobs(
-        cfg.lag_envelope_max_lag_ms,
-        cfg.lag_envelope_window_secs,
+    let knobs = ShoulderLagKnobs {
         sample_rate,
-    );
-    let env_on = envelope_cfg.is_some();
-    let env_geometry = EnvelopeCfg::geometry(
-        cfg.lag_envelope_max_lag_ms,
-        cfg.lag_envelope_window_secs,
-        sample_rate,
-    );
-    let (env_window, env_lag) = (env_geometry.window, env_geometry.max_lag);
-    // Matches the old unconditional formula's reach exactly (`env_window + env_lag`) so a rescued
-    // shoulder's envelope search has the same slack it always had — including the walk-off margin
-    // `gap_border_frame_range` needs when the near-gap fade runs longer than `env_window` alone.
-    let wide_need = env_window + env_lag;
-    // Nominal-first (`BorderCapture::Narrow`, the shipped default): the shared capture is sized to
-    // the nominal fine sweep's own reach (`window + max_lag`), never `env_window + env_lag`. Widening
-    // it unconditionally paid the wider capture's cost — and let its 12%-of-peak trim shift, moving
-    // `border_displacement_ms` — on every gap edge, even when no shoulder is ever dead enough to
-    // consult the envelope (`docs/dev/archive/TEMP-lag-nominal-first-plan.md` § Change). The wide
-    // reach is instead fetched lazily, per shoulder, only inside `rescue_shoulder` — see
-    // `pre_wide`/`post_wide` below.
-    //
-    // `BorderCapture::Wide` restores the pre-split reach as a diagnostic arm. It is gated on `env_on`
-    // because that is exactly what the old `if env_on { ... }` guard did: with the envelope off there
-    // is no wide search to serve, so the two arms must coincide.
-    let narrow_need = window + max_lag.max(0) as usize;
-    let border_need = match cfg.border_capture {
-        BorderCapture::Wide if env_on => narrow_need.max(wide_need),
-        BorderCapture::Wide | BorderCapture::Narrow => narrow_need,
+        lag_window_secs: cfg.lag_window_secs,
+        lag_max_lag_ms: cfg.lag_max_lag_ms,
+        lag_envelope_max_lag_ms: cfg.lag_envelope_max_lag_ms,
+        lag_envelope_window_secs: cfg.lag_envelope_window_secs,
+        border_capture: cfg.border_capture,
+        silence_peak_fraction: cfg.silence_peak_fraction,
+        absolute_silence_rms: cfg.absolute_silence_rms,
     };
-    let border_spec = probe_border_spec(&refined, border_need, cfg);
-    let (a_pre, a_post) = border_templates_for_gap(a_samples, ch, &border_spec);
-    let (a_pre_ch, a_post_ch) = border_templates_per_channel_for_gap(a_samples, ch, &border_spec);
-    // When the shared capture is cut to exactly the envelope's reach, the lazy wide fetches below
-    // are pure duplicated work: re-probing the same spec and re-cutting the same templates, up to
-    // four times per gap (mono pre/post + selected-channel pre/post). Hand `rescue_shoulder` `None`
-    // instead — its documented fallback is `side.a_border`, which then *is* the wide template. At
-    // the defaults `Wide` sizes `border_need` to exactly `wide_need`, so it costs one capture, not
-    // five.
-    //
-    // The test is `>=`, not `==`, and a longer capture is deliberately allowed to stand in. It is
-    // not the same slice: `gap_border_frame_range` trims silence inward from the gap bounded by
-    // `pre_start = gap_start - border_frames`, so a larger `border_frames` survives the trim with
-    // more material. That is an advantage, not a hazard — `envelope_shoulder` clamps to
-    // `cfg.window.min(a_border.len())`, so the extra length can only help it reach its full window.
-    // Measured: at `--lag-envelope-window-secs 0.3 --lag-envelope-max-lag-ms 700` behind a 900 ms
-    // silent tail, the shared 1.6 s border rescues at r = 0.996 where the envelope's own 1.0 s reach
-    // has one bin and cannot correlate at all.
-    //
-    // The cost is provenance, not correctness: how much A material the envelope saw then depends on
-    // `--border-capture`, which no recipe field describes. `LagSummary::envelope_window_ms` records
-    // the template length actually correlated so a reader never has to infer it.
-    let shared_covers_wide = border_need >= wide_need;
-    let pre_wide_mono = || -> Option<Vec<f64>> {
-        let spec = probe_border_spec(&refined, wide_need, cfg);
-        let (pre, _post) = border_templates_for_gap(a_samples, ch, &spec);
-        (!pre.is_empty()).then_some(pre)
-    };
-    let post_wide_mono = || -> Option<Vec<f64>> {
-        let spec = probe_border_spec(&refined, wide_need, cfg);
-        let (_pre, post) = border_templates_for_gap(a_samples, ch, &spec);
-        (!post.is_empty()).then_some(post)
-    };
-
-    let sweep = LagSweepParams {
-        window,
-        max_lag,
-        sample_rate,
-        channel: LagChannel::Mono,
-    };
-    // Nominal-first: the envelope is only ever consulted by `rescue_shoulder` for a shoulder that
-    // is dead at nominal, never up front (`docs/dev/archive/TEMP-lag-nominal-first-plan.md` § Change).
-    // `envelope_cfg` is built above, next to the geometry `wide_need` shares.
 
     let mut out = LagFingerprint::default();
     let mut add = |pre: Option<LagSummary>, post: Option<LagSummary>| {
@@ -597,29 +62,24 @@ pub(in crate::application::gap_fingerprint::measure) fn lag_at_placement(
         }
     };
 
-    // The B anchors below are the mapped gap edges, but these templates start away from them (silence
-    // walk-off + trim; standoff is [`PROBE_BORDER_STANDOFF_FRAMES`], not production's 0.35 s). Record
-    // that displacement per shoulder so `frac_lag_ms` can be read against a known zero instead of an
-    // assumed one — see `LagSummary::border_displacement_ms`.
-    let mono_displacement =
-        border_edge_displacement_frames(a_samples, ch, &border_spec, a_pre.len(), a_post.len());
-
-    let (pre, post) = lag_pair(&LagPairInput {
-        a_pre: &a_pre,
-        a_post: &a_post,
-        b_signal: b_mono,
-        start_frame,
-        gap_frames,
-        params: sweep,
-        displacement: Some(mono_displacement),
-        envelope: envelope_cfg,
-        pre_wide: (!shared_covers_wide).then_some(&pre_wide_mono as &dyn Fn() -> Option<Vec<f64>>),
-        post_wide: (!shared_covers_wide)
-            .then_some(&post_wide_mono as &dyn Fn() -> Option<Vec<f64>>),
-    });
+    let (pre, post) =
+        shoulder_lags_at_b_mapped(a_samples, channels, &refined, b_mono, start_frame, &knobs);
     add(pre, post);
 
+    // Selected-channel pass stays here (dump-only). Same geometry as the mono caller so a
+    // `--border-capture wide` dump cannot disagree with itself across channels.
     if let Some(sel) = selected {
+        let ch = channels.max(1);
+        let gap_frames = refined.end_frame.saturating_sub(refined.start_frame);
+        let geo = lag_decision_geometry(&knobs);
+        let border_spec = probe_lag_border_spec(
+            &refined,
+            geo.border_need,
+            knobs.silence_peak_fraction,
+            knobs.absolute_silence_rms,
+        );
+        let (a_pre_ch, a_post_ch) =
+            border_templates_per_channel_for_gap(a_samples, ch, &border_spec);
         if sel < b_ch.len()
             && sel < a_pre_ch.len()
             && sel < a_post_ch.len()
@@ -633,12 +93,22 @@ pub(in crate::application::gap_fingerprint::measure) fn lag_at_placement(
                 a_post_ch[sel].len(),
             );
             let pre_wide_ch = || -> Option<Vec<f64>> {
-                let spec = probe_border_spec(&refined, wide_need, cfg);
+                let spec = probe_lag_border_spec(
+                    &refined,
+                    geo.wide_need,
+                    knobs.silence_peak_fraction,
+                    knobs.absolute_silence_rms,
+                );
                 let (pre_ch, _post_ch) = border_templates_per_channel_for_gap(a_samples, ch, &spec);
                 pre_ch.get(sel).filter(|v| !v.is_empty()).cloned()
             };
             let post_wide_ch = || -> Option<Vec<f64>> {
-                let spec = probe_border_spec(&refined, wide_need, cfg);
+                let spec = probe_lag_border_spec(
+                    &refined,
+                    geo.wide_need,
+                    knobs.silence_peak_fraction,
+                    knobs.absolute_silence_rms,
+                );
                 let (_pre_ch, post_ch) = border_templates_per_channel_for_gap(a_samples, ch, &spec);
                 post_ch.get(sel).filter(|v| !v.is_empty()).cloned()
             };
@@ -649,15 +119,16 @@ pub(in crate::application::gap_fingerprint::measure) fn lag_at_placement(
                 start_frame,
                 gap_frames,
                 params: LagSweepParams {
+                    window: geo.window,
+                    max_lag: geo.max_lag,
+                    sample_rate,
                     channel: LagChannel::Selected(sel),
-                    ..sweep
                 },
-                // The 12 %-of-peak trim runs per buffer, so this channel's displacement is its own.
                 displacement: Some(sel_disp),
-                envelope: envelope_cfg,
-                pre_wide: (!shared_covers_wide)
+                envelope: geo.envelope_cfg,
+                pre_wide: (!geo.shared_covers_wide)
                     .then_some(&pre_wide_ch as &dyn Fn() -> Option<Vec<f64>>),
-                post_wide: (!shared_covers_wide)
+                post_wide: (!geo.shared_covers_wide)
                     .then_some(&post_wide_ch as &dyn Fn() -> Option<Vec<f64>>),
             });
             add(pre, post);
@@ -669,7 +140,12 @@ pub(in crate::application::gap_fingerprint::measure) fn lag_at_placement(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::lag_decision::{
+        is_recoverable, lag_side_sweep, rescue_shoulder, summarize_lag_curve, LagSideSweep,
+    };
+    use crate::domain::lag_envelope::{envelope_recenter_frames, EnvelopeCfg, EnvelopePeak};
     use crate::domain::policies::RefinedGapFrames;
+    use crate::domain::seam_local::lag_correlation_curve;
 
     fn write_noise(buf: &mut [f32], start: usize, end: usize, seed: u64, amp: f32) {
         for (f, slot) in buf.iter_mut().enumerate().take(end).skip(start) {

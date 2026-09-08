@@ -18,12 +18,13 @@ mod probes;
 #[cfg(test)]
 pub(super) mod probes;
 
+pub use crate::domain::lag_decision::summarize_lag_curve;
+pub use crate::domain::seam_local::{
+    lag_correlation_curve, lag_correlation_curve_auto, seam_local_peak,
+};
 pub use config::{
     DumpOptions, FingerprintConfig, GapInputs, DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
     DEFAULT_LAG_ENVELOPE_WINDOW_SECS,
-};
-pub use lag::{
-    lag_correlation_curve, lag_correlation_curve_auto, seam_local_peak, summarize_lag_curve,
 };
 // rustdoc: `schema.rs` intra-doc-links `super::measure::PROBE_BORDER_STANDOFF_FRAMES`.
 pub use build::build_gap_fingerprint;

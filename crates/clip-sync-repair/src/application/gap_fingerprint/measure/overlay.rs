@@ -12,7 +12,7 @@ use crate::domain::policies::RefinedGapFrames;
 
 use super::config::*;
 use super::constellation::measure_constellation;
-use super::lag::*;
+use super::lag::{lag_at_placement, LagAtPlacementInput};
 use super::pcm::*;
 use super::placement::*;
 use super::probes::*;

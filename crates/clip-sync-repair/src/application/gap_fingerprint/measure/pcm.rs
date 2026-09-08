@@ -297,13 +297,13 @@ pub(in crate::application::gap_fingerprint::measure) fn structure_params_for(
 /// One constant, shared by [`probe_border_spec`] (every probe `GapBorderSpec`) and by
 /// [`probe_border_standoff_secs`] / [`CorpusProbeRecipe::from_config`], so a corpus can never
 /// advertise a standoff the probe didn't apply.
-pub(crate) const PROBE_BORDER_STANDOFF_FRAMES: usize = 0;
+pub(crate) use crate::domain::lag_decision::PROBE_BORDER_STANDOFF_FRAMES;
 /// Seconds form of [`PROBE_BORDER_STANDOFF_FRAMES`] at the rate the probe applied it. Shared by
 /// [`CorpusProbeRecipe::from_config`] so a corpus cannot advertise a standoff the specs did not use.
 pub(in crate::application::gap_fingerprint::measure) fn probe_border_standoff_secs(
     sample_rate: u32,
 ) -> f64 {
-    PROBE_BORDER_STANDOFF_FRAMES as f64 / f64::from(sample_rate).max(1.0)
+    crate::domain::lag_decision::probe_border_standoff_secs(sample_rate)
 }
 /// Every probe `GapBorderSpec` is built here so a fifth site cannot write a standoff the recipe
 /// would not report. `border_frames` still varies per measurement; the standoff does not.
@@ -312,14 +312,12 @@ pub(in crate::application::gap_fingerprint::measure) fn probe_border_spec(
     border_frames: usize,
     cfg: &FingerprintConfig,
 ) -> GapBorderSpec {
-    GapBorderSpec {
-        gap_start_frame: refined.start_frame,
-        gap_end_frame: refined.end_frame,
+    crate::domain::lag_decision::probe_lag_border_spec(
+        refined,
         border_frames,
-        border_standoff_frames: PROBE_BORDER_STANDOFF_FRAMES,
-        silence_peak_fraction: cfg.silence_peak_fraction,
-        absolute_rms_floor: cfg.absolute_silence_rms,
-    }
+        cfg.silence_peak_fraction,
+        cfg.absolute_silence_rms,
+    )
 }
 
 #[cfg(test)]

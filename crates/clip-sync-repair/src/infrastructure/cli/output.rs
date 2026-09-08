@@ -12,10 +12,10 @@ use crate::application::error::RepairError;
 use crate::application::patch_audio::PatchAudioResult;
 use crate::application::ports::GapReporter;
 use crate::domain::{
-    diagnostics::collect_repair_warnings, format_gap_patch_not_applied_reason,
-    format_gap_patch_skip_reason, gap_tags::PatchTier, CompatibilityVerdict, Gap,
-    GapFillSkipReason, GapPatchOutcome, GapPatchStatus, GapReport, PatchSummary,
-    TrackCompatibility,
+    diagnostics::collect_repair_warnings, diagnostics::format_injected_time_warning,
+    format_gap_patch_not_applied_reason, format_gap_patch_skip_reason, gap_tags::PatchTier,
+    CompatibilityVerdict, Gap, GapFillSkipReason, GapPatchOutcome, GapPatchStatus, GapReport,
+    PatchSummary, TrackCompatibility,
 };
 use crate::infrastructure::config::OutputFormat;
 
@@ -227,6 +227,14 @@ fn format_human(
             out.push_str(&warning);
             out.push('\n');
             tracing::warn!("{warning}");
+        }
+    }
+
+    if let Some(summary) = patch {
+        if let Some(injected) = summary.injected_time.as_ref() {
+            let warning = format_injected_time_warning(injected, show_diagnostics);
+            out.push_str(&warning);
+            out.push('\n');
         }
     }
 

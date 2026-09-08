@@ -1,10 +1,8 @@
 # TEMP — Injected-time detector (pre-patch warning)
 
-**Status:** draft, 2026-09-08. Rewritten the same day to put the operator
-contract first; construction pins (caller, types, fixtures) added after
-a source-code readiness review the same day. Corpus read done
+**Status:** implemented, 2026-09-08. Corpus read done
 (constellation dump, no re-scan); ship branch picked — **T = 150 ms,
-N = 2**. Production wiring not started.
+N = 2**. Production pre-pass is wired in `PatchAudio::run_with_decoded`.
 
 **Tracked as:** [BACKLOG.md](../../BACKLOG.md) § *Post-join defects (pairs 31
 and 50)* — those pairs are the existence proofs. This Change is a
@@ -548,7 +546,7 @@ functions/modules, not lines.
       `collect_repair_warnings` + `tracing::warn` loop,
       `--gap-listen` calibration + dump-then-`run_with_decoded`,
       `PatchSummary::from_outcomes` preview and write sites).
-- [ ] Domain move: `shoulder_lags_at_b_mapped` + the § 5 rule 5
+- [x] Domain move: `shoulder_lags_at_b_mapped` + the § 5 rule 5
       types/functions from
       `application/gap_fingerprint/measure/lag.rs` (and
       `BorderCapture` / `LagSummary` out of `schema.rs`, re-exported
@@ -558,17 +556,17 @@ functions/modules, not lines.
       Unit: existing `lag.rs` tests still pass at the new
       location; the two `lag_at_placement_envelope_*` tests still
       pass.
-- [ ] `find_injected_time_runs` at pinned (T, N) with the § 3
+- [x] `find_injected_time_runs` at pinned (T, N) with the § 3
       delta-array cases (31 N=2, 50 dip, isolates, skipped index).
-- [ ] § 8 in-memory PCM cases 1–2 against
+- [x] § 8 in-memory PCM cases 1–2 against
       `shoulder_lags_at_b_mapped`; case 3 as sequence-pass vectors
       plus identity PCM.
-- [ ] Pre-pass in `PatchAudio::run_with_decoded` after decode,
+- [x] Pre-pass in `PatchAudio::run_with_decoded` after decode,
       before the characterize loop: `shoulder_lags_at_b_mapped` at
       `b_mapped` for every planned region; sequence pass; `phase()`
       if flagged (not `tracing::warn`). Stamp preview and write
       summaries. Hook crate test: phase before `patch-characterize`.
-- [ ] A4 human line (`format_injected_time_warning`, **not**
+- [x] A4 human line (`format_injected_time_warning`, **not**
       `collect_repair_warnings`) + `patch.injected_time`; pin copy
       and the Quiet / JSON abort limit in `cli-output.md`; pin the
       key in `json-output.md`.

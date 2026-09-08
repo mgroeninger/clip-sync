@@ -18,6 +18,8 @@ pub mod gap_seam_extend;
 pub mod gap_signature;
 pub mod gap_structure;
 pub mod gap_tags;
+pub mod injected_time;
+pub mod lag_decision;
 pub mod lag_envelope;
 pub mod level_stats;
 pub mod local_gain;
@@ -70,6 +72,15 @@ pub use gap_tags::{
     format_gap_tags_verbose_line, DonorRelation, FillTierThresholds, FitPathTag, GapPatchTierInput,
     GapTags, GapTagsPatchContext, PatchTier, PlanKind, RegionPatchOutcomeView, ResidualBand,
     SeamShape, SignatureModeTag,
+};
+pub use injected_time::{
+    find_injected_time_runs, InjectedTimeReport, InjectedTimeRun, INJECTED_TIME_DELTA_MS,
+    INJECTED_TIME_MIN_RUN,
+};
+pub use lag_decision::{
+    b_mapped_frame_in_haystack, shoulder_lags_at_b_mapped, BorderCapture, LagChannel, LagSummary,
+    LagVerdict, ShoulderLagKnobs, LAG_DECISION_MAX_LAG_MS, LAG_DECISION_WINDOW_SECS,
+    PROBE_BORDER_STANDOFF_FRAMES,
 };
 pub use local_gain::{
     collar_residual_gain, collar_residual_gain_default, LocalGainDecision, LocalGainReason,
