@@ -320,7 +320,7 @@ pub fn run_gap_listen<MR: MediaReader, PW: PatchedAudioWriter>(
 
     // ── Step 5: pre-splice A/B windows, sliced by this caller ──────────────────────────────────
     // Plan geometry, not the production engine's refined edges. Two things move an edge past the
-    // plan bounds: edge refinement (GAP_EDGE_REFINE_SECS, 0.75 s) and the seam-fail extension
+    // plan bounds: edge refinement (`GAP_EDGE_REFINE_SECS`, 0.75 s) and the seam-fail extension
     // retries (gap_{start,end}_extend_max_ms, 500 ms, both enabled by default) — so up to ~1.25 s
     // per edge. The export pads by `context` (3 s default), so a plan-geometry window still
     // contains the final throat with ≥1.75 s of real context per side. Not worth threading an

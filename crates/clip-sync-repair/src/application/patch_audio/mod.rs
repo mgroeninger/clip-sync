@@ -11,6 +11,7 @@ use crate::domain::{
     inactive_repair_flag_notes,
     patch_anchor::{format_patch_anchor_table_summary, PatchAnchorTable},
     patch_result::{GapPatchNotAppliedReason, GapPatchSkipReason, PatchSummary, ShouldersAbutSkip},
+    policies::GAP_EDGE_REFINE_SECS,
 };
 
 mod anchor_retry;
@@ -95,9 +96,6 @@ fn visit_shoulders_abut(skip: &ShouldersAbutSkip, a_pcm: &clip_sync::MultiChanne
     }
     in_range
 }
-
-/// How far gap edges may be adjusted against A's decoded PCM (seconds).
-const GAP_EDGE_REFINE_SECS: f64 = 0.75;
 
 /// The `patch_audio` tracing span. A free fn so the calibration listen path raises an identically
 /// shaped span over its own patch step; in [`PatchAudio::run`] the caller enters it *before* the

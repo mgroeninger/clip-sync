@@ -323,9 +323,8 @@ leaves the key absent.
    - Refine A with `policies::refine_gap_frames` (same call
      `characterize_region` already makes: report edges, recipe
      `silence_peak_fraction`, `request.absolute_silence_rms`,
-     0.75 s refine budget — today a local `GAP_EDGE_REFINE_SECS` in
-     both `patch_audio` and `FingerprintConfig::from_request`, not
-     a shared domain const).
+     `policies::GAP_EDGE_REFINE_SECS` — one domain budget, not a
+     CLI knob).
    - Probe borders, **not** production fill borders. Standoff is
      **0 frames** (`PROBE_BORDER_STANDOFF_FRAMES` in fingerprint
      `pcm.rs`). Production's `border_standoff_secs` (0.35) would
@@ -544,6 +543,7 @@ functions/modules, not lines.
       (`lag_at_placement`, `probe_border_spec` /
       `PROBE_BORDER_STANDOFF_FRAMES = 0`,
       `FingerprintConfig::from_request` 1 s / 600 ms,
+      `policies::GAP_EDGE_REFINE_SECS` (one domain budget),
       `resolve_gap_offset_secs` First pass in `characterize_region`,
       `collect_repair_warnings` + `tracing::warn` loop,
       `--gap-listen` calibration + dump-then-`run_with_decoded`,

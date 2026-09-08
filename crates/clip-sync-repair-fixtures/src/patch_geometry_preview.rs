@@ -14,14 +14,11 @@ use clip_sync_repair::domain::gap_structure::{self, StructureMatchParams};
 use clip_sync_repair::domain::pcm::{interleaved_to_channels, interleaved_to_mono};
 use clip_sync_repair::domain::policies::{
     self, border_templates_for_gap, border_templates_per_channel_for_gap, GapBorderSpec,
-    RefinedGapFrames, SeamTemplates,
+    RefinedGapFrames, SeamTemplates, GAP_EDGE_REFINE_SECS,
 };
 use clip_sync_repair::domain::repair_profile::gap_extension_slack_secs;
 
 use super::energy_signature_fixtures::EnergySignatureFixture;
-
-/// Matches `GAP_EDGE_REFINE_SECS` in `application/patch_audio.rs`.
-const GAP_EDGE_REFINE_SECS: f64 = 0.75;
 
 /// Subset of `PatchAudioRequest` / `PatchTestOptions` that affects haystack geometry.
 #[derive(Debug, Clone)]

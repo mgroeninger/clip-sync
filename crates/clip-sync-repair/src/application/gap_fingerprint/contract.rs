@@ -369,6 +369,11 @@ mod tests {
         );
         assert_eq!(defaults.lag_max_lag_ms, 600, "lag_max_lag_ms default moved");
         assert_eq!(
+            defaults.max_refine_secs,
+            crate::domain::policies::GAP_EDGE_REFINE_SECS,
+            "max_refine_secs default drifted from production refine budget"
+        );
+        assert_eq!(
             defaults.lag_envelope_max_lag_ms,
             super::super::measure::DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
             "lag_envelope_max_lag_ms default moved"

@@ -89,10 +89,9 @@ pub fn gap_report_from_floor_oracle(
     gap_end_frame: usize,
 ) -> GapReport {
     use clip_sync_repair::domain::gap::Gap;
-    use clip_sync_repair::domain::policies::refine_gap_frames;
+    use clip_sync_repair::domain::policies::{refine_gap_frames, GAP_EDGE_REFINE_SECS};
 
-    const PATCH_GAP_EDGE_REFINE_SECS: f64 = 0.75;
-    let max_refine_frames = (PATCH_GAP_EDGE_REFINE_SECS * sample_rate as f64).round() as usize;
+    let max_refine_frames = (GAP_EDGE_REFINE_SECS * sample_rate as f64).round() as usize;
     let refined_a = refine_gap_frames(
         decoded_a_mono,
         1,

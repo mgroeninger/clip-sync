@@ -16,7 +16,7 @@ use clip_sync_repair::domain::pcm::{interleaved_to_channels, interleaved_to_mono
 use clip_sync_repair::domain::policies::{
     border_templates_for_gap, border_templates_per_channel_for_gap, is_silent_frame,
     refine_gap_frames, FillAlignment, GapBorderSpec, RefinedGapFrames, SeamPlacement,
-    SeamTemplates,
+    SeamTemplates, GAP_EDGE_REFINE_SECS,
 };
 
 pub const BOOL_AMBIGUITY_EPS: f64 = 0.45;
@@ -943,9 +943,6 @@ pub fn f1_decoy_shift_frames(
     gap_frames / 2
 }
 
-/// Mirror `GAP_EDGE_REFINE_SECS` in `application/patch_audio.rs`.
-const PATCH_GAP_EDGE_REFINE_SECS: f64 = 0.75;
-
 fn patch_refine_gap_frames(
     samples: &[f32],
     channels: usize,
@@ -953,7 +950,7 @@ fn patch_refine_gap_frames(
     reported_start: usize,
     reported_end: usize,
 ) -> RefinedGapFrames {
-    let max_refine_frames = (PATCH_GAP_EDGE_REFINE_SECS * sample_rate as f64).round() as usize;
+    let max_refine_frames = (GAP_EDGE_REFINE_SECS * sample_rate as f64).round() as usize;
     refine_gap_frames(
         samples,
         channels,
@@ -1821,7 +1818,7 @@ pub fn build_speech_peaks_offset_from_throat(
     fill_speech_like(&mut b, ch, sample_rate, gap_start, gap_end);
     // G5: edge refine can peel into the silent peak-offset collars where B still matches A.
     // Low occupant on B only — A throat stays silent; donor reads occupied across refined span.
-    let max_refine = secs_to_frames(PATCH_GAP_EDGE_REFINE_SECS, sample_rate);
+    let max_refine = secs_to_frames(GAP_EDGE_REFINE_SECS, sample_rate);
     ensure_nominal_b_occupied(
         &mut b,
         ch,

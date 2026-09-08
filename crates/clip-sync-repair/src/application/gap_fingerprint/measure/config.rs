@@ -1,6 +1,7 @@
 //! `config` slice of the gap_fingerprint measure folder split.
 
 use crate::application::gap_fingerprint::schema::BorderCapture;
+use crate::domain::policies::GAP_EDGE_REFINE_SECS;
 
 /// Default coarse envelope half-width (ms) that recenters the ±`lag_max_lag_ms` fine sweep.
 /// `0` disables recenter. Probe-only — not Apply's `max_lag_blocks`.
@@ -131,7 +132,7 @@ impl Default for FingerprintConfig {
             min_structure_match_score: 0.55,
             min_fill_correlation: 0.35,
             fill_absolute_floor: 0.12,
-            max_refine_secs: 0.75,
+            max_refine_secs: GAP_EDGE_REFINE_SECS,
             lag_max_lag_ms: 600,
             lag_envelope_max_lag_ms: DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
             border_capture: BorderCapture::Narrow,
@@ -166,7 +167,6 @@ impl FingerprintConfig {
         silence_peak_fraction: f32,
         dump: DumpOptions,
     ) -> Self {
-        const GAP_EDGE_REFINE_SECS: f64 = 0.75;
         Self {
             silence_peak_fraction,
             absolute_silence_rms: request.absolute_silence_rms,

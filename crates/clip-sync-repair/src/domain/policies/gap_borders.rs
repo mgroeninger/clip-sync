@@ -28,6 +28,13 @@ pub struct RefinedGapFrames {
     pub end_frame: usize,
 }
 
+/// How far [`refine_gap_frames`] may walk a reported edge against A's decoded PCM (seconds).
+///
+/// One budget for every caller: production `PatchAudio`, fingerprint
+/// `FingerprintConfig::from_request` / `Default`, and the fixture oracles that mirror the
+/// patch path. Not a CLI knob.
+pub const GAP_EDGE_REFINE_SECS: f64 = 0.75;
+
 fn silent_run(
     samples: &[f32],
     channels: usize,
