@@ -1,284 +1,269 @@
-# TEMP — Injected-time / shoulder-lag-disagreement detector
+# TEMP — Pre-patch timeline-mismatch warning
 
-**Status:** draft, 2026-09-08. Design, not started. Touches production
-(`region/characterize.rs`, `domain::GapTags`), not fingerprint-only.
+**Status:** draft, 2026-09-08. Design, not started. Production warning,
+not fingerprint-only, not a per-gap diagnostic dump.
 
 **Tracked as:** [BACKLOG.md](../../BACKLOG.md) § *Post-join defects (pairs 31
 and 50)*.
 
 **Predecessor (context, not superseded):**
-[TEMP-constellation-fingerprint-plan.md](TEMP-constellation-fingerprint-plan.md)
-§ 11 item D flagged, from existing dump data with no re-scan, that pair
-50 gaps 9–17 show "repeated large pre/post disagreements (deltas 273.8–
-1040.3 ms) — not yet investigated, flagged only." This plan is that
-investigation's conclusion turned into a design: the disagreement is
-real (confirmed against `lag_decision.pre_anchor`/`post_anchor`, the
-Full-tier ±600 ms shoulder sweep), it is not what `--dual-fit`'s
-`placement_slide` already measures (that instrument's confidence gate,
-`peak_r >= ~0.35`, is `None` on exactly the gaps where the divergence
-lives — pair 50 gaps 8–18 all read `gate_pass: false`), and it is not
-what `anchored-retry`'s `PatchOffsetAnchor` carries (single scalar,
-`Patched`-only, absent for skipped gaps).
+[archive/TEMP-constellation-fingerprint-plan.md](archive/TEMP-constellation-fingerprint-plan.md)
+§ 11 item D showed, from existing dumps with no re-scan, that a *run*
+of consecutive gaps can carry large ungated pre/post shoulder-lag
+disagreements (the corpus examples are pair 50 gaps 9–17, deltas
+273.8–1040.3 ms, and pair 31 gaps 7–8). That is not what `--dual-fit`'s
+`placement_slide` already measures (its confidence gate, `peak_r >=
+~0.35`, is `None` on exactly the gaps where the divergence is loudest)
+and not what `anchored-retry`'s `PatchOffsetAnchor` carries (single
+scalar, `Patched`-only). This plan is that observation turned into a
+**file-level warning that fires before the patch loop**, not a
+corpus-pair matcher and not a `GapTags` field dump.
 
 **Companions:**
 [TEMP-disjoint-offseam-lock-plan.md](TEMP-disjoint-offseam-lock-plan.md)
-(50/g10, single-shoulder off-seam lock at a *disjoint* A slice — this
-plan is on-seam, both shoulders, and about a *run* of gaps, not one
-shoulder; complementary, not overlapping).
+(one shoulder, one gap, off-seam lock — complementary, not this
+warning).
 
-**Media hygiene:** pair index + gap index only.
+**Media hygiene:** pair index + gap index only. Corpus pairs are
+existence proofs and negative controls for (T, N). They are not the
+user-facing identity of the warning.
 
 ---
 
 ## 0. What this tests (normative)
 
-**Across a run of consecutive gaps, does the sign/magnitude pattern of
-each gap's independent pre-shoulder vs. post-shoulder lag (measured the
-same way `lag_at_placement` already measures it, but unconditionally —
-no correlation-confidence gate) mark a bounded region of B whose content
-is displaced in time relative to A, distinctly from an isolated
-single-gap seam defect?**
+**Before the patch search runs, can a cheap ungated pre/post
+shoulder-lag read at each gap's alignment-mapped (`b_mapped`)
+position, followed by a cross-gap sequence pass, produce a single
+file-level warning that this pair appears to have a timeline mismatch
+which can make filling gaps significantly harder — distinctly from an
+isolated single-gap seam defect, and without naming which file carries
+the extra or missing time?**
 
 That is the whole plan. Later sections only implement it. If a later
 sentence disagrees with this one, this one wins.
 
-"Independent pre/post lag" means `lag_pair`'s existing pair of bounded
-(±600 ms nominal, ±2000 ms envelope-rescued) correlation sweeps, one
-per shoulder, run against the already-decoded border template at
-`characterize`'s baseline placement — the same measurement
-`gap_fingerprint`'s Full-tier `lag_at_placement` already performs, nowhere
-committed to production. "Unconditionally" means without
-`registration_shoulder_residual_ms`'s confidence floor: the corpus
-evidence (pair 50 gaps 9, 11–13, 17) is that the divergence is loudest
-exactly where `peak_r` is too low for dual-fit's gate to read anything.
-"A run of consecutive gaps" is the new part this plan adds: no existing
-mechanism looks across gaps at all — `--dual-fit` and `anchored-retry`
-both reason gap-by-gap.
+"Cheap" means `lag_pair`'s existing pair of bounded (±600 ms nominal,
+±2000 ms envelope-rescued) correlation sweeps, one per shoulder, over
+already-decoded ~1 s borders — the same measurement Full-tier
+`lag_at_placement` already performs at `b_mapped` (`build.rs`:
+"Decision-seam lag at `b_mapped` nominal … not structure throat"), not
+`place_on_b` and not `characterize_region`'s unified search.
+"Unconditionally" means without `registration_shoulder_residual_ms`'s
+confidence floor. "Sequence pass" is the product, not a follow-up:
+one isolated spike is `--dual-fit`'s job when its gate can fire; the
+warning's value is a *run*. "Before the patch search" means after A+B
+PCM is in hand and before the characterize loop; a mid-run `phase()`
+so the operator can abort, plus the same warning on the final stdout
+report.
 
-This plan does **not** test: rewiring `--dual-fit`'s repair decision,
-changing what `shoulders_abut` means for a single gap, building a
-correlation-confidence gate for the new fields (they ship ungated,
-diagnostic sequence-level flags only), or fixing pair 50's fill. It
-tests whether a *warning* is constructible from data production would
-already have on hand if this were wired — not whether the fill pipeline
-should act on it.
+This plan does **not** test: rewiring `--dual-fit`, changing
+`shoulders_abut`, aborting or skipping the patch loop automatically,
+stamping per-gap lag fields onto `GapTags` / the v1 JSON gap rows,
+fixing any fill, or identifying a named corpus pair. If the sequence
+pass cannot be made honest at some (T, N), the plan is refuted — it
+does not fall back to shipping per-gap diagnostics.
 
 ---
 
 ## 1. Population (the customer)
 
-Every gap in a run, patched or skipped, once `characterize`'s baseline
-`place_on_b` placement has resolved a `start_frame` and decoded
-`a_samples`/`b_mono`/`b_ch` are in hand — i.e., every gap that reaches
-`region/characterize.rs`'s existing placement step. This is deliberately
-**not** `TEMP-constellation-fingerprint-plan.md`'s § 1 "remaining-skip
-shoulder" population (B present, Pearson lock absent, tier=skip only):
-the sequence detector needs a lag reading on *every* gap in a run,
-disposition-independent, or a real run can't be told apart from noise
-at its edges (see pair 50 g8, g18 in § 6 — both `Patched`, both part of
-the same anomalous span by timestamp, neither in the constellation
-plan's population).
+Every gap in the fill plan that has a mapped B span, once `PatchAudio`
+has decoded A and B and before any region is characterized.
+Disposition is unknown (the search has not run); the sequence pass
+needs a lag reading on every planned gap or a real run cannot be told
+apart from noise at its edges.
+
+This is not the constellation plan's remaining-skip-shoulder
+population, and it is not "gaps that `characterize_region` has already
+placed." Scan-only (`dry_run` with no preview/write) is **out of
+scope** for this Change: that path never holds A+B PCM. A later
+scan-time retained-window pass could warn on dry-run too; it is not
+this plan.
 
 ---
 
 ## 2. Design rules (normative)
 
-1. The lag measurement itself is a pure extraction of existing code
-   (`lag_pair`, `lag_side_sweep`, `LagSweepParams`, `summarize_lag_curve`,
+1. The lag measurement is a pure extraction of existing code (`lag_pair`,
+   `lag_side_sweep`, `LagSweepParams`, `summarize_lag_curve`,
    `rescue_shoulder`) from
-   `application/gap_fingerprint/measure/lag.rs` into `domain/`, following
-   the precedent already set for `seam_local`/`lag_envelope` (moved for
-   the identical reason: "so the production patch path and this
-   diagnostic scan use one implementation," `lag.rs:67-76`). No new
-   correlation math.
-2. The extracted call is **unconditional** — it runs at every gap
-   `characterize` resolves a placement for, not gated behind
-   `DetailTier::Full`, not gated behind `--dual-fit`, not gated behind a
-   confidence floor. It is cheap: a bounded ±600 ms sweep over an
-   already-decoded ~1 s border, the same cost class as `lag_decision`
-   inside the Full-tier block today (`build.rs:258-268`), not the
-   expensive per-bracket `constellation` sweep beside it.
-3. New `GapTags` fields carry the raw per-shoulder read
-   (`pre_frac_lag_ms`, `post_frac_lag_ms`, and `shoulder_lag_delta_ms =
-   (post − pre).abs()`) plus each side's `peak_r`/`edge_pinned` so a
-   consumer can judge confidence itself — this plan does not collapse
-   that into a single verdict field. No new field feeds a repair
-   decision in this plan; they are read-only diagnostics on the
-   `GapReport`.
-4. The cross-gap sequence pass is a **separate**, explicitly
-   non-normative-until-fixture-tested step (§ 2.1) layered on top of the
-   per-gap fields — it must not be conflated with, or block on, item 3
-   shipping. Item 3 alone is useful (a human or a follow-up tool can
-   already eyeball `shoulder_lag_delta_ms` across a run).
-5. Nothing in this plan changes what `shoulders_abut` means for a single
-   gap, changes `--dual-fit`'s gate, or adds a new CLI flag. Existing
-   repair behavior and JSON output contract are unchanged; the new
-   fields are additive to `GapReport`'s diagnostic surface only (exact
-   placement — always-on internal field vs. a new opt-in report section
-   — is a § 9 implementation decision, not decided here).
-6. Sequence flagging (§ 2.1) needs two judgment calls this plan does not
-   pre-decide and must resolve against fixture + corpus data before
-   shipping: a per-gap delta threshold, and a minimum run length
-   (isolated single-gap spikes are exactly what `--dual-fit`'s existing
-   single-gap `placement_slide` already covers when its gate fires — the
-   new signal's value is specifically the *sequence*, not a lone
-   outlier).
+   `application/gap_fingerprint/measure/lag.rs` into `domain/`,
+   following `seam_local` / `lag_envelope` (same reason: one
+   implementation for the fingerprint dump and this production
+   pre-pass). No new correlation math.
+2. The extracted call is **unconditional** at `b_mapped` for every
+   planned gap. Not gated behind `DetailTier::Full`, `--dual-fit`, a
+   confidence floor, or `characterize_region`. Cost class: Full-tier
+   `lag_decision` (bounded ±600 ms over ~1 s in memory), paid once per
+   gap in a loop that finishes **before** the characterize loop.
+3. The user-facing deliverable is **one run-level warning**, not a
+   per-gap field set. Per-gap `pre`/`post`/`delta`/`peak_r` exist only
+   as internals the sequence pass consumes; they do not land on
+   `GapTags` and they do not land on v1 JSON gap rows in this Change.
+4. The sequence pass **is** this plan (not a later Change). It does
+   not ship without a fixture- and corpus-pinned (T, N). Isolated
+   single-gap spikes must not warn.
+5. Nothing in this plan changes what `shoulders_abut` means, changes
+   `--dual-fit`'s gate, adds a CLI flag, or stops the patch loop. Warn
+   and continue. No new flag: after decode the extra cost is the
+   `lag_decision` class, always on for preview/write.
+6. (T, N) are not pre-decided. Conservative: prefer a miss over a
+   false warning. Whole-file `offsets_consistent` / `offset_drift`
+   already cover a step that lasts to the end clip; this warning's
+   extra job is a *bounded island* (and localizing that the trouble
+   sits on a run of holes). Do not duplicate the existing alignment-
+   instability warning ([cli-output.md](../cli-output.md) § Alignment
+   instability) with different words for the same fact.
+7. User-facing copy names a **file flaw that can make filling gaps
+   harder**. It does not name a corpus pair, a map-step size, or
+   which file is wrong.
 
-### 2.1 Sequence pass (non-normative sketch, resolved in § 6/§ 7)
+### 2.1 Sequence pass (resolved in § 6/§ 7 before any production wiring)
 
-A run of ≥ N consecutive gaps (N TBD by § 6) where each gap's
-`shoulder_lag_delta_ms` exceeds a threshold T (TBD by § 6, corpus
-evidence starts the search near pair 50's observed 273.8–1040.3 ms
-range) is flagged as a candidate injected-time / misregistration region.
-Not: a single-gap threshold crossing (that is `--dual-fit`'s job when
-its gate can fire); not a claim about *which* file (A or B) carries the
-extra/missing time, only that the region exists.
+A run of ≥ N consecutive planned gaps where each gap's
+`|post_frac_lag_ms − pre_frac_lag_ms|` exceeds T is one warning for
+the pair. T and N come from § 6. Not a single-gap threshold; not a
+claim about A vs B.
+
+Expected interior signature when the mismatch is **outside** the
+lag window (the corpus shape that justifies the warning): both
+shoulders correlate against the wrong B content, so ungated delta
+stays elevated **throughout** the mis-mapped span, not only at its
+two edge gaps. An in-window constant offset that only lights the two
+edges is case 2's cousin — not this warning.
 
 ---
 
-## 3. Fixture (synthetic, before any corpus run)
+## 3. Fixture (synthetic, before any production wiring)
 
-Before touching `characterize.rs`, prove the extracted `lag_pair` (once
-moved to `domain/`) still passes `lag.rs`'s existing unit tests
-unchanged (pure move, § 2 rule 1) — no new fixture content needed for
-that step.
+Prove the extracted `lag_pair` still passes `lag.rs`'s existing unit
+tests unchanged (pure move, § 2 rule 1).
 
-New fixture content is needed only for § 2.1 (the sequence pass, not
-yet existing anywhere):
+New fixture content is the sequence pass:
 
-- **Case 1 — real injected region.** A synthetic run of ≥ 5 gaps where a
-  bounded span of B has a constant time offset relative to A (models
-  pair 50's shape) and the rest of the run is at nominal registration.
-  Expect: `shoulder_lag_delta_ms` elevated for exactly the gaps whose
-  neighborhood straddles the offset region's edges, flat elsewhere.
-- **Case 2 — single isolated seam defect, no region.** One gap with a
-  real pre/post disagreement (bad splice) but neighbors on both sides at
-  nominal registration. Expect: sequence pass does **not** flag (fails
-  the minimum-run-length rule) — this is the case that must stay
-  `--dual-fit`'s job, not this detector's.
-- **Case 3 — noisy nominal run, no region.** A run at nominal
-  registration with realistic per-gap correlation noise (low `peak_r`
-  shoulders included, modeling pair 50's own low-`peak_r` gaps).
-  Expect: `shoulder_lag_delta_ms` noise stays under threshold T at the
-  chosen N, or § 6/§ 7 revisit T/N — this is the decoy-rate check for
-  this plan (parallel to the constellation plan's redraw decoy).
+- **Case 1 — real mismatch region.** A synthetic run of ≥ 5 gaps
+  where a bounded span of B has a constant offset **outside** the
+  ±600 ms / ±2000 ms envelope window, and the rest of the run is at
+  nominal registration. Expect: delta elevated throughout that span;
+  the sequence pass warns. (An in-window step that only spikes the
+  two edge gaps is the wrong model — it would fail a minimum-run
+  rule and is not the corpus shape.)
+- **Case 2 — isolated seam defect, no region.** One gap with a real
+  pre/post disagreement, neighbors nominal. Expect: no warning.
+- **Case 3 — noisy nominal run, no region.** Nominal registration with
+  realistic per-gap correlation noise, including low `peak_r`
+  shoulders. Expect: no warning at the chosen (T, N), or § 6/§ 7
+  refute.
 
 ---
 
 ## 4. Probe (production path, cost)
 
-Per-gap: one extra `lag_pair` call at `characterize.rs`'s existing
-`place_on_b` point, using data already decoded there. No new decode, no
-new file read. Cost is the `lag_decision` cost class already paid today
-under Full-tier fingerprinting (bounded ±600 ms correlation sweep over
-~1 s of already-in-memory samples) — now paid on every repair run,
-patched or skipped, not gated behind `--gap-fingerprints`.
+After `decode_ab` in `PatchAudio::run_with_decoded`, before the
+characterize loop: for each planned region, `lag_pair` at `b_mapped`
+from the already-decoded PCM. No extra file read. Then O(gaps)
+sequence pass. If it flags, `phase()` on stderr immediately (operator
+can abort) and record the same warning for the stdout report.
 
-The sequence pass (§ 2.1) is O(gaps in a run), pure post-processing over
-already-collected `GapTags`, no additional decode or correlation work.
+Not inside `characterize_region`. That loop *is* the cost this
+warning exists to precede (`char_gate_search` is the dominant share
+of repair time; this sweep is not).
+
+Scan-time retained windows (warn on dry-run with no second full-file
+decode) are a later Change.
 
 ---
 
-## 5. Dump / field contract (minimum)
+## 5. Warning contract (minimum)
 
-On `GapTags` (or the analogous production-path struct — exact home is a
-§ 9 decision):
+Human, one `Warning:` line on the stdout report, in the existing
+timeline/alignment-warning block ([cli-output.md](../cli-output.md)
+§ Timeline / duration warnings). Same text via `phase()` on stderr
+as soon as the pre-pass flags, before characterize. Suggested copy
+(pin in `cli-output.md` when this ships):
 
-- `pre_frac_lag_ms: Option<f64>`, `post_frac_lag_ms: Option<f64>` — raw
-  `lag_pair` output, `None` only if the shoulder itself doesn't exist to
-  sweep (not gated by confidence).
-- `pre_peak_r: Option<f64>`, `post_peak_r: Option<f64>` — carried
-  alongside so a consumer can judge confidence without a baked-in floor.
-- `pre_edge_pinned: bool`, `post_edge_pinned: bool` — carried for the
-  same reason `SeamLocalTags` carries them today.
-- `shoulder_lag_delta_ms: Option<f64>` — `(post − pre).abs()` when both
-  present, else `None`.
+`Warning: this pair looks like it has a timeline mismatch that can make filling gaps much harder — review before leaving a long repair running`
 
-If § 2.1 ships in the same change: a run-level `injected_time_region:
-Option<{start_gap_index, end_gap_index}>` per repair run, computed once
-over the full gap sequence — not per-gap.
+Do not mention a gap index range in the default line (that is a
+corpus-style identity). Verbose may add the planned-gap span the
+sequence pass used.
+
+JSON: one additive optional run-level key on the repair report (not
+per-gap `tags`), absent when the pass does not flag. Exact name and
+shape are a `json-output.md` additive revision in the same Change —
+boolean or a small object, not a `GapTags` dump. Human warning lines
+are not duplicated as a JSON array (same rule as A1–A3).
 
 ---
 
 ## 6. Corpus comparison methodology
 
-No re-scan needed for the confirmatory half — pair 50 gaps 8–18's
-`lag_decision.pre_anchor[0].frac_lag_ms` / `post_anchor[0].frac_lag_ms`
-(already dumped, `--gap-fingerprints --features calibration,he-aac`,
-Full tier) are read directly as ground truth for § 3 case 1's expected
-shape and for picking T/N in § 2.1.
+No re-scan for the confirmatory half. Read existing Full-tier
+`lag_decision.pre_anchor[0].frac_lag_ms` / `post_anchor[0].frac_lag_ms`:
 
-Negative controls, also from existing dumps, no re-scan: pairs 22 and
-24 (flagged in the constellation plan's population but not part of any
-known abutment/map-step case), plus the full 51-pair corpus's overall
-`|pre − post|` distribution — the sequence pass's threshold T must sit
-above the bulk of this distribution's noise floor, and N must be large
-enough that pairs 22/24 (isolated single-gap disagreements, not runs)
-do not flag.
+- Positive: pair 50 gaps 8–18 (a run) and pair 31 gaps 7–8 (a short
+  run / straddle). These must warn at the chosen (T, N). They are
+  calibration, not the warning's meaning.
+- Negative: pairs 22 and 24 (isolated disagreements, not runs),
+  plus the full 51-pair `|pre − post|` distribution. T sits above the
+  noise floor; N is large enough that 22/24 do not warn.
+- Do not warn solely because `offset_drift_secs` is large — that is
+  the existing alignment warning. A pair that already carries that
+  warning may also trip this one if a hole-run is present; that is
+  allowed, not required.
 
-A from-decode run is needed only to validate the moved `domain::lag_pair`
-produces byte-identical output to today's `lag.rs` call sites (§ 2 rule
-1, pure-move check) — not to re-derive any of the numbers above.
+A from-decode run is needed only to validate moved `domain::lag_pair`
+matches today's `lag.rs` call sites — not to re-derive T/N.
 
 ---
 
 ## 7. Decision
 
-- If § 3's three fixture cases pass at some (T, N) and § 6's corpus read
-  confirms pair 50 gaps 9–17 flag as one region while pairs 22/24 don't
-  flag: item 3 (§ 9) ships as production `GapTags` fields, and § 2.1
-  ships as a follow-up Change, tracked separately from this plan once
-  T/N are pinned.
-- If fixture case 3 (noisy nominal run) can't be kept under threshold at
-  any N without also losing case 1's real region: § 2.1 is refuted as
-  stated — the per-gap fields (§ 9 items 1–3) may still ship alone as
-  diagnostics with no sequence verdict, and cross-gap flagging is
-  deferred pending a better statistic (e.g. requiring monotonic-sign
-  agreement within the run, not just magnitude).
-- If the domain-move validation in § 6 finds the extracted `lag_pair`
-  does not reproduce today's Full-tier numbers: fix the extraction
-  before anything else proceeds; this is a bug, not a design question.
+- If § 3's three cases pass at some (T, N) and § 6's read flags the
+  positive runs and not 22/24: this Change ships the pre-pass +
+  warning. (T, N) are pinned in the code and in this file.
+- If case 3 cannot sit under T at any N without also losing case 1:
+  **this plan is refuted.** Record in `settled.md`. Do not ship
+  per-gap fields as a consolation. A better statistic (e.g.
+  monotonic-sign agreement inside the run) is a new TEMP, not a
+  fallback in this one.
+- If the domain-move check does not reproduce today's Full-tier
+  numbers: fix the extraction before anything else; that is a bug.
 
 ---
 
 ## 8. Done when
 
-The § 3 fixture is green for the pure-move check and (if § 2.1 proceeds)
-for the three sequence cases at a pinned (T, N); § 6 has been read
-against pair 50 gaps 8–18 plus pairs 22/24 plus the full-corpus noise
-floor; § 7 has picked a branch.
+§ 6 has been read; § 7 has picked a branch; if ship: § 3 is green at
+the pinned (T, N), the warning fires from the pre-pass before
+characterize on a case-1 fixture, case 2 and case 3 stay quiet,
+production patch bytes and repair decisions are unchanged, and
+`cli-output.md` / `json-output.md` record the additive warning.
 
-Production patch bytes unchanged — this plan adds diagnostic fields
-only, no gate, no new repair decision.
-
-**Not** done when: `shoulders_abut` or `--dual-fit`'s gate changes
-behavior; a repair decision reads `shoulder_lag_delta_ms` or
-`injected_time_region`; the sequence pass ships without a corpus-checked
-(T, N).
+**Not** done when: the warning is computed only after characterize;
+`GapTags` grew lag fields; a repair decision or skip reads the flag;
+(T, N) shipped without the corpus read; copy names a corpus pair.
 
 ---
 
 ## 9. Placement in code (checklist — execute in order)
 
-Design is § 0–§ 2. This list is the Change.
+Design is § 0–§ 2. This list is the Change. Do not start production
+wiring until § 6/§ 7 have picked the ship branch.
 
-- [ ] Move `lag_pair`/`lag_side_sweep`/`LagSweepParams`/
-      `summarize_lag_curve`/`rescue_shoulder` from
-      `application/gap_fingerprint/measure/lag.rs` into `domain/`,
-      following the `seam_local`/`lag_envelope` precedent. Unit:
-      existing `lag.rs` tests unchanged, now against the domain
-      location; `lag_at_placement_envelope_recenter_is_per_shoulder`
-      and `lag_at_placement_envelope_shared_far_unlocks_both` (the
-      31/g7- and 31/g10-class regression tests) still pass.
-- [ ] Call the moved `lag_pair` unconditionally from
-      `region/characterize.rs` at the existing `place_on_b` baseline
-      placement point. Unit: a gap with known pre/post lags gets the
-      right `GapTags` values regardless of tier/flags.
-- [ ] Add § 5's new ungated `GapTags` fields; wire them through to
-      whatever surface exposes `GapTags` today (JSON output contract
-      unaffected — confirm no field lands in the v1 JSON schema unless
-      explicitly decided in a later Change).
-- [ ] § 3 fixture (three cases) + § 2.1 sequence pass, if § 7 keeps it
-      in scope.
-- [ ] § 6 corpus read (pair 50 8–18, pairs 22/24, full-corpus
-      distribution); § 7 decision recorded here or in `settled.md`.
+- [ ] § 6 corpus read (pair 50 8–18, pair 31 7–8, pairs 22/24,
+      full-corpus distribution); (T, N) candidate or refute recorded
+      here.
+- [ ] Move `lag_pair` / `lag_side_sweep` / `LagSweepParams` /
+      `summarize_lag_curve` / `rescue_shoulder` from
+      `application/gap_fingerprint/measure/lag.rs` into `domain/`.
+      Unit: existing `lag.rs` tests unchanged at the new location;
+      `lag_at_placement_envelope_recenter_is_per_shoulder` and
+      `lag_at_placement_envelope_shared_far_unlocks_both` still pass.
+- [ ] Pre-pass in `PatchAudio::run_with_decoded` after decode, before
+      the characterize loop: `lag_pair` at `b_mapped` for every planned
+      region; sequence pass at pinned (T, N); `phase()` if flagged.
+- [ ] § 3 fixture (three cases) against that pre-pass.
+- [ ] Human `Warning:` line + additive JSON run-level key; pin copy
+      in `cli-output.md` and the key in `json-output.md`.
