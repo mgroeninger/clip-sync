@@ -17,12 +17,10 @@ use symphonia::core::codecs::audio::well_known::{
 };
 use symphonia::core::codecs::audio::{AudioCodecId, AudioCodecParameters, AudioDecoderOptions};
 use symphonia::core::codecs::CodecParameters;
-use symphonia::core::errors::{Error as SymphoniaError, SeekErrorKind};
 use symphonia::core::formats::probe::Hint;
-use symphonia::core::formats::{FormatOptions, SeekMode, SeekTo, Track, TrackType};
+use symphonia::core::formats::{FormatOptions, Track, TrackType};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::units::Time;
 use tracing::debug;
 
 use crate::application::error::MediaError;
@@ -33,7 +31,7 @@ use crate::infrastructure::symphonia::duration::{
     track_duration_from_track,
 };
 use crate::infrastructure::symphonia::error_mapping::{
-    log_media_success, map_io_error, map_probe_error, map_seek_error,
+    log_media_success, map_io_error, map_probe_error,
 };
 use crate::infrastructure::symphonia::session::MediaIoState;
 
@@ -63,17 +61,19 @@ pub(crate) fn probe_media_reusable(
     path: &Path,
 ) -> Result<(Vec<AudioTrack>, Duration, Option<MediaIoState>), MediaError> {
     let mut format = open_format_reader(path)?;
-    let (tracks, duration) = probe_from_format(path, format.as_mut())?;
-    let io = match rewind_format_reader(path, format.as_mut()) {
-        Ok(()) => Some(MediaIoState::new(format)),
-        Err(error) => {
-            debug!(
-                path = %path.display(),
-                error = %error,
-                "could not rewind format reader after probe; will reopen on extract"
-            );
-            None
-        }
+    let (tracks, duration, packet_scan) = probe_from_format(path, format.as_mut())?;
+    // Metadata probe leaves the demuxer at the first packet. Accurate-seek to t=0 to "rewind"
+    // fails on MKV when the first CuePoint is the first video keyframe (often > 0), and it
+    // uses tracks.first() — usually video. After a duration packet-scan the reader is at EOF
+    // and must not be reused.
+    let io = if packet_scan {
+        debug!(
+            path = %path.display(),
+            "duration packet scan consumed the reader; will reopen on extract"
+        );
+        None
+    } else {
+        Some(MediaIoState::new(format))
     };
     log_media_success(path, "probe");
     Ok((tracks, duration, io))
@@ -82,7 +82,7 @@ pub(crate) fn probe_media_reusable(
 fn probe_from_format(
     path: &Path,
     format: &mut dyn symphonia::core::formats::FormatReader,
-) -> Result<(Vec<AudioTrack>, Duration), MediaError> {
+) -> Result<(Vec<AudioTrack>, Duration, bool), MediaError> {
     let media_duration = format_media_duration(format);
     let mut tracks = Vec::new();
     let mut duration = Duration::ZERO;
@@ -117,6 +117,7 @@ fn probe_from_format(
         duration = duration.max(media_duration);
     }
 
+    let mut packet_scan = false;
     if duration.is_zero() {
         // Probe chain: per-track metadata → container duration → chapters → packet scan
         // (`scan_container_audio_duration`). Open succeeds when decodable tracks exist even
@@ -125,6 +126,7 @@ fn probe_from_format(
             duration = estimated;
         } else {
             duration = scan_container_audio_duration(path, format)?;
+            packet_scan = true;
         }
     }
 
@@ -136,34 +138,7 @@ fn probe_from_format(
         }
     }
 
-    Ok((tracks, duration))
-}
-
-fn rewind_format_reader(
-    path: &Path,
-    format: &mut dyn symphonia::core::formats::FormatReader,
-) -> Result<(), MediaError> {
-    let time = Time::ZERO;
-    let seek_to = SeekTo::Time {
-        time,
-        track_id: None,
-    };
-    match format.seek(SeekMode::Accurate, seek_to) {
-        Ok(_) => Ok(()),
-        Err(SymphoniaError::SeekError(SeekErrorKind::OutOfRange)) => {
-            // First CuePoint is often the first video keyframe, slightly after 0. Caller
-            // drops the reusable reader and extract reopens at the first packet.
-            debug!(
-                path = %path.display(),
-                "rewind seek to 0.000s is out of cue range; will reopen on extract"
-            );
-            Err(MediaError::seek_failed(format!(
-                "{}: seek to 0.000s on track 0 failed: requested seek timestamp is out-of-range for stream",
-                path.display()
-            )))
-        }
-        Err(error) => Err(map_seek_error(path, 0, 0.0, error, None)),
-    }
+    Ok((tracks, duration, packet_scan))
 }
 
 fn is_audio_decodable(params: &symphonia::core::codecs::audio::AudioCodecParameters) -> bool {

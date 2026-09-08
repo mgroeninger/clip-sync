@@ -1068,16 +1068,33 @@ pub(crate) fn scan_track_decodable_extent(
     Ok(Some(max_end.min(container_duration)))
 }
 
-/// Raw seek that returns the Symphonia error unmapped, so callers can recover before mapping.
+/// Raw seek: Timestamp at `start_ts + wall-clock` first (encoder delay / stream origin),
+/// then `SeekTo::Time`. MKV cue walks reject a Time of 0 when the first CuePoint is later.
 fn raw_seek(
     format: &mut dyn symphonia::core::formats::FormatReader,
     track_id: u32,
     start: Duration,
 ) -> Result<(), SymphoniaError> {
-    // Duration values from media operations fit comfortably in i64 seconds.
     let secs = start.as_secs().min(i64::MAX as u64) as i64;
     let time = Time::try_new(secs, start.subsec_nanos())
         .unwrap_or_else(|| Time::try_new(secs, 0).expect("valid time"));
+
+    let origin = format
+        .tracks()
+        .iter()
+        .find(|track| track.id == track_id)
+        .map(|track| (track.start_ts, track.time_base));
+    if let Some((start_ts, Some(time_base))) = origin {
+        if let Some(offset) = time_base.calc_timestamp(time) {
+            let ts = Timestamp::new(start_ts.get().saturating_add(offset.get()));
+            match format.seek(SeekMode::Accurate, SeekTo::Timestamp { ts, track_id }) {
+                Ok(_) => return Ok(()),
+                Err(SymphoniaError::SeekError(SeekErrorKind::OutOfRange)) => {}
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
     format
         .seek(
             SeekMode::Accurate,
@@ -1089,12 +1106,37 @@ fn raw_seek(
         .map(|_| ())
 }
 
+/// When Accurate seek is OutOfRange, decode from the first packet only if the target is at
+/// or before the track origin, or within the first ~GOP of the file (MKV cues often start on
+/// the first video keyframe, not t=0). Mid-file and near-tail misses must not sequential-scan.
+pub(super) fn seek_out_of_range_recovers_at_start(
+    start: Duration,
+    track_origin: Option<Duration>,
+    track_duration: Option<Duration>,
+) -> bool {
+    if track_duration.is_some_and(|duration| {
+        start.as_secs_f64() >= duration.as_secs_f64() - NEAR_TRACK_END_TOLERANCE_SECS
+    }) {
+        return false;
+    }
+    if track_origin.is_some_and(|origin| start <= origin) {
+        return true;
+    }
+    start.as_secs_f64() <= NEAR_TRACK_END_TOLERANCE_SECS
+}
+
+fn track_origin_duration(
+    format: &dyn symphonia::core::formats::FormatReader,
+    track_id: u32,
+) -> Option<Duration> {
+    let track = format.tracks().iter().find(|track| track.id == track_id)?;
+    timestamp_to_std_duration(track.start_ts, track.time_base?)
+}
+
 /// Seek to `start`, recovering once by reopening `MediaIoState` on seek failure.
 ///
-/// `OutOfRange` at **t = 0** is not a tail miss: Symphonia's MKV cue walk needs a CuePoint at
-/// or before the target, and the first cue is often the first video keyframe slightly after 0.
-/// Reopen and decode from the first packet instead of treating it as fatal.
-/// Other `OutOfRange` errors (expected tail-boundary seeks) are not retried.
+/// `OutOfRange` before the first cue / `start_ts` is not a tail miss: reopen and read packets.
+/// Near-tail `OutOfRange` is not retried (would scan the whole file).
 /// Returns the original (mapped) seek error if reopen fails or the retry also fails.
 pub(super) fn seek_with_recovery(
     path: &Path,
@@ -1112,11 +1154,13 @@ pub(super) fn seek_with_recovery(
         first_err,
         SymphoniaError::SeekError(SeekErrorKind::OutOfRange)
     ) {
-        if start.is_zero() {
+        let origin = track_origin_duration(state.format.as_ref(), track_id);
+        if seek_out_of_range_recovers_at_start(start, origin, track.duration) {
             debug!(
                 path = %path.display(),
                 track = track_id,
-                "Accurate seek to 0.000s is out of cue range; reopening at first packet"
+                start_secs = start.as_secs_f64(),
+                "Accurate seek is out of cue range before stream origin; reopening at first packet"
             );
             *state = MediaIoState::open(path)?;
             ensure_track_decoder(path, state, track)?;
@@ -1163,20 +1207,7 @@ pub(super) fn seek_to_window_start(
     start: Duration,
     track_duration: Option<Duration>,
 ) -> Result<(), MediaError> {
-    let time = Time::try_new(start.as_secs() as i64, start.subsec_nanos()).ok_or_else(|| {
-        MediaError::seek_failed(format!(
-            "{}: seek to {:.3}s on track {track_id} failed: invalid time",
-            path.display(),
-            start.as_secs_f64()
-        ))
-    })?;
-
-    let seek_to = SeekTo::Time {
-        time,
-        track_id: Some(track_id),
-    };
-
-    format.seek(SeekMode::Accurate, seek_to).map_err(|error| {
+    raw_seek(format, track_id, start).map_err(|error| {
         map_seek_error(
             path,
             track_id,
@@ -1185,7 +1216,6 @@ pub(super) fn seek_to_window_start(
             track_duration.map(|d| d.as_secs_f64()),
         )
     })?;
-
     Ok(())
 }
 
@@ -1222,7 +1252,46 @@ pub(crate) fn float_to_i16(sample: f32) -> i16 {
 
 #[cfg(test)]
 mod tail_clip_tests {
-    use super::tail_partial_clip_acceptable;
+    use std::time::Duration;
+
+    use super::{seek_out_of_range_recovers_at_start, tail_partial_clip_acceptable};
+
+    #[test]
+    fn out_of_range_recovers_at_or_before_track_origin() {
+        assert!(seek_out_of_range_recovers_at_start(
+            Duration::from_millis(50),
+            Some(Duration::from_millis(200)),
+            Some(Duration::from_secs(100)),
+        ));
+        assert!(seek_out_of_range_recovers_at_start(
+            Duration::ZERO,
+            Some(Duration::ZERO),
+            Some(Duration::from_secs(100)),
+        ));
+    }
+
+    #[test]
+    fn out_of_range_recovers_within_first_cue_slack() {
+        assert!(seek_out_of_range_recovers_at_start(
+            Duration::from_millis(100),
+            Some(Duration::ZERO),
+            Some(Duration::from_secs(100)),
+        ));
+    }
+
+    #[test]
+    fn out_of_range_does_not_recover_midfile_or_tail() {
+        assert!(!seek_out_of_range_recovers_at_start(
+            Duration::from_secs(50),
+            Some(Duration::ZERO),
+            Some(Duration::from_secs(100)),
+        ));
+        assert!(!seek_out_of_range_recovers_at_start(
+            Duration::from_secs_f64(99.5),
+            Some(Duration::ZERO),
+            Some(Duration::from_secs(100)),
+        ));
+    }
 
     #[test]
     fn accepts_mkv_style_tail_shortfall_for_end_clip() {

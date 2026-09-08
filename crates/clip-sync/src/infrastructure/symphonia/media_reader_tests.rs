@@ -1193,13 +1193,26 @@ fn extract_start_clip_when_mkv_first_cue_is_after_zero() {
         .iter()
         .find(|t| t.decodable)
         .expect("decodable audio track");
-    let window = ClipWindow::new(Duration::ZERO, Duration::from_secs(1), ClipLabel::Start);
+    let start = ClipWindow::new(Duration::ZERO, Duration::from_secs(1), ClipLabel::Start);
     let clip = session
-        .extract_mono(track, &window, &NoopProgress, "start")
+        .extract_mono(track, &start, &NoopProgress, "start")
         .expect("start-clip extract when Accurate seek to 0.000s is out of cue range");
     assert!(
         !clip.samples.is_empty(),
         "expected decoded start-clip samples"
+    );
+
+    let early = ClipWindow::new(
+        Duration::from_millis(100),
+        Duration::from_secs(1),
+        ClipLabel::Start,
+    );
+    let early_clip = session
+        .extract_mono(track, &early, &NoopProgress, "early")
+        .expect("extract starting before the first CuePoint");
+    assert!(
+        !early_clip.samples.is_empty(),
+        "expected samples when the window starts before the first cue"
     );
 }
 

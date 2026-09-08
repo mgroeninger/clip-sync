@@ -306,7 +306,7 @@ impl SymphoniaMediaSession {
         if io.is_none() {
             debug!(
                 path = %path.display(),
-                "reopening format reader for session (probe rewind was unavailable)"
+                "reopening format reader for session (probe did not leave a reusable reader)"
             );
             *io = Some(MediaIoState::open(path)?);
         }
