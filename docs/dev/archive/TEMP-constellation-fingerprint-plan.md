@@ -1,5 +1,20 @@
 # TEMP — A/B constellation lag histogram
 
+> **Archived 2026-09-08. Not pursued to a verdict — superseded by a better-targeted
+> successor.** §11's own corpus read is why: of the 51-pair corpus's remaining
+> patchable-but-skipped population, all but one gap trace back to pair 31 (gaps 7–8,
+> the known −1.15 s map step) or pair 50 (gaps 9–17, a second cluster of 273.8–1040.3 ms
+> pre/post lag disagreements, likely a second map-step-adjacent pair). Both are
+> step-shaped **injected-time** regions, not a lag any better matcher — constellation
+> included — could locate, so the lever this plan was building does not aim at the
+> actual failure mode. **Not refuted**: the mechanism itself was never shown wrong, and
+> the code (fixture-tested, §9 items 1–4) stays in the tree gated behind
+> `--fingerprint-constellation` (off by default) rather than deleted — see
+> [../gap-fingerprint.md](../gap-fingerprint.md) § *Constellation fingerprint*.
+> Successor: [../TEMP-injected-time-detector-plan.md](../TEMP-injected-time-detector-plan.md),
+> which targets detecting the injected-time regions directly. See
+> [../settled.md](../settled.md) § A.
+
 **Status:** draft, 2026-09-06. Experiment, not a Change. Fingerprint path
 only. Does **not** touch `domain/seam_locks.rs`, `GapSignature`, or unified
 fit.

@@ -805,7 +805,7 @@ read ([TEMP-constellation-fingerprint-plan.md](TEMP-constellation-fingerprint-pl
 that the remaining-skip population this probe targets is dominated by pairs 31 and 50 — both
 step-shaped injected-time regions (a bounded span of B displaced in time relative to A), not a case
 where a better event picker finds a lag dense Pearson missed. That is a different failure mode than
-this probe measures (see [TEMP-injected-time-detector-plan.md](TEMP-injected-time-detector-plan.md)).
+this probe measures (see [TEMP-injected-time-detector-plan.md](TEMP-injected-time-detector-plan.md) — a pre-patch file-level warning, not a matcher).
 The measurement code and its fixture tests stay in the tree — `constellation: false` is just the
 default now, matching how `--fingerprint-post-window-ladder` / `--fingerprint-pre-window-ladder` are
 opt-in dump-only probes — but a routine `--gap-fingerprints` run no longer pays its per-bracket cost,

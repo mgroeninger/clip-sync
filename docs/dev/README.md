@@ -65,8 +65,8 @@ is untracked — that is a bug in the catalog, not a state a doc may sit in.
 | Draft | What it is | Tracked as |
 |-------|-----------|-----------|
 | [TEMP-post-splice-introduced-silence-collapse-plan.md](TEMP-post-splice-introduced-silence-collapse-plan.md) | After splice, fill `visit_shoulders_abut`: concat-confirm → **warn by default**; `--collapse-introduced-silence` drains A PCM and the current mux takes that buffer | [BACKLOG.md](../../BACKLOG.md) § *Fill placement* |
-| [TEMP-constellation-fingerprint-plan.md](TEMP-constellation-fingerprint-plan.md) | Diagnostic: remaining-skip shoulders, fixture-gated onset picker, unique peak in `L = t_B − t_A` vs in-span B redraw decoy — not Pearson-solved gaps, not 50/g10 | [BACKLOG.md](../../BACKLOG.md) § *Fill placement* |
 | [TEMP-disjoint-offseam-lock-plan.md](TEMP-disjoint-offseam-lock-plan.md) | Diagnostic: 1 s Pearson lock on A **disjoint** from production’s seam template, vs a same-window on-seam control. The § 0 test the predecessor did not run | [BACKLOG.md](../../BACKLOG.md) § *Post-join defects* → 50/g10 |
+| [TEMP-injected-time-detector-plan.md](TEMP-injected-time-detector-plan.md) | Pre-patch file-level warning: a run of ungated pre/post shoulder-lag disagreements means this pair may be much harder to fill; fires after decode, before characterize | [BACKLOG.md](../../BACKLOG.md) § *Post-join defects* |
 | [TEMP-flac-output-plan.md](TEMP-flac-output-plan.md) | In-process `--flac` lossless output, peer of `--wav`. Motivated by the RIFF `u32` data-chunk limit | [BACKLOG.md](../../BACKLOG.md) § *Repair R6* |
 | [TEMP-nway-donor-alignment-plan.md](TEMP-nway-donor-alignment-plan.md) | Repair one damaged copy from **multiple** donors with sparse non-overlapping damage | [settled.md](settled.md) § C — latched, no corpus |
 
@@ -75,21 +75,7 @@ is untracked — that is a bug in the catalog, not a state a doc may sit in.
 Measurement records. A findings note lives here only while it has an open question; once every
 question is promoted to [BACKLOG.md](../../BACKLOG.md) or closed, it archives.
 
-None currently. [TEMP-rigid-shoulder-offset-skips-2026-08-31.md](archive/TEMP-rigid-shoulder-offset-skips-2026-08-31.md)
-archived 2026-09-01 (Q1–Q3 named; Q2 successor
-[TEMP-seam-lock-rigid-fill-plan.md](archive/TEMP-seam-lock-rigid-fill-plan.md) shipped and
-archived the same day).
-
-Earlier notes (the two flat-3000 runs, the collapsed-bridge census, the pair-50 outcomes) went to
-[archive/](archive/) on 2026-08-24 under exactly that rule, and their surviving questions are
-[BACKLOG.md](../../BACKLOG.md) § *Post-join defects (pairs 31 and 50)*.
-[archive/TEMP-fill-normalize-local-reference-2026-08-25.md](archive/TEMP-fill-normalize-local-reference-2026-08-25.md)
-followed on 2026-08-26 — the note that sized the normalize-boost exposure (308 gaps: 65% at unity,
-6 of 8 hot fills hot only from our own gain) and carried the ear labels. Its Q1 was answered
-2026-08-27 (both 5/g6 and 15/g3 audible; 15/g3 shows the axis is the gain, not edge delta); the
-other three closed with the program-gain Change. Note the section stayed **open** while the note
-archived: the rule is about the note's questions being promoted, not about the BACKLOG section
-closing.
+None currently.
 
 > Architecture: [../../PLAN.md](../../PLAN.md). Open work: [../../BACKLOG.md](../../BACKLOG.md).
 > Settled verdicts: [settled.md](settled.md).
