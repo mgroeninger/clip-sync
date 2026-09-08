@@ -35,6 +35,14 @@ pub struct DumpOptions {
     /// `--fingerprint-pre-window-ladder` (`docs/dev/archive/TEMP-dual-fit-pre-window-ladder-plan.md`).
     /// Independent of `diagnostics` and of `post_window_ladder` — dump-only, no Tier-3 split.
     pub pre_window_ladder: bool,
+    /// `--fingerprint-constellation` (`docs/dev/TEMP-constellation-fingerprint-plan.md`, archived
+    /// settled 2026-09-08: the corpus's remaining-skip failures are step-shaped injected-time
+    /// regions — pairs 31 and 50 — not a lag a better event picker can hit; see
+    /// `docs/dev/TEMP-injected-time-detector-plan.md`). Off by default so a routine
+    /// `--gap-fingerprints` run does not pay this probe's per-bracket cost; kept opt-in rather than
+    /// removed in case a future matcher revisits the histogram. Independent of `diagnostics` — dump
+    /// only, no Tier-3 split.
+    pub constellation: bool,
 }
 impl Default for DumpOptions {
     fn default() -> Self {
@@ -45,6 +53,7 @@ impl Default for DumpOptions {
             lag_envelope_window_secs: DEFAULT_LAG_ENVELOPE_WINDOW_SECS,
             post_window_ladder: false,
             pre_window_ladder: false,
+            constellation: false,
         }
     }
 }
@@ -96,6 +105,10 @@ pub struct FingerprintConfig {
     /// real registration from periodic ambiguity (250 ms is ambiguous on quiet produced audio, where a
     /// rival local max is nearly as tall; 1 s breaks the tie). Drives `peak_z` / `prominence`.
     pub lag_window_secs: f64,
+    /// `--fingerprint-constellation` (see [`DumpOptions::constellation`]). Off by default; gates the
+    /// per-bracket `constellation` measurement in `build_gap_fingerprint` independent of tier/pairwise
+    /// gating (both must still hold).
+    pub constellation: bool,
 }
 impl Default for FingerprintConfig {
     fn default() -> Self {
@@ -124,6 +137,7 @@ impl Default for FingerprintConfig {
             border_capture: BorderCapture::Narrow,
             lag_envelope_window_secs: DEFAULT_LAG_ENVELOPE_WINDOW_SECS,
             lag_window_secs: 1.0,
+            constellation: false,
         }
     }
 }
@@ -180,6 +194,7 @@ impl FingerprintConfig {
             border_capture: dump.border_capture,
             lag_envelope_window_secs: dump.lag_envelope_window_secs,
             lag_window_secs: 1.0,
+            constellation: dump.constellation,
         }
     }
 }

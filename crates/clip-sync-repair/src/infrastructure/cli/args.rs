@@ -76,6 +76,16 @@ pub struct Args {
     #[arg(long)]
     pub fingerprint_pre_window_ladder: bool,
 
+    /// Constellation lag-histogram probe (`docs/dev/TEMP-constellation-fingerprint-plan.md`): per-
+    /// bracket onset picker + `L`-histogram lock test, dumped as the `constellation` group. Off by
+    /// default — archived settled 2026-09-08 (the remaining-skip failures the probe targeted turned
+    /// out to be step-shaped injected-time regions, pairs 31 and 50, not a lag a better matcher can
+    /// hit; see `docs/dev/TEMP-injected-time-detector-plan.md`). Kept opt-in, not removed, for future
+    /// audit dumps. Independent of `--fingerprint-diagnostics`. Requires `--gap-fingerprints DIR`.
+    #[cfg(feature = "calibration")]
+    #[arg(long)]
+    pub fingerprint_constellation: bool,
+
     /// Coarse envelope half-width (ms) for the nominal-first shoulder rescue: it recenters
     /// `lag_decision`'s ±600 ms sweep in a fingerprint dump, and the seam locks on a production
     /// repair. Default 2000. `0` disables recenter (nominal `b_mapped`, no `envelope_*` on the

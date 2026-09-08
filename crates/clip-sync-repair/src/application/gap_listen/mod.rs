@@ -242,10 +242,12 @@ pub fn run_gap_listen<MR: MediaReader, PW: PatchedAudioWriter>(
             lag_envelope_max_lag_ms: listen.lag_envelope_max_lag_ms,
             border_capture: listen.border_capture,
             lag_envelope_window_secs: listen.lag_envelope_window_secs,
-            // The window-ladder probes are fingerprint-dump-only (`--fingerprint-post-window-ladder`,
-            // `--fingerprint-pre-window-ladder`); `--gap-listen` does not carry either flag.
+            // The window-ladder and constellation probes are fingerprint-dump-only
+            // (`--fingerprint-post-window-ladder`, `--fingerprint-pre-window-ladder`,
+            // `--fingerprint-constellation`); `--gap-listen` does not carry any of these flags.
             post_window_ladder: false,
             pre_window_ladder: false,
+            constellation: false,
         },
         progress,
     );

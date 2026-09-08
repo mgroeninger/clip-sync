@@ -497,3 +497,172 @@ fp.constellation = constellation;
 `project.rs`'s `spec_to_fingerprint_summary` gains `constellation: None,`
 next to `anchors: None,` (~line 253), plus a doc-comment mention next to
 the existing "silence/contour/anchors are also omitted" line (~line 39-65).
+
+---
+
+## 11. Candidate follow-ups from the § 6 read (not decided, not started)
+
+Found while reading the live corpus dump against `lag_decision`'s trusted
+waveform lag. Full-corpus figures below (51 pairs, 2026-09-08; pairs 6
+and 16 correctly absent from every corpus run — not a stall) — **906/1164
+(77.8%)** of comparable locked shoulders land within 60 ms of the
+trusted anchor; the residual 258 (22.2%) is a real mechanism, not the
+coordinate bug already fixed upstream of this read (partial 14-pair read
+was 72%/28%; the full read doesn't reverse it, only sharpens it).
+Recorded here so a later TEMP can pick these up without re-deriving
+them. Rule 8 already forbids widening past the recipe *in v1* — this
+section is exactly that "later," not a retraction of rule 8.
+
+**Scope caveat, applies to every number below:** these are computed
+across *every* constellation shoulder in the dump, not restricted to
+§1's "remaining-skip shoulder" population (disposition `skipped`,
+Pearson lock absent/non-unique, not a reasoned non-placement). §5
+itself warns that patched/`gate_pass` gaps "are not the customer and
+not the decoy control." A real §7 verdict needs that filter applied
+first — not yet done, so checklist item 5 stays unchecked and no §7
+call is made here.
+
+**Status of everything below: data-only analysis against the existing
+dump, not implemented changes.** (A)-(D) are candidate directions for a
+future production mechanism — how `hist_peak_lag_ms` (or a redesigned
+successor to it) might eventually be used — not proposals to edit
+`domain/constellation.rs`, the fingerprint measure glue, or the picker
+right now. None of rule 2 (picker), rule 3 (vote), or rule 4
+(uniqueness/redraw) has changed, and none should change to chase any of
+(A)-(D) without a separate, explicit decision to do so. Where a
+candidate's own validation used real numbers (B's exposure argument, D's
+narrowed-null check), that validation was done by *re-deriving* the
+histogram in a throwaway script against already-dumped points — never
+by altering the fingerprint path itself. §7's rule stands for all of
+these exactly as it does for a matcher: "Do not promote into
+`seam_locks.rs` or `GapSignature` from this dump."
+
+**A. One-sided A window is a structural blind spot ("shadow zone").**
+Rule 6 makes A one-sided (`[gap_start − context, gap_start)`); rule 7
+makes B symmetric-ish (`A span ± max_lag`). Any true B onset whose
+lag-adjusted equivalent A-position falls in `(0, +max_lag_ms]` is inside
+B's searched span but past A's own window edge — unreachable no matter
+how prominent. Quantified corpus-wide, full 51-pair scan (1049 gaps with
+both `constellation` and `geometry`): **819/1049 (78.1%)** have
+`max_lag_ms` (constant 2000 ms across every gap seen) exceeding the
+gap's own `duration_secs` (median gap 1094.7 ms), so the overshoot
+commonly reaches past the real hole into genuinely valid, already-
+resumed A audio (median overshoot where it exceeds: 1147.0 ms) — this is
+the common case, not an edge case; identical rate to the 14-pair partial
+read. One concrete
+locked-but-wrong shoulder (pair 1, gap 5, pre) has its highest-prominence
+B point (ruling out a prominence-floor fix) sitting, once shifted by the
+trusted lag, ~1.8 s past A's window edge.
+
+**B. Widening A is not risk-free — do not bundle it with (A) above
+without (C).** A's narrow window is *derived from certainty* (we know
+exactly which gap-adjacent span is meaningful); B's width is *derived
+from uncertainty* (lag unknown, so padded). Mirroring B's number onto A
+conflates the two. Concretely:
+  - Symmetric widening only closes (A) if B's window is *also* re-derived
+    off the new, wider A span (`B = new-A-span ± max_lag`), else the
+    shadow zone just moves outward. One re-derivation, not a regress.
+  - Extra A content is not inert. An orphan A feature (no true B partner)
+    usually scatters its 12 pairwise votes across many bins — mostly
+    harmless — *except* when source content is periodic/clustered
+    (dialogue rhythm, music beat, repeated foley), where it can clump
+    into a false near-tie against the true peak. That is the same
+    mechanism already producing today's 28% (gap 5's pre shows exactly
+    this: both A and B clustered, real mode 6 votes vs redraw_p95 5).
+    Widening A increases exposure to an already-known failure mode; it
+    is not a new, unrelated risk, but it is not free either.
+
+**C. Vote weighting (down-weight isolated / far-from-seam onsets) is the
+candidate fix for the false-positive half; widening A is the candidate
+fix for the false-negative half — they are not substitutes.** Weighting
+by something like `prominence × w(distance from seam) × w(isolation
+from same-side neighbors)` directly targets clumped-but-spurious votes
+(the gap-5 B outlier is both far from the seam and far from B's other
+clusters). Two open questions, not yet resolved: the redraw null would
+need the same weighting applied to its synthetic draws to stay a fair
+95th-percentile comparison (rule 4); and isolation is partly an artifact
+of (A)'s blind spot itself (a B point can look "isolated" only because
+its true A partner was never searched), so measuring weighting's effect
+before touching A's window isolates the two fixes' contributions.
+
+**Recommended order, if this is picked up:** measure weighting alone
+first, A's window untouched, and see how much of the 28% it recovers
+before deciding whether widening A (with C's exposure in mind, and
+B's knock-on re-derivation) is still needed for the remainder. This
+keeps the false-positive fix and the false-negative fix separately
+attributable instead of shipped as one bundled change.
+
+**D. Cross-side interrogation (converged side informs the other) —
+promising, cheap to validate, not yet built.** Same motivation as (A)
+without (B)'s contamination risk: instead of blindly widening A's
+candidate set, use a confidently-locked side's own lag as a prior to
+narrow or re-weight the *other* side's already-searched B span. Pre and
+post are separated only by the gap's own (usually short) duration, so
+their true local lags should track closely if B is a locally-consistent
+mapping near the seam.
+
+Checked against already-existing, independent data (`lag_decision`'s
+`pre_anchor`/`post_anchor` `frac_lag_ms`, not the constellation
+histogram at all), full 51-pair corpus: **971/1073 gaps have both
+anchors; `|pre − post|` is tight** — median 0.02 ms, 90.1% within 10 ms,
+93.2% within 30 ms, 98.7% within 60 ms (essentially unchanged from the
+14-pair partial read: 90.7%/94.9%/99.4%). The premise holds for the
+overwhelming majority of gaps. The known outlier (pair 31 gaps 7 and 8:
+deltas 1122 ms and 1688 ms) is still the largest disagreement and is
+still the already-known map-step gap (settled: pair 31 straddles a
+−1.15 s map step). The full read surfaces a **second cluster worth a
+look**: pair 50 gaps 9–17 show repeated large pre/post disagreements
+(deltas 273.8–1040.3 ms) — not yet investigated, flagged only, possibly
+a second map-step-adjacent pair. Either way this is a good sign, not a
+counterexample: "pre and post disagree by a lot" is itself a usable
+signal (flag/decline, do not blend) rather than a flaw in the premise —
+the failure mode is legible, not silent.
+
+Not yet designed: how to fold this into rule 4's redraw-null test (a
+narrowed or re-weighted search changes what "beats the 95th percentile"
+means), and how large a disagreement should trigger "decline to use the
+prior" vs "use it." Cheaper than (A)/(B)/(C) to prototype since it needs
+no new A content and no new B search — just a re-weighting of the
+existing per-shoulder histogram using the other shoulder's own already-
+computed result.
+
+**Scope, checked against the constellation dump itself (not just the
+`lag_decision` anchors above; full 51-pair corpus, 1049 gaps with both
+shoulders present):** `both locked` 307, **`exactly one locked` 550
+(52.4%, the largest bucket)**, `neither locked` 192 (essentially the
+same shape as the 14-pair partial read: 240/376/125). The un-locked
+sibling in that 550 is almost always `not_unique` (496; only 54
+`unmeasured`) — the picker did find candidate onsets, the vote just
+didn't clear the redraw bar — which is exactly the shape a re-weighting
+prior helps with (a real candidate pool to nudge, not an empty one).
+227/550 (41%) have the locked side beating its own `redraw_p95_votes`
+by ≥ 3 votes, not a hairline pass. This makes (D) a
+larger-scope candidate than it first looked: a working rescue could
+plausibly move a large share of `not_unique` shoulders into "locked,"
+not just patch rare disagreements — worth prioritizing ahead of (B)/(C)
+for that reason alone, independent of (B)'s contamination-risk
+argument.
+
+**Validated entirely from existing dump data, no re-scan; full 51-pair
+corpus.** Method: for a one-side-locked gap, trust-filter the locked
+side's `hist_peak_lag_ms` against `lag_decision`'s independent waveform
+anchor (agreement within 60 ms; drops 125 cases where the "lock" is
+itself the wrong peak — see (B)'s own worked example, pair 1 gap 5,
+which is exactly one of these), leaving **401 trust-filtered candidates**.
+Then, on the `not_unique` other side's own already-dumped A/B points,
+recompute the all-pairs vote count in a window near the locked side's
+lag, and compare it against a **redraw null restricted to that same
+narrow window** (drawn from the already-stamped B span + `min_spacing_ms`
+— rule 4's mechanism, just scoped smaller), not the shoulder's full-
+haystack `redraw_p95_votes`. That distinction matters: checked against
+the full-haystack bar, only 39/401 (9.7%) "win" — but that bar answers
+"is anything anywhere real," not "is this one predicted spot real," so
+it understates the effect. Checked against the correctly-scoped narrow
+null, **207/401 (51.6%)** of trust-filtered `not_unique` sides already
+have a real vote cluster at the sibling's lag that would have locked
+under a narrowed search — matching the (~52%) scope estimate above, and
+essentially unchanged from the 14-pair partial read's 52.9%. This is
+proof-of-concept, not a shipped mechanism: it doesn't yet say how narrow
+the search window should be in production, or how to fold a narrowed
+null into rule 4 in general (not just at gaps where we happen to already
+know the answer from the other side).

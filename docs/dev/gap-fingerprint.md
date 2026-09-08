@@ -274,7 +274,7 @@ approaches were refuted by measurement. Full analysis + cost hierarchy: that pla
 | `silence` | from-decode (pass-1 overlay) | collar RMS/peak ratio + relative silence test (border walk-off). `Option` whole block. Spec projector emits `None`; from-decode restores pass-1. Absence means pre-overlay dump or never pass 1 — not "this gap has no collar" |
 | `contour` | from-decode (pass-1 overlay) | `has_anchor_seam_contour`, pre/post envelope flatness. `Option` whole block. Same overlay / absence rule as `silence` |
 | `anchors` | from-decode (pass-1 overlay) | pre/post candidates `{ time, source, prominence, rms_db }`. `Some` including `{ pre: [], post: [] }` means measured, none found. `None` means unmeasured |
-| `constellation` | from-decode, B present | onset-timing `L`-histogram lock test, pre/post shoulders. `Option` whole block. Measured **directly** in the from-decode per-gap loop, not a pass-1 restore — `characterize_gaps`'s Summary-tier build never reaches it, so unlike `silence`/`contour`/`anchors` there is nothing to overlay. Spec projector still emits `None`; absence means oracle-only (no PCM) or a from-decode dump that predates this wiring — see *Constellation fingerprint* below |
+| `constellation` | from-decode, B present, `--fingerprint-constellation` | onset-timing `L`-histogram lock test, pre/post shoulders. `Option` whole block. **Opt-in, off by default** (archived settled 2026-09-08 — see *Constellation fingerprint* below); absent unless the flag is passed. When on: measured **directly** in the from-decode per-gap loop, not a pass-1 restore — `characterize_gaps`'s Summary-tier build never reaches it, so unlike `silence`/`contour`/`anchors` there is nothing to overlay. Spec projector still emits `None`; absence otherwise means oracle-only (no PCM) or a from-decode dump that predates this wiring |
 | `brackets` | full | feasible brackets `{ span, move, seam_*, structure_*, failure_stage, residual_margin_db? }`; `start_frame`/`fill_frames` only on brackets that pass the gate. On `structure_floor`, scores live in `structure_*` (not overloaded onto `seam_*`); on `residual`, `residual_margin_db` carries the applied headroom margin. Gap-level `structure`/`seams` blocks remain omitted under `skip_baseline_placement` (F1) |
 | `structure` / `seams` | **omitted on the production path** | intended: baseline scores; seams carry per-channel + selected channels. Suppressed by `skip_baseline_placement`; deferred as Finding F1 (`archive/TEMP-pipeline-perf-redesign-plan.md` §8g.4a) |
 | `lag_decision` | full, B present | **decision** per-shoulder lag fingerprint registered at **`b_mapped`** (see *Registration & dual-fit*). Wire key was `baseline_lag` before 2026-08-07 (serde alias reads old corpora) |
@@ -800,7 +800,19 @@ registration is always in `lag_decision` below.
 
 ## Constellation fingerprint
 
-`constellation` (pairwise + `DetailTier::Full` only) is a **probe**, not a placement or a gate input:
+**Status: archived, opt-in behind `--fingerprint-constellation` (settled 2026-09-08).** The corpus
+read ([TEMP-constellation-fingerprint-plan.md](TEMP-constellation-fingerprint-plan.md) § 11) found
+that the remaining-skip population this probe targets is dominated by pairs 31 and 50 — both
+step-shaped injected-time regions (a bounded span of B displaced in time relative to A), not a case
+where a better event picker finds a lag dense Pearson missed. That is a different failure mode than
+this probe measures (see [TEMP-injected-time-detector-plan.md](TEMP-injected-time-detector-plan.md)).
+The measurement code and its fixture tests stay in the tree — `constellation: false` is just the
+default now, matching how `--fingerprint-post-window-ladder` / `--fingerprint-pre-window-ladder` are
+opt-in dump-only probes — but a routine `--gap-fingerprints` run no longer pays its per-bracket cost,
+and `constellation` is absent (`None`) unless the flag is passed. Everything below describes the
+field shape when the flag is on; it is otherwise historical/reference, not the default read path.
+
+`constellation` (pairwise + `DetailTier::Full` + `--fingerprint-constellation`) is a **probe**, not a placement or a gate input:
 [TEMP-constellation-fingerprint-plan.md](TEMP-constellation-fingerprint-plan.md) §0 asks whether A and
 B share enough timed onsets, on shoulders where dense Pearson (`lag_decision` / `splice_dualfit`)
 already failed, that a histogram of `L = t_B − t_A` has a unique peak at a decoy rate measured against

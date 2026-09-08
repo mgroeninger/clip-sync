@@ -239,20 +239,22 @@ pub fn build_gap_fingerprint(
         }
 
         if tier == DetailTier::Full {
-            constellation = Some(measure_constellation(
-                index,
-                inputs.a_samples,
-                b_haystack,
-                ch,
-                inputs.sample_rate,
-                rate,
-                refined,
-                total_a,
-                context_frames,
-                cfg,
-                gap_offset_secs,
-                inputs.b_extract_start_secs,
-            ));
+            if cfg.constellation {
+                constellation = Some(measure_constellation(
+                    index,
+                    inputs.a_samples,
+                    b_haystack,
+                    ch,
+                    inputs.sample_rate,
+                    rate,
+                    refined,
+                    total_a,
+                    context_frames,
+                    cfg,
+                    gap_offset_secs,
+                    inputs.b_extract_start_secs,
+                ));
+            }
 
             // Decision-seam lag at `b_mapped` nominal + ±600 ms sweep (ledger A2) — not structure throat.
             lag_decision = Some(lag_at_placement(&LagAtPlacementInput {
@@ -420,6 +422,7 @@ mod tests {
             gap_signature_context_secs: 1.5,
             fill_border_search_secs: 1.0,
             noise_collar_secs: 0.3,
+            constellation: true,
             ..Default::default()
         };
         let inputs = GapInputs {
@@ -501,8 +504,8 @@ mod tests {
         );
     }
 
-    /// Item 3 wiring is gated to pairwise + Full tier — A-only or Summary-tier fingerprints must not
-    /// pay for (or carry) a constellation measurement.
+    /// Item 3 wiring is gated to pairwise + Full tier (with the opt-in flag on) — A-only or
+    /// Summary-tier fingerprints must not pay for (or carry) a constellation measurement.
     #[test]
     fn constellation_is_gated_to_pairwise_full_tier() {
         let rate = 48_000u32;
@@ -510,6 +513,10 @@ mod tests {
         let total = (2.0 * f64::from(rate)) as usize;
         let a = vec![0f32; total];
         let b = vec![0f32; total];
+        let config = FingerprintConfig {
+            constellation: true,
+            ..Default::default()
+        };
         let inputs_a_only = GapInputs {
             a_samples: &a,
             b_haystack: None,
@@ -519,7 +526,7 @@ mod tests {
             reported_end_frame: 2 * total / 3,
             b_extract_start_secs: 0.0,
             gap_offset_secs: 0.0,
-            config: FingerprintConfig::default(),
+            config,
         };
         let fp = build_gap_fingerprint(0, &inputs_a_only, DetailTier::Full, false);
         assert!(
@@ -536,12 +543,40 @@ mod tests {
             reported_end_frame: 2 * total / 3,
             b_extract_start_secs: 0.0,
             gap_offset_secs: 0.0,
-            config: FingerprintConfig::default(),
+            config,
         };
         let fp = build_gap_fingerprint(0, &inputs_summary, DetailTier::Summary, false);
         assert!(
             fp.constellation.is_none(),
             "Summary tier must not measure constellation"
+        );
+    }
+
+    /// `constellation: false` (the shipped default) must not measure, even at pairwise + Full tier —
+    /// the probe is opt-in behind `--fingerprint-constellation` (settled 2026-09-08,
+    /// `docs/dev/TEMP-constellation-fingerprint-plan.md`).
+    #[test]
+    fn constellation_off_by_default_at_pairwise_full_tier() {
+        let rate = 48_000u32;
+        let ch = 1usize;
+        let total = (2.0 * f64::from(rate)) as usize;
+        let a = vec![0f32; total];
+        let b = vec![0f32; total];
+        let inputs = GapInputs {
+            a_samples: &a,
+            b_haystack: Some(&b),
+            channels: ch,
+            sample_rate: rate,
+            reported_start_frame: total / 3,
+            reported_end_frame: 2 * total / 3,
+            b_extract_start_secs: 0.0,
+            gap_offset_secs: 0.0,
+            config: FingerprintConfig::default(),
+        };
+        let fp = build_gap_fingerprint(0, &inputs, DetailTier::Full, false);
+        assert!(
+            fp.constellation.is_none(),
+            "constellation must default to off"
         );
     }
 }
