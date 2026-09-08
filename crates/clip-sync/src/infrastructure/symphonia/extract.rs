@@ -203,14 +203,7 @@ pub(crate) fn scan_mono_buckets_with_state(
 
     let track_id = track.index;
     ensure_track_decoder(path, state, track)?;
-
-    seek_to_window_start(
-        path,
-        state.format.as_mut(),
-        track_id,
-        Duration::ZERO,
-        track.duration,
-    )?;
+    seek_with_recovery(path, state, track, Duration::ZERO)?;
     state
         .decoders
         .get_mut(&track_id)
@@ -486,14 +479,7 @@ pub(crate) fn scan_interleaved_buckets_with_state(
 
     let track_id = track.index;
     ensure_track_decoder(path, state, track)?;
-
-    seek_to_window_start(
-        path,
-        state.format.as_mut(),
-        track_id,
-        Duration::ZERO,
-        track.duration,
-    )?;
+    seek_with_recovery(path, state, track, Duration::ZERO)?;
     state
         .decoders
         .get_mut(&track_id)
@@ -1104,7 +1090,11 @@ fn raw_seek(
 }
 
 /// Seek to `start`, recovering once by reopening `MediaIoState` on seek failure.
-/// `OutOfRange` errors (expected tail-boundary seeks) are not retried.
+///
+/// `OutOfRange` at **t = 0** is not a tail miss: Symphonia's MKV cue walk needs a CuePoint at
+/// or before the target, and the first cue is often the first video keyframe slightly after 0.
+/// Reopen and decode from the first packet instead of treating it as fatal.
+/// Other `OutOfRange` errors (expected tail-boundary seeks) are not retried.
 /// Returns the original (mapped) seek error if reopen fails or the retry also fails.
 pub(super) fn seek_with_recovery(
     path: &Path,
@@ -1122,6 +1112,16 @@ pub(super) fn seek_with_recovery(
         first_err,
         SymphoniaError::SeekError(SeekErrorKind::OutOfRange)
     ) {
+        if start.is_zero() {
+            debug!(
+                path = %path.display(),
+                track = track_id,
+                "Accurate seek to 0.000s is out of cue range; reopening at first packet"
+            );
+            *state = MediaIoState::open(path)?;
+            ensure_track_decoder(path, state, track)?;
+            return Ok(());
+        }
         return Err(map_seek_error(
             path,
             track_id,

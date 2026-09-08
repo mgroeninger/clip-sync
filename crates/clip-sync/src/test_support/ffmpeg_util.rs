@@ -380,6 +380,40 @@ pub fn write_lavfi_sine_container(
         .unwrap_or(false)
 }
 
+/// Audio at t=0, video timestamps starting later so the first MKV CuePoint is after 0.
+/// Symphonia Accurate-seek to 0.000s is then OutOfRange even though audio packets exist.
+#[cfg(feature = "ffmpeg-tests")]
+pub fn write_mkv_audio_with_delayed_video_cues(path: &Path, duration_secs: u32) -> bool {
+    if !ffmpeg_available() {
+        return false;
+    }
+
+    Command::new("ffmpeg")
+        .arg("-y")
+        .arg("-loglevel")
+        .arg("error")
+        .arg("-f")
+        .arg("lavfi")
+        .arg("-i")
+        .arg(format!("sine=frequency=440:duration={duration_secs}"))
+        .arg("-itsoffset")
+        .arg("0.2")
+        .arg("-f")
+        .arg("lavfi")
+        .arg("-i")
+        .arg(format!(
+            "testsrc=duration={duration_secs}:size=160x120:rate=25"
+        ))
+        .args(["-map", "0:a", "-map", "1:v", "-c:a", "aac", "-c:v", "mpeg4"])
+        .arg("-shortest")
+        .arg(path)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
 #[cfg(feature = "he-aac")]
 pub fn encode_he_aac_mp4_from_wav(input_wav: &Path, output: &Path) -> bool {
     if !ffmpeg_available() {

@@ -1167,6 +1167,42 @@ fn backward_seek_mkv_bit_exact() {
     assert_backward_seek_bit_exact(&path, true);
 }
 
+/// Start-clip extract must not Accurate-seek to 0.000s: MKV cues often begin at the first
+/// video keyframe, which can be after t=0, and Symphonia then returns OutOfRange.
+#[cfg(feature = "ffmpeg-tests")]
+#[test]
+fn extract_start_clip_when_mkv_first_cue_is_after_zero() {
+    use crate::test_support::ffmpeg_util;
+
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("cue_after_zero.mkv");
+    if !ffmpeg_util::write_mkv_audio_with_delayed_video_cues(&path, 4) {
+        eprintln!(
+            "skipping extract_start_clip_when_mkv_first_cue_is_after_zero: \
+             ffmpeg unavailable or encode failed"
+        );
+        return;
+    }
+
+    let reader = SymphoniaMediaReader;
+    let mut session = reader
+        .open(&MediaSource::new(&path))
+        .expect("open MKV whose first cue is after 0");
+    let tracks = session.list_tracks().unwrap();
+    let track = tracks
+        .iter()
+        .find(|t| t.decodable)
+        .expect("decodable audio track");
+    let window = ClipWindow::new(Duration::ZERO, Duration::from_secs(1), ClipLabel::Start);
+    let clip = session
+        .extract_mono(track, &window, &NoopProgress, "start")
+        .expect("start-clip extract when Accurate seek to 0.000s is out of cue range");
+    assert!(
+        !clip.samples.is_empty(),
+        "expected decoded start-clip samples"
+    );
+}
+
 /// Phase 0 — MKV tail anchor: verify that `track_decodable_extent` returns a duration
 /// meaningfully shorter than the patched container duration. This anchors the fixture
 /// property that Phase 4 (MediaExtent) uses to fix hold-out placement.

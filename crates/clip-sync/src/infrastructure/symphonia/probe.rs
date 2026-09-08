@@ -17,6 +17,7 @@ use symphonia::core::codecs::audio::well_known::{
 };
 use symphonia::core::codecs::audio::{AudioCodecId, AudioCodecParameters, AudioDecoderOptions};
 use symphonia::core::codecs::CodecParameters;
+use symphonia::core::errors::{Error as SymphoniaError, SeekErrorKind};
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, SeekMode, SeekTo, Track, TrackType};
 use symphonia::core::io::MediaSourceStream;
@@ -147,10 +148,22 @@ fn rewind_format_reader(
         time,
         track_id: None,
     };
-    format
-        .seek(SeekMode::Accurate, seek_to)
-        .map_err(|error| map_seek_error(path, 0, 0.0, error, None))?;
-    Ok(())
+    match format.seek(SeekMode::Accurate, seek_to) {
+        Ok(_) => Ok(()),
+        Err(SymphoniaError::SeekError(SeekErrorKind::OutOfRange)) => {
+            // First CuePoint is often the first video keyframe, slightly after 0. Caller
+            // drops the reusable reader and extract reopens at the first packet.
+            debug!(
+                path = %path.display(),
+                "rewind seek to 0.000s is out of cue range; will reopen on extract"
+            );
+            Err(MediaError::seek_failed(format!(
+                "{}: seek to 0.000s on track 0 failed: requested seek timestamp is out-of-range for stream",
+                path.display()
+            )))
+        }
+        Err(error) => Err(map_seek_error(path, 0, 0.0, error, None)),
+    }
 }
 
 fn is_audio_decodable(params: &symphonia::core::codecs::audio::AudioCodecParameters) -> bool {

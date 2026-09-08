@@ -322,7 +322,7 @@ pub(super) fn run_extract_decode_loop<S: ExtractSink>(
         };
         if seek_mode == ExtractSeekMode::WindowStart {
             seek_with_recovery(path, state, track, seek_start)?;
-        } else {
+        } else if !seek_start.is_zero() {
             seek_to_window_start(
                 path,
                 state.format.as_mut(),
@@ -331,6 +331,8 @@ pub(super) fn run_extract_decode_loop<S: ExtractSink>(
                 track.duration,
             )?;
         }
+        // SequentialFromStart at t=0: attempt > 0 already reopened; do not Accurate-seek to
+        // 0.000s (MKV cue tables often have no CuePoint at or before 0).
         state
             .decoders
             .get_mut(&track_id)
