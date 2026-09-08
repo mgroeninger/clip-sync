@@ -1,6 +1,7 @@
 //! `config` slice of the gap_fingerprint measure folder split.
 
 use crate::application::gap_fingerprint::schema::BorderCapture;
+use crate::domain::lag_decision::{LAG_DECISION_MAX_LAG_MS, LAG_DECISION_WINDOW_SECS};
 use crate::domain::policies::GAP_EDGE_REFINE_SECS;
 
 /// Default coarse envelope half-width (ms) that recenters the ±`lag_max_lag_ms` fine sweep.
@@ -133,11 +134,11 @@ impl Default for FingerprintConfig {
             min_fill_correlation: 0.35,
             fill_absolute_floor: 0.12,
             max_refine_secs: GAP_EDGE_REFINE_SECS,
-            lag_max_lag_ms: 600,
+            lag_max_lag_ms: LAG_DECISION_MAX_LAG_MS,
             lag_envelope_max_lag_ms: DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
             border_capture: BorderCapture::Narrow,
             lag_envelope_window_secs: DEFAULT_LAG_ENVELOPE_WINDOW_SECS,
-            lag_window_secs: 1.0,
+            lag_window_secs: LAG_DECISION_WINDOW_SECS,
             constellation: false,
         }
     }
@@ -187,13 +188,13 @@ impl FingerprintConfig {
             // `b_mapped_start`/`b_mapped_end` share a single rigid per-gap offset (gap_offset_secs) —
             // pre/post are NOT independently registered. The full-corpus rescan showed real steps up
             // to 322 ms from that nominal, so ±200 ms clips genuine peaks off the search edge and
-            // manufactures false dead-shoulder/decorrelated verdicts. 600 ms matches the width already
-            // validated offline (SPLICE_EXP_FINE_LAG_MS=600, §1b-i/§3.6).
-            lag_max_lag_ms: 600,
+            // manufactures false dead-shoulder/decorrelated verdicts. Same pin as production A4
+            // (`LAG_DECISION_MAX_LAG_MS`); not a CLI/config key.
+            lag_max_lag_ms: LAG_DECISION_MAX_LAG_MS,
             lag_envelope_max_lag_ms: dump.lag_envelope_max_lag_ms,
             border_capture: dump.border_capture,
             lag_envelope_window_secs: dump.lag_envelope_window_secs,
-            lag_window_secs: 1.0,
+            lag_window_secs: LAG_DECISION_WINDOW_SECS,
             constellation: dump.constellation,
         }
     }

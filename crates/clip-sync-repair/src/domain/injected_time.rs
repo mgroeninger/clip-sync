@@ -31,12 +31,13 @@ pub struct InjectedTimeReport {
     pub runs: Vec<InjectedTimeRun>,
 }
 
-/// Walk already-sorted measured gaps (`gap_index`, `pre_frac_lag_ms`, `post_frac_lag_ms`).
+/// Walk measured gaps (`gap_index`, `pre_frac_lag_ms`, `post_frac_lag_ms`).
 ///
-/// Consecutive means sorted `gap_index` among **measured** gaps differs by exactly 1. A missing
-/// shoulder (the gap is not in `measured`), an unplanned index, or a dip at or below `t_ms`
-/// breaks a run. Isolated spikes do not warn. `a_start_secs` / `a_end_secs` on the returned
-/// runs are 0; the production pre-pass stamps report times.
+/// Consecutive means sorted `gap_index` among **measured** gaps differs by exactly 1. Input
+/// order does not matter; this sorts by `gap_index`. A missing shoulder (the gap is not in
+/// `measured`), an unplanned index, or a dip at or below `t_ms` breaks a run. Isolated spikes
+/// do not warn. `a_start_secs` / `a_end_secs` on the returned runs are 0; the production
+/// pre-pass stamps report times.
 pub fn find_injected_time_runs(
     measured: &[(usize, f64, f64)],
     t_ms: f64,
@@ -45,6 +46,9 @@ pub fn find_injected_time_runs(
     if n == 0 || measured.is_empty() {
         return Vec::new();
     }
+
+    let mut measured = measured.to_vec();
+    measured.sort_by_key(|(index, _, _)| *index);
 
     let mut runs = Vec::new();
     let mut run_first_i: Option<usize> = None;
@@ -185,6 +189,13 @@ mod tests {
         assert_eq!(runs_at_pin(&measured), vec![(9, 10), (12, 13)]);
     }
 
+    /// Consecutive is defined on `gap_index`, not input order.
+    #[test]
+    fn unsorted_measured_still_finds_a_consecutive_run() {
+        let measured = [(8, 0.0, 1688.4), (6, 0.0, 36.0), (7, 0.0, 1122.2)];
+        assert_eq!(runs_at_pin(&measured), vec![(7, 8)]);
+    }
+
     /// Case 3 sequence-pass floor: p98.7 ≈ 42 ms everywhere plus the 63 ms isolates.
     #[test]
     fn case_3_noise_floor_vectors_are_silent() {
@@ -293,25 +304,27 @@ mod tests {
         );
         let island: Vec<_> = measured
             .iter()
-            .filter(|(i, pre, post)| {
-                *i >= 2 && *i <= 4 && (*post - *pre).abs() > INJECTED_TIME_DELTA_MS
-            })
+            .filter(|(i, _, _)| (2..=4).contains(i))
             .copied()
             .collect();
-        assert!(
-            island.len() >= 2,
-            "island deltas should stay elevated, measured={measured:?}"
+        let island_indices: Vec<_> = island.iter().map(|(i, _, _)| *i).collect();
+        assert_eq!(
+            island_indices,
+            vec![2, 3, 4],
+            "all island gaps need both shoulders, measured={measured:?}"
         );
+        for (i, pre, post) in &island {
+            let d = (post - pre).abs();
+            assert!(
+                d > INJECTED_TIME_DELTA_MS,
+                "island gap {i} should stay elevated, delta={d} measured={measured:?}"
+            );
+        }
         let runs = runs_at_pin(&measured);
         assert_eq!(
-            runs.len(),
-            1,
-            "one bounded island, got {runs:?} from {measured:?}"
-        );
-        assert!(
-            runs[0].0 >= 2 && runs[0].1 <= 4,
-            "run should sit in the island gaps 2–4, got {:?}",
-            runs[0]
+            runs,
+            vec![(2, 4)],
+            "run should be the whole measured island, got {runs:?} from {measured:?}"
         );
     }
 
@@ -424,5 +437,29 @@ mod tests {
             value.get("injected_time").is_none(),
             "absent when the pass does not flag: {value}"
         );
+    }
+
+    #[test]
+    fn patch_summary_serializes_injected_time_run_shape() {
+        let summary = crate::domain::PatchSummary::from_outcomes(vec![]).with_injected_time(Some(
+            InjectedTimeReport {
+                runs: vec![InjectedTimeRun {
+                    first_gap_index: 7,
+                    last_gap_index: 8,
+                    a_start_secs: 1234.5,
+                    a_end_secs: 1238.0,
+                }],
+            },
+        ));
+        let value = serde_json::to_value(&summary).expect("json");
+        let run = &value["injected_time"]["runs"][0];
+        assert_eq!(run["first_gap_index"], 7);
+        assert_eq!(run["last_gap_index"], 8);
+        assert_eq!(run["a_start_secs"], 1234.5);
+        assert_eq!(run["a_end_secs"], 1238.0);
+        assert!(run.get("pre").is_none());
+        assert!(run.get("post").is_none());
+        assert!(run.get("delta").is_none());
+        assert!(run.get("peak_r").is_none());
     }
 }

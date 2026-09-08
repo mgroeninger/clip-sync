@@ -77,7 +77,6 @@ pub(super) fn detect_injected_time(
         };
         measured.push((region.gap_index, pre.frac_lag_ms, post.frac_lag_ms));
     }
-    measured.sort_by_key(|(index, _, _)| *index);
     let runs = find_injected_time_runs(&measured, INJECTED_TIME_DELTA_MS, INJECTED_TIME_MIN_RUN);
     stamp_injected_time_report_times(runs, &times)
 }

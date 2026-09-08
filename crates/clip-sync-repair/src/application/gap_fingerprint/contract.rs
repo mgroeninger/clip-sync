@@ -327,10 +327,11 @@ mod tests {
     /// [`quoted_constants_still_match_the_code`]: if the code moves and the string does not, the
     /// contract lies to exactly the readers who trust it most.
     ///
-    /// Two of these are **config defaults, not consts** — `lag_max_lag_ms`, `lag_window_secs` and
-    /// `fill_seam_search_secs` are tunable. The contracts therefore say *"defaults"* and name the
-    /// recorded wire fields (`window_ms` / `max_lag_ms`) that carry the value actually used, rather
-    /// than asserting a number that an override would falsify. Do not "simplify" that wording away.
+    /// `fill_seam_search_secs` is a config default (tunable). Fine-sweep `lag_window_secs` /
+    /// `lag_max_lag_ms` are the production A4 pin (`LAG_DECISION_*`); dump defaults must follow
+    /// them. The contracts still say *"defaults"* and name the recorded wire fields
+    /// (`window_ms` / `max_lag_ms`) that carry the value actually used. Do not "simplify"
+    /// that wording away.
     #[test]
     fn quoted_c2_constants_still_match_the_code() {
         use super::super::measure::probes::{SEAM_PROBE_ENV_BIN_MS, SEAM_PROBE_FINE_LAG_MS};
@@ -364,10 +365,15 @@ mod tests {
         // wrong even though nothing is renamed.
         let defaults = super::super::measure::FingerprintConfig::default();
         assert_eq!(
-            defaults.lag_window_secs, 1.0,
-            "lag_window_secs default moved"
+            defaults.lag_window_secs,
+            crate::domain::LAG_DECISION_WINDOW_SECS,
+            "lag_window_secs default drifted from production A4 fine sweep"
         );
-        assert_eq!(defaults.lag_max_lag_ms, 600, "lag_max_lag_ms default moved");
+        assert_eq!(
+            defaults.lag_max_lag_ms,
+            crate::domain::LAG_DECISION_MAX_LAG_MS,
+            "lag_max_lag_ms default drifted from production A4 fine sweep"
+        );
         assert_eq!(
             defaults.max_refine_secs,
             crate::domain::policies::GAP_EDGE_REFINE_SECS,
