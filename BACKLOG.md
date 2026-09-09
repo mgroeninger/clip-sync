@@ -109,18 +109,6 @@ say it is conservative, which is not the same as saying it is right.
 | **Re-label `2026-08-08-edge-listen`** | Pairs 7/8/12 are swapped. Required before quoting "lowest labelled clean" as a bound | Relabelled |
 | Residual seam `g` (`a ≈ g·b`) as the production gain | Candidate replacement — estimates level from the **seam** rather than whole-fill RMS. Needs verdict plumbing plus corpus rules for when the estimate is trustworthy | Evaluated against the sweep |
 
-## Repeat-at-seam prior
-
-Durable reading: [gap-fill-modes.md](docs/gap-fill-modes.md) § Fit unified search and
-[json-output.md](docs/json-output.md) § `fit_terms`. `anchor_penalty` is a configuration zero and
-needs no work. Do **not** lower `REPEAT_CORR_THRESHOLD` — [settled.md](docs/dev/settled.md) § A;
-the constant split that would precondition any retune is recorded in that row's *Reopen if* cell, and
-is not work until something asks to raise the threshold.
-
-| Item | Next action | Done when |
-|------|-------------|-----------|
-| **Delete arm 3** | Unreachable by construction (`REPEAT_SUM_CEILING = 2 × REPEAT_CORR_THRESHOLD`). Delete it; do **not** repair the ceiling | Gone |
-
 ## Donor registration
 
 From the 2026-08 equivalence-band / donor-registration review. Donor Apply and the fill-level check

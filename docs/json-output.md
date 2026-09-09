@@ -599,7 +599,8 @@ placement only — a penalty that demoted a rival below the winner leaves no tra
 it removed. And `repeat_penalty: 0.0` does **not** mean the repeat correlation had no effect on this gap: the
 same hard-coded `0.55` threshold is separately a stop condition for short-bracket extension, which is a veto
 this weight neither scales nor disables, and which changes the delivered fill length rather than any reported
-term. Open leftovers: [BACKLOG.md](../BACKLOG.md) § *Repeat-at-seam prior is inert on every winner*.
+term. Verdicts and the constant split that would precondition any retune:
+[dev/settled.md](dev/settled.md) § A.
 
 Two asymmetries matter when reading them. `late_start_penalty` is **one field for two
 directions**: a *forward* slide is scaled by `fill_fit_late_start_penalty_scale` (default `1.0`), a *backward*

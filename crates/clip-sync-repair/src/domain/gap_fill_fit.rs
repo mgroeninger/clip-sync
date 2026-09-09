@@ -45,7 +45,6 @@ fn band_agrees_with_naive(naive: f64, band: f64) -> bool {
 
 const REPEAT_CORR_THRESHOLD: f64 = 0.55;
 const REPEAT_SEAM_WEAK: f64 = 0.45;
-const REPEAT_SUM_CEILING: f64 = 1.1;
 
 /// Level F perf instrumentation (docs/dev/repair-perf.md §1): split ONE candidate evaluation into its
 /// component costs. `unified_refine_*` is the pipeline's single largest exclusive cost and has no child spans,
@@ -529,10 +528,18 @@ fn repeat_correlations_at_placement(
     RepeatCorrelations { pre, post }
 }
 
-/// The **cheap** half: the branch logic combining the repeat pair with the seam pair. Unchanged from the
-/// original `repeat_penalty_at_placement` body. It is `wave_min`-dependent and therefore genuinely
-/// per-candidate — the banded path must still run it, which is why `Banded` carries correlations rather than a
-/// finished penalty.
+/// The **cheap** half: the branch logic combining the repeat pair with the seam pair. It is
+/// `wave_min`-dependent and therefore genuinely per-candidate — the banded path must still run it, which is
+/// why `Banded` carries correlations rather than a finished penalty.
+///
+/// Two live arms: weak seams with a high repeat on either side, and a lopsided post seam with a high post
+/// repeat. A third arm (`repeat_pre + repeat_post > 1.1` with weak seams, penalising the mean) was **deleted
+/// 2026-09-09 as dead code, not retuned**: its ceiling was exactly `2 × REPEAT_CORR_THRESHOLD`, so a sum over
+/// it forces `repeat_max > REPEAT_CORR_THRESHOLD`, and it carried the same `wave_min < REPEAT_SEAM_WEAK` test
+/// as arm 1 — its guard was a strict subset of arm 1's, which shadowed it for every input including NaN and
+/// infinities. Behaviour is therefore unchanged. Do **not** reintroduce it by "repairing" the ceiling; the
+/// calibration that would precondition any repeat retune is `docs/gap-fill-modes.md` § Fit unified search
+/// and `docs/dev/settled.md` § A.
 ///
 /// Lever 1b(a) (TEMP-production-repair-perf-plan.md §2.5): the pre/post **seam** correlations are passed in —
 /// the caller already computed them (`wave_min = pre_seam.min(post_seam)`) via `waveform_seams_at_start`
@@ -553,7 +560,6 @@ fn repeat_penalty_from_correlations(
         post: repeat_post,
     } = corr;
     let repeat_max = repeat_pre.max(repeat_post);
-    let repeat_sum = repeat_pre + repeat_post;
     let asymmetric_post_dup = repeat_post > REPEAT_CORR_THRESHOLD
         && post_seam > REPEAT_CORR_THRESHOLD
         && post_seam - pre_seam > 0.35;
@@ -561,8 +567,6 @@ fn repeat_penalty_from_correlations(
         repeat_max
     } else if asymmetric_post_dup {
         repeat_post
-    } else if repeat_sum > REPEAT_SUM_CEILING && wave_min < REPEAT_SEAM_WEAK {
-        repeat_sum * 0.5
     } else {
         0.0
     }
