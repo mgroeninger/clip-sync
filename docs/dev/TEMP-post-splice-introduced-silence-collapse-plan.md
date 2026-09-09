@@ -1,12 +1,12 @@
 # TEMP — Post-splice check: collapse introduced silence on skip gaps
 
-**Status:** draft, 2026-08-27. One Change. **Startable the day**
-[TEMP-early-shoulder-locks-collapse-skip-plan.md](archive/TEMP-early-shoulder-locks-collapse-skip-plan.md)
-ships capture + `visit_shoulders_abut` (this Change fills that visit; it does
-not re-search and does not invent a second skip walk).
+**Status:** latched 2026-09-08. One Change. Skip-gate capture +
+`visit_shoulders_abut` already ship
+([TEMP-early-shoulder-locks-collapse-skip-plan.md](archive/TEMP-early-shoulder-locks-collapse-skip-plan.md));
+this Change fills that visit. Deferred, not blocked — the predecessor
+shipped 2026-08-31.
 
-**Tracked as:** [BACKLOG.md](../../BACKLOG.md) § *Fill placement* → *Post-splice
-introduced-silence collapse*.
+**Tracked as:** [settled.md](settled.md) § C.
 
 **Companions:** skip identity, capture, lookalike tags, and the post-splice
 visit hook

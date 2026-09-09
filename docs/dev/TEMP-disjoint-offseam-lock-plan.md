@@ -1,10 +1,10 @@
 # TEMP — Disjoint off-seam lock
 
-**Status:** draft, 2026-09-06. Experiment, not a Change. Fingerprint path
-only (Tier-3). Does **not** touch `domain/seam_locks.rs`.
+**Status:** latched 2026-09-08, not started. Valid experiment; deferred, not
+refuted. Fingerprint path only (Tier-3). Does **not** touch
+`domain/seam_locks.rs`.
 
-**Tracked as:** [BACKLOG.md](../../BACKLOG.md) § *Post-join defects (pairs 31
-and 50)* → *50/g10*.
+**Tracked as:** [settled.md](settled.md) § C.
 
 **Predecessor (do not re-run):**
 [archive/TEMP-seam-anchor-relocation-plan.md](archive/TEMP-seam-anchor-relocation-plan.md).

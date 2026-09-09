@@ -76,7 +76,8 @@ fn shoulders_abut_row(spec: &GapRepairSpec) -> Option<ShouldersAbutSkip> {
 ///
 /// It confirms the row's destination frames still name real A samples and nothing more; A is not
 /// shortened here. The successor
-/// (`docs/dev/TEMP-post-splice-introduced-silence-collapse-plan.md`) puts the concat-confirm and
+/// (`docs/dev/TEMP-post-splice-introduced-silence-collapse-plan.md`, latched
+/// `docs/dev/settled.md` § C) puts the concat-confirm and
 /// the optional drain in this body, which is why it runs after the splice loop — by then every
 /// neighbouring fill is in, so a drain would be cutting from the timeline the user will hear.
 /// Takes A by shared reference for the same reason the visit is record-only: nothing here writes.

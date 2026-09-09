@@ -160,11 +160,11 @@ reaches this table ([pipeline.md](../pipeline.md) phases 2–3; § Silence-chara
 > searches beyond ±600 ms or measures bridge length" — was true when written and is why the step gap
 > read `High`/`balanced` end to end; it is false now, and a reader who acts on it will look for a
 > detector that already exists. What is *still* undone is the cut: the refusal leaves A's silence in
-> place, and draining it is the successor Change
-> ([TEMP-post-splice-introduced-silence-collapse-plan.md](TEMP-post-splice-introduced-silence-collapse-plan.md)).
+> place, and draining it is latched
+> ([TEMP-post-splice-introduced-silence-collapse-plan.md](TEMP-post-splice-introduced-silence-collapse-plan.md);
+> [settled.md](settled.md) § C).
 > Derivation, probe numbers, and resolution:
-> [archive/TEMP-31g7-gap-shape-vocabulary.md](archive/TEMP-31g7-gap-shape-vocabulary.md) §9; work items:
-> BACKLOG § *Fill placement*.
+> [archive/TEMP-31g7-gap-shape-vocabulary.md](archive/TEMP-31g7-gap-shape-vocabulary.md) §9.
 >
 > What survives either hole as a definitional fix: `Decorrelated` overclaims ("sources genuinely
 > differ" from a bounded sweep) and needs a distinct "not found in reach" reading (findings

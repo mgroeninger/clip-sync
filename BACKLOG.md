@@ -20,9 +20,8 @@ Last updated: 2026-09-08.
 - Shipped work is recorded in `docs/dev/archive/*` and git history.
 - Out of scope: [PLAN.md](PLAN.md) § Out of scope.
 
-**Next:** the highest-priority *defect* on the board is
-[50/g10 — echo + stutter at the anchor-seam join](#post-join-defects-pairs-31-and-50) — mechanism
-explained 2026-09-03, three fix approaches ruled out, no working fix yet.
+**Next:** 50/g10’s disjoint-offseam experiment is latched
+([settled.md](docs/dev/settled.md) § C). Remaining post-join rows below are startable.
 
 ---
 
@@ -33,8 +32,9 @@ Two ear-confirmed wrong patches, two distinct defects. Findings:
 [archive/TEMP-31g7-model-vs-findings.md](docs/dev/archive/TEMP-31g7-model-vs-findings.md) §8.
 Durable `lag_decision` behaviour: [gap-fingerprint.md](docs/dev/gap-fingerprint.md) § *`lag_decision`*.
 The 31/g7 **pair-sequence** skip classifier is **blocked** — [settled.md](docs/dev/settled.md) § D.
-The **per-gap** keep-path refuse (early locks, abut → skip) is the row below. Seven
-diagnostic-field and conditional-ear-label leftovers moved to [settled.md](docs/dev/settled.md)
+The **per-gap** keep-path refuse (early locks, abut → skip) shipped 2026-08-31; the
+post-splice drain of that silence is latched — [settled.md](docs/dev/settled.md) § C.
+Seven diagnostic-field and conditional-ear-label leftovers moved to [settled.md](docs/dev/settled.md)
 § B / § C on 2026-08-24.
 
 **Already categorized (no row).** 26/g6 is Hole 1 (well-posed landmark ignored; axis-2 `waveform_min`
@@ -52,10 +52,8 @@ gap that sits in the end-clip window). Hole 1 stays n=1.
 
 | Item | Next action | Done when |
 |------|-------------|-----------|
-| **Post-splice introduced-silence collapse** | [TEMP-post-splice-introduced-silence-collapse-plan.md](docs/dev/TEMP-post-splice-introduced-silence-collapse-plan.md) — fill `visit_shoulders_abut`: concat-confirm, **warn by default**, drain only under `--collapse-introduced-silence`; current mux. Starts the day the skip-gate row ships. **Carries a drain hazard (2026-08-30)**: the captured list is 2 gaps and **11/g9 is a false positive** — no downstream trail, 1 s probe locks both shoulders at nominal — so draining it would delete 599 ms of A that was never introduced silence. It wears no lookalike tag (`clamped` / `edge_pinned` / `program_quiet` are zero corpus-wide), so it arrives looking like 31/g7 | Default 31/g7 is `shoulders_abut` + warning, A length unchanged; flag on is `collapsed` (hole gone); fills never reindexed; **and 11/g9 does not drain**, refused attributably — either `join_dead` from the concat-confirm on an 11/g9-shaped fixture, or an explicit step-agreement admission filter (§1 of the plan has both, with numbers) |
 | **47/g14 — failure-to-move** | Ear-label as its own question. Did a licensed landmark say move, and search stay put? | Labelled. **Yes** → its own fork (not 26's "moved to the wrong tooth"). **No / cannot tell** → drop or re-categorize |
 | **31/g8 — Narrow-capture pre miss** | Capture, not the tree above. Write a TEMP. Shipped default `BorderCapture::Narrow` declines the pre at envelope +800 ms / r 0.816; Wide keeps −1146.1 / r 0.974 because the shared capture's 12% trim puts `D` at 1984 ms vs Narrow's 13 ms. Numbers: [archive/TEMP-envelope-adaptive-widen-plan.md](docs/dev/archive/TEMP-envelope-adaptive-widen-plan.md) deciding measurement 2 | A decision exists that is not "flip the default" ([settled.md](docs/dev/settled.md) § B) |
-| **Rigid shoulder-offset remainder: 11/g9 still skip** | G6 (trim-0 arm plus post-grow) shipped and converted the rest of the cohort — history in [settled.md](docs/dev/settled.md) § E. **11/g9** fails `bridge_frames > 0` (`shoulders_abut`) — collapse row above | 11/g9 either drains under the collapse row above or stays skip |
 | **α / `border_standoff_secs`** | Not Hole 1's 1.45 s. Fill sits ~25 ms late vs both shoulders; hypothesis is production's 0.35 s standoff. Run existing arms through `scripts/measure/diff-patch-adjustments.ps1`, or drop the item | Confirmed, or dropped |
 
 ## Post-join defects (pairs 31 and 50)
@@ -65,15 +63,14 @@ them. Promoted 2026-08-24 from the census and pair-50 notes, both now archived:
 [archive/TEMP-collapsed-bridge-census-2026-08-20.md](docs/dev/archive/TEMP-collapsed-bridge-census-2026-08-20.md)
 Q7 / Q11 and
 [archive/TEMP-pair50-anchor-seam-outcomes-2026-08-21.md](docs/dev/archive/TEMP-pair50-anchor-seam-outcomes-2026-08-21.md)
-Q1 (mechanism explained 2026-09-03, fix still open — see row below / [settled.md](docs/dev/settled.md) § A for
-ruled-out approaches) / Q2. Both pairs' steps have opposite signs
+Q1 (mechanism explained 2026-09-03; disjoint-offseam probe latched — [settled.md](docs/dev/settled.md) § C;
+ruled-out approaches in § A) / Q2. Both pairs' steps have opposite signs
 (−1.15 s vs +2.789 s) and share nothing else — same tree step 3/4 as above, not a shared class until
 a remnant comparison says so.
 
 | Item | Next action | Done when |
 |------|-------------|-----------|
 | **31/g10 — audible blip where g8 and g11 are clean** (Medium) | First: re-listen and pin locus — **post join** vs the fill's own end boundary. Then: overlap-only post remnant for g10 **and** g11 (pair-50 technique), compare residual lags. 31/g8's Narrow miss is the capture row above, not this | Locus pinned. **Same remnant as 50/g10** → one join class. **Different** → keep separate. **Cannot tell** → stop (n=1 vs two clean twins) |
-| **50/g10 — echo (post join) + stutter (pre join), quiet-dialogue-over-noise gap** (High) | Mechanism explained 2026-09-03: production's rigid anchor offset (2.821 s) sits 16 ms from the true pre plateau and 10 ms from the true post plateau — a real two-sided registration compromise, not a single bad seam. Dual-fit declines because the post seam is locally ambiguous (`post_seam_r` 0.248, `post_seam_prom` 0.0049 despite `post_seam_z` 5.61). **Ruled out:** sub-frame waveform-lag refinement (settled.md § A); grow-post to 1000 ms; drift/time-warp (2026-06-29); GCC-PHAT on the same ±30 ms window (settled.md § A); the 10 s-on-seam take-first funnel ([archive/TEMP-seam-anchor-relocation-plan.md](docs/dev/archive/TEMP-seam-anchor-relocation-plan.md) — instrument did not test off-seam lock). **Next:** [TEMP-disjoint-offseam-lock-plan.md](docs/dev/TEMP-disjoint-offseam-lock-plan.md) — 1 s Pearson on A disjoint from production’s seam template, vs a same-window on-seam control. Carry-back is out of scope until that probe finds a lock at 50/g10 post | Disjoint probe has a yes/no at 50/g10 post. **Yes** and already-good seams agree → carry-back TEMP. **No**, or the probe disagrees on already-good seams → manual-review flag, this row closed |
 | **50/g11–g13 — skips between two correctly-resolved flanks** | First question only: at the true +2.8 s, `donor_interior_aligned.continuous` is `false` on g11/g12 (strict count two; g13/g17 gain an aligned donor that also reads discontinuous) while flanks g10/g14 stay continuous and `nominal` stays `true`. If that donor reading explains the skip, stop. Only if the donor **does** bridge: g11/g12 have no `best_attempt` — "no A-side candidate" vs "none beat baseline". Gate numbers if needed: g11 −0.018/0.393, g12 −0.072/0.567, g13 anchor attempt 0.188/0.226 | **Donor fails to bridge** → honest skip, close. **Donor bridges** → missing `best_attempt` attributed |
 
 ## Fill normalize boosts against a non-local reference

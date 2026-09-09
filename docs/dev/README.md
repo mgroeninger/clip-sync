@@ -64,8 +64,8 @@ is untracked — that is a bug in the catalog, not a state a doc may sit in.
 
 | Draft | What it is | Tracked as |
 |-------|-----------|-----------|
-| [TEMP-post-splice-introduced-silence-collapse-plan.md](TEMP-post-splice-introduced-silence-collapse-plan.md) | After splice, fill `visit_shoulders_abut`: concat-confirm → **warn by default**; `--collapse-introduced-silence` drains A PCM and the current mux takes that buffer | [BACKLOG.md](../../BACKLOG.md) § *Fill placement* |
-| [TEMP-disjoint-offseam-lock-plan.md](TEMP-disjoint-offseam-lock-plan.md) | Diagnostic: 1 s Pearson lock on A **disjoint** from production’s seam template, vs a same-window on-seam control. The § 0 test the predecessor did not run | [BACKLOG.md](../../BACKLOG.md) § *Post-join defects* → 50/g10 |
+| [TEMP-post-splice-introduced-silence-collapse-plan.md](TEMP-post-splice-introduced-silence-collapse-plan.md) | After splice, fill `visit_shoulders_abut`: concat-confirm → **warn by default**; `--collapse-introduced-silence` drains A PCM and the current mux takes that buffer | [settled.md](settled.md) § C — latched |
+| [TEMP-disjoint-offseam-lock-plan.md](TEMP-disjoint-offseam-lock-plan.md) | Diagnostic: 1 s Pearson lock on A **disjoint** from production’s seam template, vs a same-window on-seam control. The § 0 test the predecessor did not run | [settled.md](settled.md) § C — latched |
 | [TEMP-flac-output-plan.md](TEMP-flac-output-plan.md) | In-process `--flac` lossless output, peer of `--wav`. Motivated by the RIFF `u32` data-chunk limit | [BACKLOG.md](../../BACKLOG.md) § *Repair R6* |
 | [TEMP-nway-donor-alignment-plan.md](TEMP-nway-donor-alignment-plan.md) | Repair one damaged copy from **multiple** donors with sparse non-overlapping damage | [settled.md](settled.md) § C — latched, no corpus |
 
