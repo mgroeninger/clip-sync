@@ -37,10 +37,10 @@ pub struct DumpOptions {
     /// `--fingerprint-pre-window-ladder` (`docs/dev/archive/TEMP-dual-fit-pre-window-ladder-plan.md`).
     /// Independent of `diagnostics` and of `post_window_ladder` — dump-only, no Tier-3 split.
     pub pre_window_ladder: bool,
-    /// `--fingerprint-constellation` (`docs/dev/TEMP-constellation-fingerprint-plan.md`, archived
+    /// `--fingerprint-constellation` (`docs/dev/archive/TEMP-constellation-fingerprint-plan.md`, archived
     /// settled 2026-09-08: the corpus's remaining-skip failures are step-shaped injected-time
     /// regions — pairs 31 and 50 — not a lag a better event picker can hit; see
-    /// `docs/dev/TEMP-injected-time-detector-plan.md`). Off by default so a routine
+    /// `docs/dev/archive/TEMP-injected-time-detector-plan.md`). Off by default so a routine
     /// `--gap-fingerprints` run does not pay this probe's per-bracket cost; kept opt-in rather than
     /// removed in case a future matcher revisits the histogram. Independent of `diagnostics` — dump
     /// only, no Tier-3 split.

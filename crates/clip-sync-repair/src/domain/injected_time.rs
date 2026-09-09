@@ -3,7 +3,7 @@
 //! Detects a **bounded** extra/missing-program island from a run of consecutive planned gaps
 //! whose ungated pre/post shoulder lags disagree. Construction of those lags is
 //! [`crate::domain::lag_decision::shoulder_lags_at_b_mapped`]; this module only walks the
-//! sequence. See `docs/dev/TEMP-injected-time-detector-plan.md`.
+//! sequence. See `docs/dev/archive/TEMP-injected-time-detector-plan.md`.
 
 use serde::Serialize;
 

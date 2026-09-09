@@ -11,9 +11,8 @@
 > the code (fixture-tested, §9 items 1–4) stays in the tree gated behind
 > `--fingerprint-constellation` (off by default) rather than deleted — see
 > [../gap-fingerprint.md](../gap-fingerprint.md) § *Constellation fingerprint*.
-> Successor: [../TEMP-injected-time-detector-plan.md](../TEMP-injected-time-detector-plan.md),
-> which targets detecting the injected-time regions directly. See
-> [../settled.md](../settled.md) § A.
+> Successor: [TEMP-injected-time-detector-plan.md](TEMP-injected-time-detector-plan.md)
+> (shipped 2026-09-08 as A4). See [../settled.md](../settled.md) § A.
 
 **Status:** draft, 2026-09-06. Experiment, not a Change. Fingerprint path
 only. Does **not** touch `domain/seam_locks.rs`, `GapSignature`, or unified

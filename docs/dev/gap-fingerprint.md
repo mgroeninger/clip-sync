@@ -801,11 +801,11 @@ registration is always in `lag_decision` below.
 ## Constellation fingerprint
 
 **Status: archived, opt-in behind `--fingerprint-constellation` (settled 2026-09-08).** The corpus
-read ([TEMP-constellation-fingerprint-plan.md](TEMP-constellation-fingerprint-plan.md) § 11) found
+read ([archive/TEMP-constellation-fingerprint-plan.md](archive/TEMP-constellation-fingerprint-plan.md) § 11) found
 that the remaining-skip population this probe targets is dominated by pairs 31 and 50 — both
 step-shaped injected-time regions (a bounded span of B displaced in time relative to A), not a case
 where a better event picker finds a lag dense Pearson missed. That is a different failure mode than
-this probe measures (see [TEMP-injected-time-detector-plan.md](TEMP-injected-time-detector-plan.md) — a pre-patch file-level warning, not a matcher).
+this probe measures (see [archive/TEMP-injected-time-detector-plan.md](archive/TEMP-injected-time-detector-plan.md) — shipped A4, a pre-patch file-level warning, not a matcher).
 The measurement code and its fixture tests stay in the tree — `constellation: false` is just the
 default now, matching how `--fingerprint-post-window-ladder` / `--fingerprint-pre-window-ladder` are
 opt-in dump-only probes — but a routine `--gap-fingerprints` run no longer pays its per-bracket cost,
@@ -813,7 +813,7 @@ and `constellation` is absent (`None`) unless the flag is passed. Everything bel
 field shape when the flag is on; it is otherwise historical/reference, not the default read path.
 
 `constellation` (pairwise + `DetailTier::Full` + `--fingerprint-constellation`) is a **probe**, not a placement or a gate input:
-[TEMP-constellation-fingerprint-plan.md](TEMP-constellation-fingerprint-plan.md) §0 asks whether A and
+[archive/TEMP-constellation-fingerprint-plan.md](archive/TEMP-constellation-fingerprint-plan.md) §0 asks whether A and
 B share enough timed onsets, on shoulders where dense Pearson (`lag_decision` / `splice_dualfit`)
 already failed, that a histogram of `L = t_B − t_A` has a unique peak at a decoy rate measured against
 that shoulder's own redraw — not whether some bin is merely nonempty, and not whether the peak

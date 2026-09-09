@@ -76,11 +76,11 @@ pub struct Args {
     #[arg(long)]
     pub fingerprint_pre_window_ladder: bool,
 
-    /// Constellation lag-histogram probe (`docs/dev/TEMP-constellation-fingerprint-plan.md`): per-
+    /// Constellation lag-histogram probe (`docs/dev/archive/TEMP-constellation-fingerprint-plan.md`): per-
     /// bracket onset picker + `L`-histogram lock test, dumped as the `constellation` group. Off by
     /// default — archived settled 2026-09-08 (the remaining-skip failures the probe targeted turned
     /// out to be step-shaped injected-time regions, pairs 31 and 50, not a lag a better matcher can
-    /// hit; see `docs/dev/TEMP-injected-time-detector-plan.md`). Kept opt-in, not removed, for future
+    /// hit; see `docs/dev/archive/TEMP-injected-time-detector-plan.md`). Kept opt-in, not removed, for future
     /// audit dumps. Independent of `--fingerprint-diagnostics`. Requires `--gap-fingerprints DIR`.
     #[cfg(feature = "calibration")]
     #[arg(long)]

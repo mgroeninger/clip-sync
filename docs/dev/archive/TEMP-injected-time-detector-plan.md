@@ -1,31 +1,40 @@
 # TEMP — Injected-time detector (pre-patch warning)
 
+> **Archived 2026-09-08. Shipped.** A4 at **T = 150 ms, N = 2**: after A+B
+> decode, before characterize, one file-level `Warning:` if two or more
+> consecutive planned gaps disagree by more than 150 ms at `b_mapped`.
+> Warn and continue. Current behaviour:
+> [cli-output.md](../../cli-output.md) § Timeline / duration warnings;
+> [json-output.md](../../json-output.md) `patch.injected_time`. See
+> [settled.md](../settled.md) § E (T/N pin) and § C (scan-time dry-run
+> latch).
+
 **Status:** implemented, 2026-09-08. Corpus read done
 (constellation dump, no re-scan); ship branch picked — **T = 150 ms,
 N = 2**. Production pre-pass is wired in `PatchAudio::run_with_decoded`.
 
-**Tracked as:** [BACKLOG.md](../../BACKLOG.md) § *Post-join defects (pairs 31
-and 50)* — those pairs are the existence proofs. This Change is a
-file-level operator warning (sibling of A1–A3), not a join-quality
-fix and not a fill.
+**Tracked as:** shipped; the BACKLOG row is deleted. Pairs 31 and 50
+remain as join/skip defects — they were existence proofs for (T, N),
+not the identity of the warning. This Change is a file-level operator
+warning (sibling of A1–A3), not a join-quality fix and not a fill.
 
 **Predecessor (context, not superseded):**
-[archive/TEMP-constellation-fingerprint-plan.md](archive/TEMP-constellation-fingerprint-plan.md)
+[TEMP-constellation-fingerprint-plan.md](TEMP-constellation-fingerprint-plan.md)
 § 11: the remaining-skip population that probe aimed at is dominated
 by step-shaped **injected-time** regions, which no lag matcher locates.
 This plan detects that file flaw and **warns**, before the patch
 search spends the time those regions cost.
 
 **Companions:**
-[TEMP-disjoint-offseam-lock-plan.md](TEMP-disjoint-offseam-lock-plan.md)
+[TEMP-disjoint-offseam-lock-plan.md](../TEMP-disjoint-offseam-lock-plan.md)
 (one shoulder, one gap, off-seam lock — complementary, not this
-warning); [cli-output.md](../cli-output.md) § Timeline / duration
-warnings (A1–A3); [json-output.md](../json-output.md) additive
+warning); [cli-output.md](../../cli-output.md) § Timeline / duration
+warnings (A1–A3); [json-output.md](../../json-output.md) additive
 revision in the same Change.
 
 **Media hygiene:** pair index + dump `gNNN` (0-based) in this note.
 User-facing copy and CLI arguments use **gap numbers** (1-based, the
-table `#` column) — [gap-vocabulary.md](gap-vocabulary.md) § *Gap
+table `#` column) — [gap-vocabulary.md](../gap-vocabulary.md) § *Gap
 numbering*. Corpus pairs are existence proofs and negative controls
 for (T, N). They are not the identity of the warning.
 
@@ -101,7 +110,7 @@ exactly the gaps where the divergence is loudest.
 
 Existence proofs (dump indices, not copy): pair 31 g7–g8; pair 50
 g9–g13 and g15–g18 (g14 is a one-gap dip — see § 6). Collapse's
-introduced-silence visit ([TEMP-post-splice-introduced-silence-collapse-plan.md](TEMP-post-splice-introduced-silence-collapse-plan.md))
+introduced-silence visit ([TEMP-post-splice-introduced-silence-collapse-plan.md](../TEMP-post-splice-introduced-silence-collapse-plan.md))
 is a different hole: A has dead time B does not, picture was not
 padded, the honest repair is drain. This warning does not drain.
 
@@ -109,7 +118,7 @@ padded, the honest repair is drain. This warning does not drain.
 
 ## 2. Warning contract (normative)
 
-Same family as A1–A3 ([cli-output.md](../cli-output.md) § Timeline /
+Same family as A1–A3 ([cli-output.md](../../cli-output.md) § Timeline /
 duration warnings). Pin the table, the copy, and the JSON key in
 those docs when this ships. Today that section says “up to three
 `Warning:` lines”; this Change is **A4**.
@@ -150,7 +159,7 @@ on).
 
 **Streams.** Mid-run: one `phase()` line on stderr, same text as the
 stdout `Warning:`, as soon as the pre-pass flags. That is an
-intentional exception to [cli-output.md](../cli-output.md)
+intentional exception to [cli-output.md](../../cli-output.md)
 “no duplication” / “stderr is operational”: the value is aborting
 **before** `char_gate_search`. Do **not** also `tracing::warn` the
 same line — Auto would print it twice. `--quiet` suppresses
@@ -165,7 +174,7 @@ append it on stdout from `infrastructure/cli/output.rs` the way
 `tracing::warn`. JSON has no human `Warning:` array (same rule as
 A1–A3).
 
-**JSON** (additive optional key on [`PatchSummary`](../json-output.md),
+**JSON** (additive optional key on [`PatchSummary`](../../json-output.md),
 absent when the pass does not flag; scan-only has no `patch` object).
 Same pattern as `program_gain` / `shoulders_abut`: the domain summary
 is what `--format json` already serializes. Not a `GapTags` dump.

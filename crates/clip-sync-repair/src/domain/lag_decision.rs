@@ -1,5 +1,5 @@
 //! Mono Full-tier `lag_decision` construction, shared by the fingerprint dump and the
-//! injected-time pre-pass (`docs/dev/TEMP-injected-time-detector-plan.md` § 5).
+//! injected-time pre-pass (`docs/dev/archive/TEMP-injected-time-detector-plan.md` § 5).
 //!
 //! Moved from `application::gap_fingerprint` so production repair can call the same
 //! `shoulder_lags_at_b_mapped` the dump uses for mono `lag_decision`, without importing
@@ -662,7 +662,7 @@ pub const LAG_DECISION_MAX_LAG_MS: u32 = 600;
 /// every `frac_lag_ms` and invalidate the injected-time (T, N) pin.
 ///
 /// Moved here from fingerprint `measure/pcm.rs` so that crate is not the production source of
-/// truth (`docs/dev/TEMP-injected-time-detector-plan.md` § 5).
+/// truth (`docs/dev/archive/TEMP-injected-time-detector-plan.md` § 5).
 pub const PROBE_BORDER_STANDOFF_FRAMES: usize = 0;
 
 /// Seconds form of [`PROBE_BORDER_STANDOFF_FRAMES`] at the rate the probe applied it.

@@ -203,8 +203,8 @@ pub struct RepairConfig {
     /// independent of `fingerprint_diagnostics` and of `fingerprint_post_window_ladder`.
     #[serde(default)]
     pub fingerprint_pre_window_ladder: bool,
-    /// Constellation lag-histogram probe (`docs/dev/TEMP-constellation-fingerprint-plan.md`, archived
-    /// settled 2026-09-08 — see `docs/dev/TEMP-injected-time-detector-plan.md`). Off by default;
+    /// Constellation lag-histogram probe (`docs/dev/archive/TEMP-constellation-fingerprint-plan.md`,
+    /// archived settled 2026-09-08 — see `docs/dev/archive/TEMP-injected-time-detector-plan.md`). Off by default;
     /// independent of `fingerprint_diagnostics` and the window-ladder probes.
     #[serde(default)]
     pub fingerprint_constellation: bool,
