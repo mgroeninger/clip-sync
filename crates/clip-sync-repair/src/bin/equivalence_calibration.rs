@@ -141,23 +141,22 @@
 //! being gated on a dump budget. Only `--replay` accepts the scan shape — the divergence table and
 //! `--band` compare against `equivalence_diagnostic`, which no scan report has.
 //!
-//! **Known defect, found 2026-09-10 — read `--replay`'s mismatch count and `apply` column with
-//! this in mind.** Under `Apply` (the shipped default), the verdict's `donor_span_secs` records the
-//! **registered** window, not the nominal one (`domain::gap_equivalence`: "the window actually
-//! measured, which is the registered one"). The replay feeds that span back into
-//! `register_donor_window` as `b_mapped`, so on an Apply-era record it re-registers a window that is
-//! already lag-corrected. Two consequences:
+//! **The `Apply` shift, and why `--replay` backs it out (fixed 2026-09-10).** Under `Apply` — the
+//! shipped default — the verdict's `donor_span_secs` records the **registered** window, not the
+//! nominal one. Replayed as if it were the nominal map, it re-registered a window that was already
+//! lag-corrected: the search landed at lag 0, the completeness gate called the record broken on
+//! arithmetic (624 of 968 gaps on a 51-pair scan set, 8 of 13 on a dump set), and the donor census
+//! got shifted a second time, so the `apply` column read a window production never measured. The
+//! replay now recovers the mode from `envelopes.b_nominal_bin` — where the nominal map landed — and
+//! subtracts the lag before re-registering. The `span` column reports which window each record held.
+//! Same corpus after the fix: 80 mismatches, 9 flips (was 624 and 23; the old flip count was an
+//! artifact and is not comparable).
 //!
-//!   - The completeness gate reports `lag L→0` on almost every gap and exits 1. That is arithmetic,
-//!     not evidence that the record fails to reproduce itself. Measured over 51 scan reports:
-//!     624 of 968 replayed gaps; over a 12-pair dump set, 8 of 13.
-//!   - `donor@0` is really the **registered** census (it matches the recorded
-//!     `donor_silence_fraction` exactly on all 968), which makes `donor@ℓ` a *second* shift and the
-//!     `apply` column — and its FLIP/abstain tallies — a reading at a window production never used.
-//!
-//! The record carries what a fix needs: `envelopes.b_nominal_bin` is the nominal window's index in
-//! the recorded B slice, so the nominal span can be recovered without knowing the mode. Until then,
-//! treat the flip count as unverified. Tracked in `BACKLOG.md` § Donor registration.
+//! **Residual, open.** Those remaining 80 are a different and much smaller thing: 105 of the 113
+//! reported field diffs are below 1e-6 — last-bit noise against a comparison made at
+//! `f64::EPSILON` — leaving about six records whose correlations genuinely move, two of them by a
+//! bin count. Do not loosen the tolerance before that handful is understood; a replay that claims
+//! exactness should be exact. Tracked in `BACKLOG.md` § Donor registration.
 //!
 //! **Tense note (2026-08-04).** `Apply` is now the production default
 //! (`RepairConfig::apply_donor_registration`), so on a dump taken since then the `apply` column is
@@ -191,7 +190,7 @@ use serde::Deserialize;
 use clip_sync_repair::application::gap_fingerprint::GapCorpus;
 use clip_sync_repair::domain::gap_equivalence::{
     register_donor_window, DonorRegistrationParams, EnvelopeSlice, GapEquivalenceClass,
-    GapEquivalenceVerdict,
+    GapEquivalenceVerdict, EQUIVALENCE_CONTEXT_SECS,
 };
 use clip_sync_repair::domain::policies::BlockLevel;
 
@@ -1072,15 +1071,83 @@ struct Replay {
     reproduces: bool,
     /// Why not, when it did not.
     detail: String,
-    /// Donor fraction at the nominal window, re-counted from the record.
+    /// Donor fraction at the **nominal** window, re-counted from the record. The nominal window is
+    /// reconstructed by [`recorded_span_mode`], not read off `donor_span_secs`, which under `Apply`
+    /// holds the registered one.
     frac_nominal: f64,
     /// …and at the registered lag — the reading `Apply` would have taken.
     frac_registered: f64,
+    /// Whichever of the two the record itself measured, so it is the one that must reproduce
+    /// [`GapEquivalenceVerdict::donor_silence_fraction`]: `frac_registered` on an `Apply`-era
+    /// record, `frac_nominal` otherwise.
+    frac_as_recorded: f64,
+    /// Which window `donor_span_secs` turned out to hold.
+    span_mode: SpanMode,
     /// Whether `Apply` would drop this gap, and whether that differs from what production decided.
     apply_drop: bool,
     /// `Apply` declined to place the window (`peak_r` below the abstain threshold), which is a keep
     /// for a different reason than the registration finding an occupied donor.
     abstained: bool,
+}
+
+/// Which window a verdict's `donor_span_secs` turned out to hold.
+///
+/// The field is documented as "the window actually measured", and under
+/// [`DonorRegistrationMode::Apply`] — the shipped default since 2026-08-04 — that is the **registered**
+/// window, already shifted by `lag_ms`. Replaying it as the nominal map would re-register a window
+/// that is already lag-corrected: the search lands at lag 0 and the completeness gate calls the
+/// record broken on arithmetic, while the donor census gets shifted a second time. The record does
+/// not carry its mode, but `envelopes.b_nominal_bin` says where the nominal map landed, so running
+/// the recorded span through the same bin lookup registration uses answers the question directly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SpanMode {
+    /// The recorded span is the nominal map. Either `Apply` was off, or the lag was 0 and the two
+    /// windows coincide.
+    Nominal,
+    /// The recorded span is the nominal map shifted by `lag_ms`; subtracting it recovers the nominal.
+    Applied,
+    /// It is neither, so the nominal window cannot be recovered and nothing is assumed.
+    Unresolved,
+}
+
+impl SpanMode {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Nominal => "nominal",
+            Self::Applied => "applied",
+            Self::Unresolved => "??",
+        }
+    }
+}
+
+/// The bin of `levels` that registration's window lookup starts at for a donor window beginning at
+/// `span_lo`. Mirrors `window_indices` over the context-padded window, by block centre — the same
+/// rule, so the index is comparable with the recorded `b_nominal_bin`.
+fn window_start_bin(levels: &[BlockLevel], span_lo: f64) -> usize {
+    let lo = span_lo - EQUIVALENCE_CONTEXT_SECS;
+    levels.partition_point(|b| (b.start_secs + b.end_secs) / 2.0 < lo)
+}
+
+/// Which window `recorded_lo` is, given where the nominal map landed. At lag 0 the two are the same
+/// window and the question does not arise.
+fn recorded_span_mode(
+    b_levels: &[BlockLevel],
+    recorded_lo: f64,
+    nominal_bin: usize,
+    lag_blocks: i64,
+) -> SpanMode {
+    if lag_blocks == 0 {
+        return SpanMode::Nominal;
+    }
+    let bin = window_start_bin(b_levels, recorded_lo) as i64;
+    let nominal = nominal_bin as i64;
+    if bin == nominal {
+        SpanMode::Nominal
+    } else if bin == nominal + lag_blocks {
+        SpanMode::Applied
+    } else {
+        SpanMode::Unresolved
+    }
 }
 
 /// Replay one gap. `None` when the verdict carries nothing to replay — no registration, no envelopes,
@@ -1089,13 +1156,24 @@ fn replay_gap(v: &GapEquivalenceVerdict, min_envelope_r: f64) -> Option<Replay> 
     let reg = v.donor_registration.as_ref()?;
     let env = reg.envelopes.as_ref()?;
     let (core_lo, core_hi) = v.a_span_secs?;
-    let (donor_lo, donor_hi) = v.donor_span_secs?;
+    let (recorded_lo, recorded_hi) = v.donor_span_secs?;
     let floor = v.gap_floor_db?;
     let t = v.thresholds?;
     let a_below = v.a_below_noise_db?;
 
     let a_levels = levels_from(&env.a, env.bin_ms);
     let b_levels = levels_from(&env.b, env.bin_ms);
+
+    // Back out the shift before anything reads the window. Feeding an `Apply`-era span in as the
+    // nominal map re-registers an already-registered window, which is how this replay used to report
+    // `lag L→0` on two thirds of the corpus and count flips at a window production never measured.
+    let lag_secs = reg.lag_ms / 1000.0;
+    let span_mode = recorded_span_mode(&b_levels, recorded_lo, env.b_nominal_bin, reg.lag_blocks);
+    let shift = match span_mode {
+        SpanMode::Applied => lag_secs,
+        SpanMode::Nominal | SpanMode::Unresolved => 0.0,
+    };
+    let (donor_lo, donor_hi) = (recorded_lo - shift, recorded_hi - shift);
 
     // The production function, on the recorded inputs. Not a reimplementation — that is the point.
     let params = DonorRegistrationParams::default();
@@ -1110,6 +1188,12 @@ fn replay_gap(v: &GapEquivalenceVerdict, min_envelope_r: f64) -> Option<Replay> 
     let (reproduces, detail) = match &redone {
         Some(r) => {
             let mut diffs = Vec::new();
+            if span_mode == SpanMode::Unresolved {
+                diffs.push(format!(
+                    "recorded donor span is neither the nominal map nor it shifted by lag {}",
+                    reg.lag_blocks
+                ));
+            }
             if r.lag_blocks != reg.lag_blocks {
                 diffs.push(format!("lag {}→{}", reg.lag_blocks, r.lag_blocks));
             }
@@ -1127,11 +1211,14 @@ fn replay_gap(v: &GapEquivalenceVerdict, min_envelope_r: f64) -> Option<Replay> 
         None => (false, "registration did not run on the record".to_string()),
     };
 
-    let lag_secs = reg.lag_ms / 1000.0;
     let (sn, tn) = donor_census(&b_levels, donor_lo, donor_hi, floor)?;
     let (sr, tr) = donor_census(&b_levels, donor_lo + lag_secs, donor_hi + lag_secs, floor)?;
     let frac_nominal = sn as f64 / tn as f64;
     let frac_registered = sr as f64 / tr as f64;
+    let frac_as_recorded = match span_mode {
+        SpanMode::Applied => frac_registered,
+        SpanMode::Nominal | SpanMode::Unresolved => frac_nominal,
+    };
 
     // `Apply`'s decision, from the gate's own rule: keep only a dropout over an occupied donor.
     // Abstaining keeps too, but it is a refusal to place the window rather than a reading of it.
@@ -1149,6 +1236,8 @@ fn replay_gap(v: &GapEquivalenceVerdict, min_envelope_r: f64) -> Option<Replay> 
         detail,
         frac_nominal,
         frac_registered,
+        frac_as_recorded,
+        span_mode,
         apply_drop,
         abstained,
     })
@@ -1201,12 +1290,12 @@ fn print_replay(path: &Path, args: &Args) -> ExitCode {
     println!(
         "Replaying recorded registration envelopes. `apply` is what DonorRegistrationMode::Apply \
          decides (abstain below peak_r {:.2}) — the shipped default since 2026-08-04, so on a \
-         current dump this is the gate's own decision.\n",
+         current dump this is the gate's own decision. `span` says which window the record's \n         donor_span_secs held; on an `applied` record the shift is backed out before replaying, \n         so donor@0 is the nominal reading either way.\n",
         args.replay_min_envelope_r
     );
     println!(
-        "  {:<10} {:<16} {:<5} {:<5} {:<7} {:<7} {:<7} {:<16} {:<7} replay",
-        "gap", "class", "drop", "lag", "peak_r", "donor@0", "donor@ℓ", "apply", "source"
+        "  {:<10} {:<16} {:<5} {:<5} {:<7} {:<7} {:<7} {:<8} {:<16} {:<7} replay",
+        "gap", "class", "drop", "lag", "peak_r", "donor@0", "donor@ℓ", "span", "apply", "source"
     );
 
     let mut tally = ReplayTally::default();
@@ -1231,9 +1320,10 @@ fn print_replay(path: &Path, args: &Args) -> ExitCode {
             if !r.reproduces {
                 tally.mismatched += 1;
             }
+            // Against the window the record measured, not always the nominal one — see `SpanMode`.
             let frac_ok = v
                 .donor_silence_fraction
-                .is_some_and(|f| (f - r.frac_nominal).abs() < 1e-9);
+                .is_some_and(|f| (f - r.frac_as_recorded).abs() < 1e-9);
             if !frac_ok {
                 tally.frac_mismatched += 1;
             }
@@ -1249,13 +1339,13 @@ fn print_replay(path: &Path, args: &Args) -> ExitCode {
                 (true, true) => "ok".to_string(),
                 (true, false) => format!(
                     "⚠ donor fraction {:.3} ≠ recorded {:.3}",
-                    r.frac_nominal,
+                    r.frac_as_recorded,
                     v.donor_silence_fraction.unwrap_or(f64::NAN)
                 ),
                 (false, _) => format!("⚠ {}", r.detail),
             };
             println!(
-                "  {:<10} {:<16} {:<5} {:<5} {:<7.3} {:<7.3} {:<7.3} {:<16} {:<7} {status}",
+                "  {:<10} {:<16} {:<5} {:<5} {:<7.3} {:<7.3} {:<7.3} {:<8} {:<16} {:<7} {status}",
                 format!("{label}/{index}"),
                 class_label(v.class),
                 v.drop,
@@ -1263,6 +1353,7 @@ fn print_replay(path: &Path, args: &Args) -> ExitCode {
                 reg.peak_r,
                 r.frac_nominal,
                 r.frac_registered,
+                r.span_mode.label(),
                 format!(
                     "{}{}{}",
                     r.apply_drop,
@@ -1630,6 +1721,68 @@ mod tests {
         );
         // Occupied donor + A dropout ⇒ production keeps; registered donor is silent ⇒ Apply drops.
         assert!(!v.drop && r.apply_drop, "and that is a class flip");
+    }
+
+    /// **The `Apply` shift, backed out.** A record written under the shipped default holds the
+    /// *registered* donor window, so replaying it as the nominal map re-registers an already-
+    /// registered span: the search lands at lag 0 and the completeness gate fails a record that is
+    /// perfectly intact. The same fixture shifted by its own lag must therefore replay identically to
+    /// the unshifted one, and be recognised as shifted.
+    #[test]
+    fn replay_backs_out_an_applied_donor_shift() {
+        let nominal = verdict_with_registration();
+        let base = replay_gap(&nominal, 0.70).expect("replayable");
+        assert_eq!(base.span_mode, SpanMode::Nominal);
+
+        let mut v = nominal.clone();
+        let lag_secs = v.donor_registration.as_ref().unwrap().lag_ms / 1000.0;
+        let (lo, hi) = v.donor_span_secs.unwrap();
+        v.donor_span_secs = Some((lo + lag_secs, hi + lag_secs));
+
+        let r = replay_gap(&v, 0.70).expect("replayable");
+        assert_eq!(r.span_mode, SpanMode::Applied, "the shift must be detected");
+        assert!(
+            r.reproduces,
+            "and backed out before re-registering: {}",
+            r.detail
+        );
+        assert_eq!(r.frac_nominal, base.frac_nominal);
+        assert_eq!(r.frac_registered, base.frac_registered);
+    }
+
+    /// The recorded fraction is measured at the window the record used, so the check that it
+    /// reproduces has to follow the shift too. Reading it at the nominal window on an `Apply` record
+    /// would fail every gap the registration actually moved.
+    #[test]
+    fn recorded_fraction_is_checked_at_the_window_the_record_measured() {
+        let mut v = verdict_with_registration();
+        let lag_secs = v.donor_registration.as_ref().unwrap().lag_ms / 1000.0;
+        let (lo, hi) = v.donor_span_secs.unwrap();
+        v.donor_span_secs = Some((lo + lag_secs, hi + lag_secs));
+
+        let r = replay_gap(&v, 0.70).expect("replayable");
+        assert_eq!(r.frac_as_recorded, r.frac_registered);
+        assert_ne!(
+            r.frac_as_recorded, r.frac_nominal,
+            "the fixture's two windows differ, which is what makes the check meaningful"
+        );
+    }
+
+    /// A span that is neither window is not silently replayed at one of them — the tool says it could
+    /// not place the window and fails the record.
+    #[test]
+    fn replay_flags_a_donor_span_it_cannot_place() {
+        let mut v = verdict_with_registration();
+        let (lo, hi) = v.donor_span_secs.unwrap();
+        v.donor_span_secs = Some((lo + 0.9, hi + 0.9));
+
+        let r = replay_gap(&v, 0.70).expect("replayable");
+        assert_eq!(r.span_mode, SpanMode::Unresolved);
+        assert!(
+            !r.reproduces && r.detail.contains("neither"),
+            "{}",
+            r.detail
+        );
     }
 
     /// Below the abstain threshold `Apply` declines to place the window, which is a **keep** — and a

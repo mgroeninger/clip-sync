@@ -790,14 +790,24 @@ document and named in the table's `source` column. The answer is identical; the 
 a scan-only run never pays the per-bracket anchor oracle. Cross-checked on pair 31 gap 10, where the
 dump and the scan report replay to the same lag, `peak_r` and mismatch detail.
 
-**What that wider read then exposed (2026-09-10).** `--replay`'s own completeness gate is measuring a
-tautology on any record written under `Apply`: `donor_span_secs` is the **registered** window, and the
-replay hands it back to `register_donor_window` as the nominal map, so the re-registration lands at
-lag 0 and the gate calls it a mismatch. 624 of 968 replayed gaps on the 51-pair scan set, 8 of 13 on a
-12-pair dump set — the same rate either shape, so it predates the scan reader. The same double shift
-makes the table's `donor@ℓ` a second displacement, so the `apply` column's flip and abstain counts are
-taken at a window production never measured. `envelopes.b_nominal_bin` records the nominal window's
-index in the B slice and is the way back; until it is used, the flip count is not a number to quote.
+**What that wider read then exposed, and the fix (2026-09-10).** `--replay`'s completeness gate was
+measuring a tautology on any record written under `Apply`: `donor_span_secs` holds the **registered**
+window, and the replay handed it back as the nominal map, so re-registration landed at lag 0 and the
+gate called the record broken. It fired on 624 of 968 gaps on the 51-pair scan set and 8 of 13 on a
+12-pair dump set — the same rate either shape, so it predated the scan reader. The same double shift
+made the table's `donor@l` a second displacement, so the `apply` flip and abstain counts were read at
+a window production never measured.
+
+The replay now recovers the mode from `envelopes.b_nominal_bin`, which records where the nominal map
+landed, and subtracts the lag before re-registering. A new `span` column reports what each record
+held: on the 51-pair set, 588 records are `applied` and 381 `nominal` (an edge-touching core still
+classifies at the nominal map even under `Apply`). Mismatches fall to 80 and flips to 9. The old
+figure of 23 flips was an artifact and is not comparable.
+
+The residual 80 are a separate, open question: 105 of the 113 reported field diffs are below 1e-6,
+which is last-bit noise against a comparison made at `f64::EPSILON`, leaving about six records whose
+correlations genuinely move — one by 0.24, two with the bin count changing. The tolerance is the
+obvious suspect and the wrong thing to change first.
 
 ## Lag fingerprint
 
