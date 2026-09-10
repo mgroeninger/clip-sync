@@ -167,6 +167,9 @@ cargo test -p clip-sync-repair --features diagnostic-tests --test diag_energy_ma
 cargo run -p clip-sync-repair --features calibration --bin equivalence-calibration -- gap-files/equiv
 # Replay donor registration from recorded envelopes (exit 1 on mismatch; gaps without envelopes named):
 cargo run -p clip-sync-repair --features calibration --bin equivalence-calibration -- gap-files/equiv --replay
+# --replay also reads plain scan JSON (one report, or a directory of <label>.json reports) - the same
+# production verdicts under scan.gap_equivalence, without paying for a fingerprint dump:
+cargo run -p clip-sync-repair --features calibration --bin equivalence-calibration -- gap-files/<scan-run> --replay
 # Cross-check listen WAVs vs an Observe/Apply dump (pair dirs matched by stem):
 cargo run -p clip-sync-repair --features calibration --bin listen-registration -- gap-files/<listen-run> --observe-dir gap-files/<observe-run>
 # Wide-window (+/-2 s) independent lag sweep of both shoulders on the listen WAVs. Measures only —

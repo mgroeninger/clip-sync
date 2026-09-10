@@ -4,7 +4,7 @@ Open follow-up work for `clip-sync`. Architecture: [PLAN.md](PLAN.md). Repair pi
 [docs/pipeline.md](docs/pipeline.md). Test corpus: [docs/dev/corpus-validation.md](docs/dev/corpus-validation.md).
 Error handling: [docs/error-mapping.md](docs/error-mapping.md).
 
-Last updated: 2026-09-08.
+Last updated: 2026-09-10.
 
 **How this doc works**
 
@@ -116,7 +116,7 @@ shipped. The conditional donor test is **blocked on a count** — [settled.md](d
 
 | Item | Next action | Done when |
 |------|-------------|-----------|
-| **`equivalence-calibration --replay` reads `GapScanJson`** | Today `--replay` loads only fingerprint `corpus.json` / `GapCorpus`, but plain scan JSON already carries the same registration + envelope fields on every gap (`scripts/measure/scan-registration.ps1`). Teach the reader the scan shape. Small reader change, no new measurement | Apply flip/abstain counts come from the production classifier, not a hand reconstruction |
+| **`--replay` re-registers an already-registered window** | Found 2026-09-10 by replaying 51 scan reports. Under `Apply` (default) `donor_span_secs` is the **registered** window; `replay_gap` passes it to `register_donor_window` as the nominal map, so the completeness gate reads `lag L→0` on 624 of 968 gaps (and 8 of 13 on a dump set — not a scan-reader artifact) and exits 1 on arithmetic. Same shift makes `donor@ℓ` a second displacement, so the `apply` FLIP/abstain tallies are read at a window production never used. Recover the nominal span from `envelopes.b_nominal_bin` (recorded for exactly this) rather than from the verdict's span | The gate's mismatch count means "did not reproduce", and the flip count is quotable |
 | **33/17 placement-path investigation** | Which path placed 33/17's fill is **unrecorded** — the dump's `brackets` array is the oracle enumeration, not the candidate production selected. Instrument the selected candidate / fit path | The path is recorded. If anything is then tuned, the likely site is the **acceptance floor**, not the comparator |
 | **33/17 is a real-but-inaudible dropout whose patch is a defect** | A hits digital zero, B keeps a −68 dB click bed; the patch lands 8 dB above its own surroundings, 36 ms misplaced, writing 380 ms past the gap end. Seam/splice path, independent of the equivalence band | Characterized |
 

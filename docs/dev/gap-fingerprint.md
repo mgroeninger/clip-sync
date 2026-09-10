@@ -781,6 +781,24 @@ rather than a known offset. A merely "divergent" gap was seen at ~2 % pre-I1/I3 
 defect. See
 [gap-vocabulary.md](gap-vocabulary.md) § *Silence-character pre-gate*.
 
+That diff, and `--band`, need a **dump**: both read `equivalence_diagnostic`, which only a
+`--gap-fingerprints` run produces. `--replay` does not — it re-runs registration on the recorded
+envelopes of the **production** verdict, and a scan-only report
+(`--format json`, `scripts/measure/scan-registration.ps1`) carries exactly those under
+`scan.gap_equivalence`. So since 2026-09-10 `--replay` accepts either shape, detected from the
+document and named in the table's `source` column. The answer is identical; the cost is not, because
+a scan-only run never pays the per-bracket anchor oracle. Cross-checked on pair 31 gap 10, where the
+dump and the scan report replay to the same lag, `peak_r` and mismatch detail.
+
+**What that wider read then exposed (2026-09-10).** `--replay`'s own completeness gate is measuring a
+tautology on any record written under `Apply`: `donor_span_secs` is the **registered** window, and the
+replay hands it back to `register_donor_window` as the nominal map, so the re-registration lands at
+lag 0 and the gate calls it a mismatch. 624 of 968 replayed gaps on the 51-pair scan set, 8 of 13 on a
+12-pair dump set — the same rate either shape, so it predates the scan reader. The same double shift
+makes the table's `donor@ℓ` a second displacement, so the `apply` column's flip and abstain counts are
+taken at a window production never measured. `envelopes.b_nominal_bin` records the nominal window's
+index in the B slice and is the way back; until it is used, the flip count is not a number to quote.
+
 ## Lag fingerprint
 
 [`lag_correlation_curve`] sweeps the seam's lag-0 Pearson ([`clip_sync::normalized_correlation`])

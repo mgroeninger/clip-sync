@@ -124,6 +124,41 @@
 //!     "how often would the registered lag flip a class?" once cost a full corpus re-dump. It is now
 //!     a read.
 //!
+//! **`--replay` also reads plain scan JSON** (2026-09-10). A scan-only report
+//! (`clip-sync-repair --format json`, as `scripts/measure/scan-registration.ps1` writes it) carries
+//! the very same production verdicts under `scan.gap_equivalence`, registration and envelopes
+//! included, because donor registration is computed during the scan from block levels alone. So the
+//! replay's inputs are:
+//!
+//!   equivalence-calibration --replay out_dir/corpus.json     # one dump
+//!   equivalence-calibration --replay gap-files/<corpora>     # numbered dump dirs
+//!   equivalence-calibration --replay run/pair-07.json        # one scan report
+//!   equivalence-calibration --replay run/                    # a directory of <label>.json reports
+//!
+//! The shape is detected from the document; the `source` column names which one each row came from.
+//! This matters for cost, not for the answer: a scan-only run skips the per-bracket anchor oracle
+//! that dominates a `--gap-fingerprints` dump, so Apply flip/abstain counts over many pairs stop
+//! being gated on a dump budget. Only `--replay` accepts the scan shape — the divergence table and
+//! `--band` compare against `equivalence_diagnostic`, which no scan report has.
+//!
+//! **Known defect, found 2026-09-10 — read `--replay`'s mismatch count and `apply` column with
+//! this in mind.** Under `Apply` (the shipped default), the verdict's `donor_span_secs` records the
+//! **registered** window, not the nominal one (`domain::gap_equivalence`: "the window actually
+//! measured, which is the registered one"). The replay feeds that span back into
+//! `register_donor_window` as `b_mapped`, so on an Apply-era record it re-registers a window that is
+//! already lag-corrected. Two consequences:
+//!
+//!   - The completeness gate reports `lag L→0` on almost every gap and exits 1. That is arithmetic,
+//!     not evidence that the record fails to reproduce itself. Measured over 51 scan reports:
+//!     624 of 968 replayed gaps; over a 12-pair dump set, 8 of 13.
+//!   - `donor@0` is really the **registered** census (it matches the recorded
+//!     `donor_silence_fraction` exactly on all 968), which makes `donor@ℓ` a *second* shift and the
+//!     `apply` column — and its FLIP/abstain tallies — a reading at a window production never used.
+//!
+//! The record carries what a fix needs: `envelopes.b_nominal_bin` is the nominal window's index in
+//! the recorded B slice, so the nominal span can be recovered without knowing the mode. Until then,
+//! treat the flip count as unverified. Tracked in `BACKLOG.md` § Donor registration.
+//!
 //! **Tense note (2026-08-04).** `Apply` is now the production default
 //! (`RepairConfig::apply_donor_registration`), so on a dump taken since then the `apply` column is
 //! what the gate *did*, not a hypothetical. On an older dump — or one taken with
@@ -166,7 +201,8 @@ use clip_sync_repair::domain::policies::BlockLevel;
 )]
 struct Args {
     /// A `--gap-fingerprints` corpus (dir or `corpus.json`) for the per-gap table, OR a parent directory
-    /// of numbered corpora for a one-line-per-pair roll-up.
+    /// of numbered corpora for a one-line-per-pair roll-up. With `--replay`, also a scan-only report
+    /// (`--format json`) or a directory of them.
     path: PathBuf,
 
     /// Margin-band census instead of the divergence table: which gaps production **drops** that sit
@@ -187,9 +223,10 @@ struct Args {
     #[arg(long, default_value_t = 1)]
     band_donor_blocks: usize,
 
-    /// Replay the recorded registration envelopes: check the dump reproduces its own registration and
-    /// donor fraction, and report what `DonorRegistrationMode::Apply` decides (what the gate *did*,
-    /// on a dump taken with the 2026-08-04 default; the counterfactual on an older one).
+    /// Replay the recorded registration envelopes: check the record reproduces its own registration
+    /// and donor fraction, and report what `DonorRegistrationMode::Apply` decides (what the gate
+    /// *did*, on a record taken with the 2026-08-04 default; the counterfactual on an older one).
+    /// Reads a fingerprint corpus or a scan-only JSON report.
     #[arg(long)]
     replay: bool,
 
@@ -568,20 +605,14 @@ fn print_rollup(parent: &Path) -> ExitCode {
     };
     if dirs.is_empty() {
         eprintln!(
-            "no corpora found under {} (expected numbered subdirs each with corpus.json)",
-            parent.display()
+            "no corpora found under {} (expected numbered subdirs each with corpus.json){}",
+            parent.display(),
+            scan_report_hint(parent)
         );
         return ExitCode::from(2);
     }
     // Numeric-aware order (1, 2, …, 10) with a lexical fallback.
-    dirs.sort_by_key(|p| {
-        let name = p
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .to_string();
-        (name.parse::<u64>().unwrap_or(u64::MAX), name)
-    });
+    dirs.sort_by_key(|p| numeric_key(p.file_name().and_then(|n| n.to_str()).unwrap_or("")));
 
     println!(
         "  {:<16} {:<6} {:<5} {:<8} {:<8} verdict",
@@ -743,14 +774,7 @@ fn collect_corpora(path: &Path) -> Result<Vec<(String, PathBuf)>, String> {
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.is_dir() && p.join("corpus.json").is_file())
         .collect();
-    dirs.sort_by_key(|p| {
-        let name = p
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .to_string();
-        (name.parse::<u64>().unwrap_or(u64::MAX), name)
-    });
+    dirs.sort_by_key(|p| numeric_key(p.file_name().and_then(|n| n.to_str()).unwrap_or("")));
     Ok(dirs
         .into_iter()
         .map(|d| {
@@ -760,6 +784,172 @@ fn collect_corpora(path: &Path) -> Result<Vec<(String, PathBuf)>, String> {
                 .unwrap_or("?")
                 .to_string();
             (name, d.join("corpus.json"))
+        })
+        .collect())
+}
+
+/// The scan-only report shape written by `clip-sync-repair --format json`
+/// (`scripts/measure/scan-registration.ps1`): `{"scan": {…, "gap_equivalence": [...]}, "patch": …}`.
+///
+/// `scan.gap_equivalence` is literally `Vec<GapEquivalenceVerdict>` — the same production verdicts a
+/// `--gap-fingerprints` dump copies into `equivalence_production` — so reading it needs no second
+/// definition of anything, and the replay is the same computation on the same record. What a scan
+/// report does **not** carry is the diagnostic second opinion, so it feeds `--replay` only; the
+/// divergence table and the band still require a dump.
+///
+/// The array is index-parallel to `scan.gaps`, which is where the gap index comes from: the array
+/// position, matching a dump's `GapFingerprint::index` (0-based, as the table prints it).
+#[derive(Deserialize)]
+struct ScanReportJson {
+    scan: ScanBody,
+}
+
+#[derive(Deserialize)]
+struct ScanBody {
+    /// Omitted by a scan that classified nothing (`gap_equivalence` is `skip_serializing_if
+    /// = "Vec::is_empty"`), which is a legitimate empty read, not a malformed file.
+    #[serde(default)]
+    gap_equivalence: Vec<GapEquivalenceVerdict>,
+}
+
+/// Which shape a replay input turned out to be. Reported per pair so the reader knows whether an
+/// `apply` column came from a fingerprint dump or from a scan report — the two are the same verdict,
+/// but only the dump has paid for the per-bracket oracle, and mixing them silently would invite the
+/// assumption that a scan-fed row carries the dump's other fields too.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReplayShape {
+    Corpus,
+    Scan,
+}
+
+impl ReplayShape {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Corpus => "corpus",
+            Self::Scan => "scan",
+        }
+    }
+}
+
+/// The production verdicts one replay input carries, each paired with its gap index.
+///
+/// The shape is detected from the **document**, not the filename: a corpus needs `source` + `gaps`,
+/// a scan report needs `scan`, and neither parses as the other. When both fail, both errors are
+/// reported — a file that is neither is far likelier to be the wrong file than a corrupt one.
+fn replay_verdicts(
+    file: &Path,
+) -> Result<(ReplayShape, Vec<(usize, GapEquivalenceVerdict)>), String> {
+    let bytes = std::fs::read(file).map_err(|e| e.to_string())?;
+    let corpus_err = match serde_json::from_slice::<GapCorpus>(&bytes) {
+        Ok(corpus) => {
+            let gaps = corpus
+                .gaps
+                .iter()
+                .filter_map(|fp| Some((fp.index, fp.equivalence_production_verdict()?.clone())))
+                .collect();
+            return Ok((ReplayShape::Corpus, gaps));
+        }
+        Err(e) => e,
+    };
+    match serde_json::from_slice::<ScanReportJson>(&bytes) {
+        Ok(report) => Ok((
+            ReplayShape::Scan,
+            report
+                .scan
+                .gap_equivalence
+                .into_iter()
+                .enumerate()
+                .collect(),
+        )),
+        Err(scan_err) => Err(format!(
+            "not a fingerprint corpus ({corpus_err}); not a scan report ({scan_err})"
+        )),
+    }
+}
+
+/// Whether `path` (a file, or a directory of them) holds scan reports. Used only to explain a
+/// failure: the divergence table and `--band` read `equivalence_diagnostic`, which no scan report
+/// carries, so the honest message names the mode that *can* read the file rather than a serde error
+/// about a missing `source` field.
+fn looks_like_scan_report(path: &Path) -> bool {
+    let probe = |f: &Path| {
+        std::fs::read(f)
+            .ok()
+            .is_some_and(|b| serde_json::from_slice::<ScanReportJson>(&b).is_ok())
+    };
+    if path.is_file() {
+        return probe(path);
+    }
+    std::fs::read_dir(path)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.is_file() && p.extension().and_then(|e| e.to_str()) == Some("json"))
+        .any(|p| probe(&p))
+}
+
+/// The one-line steer for a scan report handed to a dump-only mode. Empty when the path is not one,
+/// so callers can append it unconditionally.
+fn scan_report_hint(path: &Path) -> String {
+    if looks_like_scan_report(path) {
+        concat!(
+            " \u{2014} this looks like scan JSON, which only --replay reads; ",
+            "the divergence table and --band need a --gap-fingerprints dump"
+        )
+        .to_string()
+    } else {
+        String::new()
+    }
+}
+
+/// Numeric-aware sort key: `1, 2, …, 10`, lexical fallback for non-numeric names.
+fn numeric_key(name: &str) -> (u64, String) {
+    (name.parse::<u64>().unwrap_or(u64::MAX), name.to_string())
+}
+
+/// The labelled inputs for `--replay`. Everything [`collect_corpora`] accepts, **plus** a directory
+/// of `<label>.json` scan reports — the shape `scripts/measure/scan-registration.ps1` writes, one
+/// file per pair.
+///
+/// Corpus shapes are matched first, and that ordering is load-bearing: a corpus directory also holds
+/// one `*.json` per gap (each a single-gap `GapCorpus`), so probing for loose JSON first would read
+/// one pair as many. Since `collect_corpora` claims any directory holding `corpus.json` or numbered
+/// subdirectories that do, the loose-JSON branch is reached only when neither exists.
+fn collect_replay_inputs(path: &Path) -> Result<Vec<(String, PathBuf)>, String> {
+    if path.is_file() {
+        // A `corpus.json` keeps the divergence table's label; anything else is named by its stem,
+        // which is the pair label `scan-registration.ps1` wrote the file under.
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let label = if name == "corpus.json" {
+            "(corpus)".to_string()
+        } else {
+            path.file_stem()
+                .and_then(|n| n.to_str())
+                .unwrap_or("(scan)")
+                .to_string()
+        };
+        return Ok(vec![(label, path.to_path_buf())]);
+    }
+    let corpora = collect_corpora(path)?;
+    if !corpora.is_empty() {
+        return Ok(corpora);
+    }
+    let mut files: Vec<PathBuf> = std::fs::read_dir(path)
+        .map_err(|e| format!("reading {}: {e}", path.display()))?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.is_file() && p.extension().and_then(|e| e.to_str()) == Some("json"))
+        .collect();
+    files.sort_by_key(|p| numeric_key(p.file_stem().and_then(|n| n.to_str()).unwrap_or("")));
+    Ok(files
+        .into_iter()
+        .map(|f| {
+            let label = f
+                .file_stem()
+                .and_then(|n| n.to_str())
+                .unwrap_or("?")
+                .to_string();
+            (label, f)
         })
         .collect())
 }
@@ -774,7 +964,11 @@ fn print_band(path: &Path, args: &Args) -> ExitCode {
         }
     };
     if corpora.is_empty() {
-        eprintln!("no corpora found under {}", path.display());
+        eprintln!(
+            "no corpora found under {}{}",
+            path.display(),
+            scan_report_hint(path)
+        );
         return ExitCode::from(2);
     }
 
@@ -973,18 +1167,34 @@ struct ReplayTally {
     abstains: usize,
     /// Gaps carrying no envelopes (dumps written before 2026-08-03) or no registration at all.
     no_record: usize,
+    /// Inputs read, by shape. A run is normally all of one kind; a mixed count is worth seeing
+    /// because only the corpus side can also be diffed against the diagnostic verdict.
+    corpus_files: usize,
+    scan_files: usize,
+}
+
+impl ReplayTally {
+    fn count_shape(&mut self, shape: ReplayShape) {
+        match shape {
+            ReplayShape::Corpus => self.corpus_files += 1,
+            ReplayShape::Scan => self.scan_files += 1,
+        }
+    }
 }
 
 fn print_replay(path: &Path, args: &Args) -> ExitCode {
-    let corpora = match collect_corpora(path) {
+    let inputs = match collect_replay_inputs(path) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("error: {e}");
             return ExitCode::from(2);
         }
     };
-    if corpora.is_empty() {
-        eprintln!("no corpora found under {}", path.display());
+    if inputs.is_empty() {
+        eprintln!(
+            "no fingerprint corpora and no scan reports found under {}",
+            path.display()
+        );
         return ExitCode::from(2);
     }
 
@@ -995,14 +1205,14 @@ fn print_replay(path: &Path, args: &Args) -> ExitCode {
         args.replay_min_envelope_r
     );
     println!(
-        "  {:<10} {:<16} {:<5} {:<5} {:<7} {:<7} {:<7} {:<6} replay",
-        "gap", "class", "drop", "lag", "peak_r", "donor@0", "donor@ℓ", "apply"
+        "  {:<10} {:<16} {:<5} {:<5} {:<7} {:<7} {:<7} {:<16} {:<7} replay",
+        "gap", "class", "drop", "lag", "peak_r", "donor@0", "donor@ℓ", "apply", "source"
     );
 
     let mut tally = ReplayTally::default();
     let mut read_errors = 0usize;
-    for (label, file) in &corpora {
-        let corpus: GapCorpus = match load(file) {
+    for (label, file) in &inputs {
+        let (shape, verdicts) = match replay_verdicts(file) {
             Ok(c) => c,
             Err(e) => {
                 println!("  {label:<10} (read error: {e})");
@@ -1010,10 +1220,8 @@ fn print_replay(path: &Path, args: &Args) -> ExitCode {
                 continue;
             }
         };
-        for fp in &corpus.gaps {
-            let Some(v) = fp.equivalence_production_verdict() else {
-                continue;
-            };
+        tally.count_shape(shape);
+        for (index, v) in &verdicts {
             tally.gaps += 1;
             let Some(r) = replay_gap(v, args.replay_min_envelope_r) else {
                 tally.no_record += 1;
@@ -1047,8 +1255,8 @@ fn print_replay(path: &Path, args: &Args) -> ExitCode {
                 (false, _) => format!("⚠ {}", r.detail),
             };
             println!(
-                "  {:<10} {:<16} {:<5} {:<5} {:<7.3} {:<7.3} {:<7.3} {:<6} {status}",
-                format!("{label}/{}", fp.index),
+                "  {:<10} {:<16} {:<5} {:<5} {:<7.3} {:<7.3} {:<7.3} {:<16} {:<7} {status}",
+                format!("{label}/{index}"),
                 class_label(v.class),
                 v.drop,
                 reg.lag_blocks,
@@ -1061,6 +1269,7 @@ fn print_replay(path: &Path, args: &Args) -> ExitCode {
                     if flip { " FLIP" } else { "" },
                     if r.abstained { " abst" } else { "" }
                 ),
+                shape.label(),
             );
         }
     }
@@ -1070,14 +1279,21 @@ fn print_replay(path: &Path, args: &Args) -> ExitCode {
         tally.gaps, tally.replayed, tally.mismatched, tally.frac_mismatched
     );
     println!(
+        "Read {} fingerprint corpus/corpora and {} scan report(s).",
+        tally.corpus_files, tally.scan_files
+    );
+    println!(
         "Apply: {} class flip(s), {} abstain(s) at peak_r < {:.2}",
         tally.flips, tally.abstains, args.replay_min_envelope_r
     );
     if tally.no_record > 0 {
         println!(
-            "note: {} gap(s) carry no registration envelopes — dumps written before 2026-08-03, or \
-             a donor that could not be registered. Nothing is assumed for them; re-dump to include \
-             them.",
+            concat!(
+                "note: {} gap(s) carry no registration envelopes \u{2014} a record written ",
+                "before 2026-08-03, or a donor that could not be registered (a head gap on a ",
+                "negative offset maps before zero and has none). Nothing is assumed for them; ",
+                "re-run the scan or the dump to include them."
+            ),
             tally.no_record
         );
     }
@@ -1118,7 +1334,11 @@ fn main() -> ExitCode {
                 }
             }
             Err(e) => {
-                eprintln!("error: reading corpus {}: {e}", path.display());
+                eprintln!(
+                    "error: reading corpus {}: {e}{}",
+                    path.display(),
+                    scan_report_hint(&path)
+                );
                 ExitCode::from(2)
             }
         },
@@ -1164,6 +1384,99 @@ mod tests {
         v.donor_silent_blocks = Some(silent);
         v.donor_total_blocks = Some(total);
         v
+    }
+
+    /// Write `body` to `dir/name` and hand back the path.
+    fn write_json(dir: &Path, name: &str, body: &str) -> PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, body).expect("write fixture");
+        path
+    }
+
+    /// A scan-only report is a legitimate replay input: same production verdicts, same field names,
+    /// no dump required. If this breaks, the cheap path back to Apply flip counts is gone.
+    #[test]
+    fn replay_reads_a_scan_report() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let body = serde_json::to_string(&serde_json::json!({
+            "scan": {
+                "video_a": "a.mkv",
+                "gap_equivalence": [dropout(), shared()],
+            },
+            "patch": null,
+        }))
+        .expect("serialize");
+        let file = write_json(dir.path(), "pair-07.json", &body);
+
+        let (shape, verdicts) = replay_verdicts(&file).expect("scan report reads");
+        assert_eq!(shape, ReplayShape::Scan);
+        // Index comes from the array position — `gap_equivalence` is index-parallel to `gaps`.
+        assert_eq!(verdicts.len(), 2);
+        assert_eq!(verdicts[0].0, 0);
+        assert_eq!(verdicts[1].0, 1);
+        assert_eq!(verdicts[0].1.class, dropout().class);
+        assert!(verdicts[1].1.drop);
+    }
+
+    /// A scan that classified nothing omits the key entirely. That is an empty read, not an error —
+    /// otherwise a manifest with one unclassified pair would fail the whole run.
+    #[test]
+    fn scan_report_without_equivalence_reads_empty() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = write_json(dir.path(), "quiet.json", r#"{"scan":{"video_a":"a.mkv"}}"#);
+        let (shape, verdicts) = replay_verdicts(&file).expect("reads");
+        assert_eq!(shape, ReplayShape::Scan);
+        assert!(verdicts.is_empty());
+    }
+
+    /// Neither shape ⇒ both parse errors, because the likeliest cause is the wrong file.
+    #[test]
+    fn a_file_that_is_neither_shape_reports_both_errors() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = write_json(dir.path(), "other.json", r#"{"hello":"world"}"#);
+        let err = replay_verdicts(&file).expect_err("neither shape");
+        assert!(err.contains("not a fingerprint corpus"), "{err}");
+        assert!(err.contains("not a scan report"), "{err}");
+    }
+
+    /// Corpus shapes win over loose JSON. A corpus directory also holds one `*.json` per gap, so the
+    /// opposite order would read a single pair as many.
+    #[test]
+    fn a_corpus_directory_is_not_read_as_loose_scan_reports() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_json(dir.path(), "corpus.json", "{}");
+        write_json(dir.path(), "g0.json", "{}");
+        write_json(dir.path(), "g1.json", "{}");
+
+        let inputs = collect_replay_inputs(dir.path()).expect("collect");
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(inputs[0].1, dir.path().join("corpus.json"));
+    }
+
+    /// The `scan-registration.ps1` shape: one `<label>.json` per pair, ordered the way pair indices
+    /// read (1, 2, …, 10), not lexically.
+    #[test]
+    fn a_directory_of_scan_reports_collects_in_numeric_order() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for name in ["10.json", "2.json", "1.json"] {
+            write_json(dir.path(), name, r#"{"scan":{}}"#);
+        }
+        let labels: Vec<String> = collect_replay_inputs(dir.path())
+            .expect("collect")
+            .into_iter()
+            .map(|(l, _)| l)
+            .collect();
+        assert_eq!(labels, vec!["1", "2", "10"]);
+    }
+
+    /// A single scan report is labelled by its stem — the pair label the runner wrote it under.
+    #[test]
+    fn a_single_scan_report_is_labelled_by_its_stem() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = write_json(dir.path(), "pair-07.json", r#"{"scan":{}}"#);
+        let inputs = collect_replay_inputs(&file).expect("collect");
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(inputs[0].0, "pair-07");
     }
 
     /// The band's load-bearing property: at zero width it *is* the production rule. If this drifts,

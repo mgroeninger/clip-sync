@@ -183,6 +183,8 @@ $rows = @($dataLines | ForEach-Object { Split-ManifestRow -Line $_ -Delim $delim
 # would-`Apply` answer comes from `equivalence-calibration --replay`, which re-runs the production
 # classifier on the recorded envelopes. Reimplementing the classification here would be a second
 # opinion nobody asked for; counting fields is not.
+# Since 2026-09-10 that tool reads this runner's output directly - point it at one `<label>.json` or
+# at the whole -OutDir and it labels each row by file stem, no fingerprint dump involved.
 function Get-RegistrationSummary {
     param([string]$JsonPath)
     $doc = Get-Content $JsonPath -Raw | ConvertFrom-Json

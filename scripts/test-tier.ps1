@@ -103,7 +103,10 @@ try {
             '--test', 'cli_gap_listen',
             # The `shoulder-sweep` bin's colocated tests (its FFT Pearson, peak picker and census
             # assembly). `--bin` is needed because `autotests = false` never reaches it.
-            '--bin', 'shoulder-sweep'
+            '--bin', 'shoulder-sweep',
+            # Likewise `equivalence-calibration`'s (replay input-shape detection, corpus discovery,
+            # band arithmetic). Milliseconds; both bins are `calibration`-gated.
+            '--bin', 'equivalence-calibration'
         )
 
         Invoke-CargoTest @('-p', 'clip-sync-repair-harness', '--lib')
