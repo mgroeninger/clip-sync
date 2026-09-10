@@ -260,6 +260,48 @@ pub struct SourceMeta {
     /// group.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub alignment: Option<Contracted<CorpusScanAlignment>>,
+    /// Identity of the **binary** that wrote this corpus — see [`BuildStamp`]. Absent on corpora
+    /// written before 2026-09-09, and on hand-built / test corpora that never ran an emitting path.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub build: Option<BuildStamp>,
+}
+
+/// Which build wrote a corpus.
+///
+/// `a_source` / `b_source` identify the *media* and [`CorpusProbeRecipe`] identifies one axis of the
+/// *probe geometry*; this identifies the *code*. Two arms of a comparison taken across a code change
+/// were previously indistinguishable except by inferring it from the numbers.
+///
+/// **Scope: the commit, not the constants.** A build-time default that moved between two runs is not
+/// visible here beyond the commit that moved it. Reading a difference in behaviour off two differing
+/// stamps is still inference — the stamp tells you the builds differ, and that is all it claims.
+///
+/// Captured when `clip-sync-repair` was compiled, not when it ran. See this crate's `build.rs` for the
+/// staleness window on [`Self::dirty`] and for why an absent git is not an error.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BuildStamp {
+    /// Short `HEAD` hash at compile time. `None` when the build had no git metadata to read, which is
+    /// **not** the same as a clean tree at an unknown commit — it means the question was unanswerable.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub commit: Option<String>,
+    /// The working tree carried uncommitted changes when this crate was compiled. Read `false`
+    /// alongside an absent `commit` as "unknown", not as "clean": the no-git path cannot tell.
+    pub dirty: bool,
+    /// Crate version. Static across most builds, so it separates two runs only across a version bump —
+    /// it is here because it is the one axis that survives when git is unavailable.
+    pub version: String,
+}
+
+impl BuildStamp {
+    /// The stamp for the running binary, from the environment `build.rs` set at compile time.
+    pub fn current() -> Self {
+        let commit = env!("CLIP_SYNC_BUILD_COMMIT");
+        Self {
+            commit: (!commit.is_empty()).then(|| commit.to_string()),
+            dirty: env!("CLIP_SYNC_BUILD_DIRTY") == "1",
+            version: env!("CARGO_PKG_VERSION").to_string(),
+        }
+    }
 }
 
 /// Licensing-safe projection of [`crate::domain::ScanAlignment`] plus the optional silence-structure
@@ -1657,6 +1699,58 @@ mod tests {
         assert_eq!(fs.was_resampled(), Some(true));
     }
 
+    /// The stamp answers "which build", so the two ways it can say "I don't know" must stay
+    /// distinguishable from a real answer: an absent `commit` is *unanswerable*, and `dirty: false`
+    /// beside it is not a claim that the tree was clean. Pinned because a later reader that treats a
+    /// missing commit as "some unknown clean build" would draw exactly the wrong conclusion.
+    #[test]
+    fn build_stamp_reports_the_compiled_crate_and_survives_a_round_trip() {
+        let stamp = BuildStamp::current();
+        assert_eq!(stamp.version, env!("CARGO_PKG_VERSION"));
+        if let Some(commit) = stamp.commit.as_deref() {
+            assert!(
+                !commit.is_empty() && commit.chars().all(|c| c.is_ascii_hexdigit()),
+                "a present commit must be a hash, not a git error message: {commit:?}"
+            );
+        }
+        let json = serde_json::to_string(&stamp).expect("serialize");
+        assert_eq!(
+            serde_json::from_str::<BuildStamp>(&json).expect("deserialize"),
+            stamp
+        );
+        // `dirty` is not `skip_serializing_if`: false must be written, so a reader can tell
+        // "stamped, clean" from "no stamp at all".
+        assert!(
+            json.contains("\"dirty\""),
+            "dirty must always serialize: {json}"
+        );
+    }
+
+    /// Corpora written before the stamp existed must keep parsing, and an unstamped corpus must not
+    /// grow an empty `build` key that would read as an answer.
+    #[test]
+    fn absent_build_stamp_omits_the_key_and_parses_from_a_corpus_without_it() {
+        let meta = SourceMeta {
+            a_source: file_source(&[0.0; 4], 48_000, 2, None),
+            b_source: file_source(&[0.0; 2], 48_000, 1, None),
+            scan_recipe: CorpusScanRecipe::default(),
+            gap_count: 0,
+            incomparable: None,
+            gate_recipe: None,
+            probe_recipe: None,
+            not_measured: Vec::new(),
+            alignment: None,
+            build: None,
+        };
+        let json = serde_json::to_string(&meta).expect("serialize");
+        assert!(
+            !json.contains("build"),
+            "absent build must omit the key: {json}"
+        );
+        let back: SourceMeta = serde_json::from_str(&json).expect("a pre-stamp corpus must parse");
+        assert_eq!(back.build, None);
+    }
+
     #[test]
     fn incomparable_reason_omitted_when_absent_and_round_trips() {
         let meta = SourceMeta {
@@ -1669,6 +1763,7 @@ mod tests {
             probe_recipe: None,
             not_measured: Vec::new(),
             alignment: None,
+            build: None,
         };
         assert!(
             !serde_json::to_string(&meta)

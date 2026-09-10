@@ -56,6 +56,9 @@ pub(in crate::application::gap_fingerprint::measure) fn refused_channel_mismatch
                 Some(CorpusScanAlignment::from_report(report)),
                 ALIGNMENT_CONTRACT,
             ),
+            // A refusal is still a corpus someone will compare against another arm, so it is stamped
+            // like any other: the refusal itself can be a property of the build.
+            build: Some(BuildStamp::current()),
         },
         gaps: vec![],
     }
@@ -708,6 +711,7 @@ pub fn characterize_gaps(
                 Some(CorpusScanAlignment::from_report(report)),
                 ALIGNMENT_CONTRACT,
             ),
+            build: Some(BuildStamp::current()),
         },
         gaps,
     }
@@ -2267,6 +2271,7 @@ mod tests {
                 probe_recipe: None,
                 not_measured: Vec::new(),
                 alignment: None,
+                build: None,
             },
             gaps: vec![mk_fp(0, false), mk_fp(3, true)],
         };

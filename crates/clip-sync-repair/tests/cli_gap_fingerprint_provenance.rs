@@ -89,6 +89,19 @@ scan_both = false
         "the 30 s silent core should have been detected as a gap"
     );
 
+    // 0. The corpus says which *binary* wrote it, not only which media it came from. This is the
+    //    end-to-end half of the stamp: `BuildStamp::current()` is unit-tested, but only a real CLI
+    //    dump proves the emitting path actually attaches it. `version` is the field asserted because
+    //    it is the one that is answerable on every build — `commit` is legitimately absent when the
+    //    build had no git metadata, so asserting it would fail on a tarball build for the wrong
+    //    reason.
+    assert_eq!(
+        corpus["source"]["build"]["version"].as_str(),
+        Some(env!("CARGO_PKG_VERSION")),
+        "corpus.json must carry the build stamp: {}",
+        corpus["source"]["build"]
+    );
+
     // 1. Both sides report the codec **family**, `"pcm"` — not a per-id token. The two sides are
     //    different Symphonia codec ids here (s16le `0x108` vs s24le `0x104`), and before
     //    `codec_name` grew a linear-PCM arm they surfaced as exactly those hex strings. Equality is

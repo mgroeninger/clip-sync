@@ -120,18 +120,6 @@ shipped. The conditional donor test is **blocked on a count** — [settled.md](d
 | **33/17 placement-path investigation** | Which path placed 33/17's fill is **unrecorded** — the dump's `brackets` array is the oracle enumeration, not the candidate production selected. Instrument the selected candidate / fit path | The path is recorded. If anything is then tuned, the likely site is the **acceptance floor**, not the comparator |
 | **33/17 is a real-but-inaudible dropout whose patch is a defect** | A hits digital zero, B keeps a −68 dB click bed; the patch lands 8 dB above its own surroundings, 36 ms misplaced, writing 380 ms past the gap end. Seam/splice path, independent of the equivalence band | Characterized |
 
-## Fingerprint provenance
-
-Tracks A + B shipped 2026-07-31 —
-[archive/TEMP-fingerprint-provenance-plan.md](docs/dev/archive/TEMP-fingerprint-provenance-plan.md).
-Shipped behaviour: [gap-fingerprint.md](docs/dev/gap-fingerprint.md) § *Source identity & the corpus
-library* and § *`measurement`*. Three deferred-on-trigger leftovers moved to
-[settled.md](docs/dev/settled.md) § C.
-
-| Item | Next action | Done when |
-|------|-------------|-----------|
-| **`corpus.json` carries no build stamp** | ~10 lines. `source` identifies the *media*; nothing identifies the *binary*. `source.probe_recipe.border_capture` (shipped 2026-08-22) closes one axis; every other build-time constant is still invisible. **Trigger is met** — this cost real time on 31/g8 | Two arms from different builds can be told apart without inference |
-
 ## Fingerprint contracts (C3)
 
 R1–R3 + C1 + C2 shipped; all eight groups carry a contract —

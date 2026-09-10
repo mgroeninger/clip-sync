@@ -1082,6 +1082,17 @@ different result). So identity is **per file**, not per logical source:
   pairwise characterize is later). Omitted on pre-overlay dumps and on hand-built / spec-only
   corpora that never saw a scan. This is **not** per-gap `lag_decision` and **not**
   `geometry.fill_offset_secs`. No paths.
+- `source.build` identifies the **binary** that wrote the corpus, not the media it read (since
+  2026-09-09; absent on older corpora, and on hand-built / test corpora that never ran an emitting
+  path). Three keys: `version` (the `clip-sync-repair` crate version, always present), `dirty` (was
+  the working tree modified when the binary was compiled — always present, including `false`), and
+  `commit` (a 12-hex-digit abbreviated git hash, **absent** rather than fabricated when the build had
+  no git available, e.g. an exported tarball). Captured by the crate's build script at compile time,
+  so `dirty` describes the tree at *build* time, not at run time; an unstaged edit outside `src/` can
+  leave it stale until the next rebuild. It answers "were these two arms taken from the same code?"
+  and nothing finer: **it identifies the commit, not the constants**, so a default moved without a
+  commit in between is still invisible. Present on a channel-layout refuse too — a refusal is still a
+  corpus someone will compare against another.
 - **No paths or titles** appear anywhere in the committed output.
 
 **Library file names** (from `--gap-fingerprints`):
