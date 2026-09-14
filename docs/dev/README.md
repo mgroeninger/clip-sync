@@ -68,6 +68,7 @@ is untracked — that is a bug in the catalog, not a state a doc may sit in.
 | [TEMP-disjoint-offseam-lock-plan.md](TEMP-disjoint-offseam-lock-plan.md) | Diagnostic: 1 s Pearson lock on A **disjoint** from production’s seam template, vs a same-window on-seam control. The § 0 test the predecessor did not run | [settled.md](settled.md) § C — latched |
 | [TEMP-flac-output-plan.md](TEMP-flac-output-plan.md) | In-process `--flac` lossless output, peer of `--wav`. Motivated by the RIFF `u32` data-chunk limit | [BACKLOG.md](../../BACKLOG.md) § *Repair R6* |
 | [TEMP-nway-donor-alignment-plan.md](TEMP-nway-donor-alignment-plan.md) | Repair one damaged copy from **multiple** donors with sparse non-overlapping damage | [settled.md](settled.md) § C — latched, no corpus |
+| [TEMP-end-clip-override-warning-plan.md](TEMP-end-clip-override-warning-plan.md) | Alignment-time A6 warning: the default end-clip constraint overrode a high-confidence independent end estimate. Motivated by pair 54 (+66.472 s hidden behind +1.861 s) | [BACKLOG.md](../../BACKLOG.md) § *Timeline integrity* |
 | [TEMP-b-stall-warning-plan.md](TEMP-b-stall-warning-plan.md) | Scan-time A5 warning: long B silence inside the overlap where A is not silent (possible stall/corruption); attributes later gaps. Motivated by pair 54's 66.6 s B stall | [BACKLOG.md](../../BACKLOG.md) § *Timeline integrity* |
 
 ### Findings notes (not Changes)

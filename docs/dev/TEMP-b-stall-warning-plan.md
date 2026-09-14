@@ -243,7 +243,7 @@ revisit rule 3 before shipping.
 - [x] Domain: pure `detect_b_stalls(b_intervals, a_runs, offset, overlap, b_scanned_end, b_scan_truncated, stall_min_secs)` returning reported + suppressed, and `attribute_gaps_to_b_stalls`, in `crates/clip-sync-repair/src/domain/b_stall.rs`; § 4 unit tests 1–8.
 - [x] Scan: call it in `crates/clip-sync-repair/src/application/scan_gaps.rs` after the per-gap loop (Step 6 neighbourhood; `a_runs` is consumed by that loop, so A runs come from `gaps`); `tracing::debug` each suppression; stamp `GapReport::b_stall`.
 - [x] Config: `stall_min_secs` on `RepairConfig` (TOML, validated > 0, no CLI flag) → `ScanGapsRequest` → `GapReport`.
-- [ ] Output: stall line + `tracing::warn!` in `infrastructure/cli/output.rs` (§ 3.1); `(after B stall #k)` where a reason column exists.
+- [x] Output: stall line + `tracing::warn!` in `infrastructure/cli/output.rs` (§ 3.1); `(after B stall #k)` where a reason column exists.
 - [ ] JSON DTOs (`scan.b_stalls`, `scan.stall_min_secs`, per-gap `after_b_stall`) + [json-output.md](../json-output.md) additive entry + regenerate `full_surface_repair.json`.
 - [ ] [cli-output.md](../cli-output.md) § *Timeline / duration warnings*: A5 row, "why", "what to do".
 - [ ] § 5 census; set the default; pair 54 re-scan shows the warning and g012's `after_b_stall`.
