@@ -4,7 +4,7 @@ Open follow-up work for `clip-sync`. Architecture: [PLAN.md](PLAN.md). Repair pi
 [docs/pipeline.md](docs/pipeline.md). Test corpus: [docs/dev/corpus-validation.md](docs/dev/corpus-validation.md).
 Error handling: [docs/error-mapping.md](docs/error-mapping.md).
 
-Last updated: 2026-09-10.
+Last updated: 2026-09-14.
 
 **How this doc works**
 
@@ -24,6 +24,19 @@ Last updated: 2026-09-10.
 ([settled.md](docs/dev/settled.md) § C). Remaining post-join rows below are startable.
 
 ---
+
+## Timeline integrity
+
+Pair 54 (2026-09-14): B has a 66.6 s digital-silence stall at B 1:42:32.7 that A does not; every A
+position after it maps to B at ≈ +68 s instead of the pair's +2.06 s (end of soundtrack measured at
++67.9 s). g012 (display `#13`, ear-verified dropout) skips as unexplained low boundary correlation.
+Numbers: [TEMP-b-stall-warning-plan.md](docs/dev/TEMP-b-stall-warning-plan.md) § 1.
+
+| Item | Next action | Done when |
+|------|-------------|-----------|
+| **B-stall warning (A5)** | Scan-time warning for a long B silent interval inside the overlap where A is **not** silent over the mapped span (mutual silence never reported); attribute later gaps. Plan: [TEMP-b-stall-warning-plan.md](docs/dev/TEMP-b-stall-warning-plan.md). Census the threshold first (plan § 5) | Plan § 7 |
+| **End-clip constrained search hides a timeline step** | Pair 54's end clip reported +1.82 s, `end_aligned: true`, `offsets_consistent: true` — true offset there is +67.9 s. Suspected: the independent end-clip Chromaprint disagreed with start, so the default `constrain_end_clip_to_start_offset` PCM-searched ±`end_clip_refine_radius_secs` (5 s) around the start offset and returned `prior.confidence.max(…)` (both clips read the identical 0.9218163). First: re-run pair 54 alignment with `--no-constrain-end-clip-to-start-offset` and log the independent end estimate. If it reads ≈ +68 s, decide how a large start/end disagreement is surfaced (warning, not a silent override) | Mechanism confirmed or refuted on pair 54; if confirmed, a design for surfacing large disagreements exists |
+| **Stall-segmented map** | After A5 is trusted: map gaps after a reported stall at the cumulative offset (pair offset + stall lengths), let the existing ±600 ms seam fit refine, normal gate decides. Customer: 54/g012. Needs its own TEMP; write it only after A5's census | 54/g012 patches (or honestly skips) at the segmented map and is ear-checked |
 
 ## Fill placement
 
