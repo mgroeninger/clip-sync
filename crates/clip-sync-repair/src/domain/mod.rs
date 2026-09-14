@@ -1,4 +1,5 @@
 pub mod align;
+pub mod b_stall;
 pub mod constellation;
 pub mod cross_check;
 pub mod diagnostics;

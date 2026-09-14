@@ -18,7 +18,11 @@ the question below. [settled.md](settled.md) § A records that verdict.
 Result 4; PHAT (same seam window, different scorer — refuted)
 [archive/TEMP-phat-seam-scoring-plan.md](archive/TEMP-phat-seam-scoring-plan.md);
 grow-post (same seam, wider template, lag ±600 ms)
-[archive/TEMP-dual-fit-grow-post-plan.md](archive/TEMP-dual-fit-grow-post-plan.md).
+[archive/TEMP-dual-fit-grow-post-plan.md](archive/TEMP-dual-fit-grow-post-plan.md);
+far-unique map prediction (shares this walk geometry; independent — not
+this plan's § 5 carry-back, does not unlatch this). Latched 2026-09-14
+([settled.md](settled.md) § C):
+[archive/TEMP-far-unique-interpolate-plan.md](archive/TEMP-far-unique-interpolate-plan.md).
 
 **Media hygiene:** pair index + gap index only.
 
