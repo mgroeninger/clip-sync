@@ -1219,6 +1219,7 @@ mod tests {
             limit_fill_to_mapped_region: true,
             b_scanned_end_secs: None,
             b_scan_truncated: false,
+            b_stall: None,
             // Populated for the same reason as `collar_level` and `program_levels`: a
             // `skip_serializing_if` field that is `None` in the only JSON-shape golden is a field
             // the golden does not guard.
@@ -1469,6 +1470,7 @@ mod tests {
             limit_fill_to_mapped_region: true,
             b_scanned_end_secs: None,
             b_scan_truncated: false,
+            b_stall: None,
             audio_timeline_skew: None,
             program_levels: None,
         }
@@ -1802,6 +1804,7 @@ mod tests {
             limit_fill_to_mapped_region: true,
             b_scanned_end_secs: None,
             b_scan_truncated: false,
+            b_stall: None,
             audio_timeline_skew: None,
             program_levels: None,
         };

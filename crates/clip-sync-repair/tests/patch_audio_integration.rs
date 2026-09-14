@@ -863,6 +863,7 @@ fn make_report_with_alignment(
         limit_fill_to_mapped_region: true,
         b_scanned_end_secs: None,
         b_scan_truncated: false,
+        b_stall: None,
         audio_timeline_skew: None,
         program_levels: None,
     }
@@ -883,6 +884,7 @@ fn make_report(path_a: PathBuf, path_b: PathBuf, compat: TrackCompatibility) -> 
         limit_fill_to_mapped_region: true,
         b_scanned_end_secs: None,
         b_scan_truncated: false,
+        b_stall: None,
         audio_timeline_skew: None,
         program_levels: None,
     }
@@ -1653,6 +1655,7 @@ fn scan_then_patch_fills_detected_gap() {
             recipe: clip_sync_repair::domain::ScanRecipe::with_hold_blocks(1000, 0, 250, 0.01, 0.0),
             scan_both: false,
             gap_offset_tolerance_secs: 0.5,
+            stall_min_secs: 10.0,
             limit_fill_to_mapped_region: true,
             apply_donor_registration: true,
             local_pair_collar_secs: 2.0,

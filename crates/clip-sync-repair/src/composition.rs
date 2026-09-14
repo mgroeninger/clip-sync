@@ -310,6 +310,7 @@ pub fn repair_run_input(
         limit_fill_to_mapped_region: config.repair.limit_fill_to_mapped_region,
         apply_donor_registration: config.repair.apply_donor_registration,
         local_pair_collar_secs: config.repair.local_pair_collar_secs,
+        stall_min_secs: config.repair.stall_min_secs,
     };
 
     let after_scan = pending_after_scan(config, video_a)?;

@@ -257,6 +257,11 @@ pub struct RepairConfig {
     /// context, an argument the arms superseded.
     #[serde(default = "default_local_pair_collar_secs")]
     pub local_pair_collar_secs: f64,
+    /// Minimum B silence (seconds, after overlap clipping) the scan-time B-stall warning considers
+    /// (`docs/dev/TEMP-b-stall-warning-plan.md`). Read by **scan**; TOML only, no CLI flag.
+    /// Placeholder 10.0 until the plan's § 5 census sets it.
+    #[serde(default = "default_stall_min_secs")]
+    pub stall_min_secs: f64,
     /// Width (seconds) of the A-border template either side of a gap. Named for normalization, and
     /// no longer used by it: since 2026-08-31 no fill gain reads a border RMS. It still sizes the
     /// splice's boundary-alignment template (`patch_audio::geometry`) and the gap-fingerprint noise
@@ -528,6 +533,9 @@ fn default_normalize_window_secs() -> f64 {
 fn default_local_pair_collar_secs() -> f64 {
     4.0
 }
+fn default_stall_min_secs() -> f64 {
+    crate::domain::b_stall::DEFAULT_STALL_MIN_SECS
+}
 fn default_program_gain_max_spread_db() -> f64 {
     crate::domain::DEFAULT_PROGRAM_GAIN_MAX_SPREAD_DB
 }
@@ -678,6 +686,7 @@ impl Default for RepairConfig {
             border_capture: crate::application::gap_fingerprint::BorderCapture::default(),
             lag_envelope_window_secs: default_lag_envelope_window_secs(),
             local_pair_collar_secs: default_local_pair_collar_secs(),
+            stall_min_secs: default_stall_min_secs(),
             normalize_window_secs: default_normalize_window_secs(),
             output: RepairOutputConfig::default(),
             dry_run: default_true(),
@@ -906,6 +915,7 @@ impl RepairConfig {
                 self.partial_structure_waveform_soften,
             ),
             ("local_pair_collar_secs", self.local_pair_collar_secs),
+            ("stall_min_secs", self.stall_min_secs),
             ("normalize_window_secs", self.normalize_window_secs),
             (
                 "program_gain_max_spread_db",
@@ -1030,6 +1040,12 @@ impl RepairConfig {
         if self.local_pair_collar_secs <= 0.0 {
             return Err(ConfigError::InvalidValue {
                 field: "local_pair_collar_secs".into(),
+                reason: "must be greater than zero".into(),
+            });
+        }
+        if self.stall_min_secs <= 0.0 {
+            return Err(ConfigError::InvalidValue {
+                field: "stall_min_secs".into(),
                 reason: "must be greater than zero".into(),
             });
         }

@@ -72,6 +72,7 @@ pub fn gap_report_from_energy_fixture(temp: &Path, fixture: &EnergySignatureFixt
         limit_fill_to_mapped_region: true,
         b_scanned_end_secs: None,
         b_scan_truncated: false,
+        b_stall: None,
         audio_timeline_skew: None,
         program_levels: None,
     }
@@ -135,6 +136,7 @@ pub fn gap_report_from_floor_oracle(
         limit_fill_to_mapped_region: true,
         b_scanned_end_secs: None,
         b_scan_truncated: false,
+        b_stall: None,
         audio_timeline_skew: None,
         program_levels: None,
     }
@@ -250,6 +252,7 @@ pub fn scan_gaps_for_fixture(fixture: &EnergySignatureFixture, temp: &Path) -> G
         ),
         scan_both: false,
         gap_offset_tolerance_secs: repair.gap_offset_tolerance_secs,
+        stall_min_secs: repair.stall_min_secs,
         limit_fill_to_mapped_region: true,
         apply_donor_registration: false,
         local_pair_collar_secs: repair.local_pair_collar_secs,

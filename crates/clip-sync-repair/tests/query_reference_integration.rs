@@ -117,6 +117,7 @@ fn scan_request(path_a: PathBuf, path_b: PathBuf) -> ScanGapsRequest {
         recipe: clip_sync_repair::domain::ScanRecipe::with_hold_blocks(25_000, 0, 250, 0.01, 0.0),
         scan_both: false,
         gap_offset_tolerance_secs: 0.5,
+        stall_min_secs: 10.0,
         limit_fill_to_mapped_region: true,
         apply_donor_registration: true,
         local_pair_collar_secs: 2.0,

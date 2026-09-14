@@ -11,6 +11,7 @@ use crate::application::align_bridge::{
 };
 use crate::application::error::RepairError;
 use crate::application::ports::Aligner;
+use crate::domain::b_stall::{detect_b_stalls, BStallReport, BStallScan};
 use crate::domain::cross_check::{
     b_has_energy_from_levels, b_range_fully_scanned, check_gap_offset_agreement_in_overlap,
     mutual_silence_intervals_from_gaps, SilenceInterval,
@@ -52,6 +53,9 @@ pub struct ScanGapsRequest {
     /// case and are dropped before patch ever sees a report. A width arriving at patch time would
     /// have nothing to measure.
     pub local_pair_collar_secs: f64,
+    /// Floor (seconds) for the B-stall warning ([`crate::domain::b_stall`]). A scan knob for the
+    /// same reason as the collar: the B silence map and A runs exist only inside this use case.
+    pub stall_min_secs: f64,
 }
 
 /// Gap scan product: domain report plus the full aligner DTO for CLI/JSON output.
@@ -380,28 +384,70 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
         // Step 6: mutual-silence cross-check — only meaningful when alignment produced an offset.
         // SharedSilence (donor metric), not !b_has_energy — keep fillability out of offset agreement.
         let a_intervals = mutual_silence_intervals_from_gaps(&gaps, &gap_equivalence);
+        let start_overlap = alignment_detail.start_overlap.as_ref().map(|ov| {
+            crate::domain::align::TimelineOverlap {
+                video_a_start_secs: ov.video_a_start_secs,
+                video_a_end_secs: ov.video_a_end_secs,
+                video_b_start_secs: ov.video_b_start_secs,
+                video_b_end_secs: ov.video_b_end_secs,
+                shared_length_secs: ov.shared_length_secs,
+            }
+        });
         let gap_offset_agreement = if request.scan_both {
             alignment_detail.recommended_offset_secs.and_then(|offset| {
                 check_gap_offset_agreement_in_overlap(
                     &a_intervals,
                     &b_scan.intervals,
-                    alignment_detail
-                        .start_overlap
-                        .as_ref()
-                        .map(|ov| crate::domain::align::TimelineOverlap {
-                            video_a_start_secs: ov.video_a_start_secs,
-                            video_a_end_secs: ov.video_a_end_secs,
-                            video_b_start_secs: ov.video_b_start_secs,
-                            video_b_end_secs: ov.video_b_end_secs,
-                            shared_length_secs: ov.shared_length_secs,
-                        })
-                        .as_ref(),
+                    start_overlap.as_ref(),
                     offset,
                     request.gap_offset_tolerance_secs,
                 )
             })
         } else {
             None
+        };
+
+        // Step 6a: scan-time B-stall warning (`docs/dev/TEMP-b-stall-warning-plan.md`). Sited after
+        // the per-gap loop because that loop consumed `a_runs`; `gaps` carries every A run's span.
+        // Deliberately NOT `a_intervals` above — that is the mutual-silence subset, which would
+        // under-count A silence and over-report stalls. Not gated on `scan_both`: the B scan is
+        // not. Advisory only; nothing downstream reads it.
+        let b_stall = {
+            let scan = match (offset_secs, start_overlap.as_ref()) {
+                (Some(offset), Some(overlap)) => {
+                    let a_silence: Vec<SilenceInterval> = gaps
+                        .iter()
+                        .map(|gap| SilenceInterval {
+                            start_secs: gap.video_a_start_secs,
+                            end_secs: gap.video_a_end_secs,
+                        })
+                        .collect();
+                    detect_b_stalls(
+                        &b_scan.intervals,
+                        &a_silence,
+                        offset,
+                        overlap,
+                        b_scan.scanned_end_secs,
+                        b_scan.truncated,
+                        request.stall_min_secs,
+                    )
+                }
+                _ => BStallScan::default(),
+            };
+            for candidate in &scan.suppressed {
+                tracing::debug!(
+                    b_start_secs = candidate.b_start_secs,
+                    duration_secs = candidate.duration_secs,
+                    a_start_secs = candidate.a_start_secs,
+                    offset_used_secs = candidate.offset_used_secs,
+                    a_silent_fraction = candidate.a_silent_fraction,
+                    "B-stall candidate suppressed: A is silent over the mapped span"
+                );
+            }
+            BStallReport {
+                stall_min_secs: request.stall_min_secs,
+                stalls: scan.reported,
+            }
         };
 
         // Step 6b: whole-program A/B level capture (`domain::program_levels`). Sited here because
@@ -525,6 +571,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             b_scan_truncated: b_scan.truncated,
             audio_timeline_skew: audio_timeline_skew.map(audio_timeline_skew_from_clip_sync),
             program_levels,
+            b_stall: Some(b_stall),
         };
         if let Some(line) = format_scan_fillable_followup(&report) {
             progress.phase(&line);
@@ -1092,6 +1139,7 @@ mod tests {
             recipe: crate::domain::ScanRecipe::with_hold_blocks(1000, 0, 250, 0.01, 0.0),
             scan_both: false,
             gap_offset_tolerance_secs: 0.5,
+            stall_min_secs: 10.0,
             limit_fill_to_mapped_region: true,
             apply_donor_registration: true,
             local_pair_collar_secs: 2.0,
@@ -1315,6 +1363,7 @@ mod tests {
             limit_fill_to_mapped_region: true,
             b_scanned_end_secs: None,
             b_scan_truncated: false,
+            b_stall: None,
             audio_timeline_skew: None,
             program_levels: None,
         };
@@ -1411,6 +1460,80 @@ mod tests {
             .expect("scan should succeed");
 
         assert!(report.gap_offset_agreement.is_none());
+    }
+
+    fn aligned_with_overlap(offset: f64, dur_secs: f64) -> AlignmentResult {
+        let mut alignment = aligned_result(Some(offset));
+        alignment.start_overlap = Some(clip_sync::TimelineOverlap {
+            video_a_start_secs: 0.0,
+            video_a_end_secs: dur_secs,
+            video_b_start_secs: 0.0,
+            video_b_end_secs: dur_secs,
+            shared_length_secs: dur_secs,
+        });
+        alignment
+    }
+
+    #[test]
+    fn scan_stamps_b_stall_while_a_has_audio() {
+        // Plan § 4: B silent for the whole overlap while A is loud → one stall, and the floor
+        // is echoed. `scan_both` stays false: the detector is not gated on it.
+        let dur = Duration::from_secs(60);
+        let reader = FixedReader::new()
+            .with("a.wav", SessionKind::Loud, dur)
+            .with("b.wav", SessionKind::Silent, dur);
+        let progress = FakeProgressReporter;
+        let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
+
+        let mut request = scan_request("a.wav", "b.wav", 60);
+        request.stall_min_secs = 5.0;
+
+        let report = scan
+            .scan_after_alignment(request, aligned_with_overlap(0.0, 60.0))
+            .expect("scan should succeed");
+
+        let b_stall = report.b_stall.as_ref().expect("a real scan stamps b_stall");
+        assert_eq!(b_stall.stall_min_secs, 5.0);
+        assert_eq!(b_stall.stalls.len(), 1, "got {:?}", b_stall.stalls);
+        assert!(b_stall.stalls[0].a_silent_fraction < 0.5);
+    }
+
+    #[test]
+    fn scan_suppresses_b_stall_when_a_shares_the_silence() {
+        let dur = Duration::from_secs(60);
+        let reader = FixedReader::new()
+            .with("a.wav", SessionKind::Silent, dur)
+            .with("b.wav", SessionKind::Silent, dur);
+        let progress = FakeProgressReporter;
+        let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
+
+        let report = scan
+            .scan_after_alignment(
+                scan_request("a.wav", "b.wav", 60),
+                aligned_with_overlap(0.0, 60.0),
+            )
+            .expect("scan should succeed");
+
+        let b_stall = report.b_stall.as_ref().expect("a real scan stamps b_stall");
+        assert!(b_stall.stalls.is_empty(), "got {:?}", b_stall.stalls);
+    }
+
+    #[test]
+    fn scan_b_stall_empty_without_offset_or_overlap() {
+        let dur = Duration::from_secs(60);
+        let reader = FixedReader::new()
+            .with("a.wav", SessionKind::Loud, dur)
+            .with("b.wav", SessionKind::Silent, dur);
+        let progress = FakeProgressReporter;
+        let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
+
+        for alignment in [aligned_result(None), aligned_result(Some(0.0))] {
+            let report = scan
+                .scan_after_alignment(scan_request("a.wav", "b.wav", 60), alignment)
+                .expect("scan should succeed");
+            let b_stall = report.b_stall.as_ref().expect("a real scan stamps b_stall");
+            assert!(b_stall.stalls.is_empty(), "got {:?}", b_stall.stalls);
+        }
     }
 
     #[test]
@@ -1533,6 +1656,7 @@ mod tests {
             recipe: crate::domain::ScanRecipe::with_hold_blocks(1000, 2, 250, 0.01, 33.0 / 32767.0),
             scan_both: true,
             gap_offset_tolerance_secs: 0.5,
+            stall_min_secs: 10.0,
             limit_fill_to_mapped_region: false,
             apply_donor_registration: true,
             local_pair_collar_secs: 2.0,
@@ -1570,6 +1694,7 @@ mod tests {
             recipe,
             scan_both: false,
             gap_offset_tolerance_secs: 0.5,
+            stall_min_secs: 10.0,
             limit_fill_to_mapped_region: true,
             apply_donor_registration: true,
             local_pair_collar_secs: 2.0,

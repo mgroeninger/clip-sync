@@ -33,6 +33,17 @@ pub struct BStallCandidate {
     pub a_silent_fraction: f64,
 }
 
+/// What a real scan stamps on [`crate::domain::GapReport::b_stall`]: the floor it ran with and the
+/// stalls it reported (empty when none, or when a § 2 rule 0 precondition was missing).
+///
+/// The floor lives here rather than on [`crate::domain::ScanRecipe`], whose contract is
+/// `PartialEq` ⇔ same gap list; a warning floor cannot move a gap boundary.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BStallReport {
+    pub stall_min_secs: f64,
+    pub stalls: Vec<BStallCandidate>,
+}
+
 /// Result of the detector. `suppressed` exists for the `tracing::debug` census line only; it is
 /// not reported to the operator.
 #[derive(Debug, Clone, Default, PartialEq)]

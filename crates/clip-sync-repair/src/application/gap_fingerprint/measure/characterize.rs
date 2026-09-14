@@ -927,6 +927,7 @@ mod tests {
             limit_fill_to_mapped_region: false,
             b_scanned_end_secs: None,
             b_scan_truncated: false,
+            b_stall: None,
             audio_timeline_skew: None,
             program_levels: None,
         };
@@ -1454,6 +1455,7 @@ mod tests {
             limit_fill_to_mapped_region: false,
             b_scanned_end_secs: None,
             b_scan_truncated: false,
+            b_stall: None,
             audio_timeline_skew: None,
             program_levels: None,
         };
@@ -1635,6 +1637,7 @@ mod tests {
             limit_fill_to_mapped_region: false,
             b_scanned_end_secs: None,
             b_scan_truncated: false,
+            b_stall: None,
             audio_timeline_skew: None,
             program_levels: None,
         };
@@ -1788,6 +1791,7 @@ mod tests {
             limit_fill_to_mapped_region: false,
             b_scanned_end_secs: None,
             b_scan_truncated: false,
+            b_stall: None,
             audio_timeline_skew: None,
             program_levels: None,
         };
@@ -2046,6 +2050,7 @@ mod tests {
             limit_fill_to_mapped_region: false,
             b_scanned_end_secs: None,
             b_scan_truncated: false,
+            b_stall: None,
             audio_timeline_skew: None,
             program_levels: None,
         };
