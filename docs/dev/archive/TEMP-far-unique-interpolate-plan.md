@@ -12,7 +12,7 @@
 > occupied, and the true offset is inside ±600 ms of nominal `b_mapped`. Do
 > not reopen to chase 50/g10 ([TEMP-disjoint-offseam-lock-plan.md](../TEMP-disjoint-offseam-lock-plan.md))
 > or 31/g7–g8 (injected-time). 54/`#13` path:
-> [TEMP-b-stall-warning-plan.md](../TEMP-b-stall-warning-plan.md) then
+> [TEMP-b-stall-warning-plan.md](TEMP-b-stall-warning-plan.md) then
 > stall-segmented map.
 
 **Status:** draft, 2026-09-13; re-scoped 2026-09-14 (review: the throat
@@ -178,7 +178,7 @@ customer.
 B 1:42:32.7 that A lacks; at g012 the true offset is ≈ +67–69 s, not the
 +2.06 s map (end of soundtrack measured at +67.9 s). The gap is a
 timeline step, not a Decorrelated hole — tracked in
-[TEMP-b-stall-warning-plan.md](../TEMP-b-stall-warning-plan.md) and
+[TEMP-b-stall-warning-plan.md](TEMP-b-stall-warning-plan.md) and
 BACKLOG § *Timeline integrity*. Every far stride on this gap (≤ 7.5 s)
 off the hole) also sits after the stall and maps through the same wrong
 map; do not read its walk as map evidence.

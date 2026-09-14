@@ -230,6 +230,14 @@ fn format_human(
         }
     }
 
+    // A5: not a `collect_repair_warnings` warning (A4 precedent) — it needs the gap list for
+    // attribution, so it follows the `not_applied_count` pattern instead.
+    for warning in format_b_stall_warnings(report) {
+        out.push_str(&warning);
+        out.push('\n');
+        tracing::warn!("{warning}");
+    }
+
     if let Some(summary) = patch {
         if let Some(injected) = summary.injected_time.as_ref() {
             let warning = format_injected_time_warning(injected, show_diagnostics);
@@ -279,6 +287,7 @@ pub fn format_unified_gap_report(
     out.push('\n');
     out.push_str("  #   Range                Dur      Status\n");
 
+    let stall_attribution = b_stall_attribution(report);
     for i in 0..report.gaps.len() {
         let gap = &report.gaps[i];
         let patch_outcome = patch.and_then(|summary| summary.gaps.get(i));
@@ -288,6 +297,12 @@ pub fn format_unified_gap_report(
         // is already reflected in the patch/skip status, so we don't duplicate it there.
         if patch_outcome.is_none() {
             status.push_str(&format_gap_equivalence_suffix(report, i));
+        }
+        // A5: only skip rows have a reason to explain; scan-only carries the attribution in JSON.
+        if let (Some(outcome), Some(Some(stall))) = (patch_outcome, stall_attribution.get(i)) {
+            if matches!(outcome.status, GapPatchStatus::Skipped { .. }) {
+                status.push_str(&format!(" (after B stall #{})", stall + 1));
+            }
         }
         out.push_str(&format!(
             "  {:<3} {:<20} {:<8} {status}\n",
@@ -420,6 +435,48 @@ fn format_skipped_gap_hint(gap_refs: &[usize]) -> String {
                 .join(", #")
         )
     }
+}
+
+/// Per-gap index into `report.b_stall.stalls` (0-based), or `None` before any reported stall.
+fn b_stall_attribution(report: &GapReport) -> Vec<Option<usize>> {
+    let stalls = report
+        .b_stall
+        .as_ref()
+        .map(|b_stall| b_stall.stalls.as_slice())
+        .unwrap_or_default();
+    let gap_starts: Vec<f64> = report.gaps.iter().map(|g| g.video_a_start_secs).collect();
+    crate::domain::b_stall::attribute_gaps_to_b_stalls(&gap_starts, stalls)
+}
+
+/// One A5 warning line per reported B stall (`docs/dev/archive/TEMP-b-stall-warning-plan.md` § 3.1).
+fn format_b_stall_warnings(report: &GapReport) -> Vec<String> {
+    let Some(b_stall) = report.b_stall.as_ref() else {
+        return Vec::new();
+    };
+    let attribution = b_stall_attribution(report);
+    b_stall
+        .stalls
+        .iter()
+        .enumerate()
+        .map(|(stall_index, stall)| {
+            let tail = match attribution.iter().position(|a| *a == Some(stall_index)) {
+                Some(first_gap) => format!(
+                    "later gaps (from #{}) may be offset by up to {:+.1}s and fail to fill",
+                    first_gap + 1,
+                    stall.duration_secs
+                ),
+                None => "no detected gaps follow it".into(),
+            };
+            format!(
+                "Warning: video B is silent for {:.1}s at {} ({:.1}s) while video A has audio at {} ({:.1}s) — possible B stall or corruption; {tail}",
+                stall.duration_secs,
+                format_timestamp(stall.b_start_secs),
+                stall.b_start_secs,
+                format_timestamp(stall.a_start_secs),
+                stall.a_start_secs,
+            )
+        })
+        .collect()
 }
 
 fn format_alignment_instability_warning(
@@ -750,7 +807,7 @@ struct GapScanJson {
     track_compatibility: Option<TrackCompatibility>,
     overlap: Option<clip_sync::TimelineOverlapReport>,
     alignment: AlignmentReport,
-    gaps: Vec<Gap>,
+    gaps: Vec<GapJson>,
     /// Per-gap silence-character classification (advisory), index-parallel to `gaps`. Omitted when the
     /// scan did not populate it. See `docs/dev/gap-vocabulary.md` § Silence-character pre-gate.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -782,6 +839,24 @@ struct GapScanJson {
     /// no gain is derived from it. Omitted when the scan did not populate it.
     #[serde(skip_serializing_if = "Option::is_none")]
     program_levels: Option<crate::domain::program_levels::ProgramLevels>,
+    /// A5 floor the B-stall detector ran with. Like `local_pair_collar_secs`, omitted only by a
+    /// report that never ran a scan.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stall_min_secs: Option<f64>,
+    /// A5 reported B stalls (`docs/dev/archive/TEMP-b-stall-warning-plan.md`); omitted when none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    b_stalls: Vec<crate::domain::b_stall::BStallCandidate>,
+}
+
+/// A gap plus its report-level A5 attribution, which is derived from the stall list rather than
+/// stored on [`Gap`].
+#[derive(Serialize)]
+struct GapJson {
+    #[serde(flatten)]
+    gap: Gap,
+    /// 0-based index into `scan.b_stalls` of the latest reported stall preceding this gap.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    after_b_stall: Option<usize>,
 }
 
 impl GapScanJson {
@@ -792,7 +867,15 @@ impl GapScanJson {
             track_compatibility: report.track_compatibility.clone(),
             overlap: alignment_detail.start_overlap.map(Into::into),
             alignment: AlignmentReport::from(alignment_detail),
-            gaps: report.gaps.clone(),
+            gaps: report
+                .gaps
+                .iter()
+                .zip(b_stall_attribution(report))
+                .map(|(gap, after_b_stall)| GapJson {
+                    gap: gap.clone(),
+                    after_b_stall,
+                })
+                .collect(),
             gap_equivalence: report.gap_equivalence.clone(),
             gap_offset_agreement: report.gap_offset_agreement.clone(),
             decode_chunk_secs: report.decode_chunk_secs,
@@ -813,6 +896,12 @@ impl GapScanJson {
                 }
             }),
             program_levels: report.program_levels.clone(),
+            stall_min_secs: report.b_stall.as_ref().map(|b| b.stall_min_secs),
+            b_stalls: report
+                .b_stall
+                .as_ref()
+                .map(|b| b.stalls.clone())
+                .unwrap_or_default(),
         }
     }
 }
@@ -1219,7 +1308,20 @@ mod tests {
             limit_fill_to_mapped_region: true,
             b_scanned_end_secs: None,
             b_scan_truncated: false,
-            b_stall: None,
+            // Populated so the golden pins `stall_min_secs`, `b_stalls[]`, and both states of the
+            // per-gap `after_b_stall` (absent on the first gap, `0` on the second).
+            b_stall: Some(crate::domain::b_stall::BStallReport {
+                stall_min_secs: 10.0,
+                stalls: vec![crate::domain::b_stall::BStallCandidate {
+                    b_start_secs: 72.34,
+                    b_end_secs: 94.34,
+                    duration_secs: 22.0,
+                    a_start_secs: 60.0,
+                    a_end_secs: 82.0,
+                    offset_used_secs: 12.34,
+                    a_silent_fraction: 0.0,
+                }],
+            }),
             // Populated for the same reason as `collar_level` and `program_levels`: a
             // `skip_serializing_if` field that is `None` in the only JSON-shape golden is a field
             // the golden does not guard.
@@ -2306,6 +2408,119 @@ mod tests {
         let text = super::format_unified_gap_report(&report, Some(&summary), false, false);
         assert!(text.contains("skipped: boundary correlation below threshold"));
         assert!(text.contains("[hard skip · post-strong]"));
+    }
+
+    fn pair_54_like_stall() -> crate::domain::b_stall::BStallReport {
+        use crate::domain::b_stall::{BStallCandidate, BStallReport};
+        BStallReport {
+            stall_min_secs: 10.0,
+            stalls: vec![BStallCandidate {
+                b_start_secs: 6152.7,
+                b_end_secs: 6219.3,
+                duration_secs: 66.6,
+                a_start_secs: 6150.5,
+                a_end_secs: 6217.1,
+                offset_used_secs: 2.2,
+                a_silent_fraction: 0.0,
+            }],
+        }
+    }
+
+    fn gap_at(a_start_secs: f64) -> Gap {
+        Gap {
+            video_a_start_secs: a_start_secs,
+            video_a_end_secs: a_start_secs + 1.5,
+            video_b_start_secs: Some(a_start_secs + 2.2),
+            video_b_end_secs: Some(a_start_secs + 3.7),
+            b_has_energy: true,
+            collar_level: None,
+        }
+    }
+
+    #[test]
+    fn human_report_names_b_stall_and_first_later_gap() {
+        let mut report = minimal_report();
+        report.gaps = vec![gap_at(100.0), gap_at(6518.1)];
+        report.b_stall = Some(pair_54_like_stall());
+        let text = super::format_human(
+            &report,
+            &minimal_alignment_detail(),
+            None,
+            None,
+            false,
+            None,
+        );
+        assert!(
+            text.contains(
+                "Warning: video B is silent for 66.6s at 1:42:33 (6152.7s) while video A has audio \
+                 at 1:42:31 (6150.5s) — possible B stall or corruption; later gaps (from #2) may \
+                 be offset by up to +66.6s and fail to fill"
+            ),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn human_report_b_stall_without_following_gaps() {
+        let mut report = minimal_report();
+        report.gaps = vec![gap_at(100.0)];
+        report.b_stall = Some(pair_54_like_stall());
+        let text = super::format_human(
+            &report,
+            &minimal_alignment_detail(),
+            None,
+            None,
+            false,
+            None,
+        );
+        assert!(text.contains("possible B stall or corruption; no detected gaps follow it"));
+    }
+
+    #[test]
+    fn human_report_has_no_b_stall_line_when_none_reported() {
+        let mut report = minimal_report();
+        report.b_stall = Some(crate::domain::b_stall::BStallReport {
+            stall_min_secs: 10.0,
+            stalls: Vec::new(),
+        });
+        let text = super::format_human(
+            &report,
+            &minimal_alignment_detail(),
+            None,
+            None,
+            false,
+            None,
+        );
+        assert!(!text.contains("B stall"));
+    }
+
+    #[test]
+    fn unified_gap_report_marks_skipped_gaps_after_b_stall() {
+        use crate::domain::{GapPatchSkipReason, GapPatchStatus, PatchSummary};
+
+        let mut report = minimal_report();
+        report.gaps = vec![gap_at(100.0), gap_at(6518.1)];
+        report.b_stall = Some(pair_54_like_stall());
+        let skipped = || GapPatchStatus::Skipped {
+            reason: GapPatchSkipReason::CorrelationBelowThreshold {
+                pre_correlation: 0.18,
+                post_correlation: 0.32,
+                min_correlation: 0.55,
+                best_attempt: None,
+            },
+        };
+        let summary = PatchSummary::from_outcomes(vec![
+            gap_patch_outcome(100.0, 101.5, skipped()),
+            gap_patch_outcome(6518.1, 6519.6, skipped()),
+        ]);
+
+        let text = super::format_unified_gap_report(&report, Some(&summary), false, false);
+        let marked: Vec<&str> = text
+            .lines()
+            .filter(|line| line.contains("(after B stall #1)"))
+            .collect();
+        assert_eq!(marked.len(), 1, "{text}");
+        assert!(marked[0].contains("1:48:38"), "{text}");
     }
 
     #[test]

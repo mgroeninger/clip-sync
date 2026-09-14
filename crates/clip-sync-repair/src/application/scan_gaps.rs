@@ -407,13 +407,31 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             None
         };
 
-        // Step 6a: scan-time B-stall warning (`docs/dev/TEMP-b-stall-warning-plan.md`). Sited after
+        // Step 6a: scan-time B-stall warning (`docs/dev/archive/TEMP-b-stall-warning-plan.md`). Sited after
         // the per-gap loop because that loop consumed `a_runs`; `gaps` carries every A run's span.
         // Deliberately NOT `a_intervals` above — that is the mutual-silence subset, which would
         // under-count A silence and over-report stalls. Not gated on `scan_both`: the B scan is
         // not. Advisory only; nothing downstream reads it.
+        //
+        // The overlap is the whole-file mapped overlap of the two scanned extents, NOT
+        // `start_overlap`: that one is clipped to the start clip's window (tens of seconds), which
+        // would drop every stall past the start clip — pair 54's is at B 6152 s.
         let b_stall = {
-            let scan = match (offset_secs, start_overlap.as_ref()) {
+            let scanned_overlap = offset_secs
+                .zip(a_edge)
+                .zip(b_scan.scanned_end_secs)
+                .and_then(|((offset, ((a_lo, a_hi), _)), b_end)| {
+                    let a_start = a_lo.max(-offset);
+                    let a_end = a_hi.min(b_end - offset);
+                    (a_end > a_start).then_some(crate::domain::align::TimelineOverlap {
+                        video_a_start_secs: a_start,
+                        video_a_end_secs: a_end,
+                        video_b_start_secs: a_start + offset,
+                        video_b_end_secs: a_end + offset,
+                        shared_length_secs: a_end - a_start,
+                    })
+                });
+            let scan = match (offset_secs, scanned_overlap.as_ref()) {
                 (Some(offset), Some(overlap)) => {
                     let a_silence: Vec<SilenceInterval> = gaps
                         .iter()
@@ -1462,14 +1480,16 @@ mod tests {
         assert!(report.gap_offset_agreement.is_none());
     }
 
-    fn aligned_with_overlap(offset: f64, dur_secs: f64) -> AlignmentResult {
+    /// Offset plus a `start_overlap` as production builds it: clipped to a short start-clip window
+    /// (`[0, clip_secs)`), far shorter than the files. A5 must not read it as the scan overlap.
+    fn aligned_with_start_clip_overlap(offset: f64, clip_secs: f64) -> AlignmentResult {
         let mut alignment = aligned_result(Some(offset));
         alignment.start_overlap = Some(clip_sync::TimelineOverlap {
             video_a_start_secs: 0.0,
-            video_a_end_secs: dur_secs,
-            video_b_start_secs: 0.0,
-            video_b_end_secs: dur_secs,
-            shared_length_secs: dur_secs,
+            video_a_end_secs: clip_secs,
+            video_b_start_secs: offset,
+            video_b_end_secs: clip_secs + offset,
+            shared_length_secs: clip_secs,
         });
         alignment
     }
@@ -1477,7 +1497,8 @@ mod tests {
     #[test]
     fn scan_stamps_b_stall_while_a_has_audio() {
         // Plan § 4: B silent for the whole overlap while A is loud → one stall, and the floor
-        // is echoed. `scan_both` stays false: the detector is not gated on it.
+        // is echoed. `scan_both` stays false: the detector is not gated on it. The start-clip
+        // overlap is 5 s; the stall must still span the scanned files, not that window.
         let dur = Duration::from_secs(60);
         let reader = FixedReader::new()
             .with("a.wav", SessionKind::Loud, dur)
@@ -1489,13 +1510,18 @@ mod tests {
         request.stall_min_secs = 5.0;
 
         let report = scan
-            .scan_after_alignment(request, aligned_with_overlap(0.0, 60.0))
+            .scan_after_alignment(request, aligned_with_start_clip_overlap(0.0, 5.0))
             .expect("scan should succeed");
 
         let b_stall = report.b_stall.as_ref().expect("a real scan stamps b_stall");
         assert_eq!(b_stall.stall_min_secs, 5.0);
         assert_eq!(b_stall.stalls.len(), 1, "got {:?}", b_stall.stalls);
         assert!(b_stall.stalls[0].a_silent_fraction < 0.5);
+        assert!(
+            b_stall.stalls[0].duration_secs > 50.0,
+            "stall clipped to the start-clip window: {:?}",
+            b_stall.stalls[0]
+        );
     }
 
     #[test]
@@ -1510,7 +1536,7 @@ mod tests {
         let report = scan
             .scan_after_alignment(
                 scan_request("a.wav", "b.wav", 60),
-                aligned_with_overlap(0.0, 60.0),
+                aligned_with_start_clip_overlap(0.0, 5.0),
             )
             .expect("scan should succeed");
 
@@ -1519,7 +1545,7 @@ mod tests {
     }
 
     #[test]
-    fn scan_b_stall_empty_without_offset_or_overlap() {
+    fn scan_b_stall_empty_without_offset() {
         let dur = Duration::from_secs(60);
         let reader = FixedReader::new()
             .with("a.wav", SessionKind::Loud, dur)
@@ -1527,13 +1553,11 @@ mod tests {
         let progress = FakeProgressReporter;
         let scan = ScanGaps::new(&reader, &progress, &NeverCalledAligner);
 
-        for alignment in [aligned_result(None), aligned_result(Some(0.0))] {
-            let report = scan
-                .scan_after_alignment(scan_request("a.wav", "b.wav", 60), alignment)
-                .expect("scan should succeed");
-            let b_stall = report.b_stall.as_ref().expect("a real scan stamps b_stall");
-            assert!(b_stall.stalls.is_empty(), "got {:?}", b_stall.stalls);
-        }
+        let report = scan
+            .scan_after_alignment(scan_request("a.wav", "b.wav", 60), aligned_result(None))
+            .expect("scan should succeed");
+        let b_stall = report.b_stall.as_ref().expect("a real scan stamps b_stall");
+        assert!(b_stall.stalls.is_empty(), "got {:?}", b_stall.stalls);
     }
 
     #[test]

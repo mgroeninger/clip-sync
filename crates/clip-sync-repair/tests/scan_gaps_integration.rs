@@ -175,6 +175,58 @@ fn execute_detects_short_two_second_gap() {
     );
 }
 
+/// A5 (`docs/dev/archive/TEMP-b-stall-warning-plan.md` § 4): a 20 s stretch of B zeroed while A keeps
+/// program is reported as a B stall, and an A gap after it is attributed to that stall.
+#[test]
+fn execute_reports_b_stall_and_attributes_later_gap() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let (path_a, path_b) =
+        write_offset_chirp_wav_pair(temp.path(), SAMPLE_RATE, TOTAL_SECS, OFFSET_SECS);
+    zero_wav_segment(&path_b, SAMPLE_RATE, 70, 90);
+    zero_wav_segment(&path_a, SAMPLE_RATE, 104, 106);
+
+    let progress = FakeProgressReporter;
+    let media_reader = SymphoniaMediaReader;
+    let aligner = SymphoniaAligner;
+    let scan = ScanGaps::new(&media_reader, &progress, &aligner);
+
+    let report = scan
+        .execute(ScanGapsRequest {
+            video_a: path_a,
+            video_b: path_b,
+            align: aligned_chirp_config(),
+            decode_chunk_secs: 10,
+            recipe: clip_sync_repair::domain::ScanRecipe::with_hold_blocks(1000, 0, 250, 0.01, 0.0),
+            scan_both: true,
+            gap_offset_tolerance_secs: 0.5,
+            stall_min_secs: 10.0,
+            limit_fill_to_mapped_region: true,
+            apply_donor_registration: true,
+            local_pair_collar_secs: 2.0,
+        })
+        .expect("scan should succeed");
+
+    let b_stall = report.b_stall.as_ref().expect("a real scan stamps b_stall");
+    assert_eq!(b_stall.stall_min_secs, 10.0);
+    assert_eq!(b_stall.stalls.len(), 1, "got {:?}", b_stall.stalls);
+    let stall = &b_stall.stalls[0];
+    assert!(
+        (stall.b_start_secs - 70.0).abs() < 1.0 && (stall.duration_secs - 20.0).abs() < 1.0,
+        "got {stall:?}"
+    );
+    assert!(stall.a_silent_fraction < 0.5, "got {stall:?}");
+
+    let gap_index = report
+        .gaps
+        .iter()
+        .position(|g| (g.video_a_start_secs - 104.0).abs() < 0.5)
+        .expect("should detect the A gap near t=104s");
+    let gap_starts: Vec<f64> = report.gaps.iter().map(|g| g.video_a_start_secs).collect();
+    let attribution =
+        clip_sync_repair::domain::b_stall::attribute_gaps_to_b_stalls(&gap_starts, &b_stall.stalls);
+    assert_eq!(attribution[gap_index], Some(0));
+}
+
 /// Smoke test: B is a dual-track MP4 (2ch AAC + 6ch AC-3). The pipeline should select a
 /// decodable track, align, detect the silent gap in A, and report B energy at that position.
 #[cfg(all(feature = "ac3", feature = "ffmpeg-tests"))]

@@ -258,7 +258,7 @@ pub struct RepairConfig {
     #[serde(default = "default_local_pair_collar_secs")]
     pub local_pair_collar_secs: f64,
     /// Minimum B silence (seconds, after overlap clipping) the scan-time B-stall warning considers
-    /// (`docs/dev/TEMP-b-stall-warning-plan.md`). Read by **scan**; TOML only, no CLI flag.
+    /// (`docs/dev/archive/TEMP-b-stall-warning-plan.md`). Read by **scan**; TOML only, no CLI flag.
     /// Placeholder 10.0 until the plan's § 5 census sets it.
     #[serde(default = "default_stall_min_secs")]
     pub stall_min_secs: f64,

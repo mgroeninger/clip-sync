@@ -122,7 +122,8 @@
           "first_pair_secs": 118.2,
           "last_pair_secs": 119.6,
           "map_lag_ms": null
-        }
+        },
+        "after_b_stall": 0
       }
     ],
     "gap_offset_agreement": {
@@ -188,7 +189,19 @@
         ]
       },
       "channels_comparable": true
-    }
+    },
+    "stall_min_secs": 10.0,
+    "b_stalls": [
+      {
+        "b_start_secs": 72.34,
+        "b_end_secs": 94.34,
+        "duration_secs": 22.0,
+        "a_start_secs": 60.0,
+        "a_end_secs": 82.0,
+        "offset_used_secs": 12.34,
+        "a_silent_fraction": 0.0
+      }
+    ]
   },
   "patch": {
     "patched_count": 2,

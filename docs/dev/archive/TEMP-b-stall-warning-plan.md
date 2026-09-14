@@ -1,12 +1,19 @@
 # TEMP — B-stall warning (A5)
 
-**Status:** in progress, 2026-09-14. A Change (user-visible warning +
+> **Archived 2026-09-14. Shipped** at `stall_min_secs = 10.0`. § 5
+> census (51 pairs) chose it: 1 true stall (pair 54), 0 false reports,
+> nearest dropout 5.7 s. Rule 2's premise — that a reported silence
+> shifts the timeline — is **refuted below ~6.5 s** (64 of 66 short
+> reports were flat dropouts), and pair 50 has a real 2.75 s stall no
+> length floor can catch. Successor:
+> [TEMP-b-stall-step-confirmation-plan.md](../TEMP-b-stall-step-confirmation-plan.md).
+> Current behaviour: [cli-output.md](../../cli-output.md) § Timeline /
+> duration warnings. See [settled.md](../settled.md) § E.
+
+**Status:** implemented, 2026-09-14. A Change (user-visible warning +
 additive JSON field). Scan-time only; changes no patch / skip decision.
 Spec pins from the 2026-09-14 review are folded in (§ 2 rules 0, 3, 4;
 § 3; § 5).
-
-**Tracked as:** [BACKLOG.md](../../BACKLOG.md) § *Timeline integrity* →
-*B-stall warning (A5)*.
 
 **Companions (do not merge):**
 
@@ -73,14 +80,20 @@ Inputs, all already live in `scan_gaps` once the per-gap loop has run:
 B silent intervals (the B silence map built for per-gap energy lookup),
 B `scanned_end_secs` and `truncated`, **every** A silent run (the
 scanner's runs, i.e. each gap's `video_a_start_secs`–`video_a_end_secs`),
-the pair alignment offset, and `start_overlap`.
+the pair alignment offset, and the **whole-file mapped overlap** of the
+scanned A extent and B's `scanned_end_secs` under that offset.
+
+Not `start_overlap`: the library clips it to the start clip's window
+(tens of seconds), so it would drop every stall past the start clip.
+Found 2026-09-14 by the synthetic integration test. The unit fixtures had
+set `start_overlap` to the whole file and hid it.
 
 0. **Preconditions.** No offset, no overlap, or B not scanned
    (`scanned_end_secs` absent) → nothing, and no candidates are logged.
    A5 is **not** gated on `scan_both`: the B scan itself is not, only the
    cross-check is.
 1. **Candidate.** A B silent interval `[b0, b1)` with
-   `b1 − b0 ≥ stall_min_secs` (default **10.0 s**, placeholder until § 5)
+   `b1 − b0 ≥ stall_min_secs` (default **10.0 s**, census-chosen in § 5.1)
    lying inside the mapped overlap. Clip to the overlap first; judge
    length after clipping.
 2. **Map to A.** `a0 = b0 − offset`, `a1 = b1 − offset`, where `offset`
@@ -219,7 +232,7 @@ inserted B stall → human warning line, `scan.b_stalls`, and
 
 ## 5. Threshold (ship gate, not code gate)
 
-`stall_min_secs = 10.0` is a placeholder. Code may land at 10.0; the
+`stall_min_secs = 10.0` was a placeholder (result: § 5.1). Code may land at 10.0; the
 user-visible default does **not** ship until this table exists.
 
 Runner: `scripts/measure/scan-registration.ps1` (scan-only,
@@ -236,6 +249,41 @@ note. If ordinary program pauses above 10 s survive rule 3, or any real
 stall or program pause has `a_silent_fraction` in 0.3–0.7, stop and
 revisit rule 3 before shipping.
 
+### 5.1 Result (2026-09-14)
+
+51 pairs (1–54 minus 6 and 16), floor 2 s, no truncated B scan.
+
+| Position | Candidates | Outcome |
+|----------|-----------|---------|
+| Head (A < 60 s) | 71 | all suppressed (max 27.7 s) |
+| Tail (ends at scanned end) | 28 | all suppressed (max 305.3 s; pair 54's end silence among them) |
+| Interior, suppressed | 100 | ≥ 10 s all have A-silent fraction ≥ 0.97 at the pair offset |
+| Interior, reported | 66 | see below |
+
+Step vs dropout, per reported candidate: residual of later shared
+silences against the flat map and the shifted map, plus donor
+registration on the next ≤ 8 gaps.
+
+| Reported | n | Reading |
+|----------|---|---------|
+| Pair 54, B 6152.8, 66.6 s | 1 | stall — step residual −0.85 s, registration 0/1 |
+| Pair 50, B 2249.3, 2.75 s | 1 | stall — step residual +0.05 s, registration 0/8; ear-confirmed |
+| Everything else (2.0–6.4 s) | 64 | dropout — flat residual ≤ 0.41 s, registration 5/5–8/8 |
+
+Reported by floor: 2 s 66, 3 s 27, 4 s 7, 5 s 6, 6 s 2, 6.5–60 s 1
+(pair 54 only). Longest interior dropout 5.7 s (pair 48); pair 49's
+6.4 s is a cumulative-offset artifact (fraction 1.00 at the pair offset).
+
+The 0.3–0.7 band: 12 candidates, all ≤ 4 s genuine pauses or
+cumulative-offset artifacts (e.g. pair 25's 54.7 s tail reads 0.63 at a
+contaminated offset, 1.00 at the pair offset). None exists at ≥ 10 s.
+
+**Chosen: 10.0 s** (anything 6.5–60 s gives the same result; 10 keeps a
+wide margin). Rule 2 is harmless only because no pair has more than one
+report at that floor. Pair 54 re-scan at the default: one warning at
+1:42:33 with offset used +2.1 s (the 2 s census had +4.59 from a 2.5 s
+dropout), first attributed gap `#13` (g012).
+
 ---
 
 ## 6. Checklist
@@ -244,9 +292,9 @@ revisit rule 3 before shipping.
 - [x] Scan: call it in `crates/clip-sync-repair/src/application/scan_gaps.rs` after the per-gap loop (Step 6 neighbourhood; `a_runs` is consumed by that loop, so A runs come from `gaps`); `tracing::debug` each suppression; stamp `GapReport::b_stall`.
 - [x] Config: `stall_min_secs` on `RepairConfig` (TOML, validated > 0, no CLI flag) → `ScanGapsRequest` → `GapReport`.
 - [x] Output: stall line + `tracing::warn!` in `infrastructure/cli/output.rs` (§ 3.1); `(after B stall #k)` where a reason column exists.
-- [ ] JSON DTOs (`scan.b_stalls`, `scan.stall_min_secs`, per-gap `after_b_stall`) + [json-output.md](../json-output.md) additive entry + regenerate `full_surface_repair.json`.
-- [ ] [cli-output.md](../cli-output.md) § *Timeline / duration warnings*: A5 row, "why", "what to do".
-- [ ] § 5 census; set the default; pair 54 re-scan shows the warning and g012's `after_b_stall`.
+- [x] JSON DTOs (`scan.b_stalls`, `scan.stall_min_secs`, per-gap `after_b_stall`) + [json-output.md](../json-output.md) additive entry + regenerate `full_surface_repair.json`.
+- [x] [cli-output.md](../cli-output.md) § *Timeline / duration warnings*: A5 row, "why", "what to do".
+- [x] § 5 census; set the default; pair 54 re-scan shows the warning and g012's `after_b_stall` (§ 5.1; JSON: one stall, `offset_used_secs` 2.06, g012 and g013 `after_b_stall: 0`).
 
 ---
 

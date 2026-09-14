@@ -8,7 +8,7 @@ JSON field). Changes no offset, confidence, or fill decision.
 
 **Companions (do not merge):**
 
-- A5 B-stall warning ([TEMP-b-stall-warning-plan.md](TEMP-b-stall-warning-plan.md))
+- A5 B-stall warning ([TEMP-b-stall-warning-plan.md](archive/TEMP-b-stall-warning-plan.md))
   — scan-time, reads B silence. A6 is alignment-time and reads the two
   end-clip estimates. On pair 54 both fire, for the same step, from
   independent evidence.

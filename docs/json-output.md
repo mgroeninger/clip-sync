@@ -1,6 +1,6 @@
 # JSON output contract — v1
 
-Authoritative field-by-field contract for `--format json` output of both CLIs. **Frozen as v1 (2026-06-10).** Additive revisions: optional `end_clip_anchor` on analyzer/repair alignment reports (2026-06-17); optional `video_b_window_*` on clip entries when B differs from A; optional `audio_timeline_skew` on repair `GapReport` (2026-06-19); additive scan-recipe echo keys `min_gap_ms`, `silence_hold_ms` (effective), and `absolute_silence_rms` (normalized) on repair `GapReport` (2026-07-31); optional `fill_geometry` on repair `PatchSummary` (2026-08-17); optional `program_levels` on repair `GapReport` (2026-08-26); optional per-gap `collar_level` on repair `Gap`, with `map_lag_ms` recording the map each collar was read through (2026-08-27); optional `local_pair_collar_secs` knob echo on repair `GapReport` (2026-08-27); new `shoulders_abut` skip reason and optional `shoulders_abut` list on repair `PatchSummary` (2026-08-28); `local_gain` and `local_gain_reason` on repair `GapPatchStatus::Patched` (2026-08-31); optional `injected_time` on repair `PatchSummary` (A4, 2026-09-08).
+Authoritative field-by-field contract for `--format json` output of both CLIs. **Frozen as v1 (2026-06-10).** Additive revisions: optional `end_clip_anchor` on analyzer/repair alignment reports (2026-06-17); optional `video_b_window_*` on clip entries when B differs from A; optional `audio_timeline_skew` on repair `GapReport` (2026-06-19); additive scan-recipe echo keys `min_gap_ms`, `silence_hold_ms` (effective), and `absolute_silence_rms` (normalized) on repair `GapReport` (2026-07-31); optional `fill_geometry` on repair `PatchSummary` (2026-08-17); optional `program_levels` on repair `GapReport` (2026-08-26); optional per-gap `collar_level` on repair `Gap`, with `map_lag_ms` recording the map each collar was read through (2026-08-27); optional `local_pair_collar_secs` knob echo on repair `GapReport` (2026-08-27); new `shoulders_abut` skip reason and optional `shoulders_abut` list on repair `PatchSummary` (2026-08-28); `local_gain` and `local_gain_reason` on repair `GapPatchStatus::Patched` (2026-08-31); optional `injected_time` on repair `PatchSummary` (A4, 2026-09-08); optional `stall_min_secs` and `b_stalls` on repair `GapReport`, and optional per-gap `after_b_stall` on repair `Gap` (A5, 2026-09-14).
 
 Any change to field names, types, optionality, or nesting is a contract revision: update this document, regenerate the golden fixtures, and call the revision out explicitly in the changelog/commit.
 
@@ -182,6 +182,8 @@ Top-level object: **RepairJsonOutput**.
 | `local_pair_collar_secs` | number | when the scan populated it | Collar half-width (seconds either side of the hole) the per-gap [CollarLevelOffset](#collarleveloffset) readings in this report were measured over. Config-only, no CLI flag. Sits out here rather than among the recipe fields for the same reason `decode_chunk_secs` does: the recipe's contract is *same recipe ⇔ same gap list*, and a collar width cannot move a gap boundary. Exists so a two-arm collar differential is attributable to the width that changed rather than to the output directory — the config that set it normally lives beside the dumps in an ephemeral directory |
 | `audio_timeline_skew` | [AudioTimelineSkew](#audiotimelineskew) \| null | always | Present when gap scan measured PTS vs decoded-sample clock; `null` when not measurable (e.g. seek-based scan fallback). Human report emits a warning when `delta_secs > 1.0` |
 | `program_levels` | [ProgramLevels](#programlevels) | when the scan populated it | Whole-program A/B level readings. Since 2026-08-26 `offset` **drives the fill gain** — see `patch.program_gain` and [pipeline.md](pipeline.md) § Fill gain |
+| `stall_min_secs` | number | when the scan populated it | Minimum B silence (seconds, after overlap clipping) the A5 B-stall detector considered. Config-only (`repair.stall_min_secs`), no CLI flag; kept off the recipe fields for the same reason as `local_pair_collar_secs` |
+| `b_stalls` | array of [BStall](#bstall) | when non-empty | A5: long B silences inside the overlap where A is **not** silent over the mapped span — possible B stall or corruption. Advisory; changes no patch or skip decision. Silence present in both files is never listed |
 
 ### ProgramLevels
 
@@ -309,6 +311,20 @@ Gap positions in `gaps[]` use the **decoded-sample clock**. When `delta_secs` is
 | `video_b_end_secs` | number \| null | always | |
 | `b_has_energy` | bool | always | B has audio energy at the mapped position (potential fill source) |
 | `collar_level` | [CollarLevelOffset](#collarleveloffset) | when anything in the collar paired | The A/B level relationship **local to this gap**, read from the material either side of it. Absent for every reason at once (channels incomparable, no alignment offset, nothing paired) — do not infer which. Absence does *not* mean "too few pairs": a thin collar is reported, floor and all |
+| `after_b_stall` | integer | when a reported B stall precedes the gap | 0-based index into `scan.b_stalls` of the latest stall whose `a_start_secs` is ≤ this gap's start. The human `(after B stall #k)` is this index + 1. Informational; set on patched gaps too |
+
+### BStall
+
+One entry of `scan.b_stalls`. Serialized directly from the domain record, so a field rename is a
+contract change.
+
+| Field | Type | Presence | Meaning |
+|-------|------|----------|---------|
+| `b_start_secs` / `b_end_secs` | number | always | B silent interval on B's timeline, clipped to the overlap |
+| `duration_secs` | number | always | `b_end_secs − b_start_secs` |
+| `a_start_secs` / `a_end_secs` | number | always | The interval mapped onto A (`b − offset_used_secs`) |
+| `offset_used_secs` | number | always | Pair offset plus the durations of every earlier reported stall |
+| `a_silent_fraction` | number | always | Fraction of the mapped A span covered by A silent runs (reported only when `< 0.5`) |
 
 ### GapOffsetAgreement
 

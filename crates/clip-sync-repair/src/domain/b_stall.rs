@@ -4,7 +4,7 @@
 //! **not** silent over the mapped span — a stall or corruption in B that shifts every later gap's
 //! map. Silence present in both files at the same mapped time is program and is never reported.
 //! Advisory only: nothing here changes a patch or skip decision. See
-//! `docs/dev/TEMP-b-stall-warning-plan.md`.
+//! `docs/dev/archive/TEMP-b-stall-warning-plan.md`.
 
 use crate::domain::align::TimelineOverlap;
 use crate::domain::cross_check::SilenceInterval;
@@ -18,7 +18,10 @@ pub const B_STALL_MAX_A_SILENT_FRACTION: f64 = 0.5;
 const TIME_EPS_SECS: f64 = 1e-6;
 
 /// One long B silence, mapped onto A. Both reported and suppressed candidates carry this shape.
-#[derive(Debug, Clone, Copy, PartialEq)]
+///
+/// A behaviourless reporting record, so it serializes directly as `scan.b_stalls[]`
+/// (`docs/json-output.md` § Revision procedure): renaming a field is a JSON contract change.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct BStallCandidate {
     /// B silent interval, clipped to the overlap.
     pub b_start_secs: f64,
