@@ -12,7 +12,8 @@ use crate::application::align_bridge::{
 use crate::application::error::RepairError;
 use crate::application::ports::Aligner;
 use crate::domain::b_stall::{
-    detect_b_stalls, BStallBScan, BStallReport, BStallScan, ShoulderVerdict,
+    detect_b_stalls, trusted_stall_advance_secs, BStallBScan, BStallReport, BStallScan,
+    ShoulderVerdict,
 };
 use crate::domain::cross_check::{
     b_has_energy_from_levels, b_range_fully_scanned, check_gap_offset_agreement_in_overlap,
@@ -297,17 +298,116 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             ..Default::default()
         };
         let b_levels_for_eq = (!b_scan.levels.is_empty()).then_some(b_scan.levels.as_slice());
+
+        // Step 6a first: B-stall detection must precede the per-gap map so `video_b_*`, occupancy,
+        // and donor registration use the stall-segmented offset
+        // (`docs/dev/TEMP-stall-segmented-map-plan.md` § 2). A-silence intervals come from `a_runs`
+        // (every A silent run), not the later mutual-silence subset. The overlap is the whole-file
+        // mapped overlap of the two scanned extents, NOT `start_overlap` (clipped to the start
+        // clip — pair 54's stall is at B 6152 s).
+        let b_stall = {
+            let scanned_overlap = offset_secs
+                .zip(a_edge)
+                .zip(b_scan.scanned_end_secs)
+                .and_then(|((offset, ((a_lo, a_hi), _)), b_end)| {
+                    let a_start = a_lo.max(-offset);
+                    let a_end = a_hi.min(b_end - offset);
+                    (a_end > a_start).then_some(crate::domain::align::TimelineOverlap {
+                        video_a_start_secs: a_start,
+                        video_a_end_secs: a_end,
+                        video_b_start_secs: a_start + offset,
+                        video_b_end_secs: a_end + offset,
+                        shared_length_secs: a_end - a_start,
+                    })
+                });
+            let a_silence: Vec<SilenceInterval> = a_runs
+                .iter()
+                .map(|run| SilenceInterval {
+                    start_secs: run.start_secs,
+                    end_secs: run.end_secs,
+                })
+                .collect();
+            let scan = match (offset_secs, scanned_overlap.as_ref()) {
+                (Some(offset), Some(overlap)) => detect_b_stalls(
+                    &BStallBScan {
+                        intervals: &b_scan.intervals,
+                        levels: &b_scan.levels,
+                        scanned_end_secs: b_scan.scanned_end_secs,
+                        truncated: b_scan.truncated,
+                    },
+                    &a_silence,
+                    &a_levels,
+                    offset,
+                    overlap,
+                    request.stall_min_secs,
+                ),
+                _ => BStallScan::default(),
+            };
+            // One census line per shoulder-tested candidate, reported or not
+            // (`docs/dev/archive/TEMP-b-stall-step-confirmation-plan.md` § 2 rule 6, § 5).
+            for (candidate, reported) in scan
+                .reported
+                .iter()
+                .map(|c| (c, true))
+                .chain(scan.unconfirmed.iter().map(|c| (c, false)))
+            {
+                let Some(shoulder) = candidate.shoulder else {
+                    continue;
+                };
+                let (verdict, shift_secs) = match shoulder.verdict {
+                    ShoulderVerdict::Step { shift_secs } => ("step".to_string(), Some(shift_secs)),
+                    ShoulderVerdict::Flat => ("flat".to_string(), None),
+                    ShoulderVerdict::Undetermined(reason) => {
+                        (format!("undetermined({reason:?})"), None)
+                    }
+                };
+                tracing::debug!(
+                    reported,
+                    b_start_secs = candidate.b_start_secs,
+                    duration_secs = candidate.duration_secs,
+                    a_start_secs = candidate.a_start_secs,
+                    offset_used_secs = candidate.offset_used_secs,
+                    verdict = verdict.as_str(),
+                    r_pre = ?shoulder.r_pre,
+                    pre_lag_secs = ?shoulder.pre_lag_secs,
+                    r_flat = ?shoulder.r_flat,
+                    r_step = ?shoulder.r_step,
+                    step_shift_secs = ?shift_secs,
+                    b_pre_live_bins = shoulder.b_pre_live_bins,
+                    b_post_live_bins = shoulder.b_post_live_bins,
+                    skipped_lags = shoulder.skipped_lags,
+                    "B-stall candidate shoulder test"
+                );
+            }
+            for candidate in &scan.suppressed {
+                tracing::debug!(
+                    b_start_secs = candidate.b_start_secs,
+                    duration_secs = candidate.duration_secs,
+                    a_start_secs = candidate.a_start_secs,
+                    offset_used_secs = candidate.offset_used_secs,
+                    a_silent_fraction = candidate.a_silent_fraction,
+                    "B-stall candidate suppressed: A is silent over the mapped span"
+                );
+            }
+            BStallReport {
+                stall_min_secs: request.stall_min_secs,
+                stalls: scan.reported,
+            }
+        };
+
         let mut gaps = Vec::with_capacity(a_runs.len());
         let mut gap_equivalence = Vec::with_capacity(a_runs.len());
         for run in a_runs {
             let pos = run.start_secs;
             let end = run.end_secs;
-            let b_positions = offset_secs.map(|delta| (pos + delta, end + delta));
+            let mapped_offset =
+                offset_secs.map(|pair| pair + trusted_stall_advance_secs(&b_stall.stalls, pos));
+            let b_positions = mapped_offset.map(|delta| (pos + delta, end + delta));
 
             // Absolute occupancy from B's per-block levels over the mapped *core* (same window
             // equivalence uses) — not hold-bridged silence-run coverage, which can span real audio.
             // Fail-closed when the mapped core is not fully inside the reviewed B scan prefix.
-            let b_has_energy = match (offset_secs, b_levels_for_eq) {
+            let b_has_energy = match (mapped_offset, b_levels_for_eq) {
                 (Some(delta), Some(levels)) => {
                     let b_start = run.core_start_secs + delta;
                     let b_end = run.core_end_secs + delta;
@@ -327,7 +427,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
                 collar_level: None,
             });
 
-            let b_mapped = offset_secs
+            let b_mapped = mapped_offset
                 .map(|delta| (run.core_start_secs + delta, run.core_end_secs + delta))
                 .filter(|&(b_start, b_end)| {
                     b_levels_for_eq.is_some()
@@ -407,107 +507,6 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
             })
         } else {
             None
-        };
-
-        // Step 6a: scan-time B-stall warning (`docs/dev/archive/TEMP-b-stall-warning-plan.md`). Sited after
-        // the per-gap loop because that loop consumed `a_runs`; `gaps` carries every A run's span.
-        // Deliberately NOT `a_intervals` above — that is the mutual-silence subset, which would
-        // under-count A silence and over-report stalls. Not gated on `scan_both`: the B scan is
-        // not. Advisory only; nothing downstream reads it.
-        //
-        // The overlap is the whole-file mapped overlap of the two scanned extents, NOT
-        // `start_overlap`: that one is clipped to the start clip's window (tens of seconds), which
-        // would drop every stall past the start clip — pair 54's is at B 6152 s.
-        let b_stall = {
-            let scanned_overlap = offset_secs
-                .zip(a_edge)
-                .zip(b_scan.scanned_end_secs)
-                .and_then(|((offset, ((a_lo, a_hi), _)), b_end)| {
-                    let a_start = a_lo.max(-offset);
-                    let a_end = a_hi.min(b_end - offset);
-                    (a_end > a_start).then_some(crate::domain::align::TimelineOverlap {
-                        video_a_start_secs: a_start,
-                        video_a_end_secs: a_end,
-                        video_b_start_secs: a_start + offset,
-                        video_b_end_secs: a_end + offset,
-                        shared_length_secs: a_end - a_start,
-                    })
-                });
-            let scan = match (offset_secs, scanned_overlap.as_ref()) {
-                (Some(offset), Some(overlap)) => {
-                    let a_silence: Vec<SilenceInterval> = gaps
-                        .iter()
-                        .map(|gap| SilenceInterval {
-                            start_secs: gap.video_a_start_secs,
-                            end_secs: gap.video_a_end_secs,
-                        })
-                        .collect();
-                    detect_b_stalls(
-                        &BStallBScan {
-                            intervals: &b_scan.intervals,
-                            levels: &b_scan.levels,
-                            scanned_end_secs: b_scan.scanned_end_secs,
-                            truncated: b_scan.truncated,
-                        },
-                        &a_silence,
-                        &a_levels,
-                        offset,
-                        overlap,
-                        request.stall_min_secs,
-                    )
-                }
-                _ => BStallScan::default(),
-            };
-            // One census line per shoulder-tested candidate, reported or not
-            // (`docs/dev/archive/TEMP-b-stall-step-confirmation-plan.md` § 2 rule 6, § 5).
-            for (candidate, reported) in scan
-                .reported
-                .iter()
-                .map(|c| (c, true))
-                .chain(scan.unconfirmed.iter().map(|c| (c, false)))
-            {
-                let Some(shoulder) = candidate.shoulder else {
-                    continue;
-                };
-                let (verdict, shift_secs) = match shoulder.verdict {
-                    ShoulderVerdict::Step { shift_secs } => ("step".to_string(), Some(shift_secs)),
-                    ShoulderVerdict::Flat => ("flat".to_string(), None),
-                    ShoulderVerdict::Undetermined(reason) => {
-                        (format!("undetermined({reason:?})"), None)
-                    }
-                };
-                tracing::debug!(
-                    reported,
-                    b_start_secs = candidate.b_start_secs,
-                    duration_secs = candidate.duration_secs,
-                    a_start_secs = candidate.a_start_secs,
-                    offset_used_secs = candidate.offset_used_secs,
-                    verdict = verdict.as_str(),
-                    r_pre = ?shoulder.r_pre,
-                    pre_lag_secs = ?shoulder.pre_lag_secs,
-                    r_flat = ?shoulder.r_flat,
-                    r_step = ?shoulder.r_step,
-                    step_shift_secs = ?shift_secs,
-                    b_pre_live_bins = shoulder.b_pre_live_bins,
-                    b_post_live_bins = shoulder.b_post_live_bins,
-                    skipped_lags = shoulder.skipped_lags,
-                    "B-stall candidate shoulder test"
-                );
-            }
-            for candidate in &scan.suppressed {
-                tracing::debug!(
-                    b_start_secs = candidate.b_start_secs,
-                    duration_secs = candidate.duration_secs,
-                    a_start_secs = candidate.a_start_secs,
-                    offset_used_secs = candidate.offset_used_secs,
-                    a_silent_fraction = candidate.a_silent_fraction,
-                    "B-stall candidate suppressed: A is silent over the mapped span"
-                );
-            }
-            BStallReport {
-                stall_min_secs: request.stall_min_secs,
-                stalls: scan.reported,
-            }
         };
 
         // Step 6b: whole-program A/B level capture (`domain::program_levels`). Sited here because
@@ -591,6 +590,8 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
                         .as_ref()
                         .zip(verdict.donor_registration.as_ref())
                         .and_then(|(rp, reg)| reg.trusted_lag_secs(rp));
+                    let gap_offset =
+                        delta + trusted_stall_advance_secs(&b_stall.stalls, gap.video_a_start_secs);
                     gap.collar_level = crate::domain::program_levels::collar_level_offset(
                         &a_levels,
                         b_levels,
@@ -599,7 +600,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
                             gap_end_secs: gap.video_a_end_secs,
                             collar_secs: request.local_pair_collar_secs,
                         },
-                        delta,
+                        gap_offset,
                         map_lag_secs,
                         b_scan.scanned_end_secs,
                         &level_params,

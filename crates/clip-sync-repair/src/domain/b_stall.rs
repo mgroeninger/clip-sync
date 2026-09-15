@@ -5,11 +5,14 @@
 //! map. Silence present in both files at the same mapped time is program and is never reported.
 //! Below [`LENGTH_REPORT_SECS`] a silence is reported only when its **shoulders** show the timeline
 //! shifted (B's audio after the silence registers against A at the start of the mapped span, not
-//! its end). Advisory only: nothing here changes a patch or skip decision. See
-//! `docs/dev/archive/TEMP-b-stall-warning-plan.md` and `docs/dev/archive/TEMP-b-stall-step-confirmation-plan.md`.
+//! its end). [`trusted_stall_advance_secs`] is the fill-map consumer: only `evidence: shoulder`
+//! advances move later gaps (`docs/dev/TEMP-stall-segmented-map-plan.md`). Skip/gate/`fill_mode`
+//! are unchanged. See `docs/dev/archive/TEMP-b-stall-warning-plan.md` and
+//! `docs/dev/archive/TEMP-b-stall-step-confirmation-plan.md`.
 
 use crate::domain::align::TimelineOverlap;
 use crate::domain::cross_check::SilenceInterval;
+use crate::domain::fill_offset::FillOffsetMode;
 use crate::domain::gap_equivalence::{pearson, window_indices};
 use crate::domain::policies::BlockLevel;
 
@@ -449,6 +452,44 @@ pub fn attribute_gaps_to_b_stalls(
         .collect()
 }
 
+/// Seconds to add to the pair (recommended) offset for a gap that starts at `gap_a_start_secs`.
+///
+/// Only [`BStallEvidence::Shoulder`] advances count: `length` / `length_contradicted` stay
+/// advisory (`docs/dev/TEMP-stall-segmented-map-plan.md` § 2). Same cut as
+/// [`attribute_gaps_to_b_stalls`]. Does not fold in [`BStallCandidate::pre_lag_secs`].
+pub fn trusted_stall_advance_secs(stalls: &[BStallCandidate], gap_a_start_secs: f64) -> f64 {
+    stalls
+        .iter()
+        .filter(|s| {
+            s.evidence == Some(BStallEvidence::Shoulder) && s.a_start_secs <= gap_a_start_secs
+        })
+        .map(|s| s.shift_secs)
+        .sum()
+}
+
+/// [`trusted_stall_advance_secs`] applied only under [`FillOffsetMode::Recommended`].
+///
+/// Interpolated / anchored-retry already model clip drift or other-gap anchors; adding a stall
+/// step on top of an unconstrained end clip would double-count (pair 54).
+pub fn segmented_fill_offset_secs(
+    mode: FillOffsetMode,
+    base_offset_secs: f64,
+    stalls: &[BStallCandidate],
+    gap_a_start_secs: f64,
+) -> f64 {
+    match mode {
+        FillOffsetMode::Recommended => {
+            base_offset_secs + trusted_stall_advance_secs(stalls, gap_a_start_secs)
+        }
+        FillOffsetMode::Interpolated | FillOffsetMode::AnchoredRetry => base_offset_secs,
+    }
+}
+
+/// Reported stalls on a scan, or empty when the scan never stamped a report.
+pub fn reported_stalls(report: Option<&BStallReport>) -> &[BStallCandidate] {
+    report.map(|r| r.stalls.as_slice()).unwrap_or(&[])
+}
+
 /// Fraction of `[start, end)` covered by the union of `runs`.
 fn covered_fraction(runs: &[SilenceInterval], start: f64, end: f64) -> f64 {
     let span = end - start;
@@ -651,6 +692,74 @@ mod tests {
             vec![None, Some(0), Some(0), Some(1), Some(1)]
         );
         assert_eq!(attribute_gaps_to_b_stalls(&gaps, &[]), vec![None; 5]);
+    }
+
+    fn stall_at(
+        a_start_secs: f64,
+        shift_secs: f64,
+        evidence: Option<BStallEvidence>,
+    ) -> BStallCandidate {
+        BStallCandidate {
+            a_start_secs,
+            shift_secs,
+            evidence,
+            ..BStallCandidate::default()
+        }
+    }
+
+    #[test]
+    fn trusted_advance_ignores_length_and_contradicted() {
+        let stalls = [
+            stall_at(100.0, 12.0, Some(BStallEvidence::Length)),
+            stall_at(200.0, 20.0, Some(BStallEvidence::LengthContradicted)),
+        ];
+        assert_eq!(trusted_stall_advance_secs(&[], 500.0), 0.0);
+        assert_eq!(trusted_stall_advance_secs(&stalls, 50.0), 0.0);
+        assert_eq!(trusted_stall_advance_secs(&stalls, 500.0), 0.0);
+    }
+
+    #[test]
+    fn trusted_advance_applies_from_shoulder_a_start() {
+        let stalls = [stall_at(100.0, 3.0, Some(BStallEvidence::Shoulder))];
+        assert_eq!(trusted_stall_advance_secs(&stalls, 99.9), 0.0);
+        assert_eq!(trusted_stall_advance_secs(&stalls, 100.0), 3.0);
+        assert_eq!(trusted_stall_advance_secs(&stalls, 400.0), 3.0);
+    }
+
+    #[test]
+    fn trusted_advance_sums_shoulders_and_skips_length_between() {
+        let stalls = [
+            stall_at(100.0, 3.0, Some(BStallEvidence::Shoulder)),
+            stall_at(200.0, 12.0, Some(BStallEvidence::Length)),
+            stall_at(300.0, 2.5, Some(BStallEvidence::Shoulder)),
+        ];
+        assert_eq!(trusted_stall_advance_secs(&stalls, 150.0), 3.0);
+        assert_eq!(trusted_stall_advance_secs(&stalls, 250.0), 3.0);
+        assert_eq!(trusted_stall_advance_secs(&stalls, 300.0), 5.5);
+    }
+
+    #[test]
+    fn trusted_advance_ignores_pre_lag_and_non_recommended_modes() {
+        let stalls = [BStallCandidate {
+            a_start_secs: 100.0,
+            shift_secs: 3.0,
+            evidence: Some(BStallEvidence::Shoulder),
+            pre_lag_secs: Some(0.3),
+            ..BStallCandidate::default()
+        }];
+        assert_eq!(trusted_stall_advance_secs(&stalls, 200.0), 3.0);
+        assert_eq!(
+            segmented_fill_offset_secs(FillOffsetMode::Recommended, 2.0, &stalls, 200.0),
+            5.0
+        );
+        assert_eq!(
+            segmented_fill_offset_secs(FillOffsetMode::Interpolated, 2.0, &stalls, 200.0),
+            2.0
+        );
+        assert_eq!(
+            segmented_fill_offset_secs(FillOffsetMode::AnchoredRetry, 2.0, &stalls, 200.0),
+            2.0
+        );
     }
 
     // ---- Shoulder test (step-confirmation plan § 4). ----

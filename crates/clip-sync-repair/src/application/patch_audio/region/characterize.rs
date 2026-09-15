@@ -10,6 +10,7 @@ use crate::application::patch_region::{
     SeamExtensionRetry, SeamGateDerived, SeamGateFailure, SeamGateOutcome, SeamGateParams,
 };
 use crate::domain::{
+    b_stall::{reported_stalls, segmented_fill_offset_secs},
     fill_mode::FillMode,
     fill_offset::{resolve_gap_offset_secs, AnchoredRetryPass, FillOffsetMode},
     gap_extension_slack_secs,
@@ -142,7 +143,7 @@ pub(in crate::application::patch_audio) fn characterize_region(
     );
 
     let gap_time_on_a = (region.a_start_secs + region.a_end_secs) / 2.0;
-    let gap_offset_secs = resolve_gap_offset_secs(
+    let base_gap_offset_secs = resolve_gap_offset_secs(
         &request.report.alignment,
         fill_offset_mode,
         gap_time_on_a,
@@ -150,6 +151,12 @@ pub(in crate::application::patch_audio) fn characterize_region(
         anchored_retry_pass,
     )
     .unwrap_or(region.b_start_secs - region.a_start_secs);
+    let gap_offset_secs = segmented_fill_offset_secs(
+        fill_offset_mode,
+        base_gap_offset_secs,
+        reported_stalls(request.report.b_stall.as_ref()),
+        region.a_start_secs,
+    );
 
     if anchored_retry_pass == AnchoredRetryPass::Second {
         if let Some(table) = patch_anchors.filter(|t| !t.is_empty()) {

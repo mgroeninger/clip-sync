@@ -439,16 +439,13 @@ fn format_skipped_gap_hint(gap_refs: &[usize]) -> String {
 
 /// Per-gap index into `report.b_stall.stalls` (0-based), or `None` before any reported stall.
 fn b_stall_attribution(report: &GapReport) -> Vec<Option<usize>> {
-    let stalls = report
-        .b_stall
-        .as_ref()
-        .map(|b_stall| b_stall.stalls.as_slice())
-        .unwrap_or_default();
+    let stalls = crate::domain::b_stall::reported_stalls(report.b_stall.as_ref());
     let gap_starts: Vec<f64> = report.gaps.iter().map(|g| g.video_a_start_secs).collect();
     crate::domain::b_stall::attribute_gaps_to_b_stalls(&gap_starts, stalls)
 }
 
-/// One A5 warning line per reported B stall (`docs/dev/archive/TEMP-b-stall-warning-plan.md` § 3.1).
+/// One A5 warning line per reported B stall (`docs/dev/archive/TEMP-b-stall-warning-plan.md` § 3.1;
+/// stall-segmented map copy: `docs/dev/TEMP-stall-segmented-map-plan.md` § 3).
 fn format_b_stall_warnings(report: &GapReport) -> Vec<String> {
     let Some(b_stall) = report.b_stall.as_ref() else {
         return Vec::new();
@@ -459,7 +456,13 @@ fn format_b_stall_warnings(report: &GapReport) -> Vec<String> {
         .iter()
         .enumerate()
         .map(|(stall_index, stall)| {
+            let mapped = stall.evidence == Some(crate::domain::b_stall::BStallEvidence::Shoulder);
             let tail = match attribution.iter().position(|a| *a == Some(stall_index)) {
+                Some(first_gap) if mapped => format!(
+                    "later gaps (from #{}) mapped with {:+.1}s stall advance",
+                    first_gap + 1,
+                    stall.shift_secs
+                ),
                 Some(first_gap) => format!(
                     "later gaps (from #{}) may be offset by up to {:+.1}s and fail to fill",
                     first_gap + 1,
@@ -857,6 +860,9 @@ struct GapJson {
     /// 0-based index into `scan.b_stalls` of the latest reported stall preceding this gap.
     #[serde(skip_serializing_if = "Option::is_none")]
     after_b_stall: Option<usize>,
+    /// Trusted shoulder-shift sum applied to this gap's A→B map; omitted when zero.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stall_map_advance_secs: Option<f64>,
 }
 
 impl GapScanJson {
@@ -871,9 +877,16 @@ impl GapScanJson {
                 .gaps
                 .iter()
                 .zip(b_stall_attribution(report))
-                .map(|(gap, after_b_stall)| GapJson {
-                    gap: gap.clone(),
-                    after_b_stall,
+                .map(|(gap, after_b_stall)| {
+                    let advance = crate::domain::b_stall::trusted_stall_advance_secs(
+                        crate::domain::b_stall::reported_stalls(report.b_stall.as_ref()),
+                        gap.video_a_start_secs,
+                    );
+                    GapJson {
+                        gap: gap.clone(),
+                        after_b_stall,
+                        stall_map_advance_secs: (advance.abs() > 1e-12).then_some(advance),
+                    }
                 })
                 .collect(),
             gap_equivalence: report.gap_equivalence.clone(),
@@ -1308,8 +1321,9 @@ mod tests {
             limit_fill_to_mapped_region: true,
             b_scanned_end_secs: None,
             b_scan_truncated: false,
-            // Populated so the golden pins `stall_min_secs`, `b_stalls[]`, and both states of the
-            // per-gap `after_b_stall` (absent on the first gap, `0` on the second).
+            // Populated so the golden pins `stall_min_secs`, `b_stalls[]`, both states of the
+            // per-gap `after_b_stall` (absent on the first gap, `0` on the second), and
+            // `stall_map_advance_secs` on the post-shoulder-stall gap.
             b_stall: Some(crate::domain::b_stall::BStallReport {
                 stall_min_secs: 10.0,
                 stalls: vec![
@@ -2484,6 +2498,29 @@ mod tests {
             ),
             "{text}"
         );
+    }
+
+    #[test]
+    fn human_report_shoulder_stall_says_mapped_with_advance() {
+        let mut report = minimal_report();
+        report.gaps = vec![gap_at(100.0), gap_at(6518.1)];
+        let mut stall = pair_54_like_stall();
+        stall.stalls[0].evidence = Some(crate::domain::b_stall::BStallEvidence::Shoulder);
+        stall.stalls[0].shift_secs = 65.7;
+        report.b_stall = Some(stall);
+        let text = super::format_human(
+            &report,
+            &minimal_alignment_detail(),
+            None,
+            None,
+            false,
+            None,
+        );
+        assert!(
+            text.contains("later gaps (from #2) mapped with +65.7s stall advance"),
+            "{text}"
+        );
+        assert!(!text.contains("fail to fill"), "{text}");
     }
 
     #[test]

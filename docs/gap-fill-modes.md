@@ -32,7 +32,7 @@ Reference for `clip-sync-repair` gap patching: how `fill_mode` interacts with CL
 #### Per-gap setup (every bracket)
 
 ```text
-1. Offset map on A → B (fill_offset_mode; see pipeline.md §3)
+1. Offset map on A → B (`fill_offset_mode`; see pipeline.md §3). Default `recommended` also adds confirmed B-stall `shift*` advances.
 2. Refine A gap edges; slice B haystack from full decoded B
 3. Bracket routing (G1–G4 + R) — see below
 4. On gate skip (except structure alignment failed): dual-fit rescue (G6, default on) → re-validate → patch or skip

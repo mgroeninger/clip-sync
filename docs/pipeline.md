@@ -75,7 +75,7 @@ A is decoded and scanned for **silent runs** ≥ `min_gap_ms` (default 500) wher
 
 For each fillable gap, the **B offset map** translates A's gap time to a nominal location on B, governed by `fill_offset_mode`:
 
-- **`recommended`** (default) — every gap uses the alignment's `recommended_offset_secs`.
+- **`recommended`** (default) — every gap uses the alignment's `recommended_offset_secs`, plus the measured `shift*` of every confirmed (`evidence: shoulder`) B stall whose mapped A start is at or before the gap. `length` / `length_contradicted` stalls do not move the map. See [TEMP-stall-segmented-map-plan.md](dev/TEMP-stall-segmented-map-plan.md).
 - **`interpolated`** — linearly interpolates between the start- and end-clip offsets by the gap's position on A (use on drift-heavy pairs).
 - **`anchored_retry`** — pass 1 uses the clip offset; **pass 2** (phase 4, after all gaps in pass 1) retries seam failures using offset anchors from confident pass-1 successes.
 
@@ -150,7 +150,7 @@ The withdrawn Q4 test is settled the same way: 15/g6 and 2/g6 do **not** keep th
 
 | Step | What |
 |------|------|
-| **Offset map** | `resolve_gap_offset_secs` (recommended / interpolated / anchored-retry pass 2) |
+| **Offset map** | `resolve_gap_offset_secs` (recommended / interpolated / anchored-retry pass 2), plus `segmented_fill_offset_secs` under `recommended` |
 | **A edge refine** | `refine_gap_frames` |
 | **B haystack** | Slice from full decoded B (context + border search + margin + slack) |
 | **Seam gate** | `evaluate_seam_gate` — **fit** (default) or **gate** (legacy); see below |

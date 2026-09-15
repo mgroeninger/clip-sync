@@ -294,9 +294,10 @@ pub struct GapReport {
     /// **nothing in the patch path reads this**, and no gain is derived from it. `None` on
     /// legacy/test constructors and when A produced no level timeline.
     pub program_levels: Option<crate::domain::program_levels::ProgramLevels>,
-    /// Scan-time B-stall warning (A5; `docs/dev/archive/TEMP-b-stall-warning-plan.md`). Advisory only —
-    /// nothing in the plan or patch path reads it. A real scan always stamps it (so the floor is
-    /// echoed); `None` on legacy/test constructors only.
+    /// Scan-time B-stall report (A5; `docs/dev/archive/TEMP-b-stall-warning-plan.md`). Confirmed
+    /// (`evidence: shoulder`) stalls remap later gaps
+    /// (`docs/dev/TEMP-stall-segmented-map-plan.md`); skip/gate/`fill_mode` are unchanged. A real
+    /// scan always stamps it (so the floor is echoed); `None` on legacy/test constructors only.
     pub b_stall: Option<crate::domain::b_stall::BStallReport>,
 }
 

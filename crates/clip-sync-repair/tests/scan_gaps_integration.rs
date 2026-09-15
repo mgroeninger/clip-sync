@@ -231,6 +231,15 @@ fn execute_reports_b_stall_and_attributes_later_gap() {
         .iter()
         .position(|g| (g.video_a_start_secs - 104.0).abs() < 0.5)
         .expect("should detect the A gap near t=104s");
+    let gap = &report.gaps[gap_index];
+    let offset = report
+        .alignment
+        .recommended_offset_secs
+        .expect("aligned pair");
+    assert!(
+        (gap.video_b_start_secs.unwrap() - (gap.video_a_start_secs + offset)).abs() < 0.5,
+        "Length stall must not remap later gaps: {gap:?} offset={offset}"
+    );
     let gap_starts: Vec<f64> = report.gaps.iter().map(|g| g.video_a_start_secs).collect();
     let attribution =
         clip_sync_repair::domain::b_stall::attribute_gaps_to_b_stalls(&gap_starts, &b_stall.stalls);
@@ -306,6 +315,8 @@ fn execute_confirms_short_b_stall_by_shoulders() {
     b[drop_from..drop_to].fill(0);
     insert_silence(&mut b, SAMPLE_RATE, 80, 3);
     write_mono_wav(&path_b, SAMPLE_RATE, &b);
+    // A hole after the stall: B at the segmented map still has the original chirp.
+    zero_wav_segment(&path_a, SAMPLE_RATE, 104, 106);
 
     let progress = FakeProgressReporter;
     let media_reader = SymphoniaMediaReader;
@@ -346,6 +357,138 @@ fn execute_confirms_short_b_stall_by_shoulders() {
     assert!(
         (stall.shift_secs - 3.0).abs() <= 0.25 + 1e-9,
         "measured shift within one 250 ms block of 3 s: {stall:?}"
+    );
+
+    let offset = report
+        .alignment
+        .recommended_offset_secs
+        .expect("aligned pair");
+    let gap = report
+        .gaps
+        .iter()
+        .find(|g| (g.video_a_start_secs - 104.0).abs() < 0.5)
+        .expect("A hole after the stall");
+    let expected_b = gap.video_a_start_secs + offset + stall.shift_secs;
+    assert!(
+        (gap.video_b_start_secs.unwrap() - expected_b).abs() <= 0.2,
+        "segmented map: {gap:?} expected_b={expected_b} offset={offset} stall={stall:?}"
+    );
+    let advance = clip_sync_repair::domain::b_stall::trusted_stall_advance_secs(
+        &b_stall.stalls,
+        gap.video_a_start_secs,
+    );
+    assert!(
+        (advance - stall.shift_secs).abs() < 1e-9,
+        "{advance} vs {stall:?}"
+    );
+}
+
+/// Same fixture as [`execute_confirms_short_b_stall_by_shoulders`]: the post-stall A hole fills
+/// at the segmented map and skips at the pair offset (`docs/dev/TEMP-stall-segmented-map-plan.md` § 4.7).
+#[test]
+fn execute_patches_post_stall_hole_at_segmented_map() {
+    use clip_sync_repair::application::PatchAudio;
+    use clip_sync_repair::domain::{FillMode, FillOffsetMode, GapPatchStatus};
+    use clip_sync_repair_harness::patch_audio::{patch_request_with_options, PatchTestOptions};
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let path_a = temp.path().join("a.wav");
+    let path_b = temp.path().join("b.wav");
+    write_mono_wav(
+        &path_a,
+        SAMPLE_RATE,
+        &modulated_chirp(SAMPLE_RATE, TOTAL_SECS, 0),
+    );
+    let mut b = modulated_chirp(SAMPLE_RATE, TOTAL_SECS, OFFSET_SECS);
+    let (drop_from, drop_to) = ((SAMPLE_RATE * 40) as usize, (SAMPLE_RATE * 43) as usize);
+    b[drop_from..drop_to].fill(0);
+    insert_silence(&mut b, SAMPLE_RATE, 80, 3);
+    write_mono_wav(&path_b, SAMPLE_RATE, &b);
+    zero_wav_segment(&path_a, SAMPLE_RATE, 104, 106);
+
+    let progress = FakeProgressReporter;
+    let media_reader = SymphoniaMediaReader;
+    let aligner = SymphoniaAligner;
+    let scan = ScanGaps::new(&media_reader, &progress, &aligner);
+    let report = scan
+        .execute(ScanGapsRequest {
+            video_a: path_a,
+            video_b: path_b,
+            align: aligned_chirp_config(),
+            decode_chunk_secs: 10,
+            recipe: clip_sync_repair::domain::ScanRecipe::with_hold_blocks(1000, 0, 250, 0.01, 0.0),
+            scan_both: true,
+            gap_offset_tolerance_secs: 0.5,
+            stall_min_secs: 2.0,
+            limit_fill_to_mapped_region: true,
+            apply_donor_registration: true,
+            local_pair_collar_secs: 2.0,
+        })
+        .expect("scan should succeed")
+        .report;
+
+    let stall = &report.b_stall.as_ref().expect("stamped").stalls;
+    assert_eq!(stall.len(), 1);
+    assert_eq!(stall[0].evidence, Some(BStallEvidence::Shoulder));
+    let gap_index = report
+        .gaps
+        .iter()
+        .position(|g| (g.video_a_start_secs - 104.0).abs() < 0.5)
+        .expect("A hole after the stall");
+    assert!(
+        report.gaps[gap_index].b_has_energy,
+        "donor at the segmented map should have energy"
+    );
+
+    let options = PatchTestOptions {
+        fill_mode: FillMode::Fit,
+        fill_offset_mode: FillOffsetMode::Recommended,
+        // Production dual-fit / lag_decision is ±600 ms around nominal. The 3 s stall is
+        // inside the harness default 30 s structure haystack, which would hide the miss.
+        fill_border_search_secs: 0.6,
+        fill_align_margin_secs: 0.0,
+        min_border_discovery_secs: 0.25,
+        gap_signature_context_secs: 0.5,
+        ..PatchTestOptions::default()
+    };
+    let mapped = PatchAudio::new(&media_reader, &progress)
+        .preview(
+            patch_request_with_options(report.clone(), false, 0.5, 0.35, options.clone()),
+            10,
+        )
+        .expect("preview at segmented map");
+    let mapped_status = mapped
+        .summary
+        .gaps
+        .iter()
+        .find(|o| (o.a_start_secs - 104.0).abs() < 0.5)
+        .map(|o| &o.status)
+        .expect("post-stall hole in patch summary");
+    assert!(
+        matches!(mapped_status, GapPatchStatus::Patched { .. }),
+        "segmented map should fill: {mapped_status:?}"
+    );
+
+    let mut pair_map = report;
+    for stall in &mut pair_map.b_stall.as_mut().expect("stamped").stalls {
+        stall.evidence = Some(BStallEvidence::Length);
+    }
+    let unmapped = PatchAudio::new(&media_reader, &progress)
+        .preview(
+            patch_request_with_options(pair_map, false, 0.5, 0.35, options),
+            10,
+        )
+        .expect("preview at pair offset");
+    let unmapped_status = unmapped
+        .summary
+        .gaps
+        .iter()
+        .find(|o| (o.a_start_secs - 104.0).abs() < 0.5)
+        .map(|o| &o.status)
+        .expect("post-stall hole in pair-offset summary");
+    assert!(
+        matches!(unmapped_status, GapPatchStatus::Skipped { .. }),
+        "pair offset should miss the donor: {unmapped_status:?}"
     );
 }
 
