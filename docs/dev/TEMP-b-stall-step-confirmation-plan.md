@@ -30,7 +30,7 @@ says otherwise.
   §4–§5) — the canonical **multi-gap level-change** classifier. This plan
   is not one: it fits two shoulders of a single event, the shape of
   seam-splice dual-fit. The sequence test therefore does not transfer;
-  that plan's **dead-shoulder gate** does (§ 2 rule 3), because without it
+  that plan's **dead-shoulder gate** does (§ 2 rule 2 and *Evaluable lag*), because without it
   pair 50 produced a staircase out of noise peaks.
 
 **Media hygiene:** pair index + gap index only.
@@ -46,8 +46,9 @@ Silences whose after-shoulder holds the map are B dropouts and are not
 reported. Only reported stalls advance the cumulative offset, by the
 **measured** shift.
 
-At ≥ 10 s the shipped A5 behaviour is unchanged (reported without
-evidence), so pair 54 cannot regress.
+At ≥ 10 s the shipped A5 report is unchanged (reported whatever the
+shoulders say), so pair 54 cannot regress; the shoulder test still runs
+there and its verdict is recorded (§ 2 rule 7).
 
 ---
 
@@ -113,8 +114,26 @@ offset (pair offset + measured shift of every earlier **reported** stall).
 
 Inputs added to the detector: A and B block levels (`a_levels`,
 `b_scan.levels` — both live at Step 6a; `BlockLevel { start_secs,
-end_secs, rms_db, silent }`). Envelopes are `rms_db`; correlation is
-Pearson, as in `register_donor_window`.
+end_secs, rms_db, silent }`). Correlation is Pearson, as in
+`register_donor_window`.
+
+**Envelope.** `max(rms_db, ENVELOPE_FLOOR_DB)`. Digital-zero blocks sit at
+`BLOCK_LEVEL_FLOOR_DB = −120`; unclamped, a handful of them dominate a
+40-bin variance and the correlation aligns silence edges instead of
+program. The clamp keeps a quiet bed (−68 dB is on the corpus) distinct
+from program without letting zero blocks swamp it.
+
+**Windows by index.** Locate each base window once with `window_indices`,
+then step lags by **block index** over equal-length slices (`n` = the B
+shoulder's bin count). Re-selecting by block-centre time per lag drifts by
+a bin and yields unequal lengths.
+
+**Evaluable lag.** A lag is evaluable when its A slice lies wholly inside
+`a_levels`, has ≥ `SHOULDER_MIN_LIVE_BINS` non-`silent` bins, and
+`pearson` returns `Some`. Non-evaluable lags are **skipped**, not fatal:
+one quiet A stretch inside pair 54's 66 s search must not void the other
+~680 lags. A region's r is the max over its evaluable lags, or *none*
+when it has none.
 
 Constants below are **starting values**; § 5 pins them.
 
@@ -128,41 +147,76 @@ Constants below are **starting values**; § 5 pins them.
 | `STEP_MIN_SECS` | 1.0 | `shift ≥` this is the step region |
 | `SHOULDER_MIN_R` | 0.70 | Winning region's peak r floor (registration's `min_envelope_r`) |
 | `SHOULDER_MARGIN_R` | 0.10 | Winning region must beat the other by this |
-| `SHOULDER_MIN_LIVE_BINS` | 8 | Non-`silent` bins required in each shoulder (`MIN_REGISTRATION_BINS`) |
+| `SHOULDER_MIN_LIVE_BINS` | 8 | Non-`silent` bins required in each B shoulder and each evaluable A slice (`MIN_REGISTRATION_BINS`) |
+| `ENVELOPE_FLOOR_DB` | −80.0 | Envelope clamp (see above) |
 
 1. **Shoulders.** B pre = bins in `[b0 − SHOULDER_SECS, b0)`; B post =
    bins in `[b1, b1 + SHOULDER_SECS)`. Both must lie inside the scanned B
-   extent and the overlap; otherwise `undetermined(no_shoulder)`.
-2. **Pre-shoulder registration.** Correlate B pre against A bins ending at
-   `b0 − offset + p` for `p ∈ [−PRE_SEARCH_SECS, +PRE_SEARCH_SECS]` (bin
-   steps). Peak `(p*, r_pre)`. Require `r_pre ≥ SHOULDER_MIN_R` and
-   `|p*| ≤ PRE_MAX_LAG_SECS`; otherwise `undetermined(pre_unregistered)` —
-   the map is already wrong before the pause, so the post-shoulder cannot
-   be read against it.
-3. **Dead-shoulder gate.** Fewer than `SHOULDER_MIN_LIVE_BINS` non-`silent`
-   bins in B pre, B post, or the A window any hypothesis reads, or a flat
-   envelope (Pearson undefined) → `undetermined(dead_shoulder)`.
-4. **Post-shoulder search.** Correlate B post against A bins starting at
-   `b1 − offset − s + p*` for `s ∈ [−POST_SEARCH_PAD_SECS, dur +
-   POST_SEARCH_PAD_SECS]` (bin steps). Define `shift = s`.
-   - `r_flat` = max r over `|shift| ≤ FLAT_TOL_SECS`
-   - `r_step` = max r over `shift ≥ STEP_MIN_SECS`; `shift*` its argmax
+   extent and the overlap; otherwise `undetermined(no_shoulder)`. (The
+   overlap is the pair-offset overlap A5 already computes, not re-derived
+   at the cumulative offset — harmless for a warning; the stall-segmented
+   map must not inherit it silently.)
+2. **Dead B shoulder.** Fewer than `SHOULDER_MIN_LIVE_BINS` non-`silent`
+   bins in B pre or B post, or a flat clamped envelope on either →
+   `undetermined(dead_shoulder)`. This gate is on **B only**; A-side
+   deadness is per lag (§ 2 *Evaluable lag*).
+3. **Pre-shoulder registration.** Correlate B pre against the A slice
+   ending at `b0 − offset + p` for `p ∈ [−PRE_SEARCH_SECS,
+   +PRE_SEARCH_SECS]` (bin steps, evaluable lags only). No evaluable lag →
+   `undetermined(dead_shoulder)`. Peak `(p*, r_pre)`. Require
+   `r_pre ≥ SHOULDER_MIN_R` and `|p*| ≤ PRE_MAX_LAG_SECS`; otherwise
+   `undetermined(pre_unregistered)` — the map is already wrong before the
+   pause, so the post-shoulder cannot be read against it.
+4. **Post-shoulder search.** Correlate B post against the A slice starting
+   at `b1 − offset − s + p*` for `s ∈ [−POST_SEARCH_PAD_SECS, dur +
+   POST_SEARCH_PAD_SECS]` (bin steps, evaluable lags only — lags near
+   `−POST_SEARCH_PAD_SECS` can run past A's scanned end and are skipped).
+   Define `shift = s`.
+   - `r_flat` = max r over evaluable `|shift| ≤ FLAT_TOL_SECS`, or none
+   - `r_step` = max r over evaluable `shift ≥ STEP_MIN_SECS`, or none;
+     `shift*` its argmax
+   Both none → `undetermined(dead_shoulder)`. Exactly one none → that
+   region reads as −1 for rule 5 (it cannot win, and the other still has
+   to clear `SHOULDER_MIN_R` on its own).
 5. **Verdict** (total — every candidate gets exactly one):
    - `step` — `r_step ≥ SHOULDER_MIN_R` ∧ `r_step − r_flat ≥ SHOULDER_MARGIN_R`
    - `flat` — `r_flat ≥ SHOULDER_MIN_R` ∧ `r_flat − r_step ≥ SHOULDER_MARGIN_R`
-   - `undetermined(reason)` — anything else, including rules 1–3
+   - `undetermined(reason)` — anything else, including rules 1–4
      (`ambiguous` when both regions clear the floor within the margin —
      the periodic-material case; `no_match` when neither clears it).
    `STEP_MIN_SECS < dur` always holds at the 2 s floor, so the step region
    is non-empty. `FLAT_TOL_SECS < shift < STEP_MIN_SECS` is deliberately
    in neither region.
-6. **Report.** Duration ≥ 10 s: reported regardless (A5). Below 10 s:
-   reported only on `step`. Every non-reported candidate — rule-3
-   suppressions (existing) and unconfirmed ones (new) — is one
+6. **Report.** Duration ≥ 10 s: reported regardless of verdict (A5).
+   Below 10 s: reported only on `step`. Every non-reported candidate —
+   A-silent suppressions (existing) and unconfirmed ones (new) — is one
    `tracing::debug` line carrying verdict, reason, `r_pre`, `p*`,
-   `r_flat`, `r_step`, `shift*`.
-7. **Offset advance.** A reported stall advances `offset` by `shift*` on
-   `step`, else by `dur` (≥ 10 s on length alone). Record which.
+   `r_flat`, `r_step`, `shift*`, B pre / B post live-bin counts.
+7. **Offset advance.** By verdict, for a **reported** stall:
+
+   | Verdict | Advance | `evidence` |
+   |---------|---------|------------|
+   | `step` (any length) | `shift*` | `shoulder` |
+   | `undetermined` (≥ 10 s) | `dur` | `length` |
+   | `flat` (≥ 10 s) | `dur` | `length_contradicted` |
+
+   **`shift*`, not `shift* − p*`.** Rules 3–4 put the true local offset
+   after the stall at `offset − p* + shift*`. `p*` is bounded by
+   `PRE_MAX_LAG_SECS` and is the same registration noise / slow drift the
+   dropout path already ignores (A5's dropouts sit within ±0.41 s of the
+   flat map); folding it into `offset` would random-walk the map by up to
+   0.5 s per stall. The advance measures the **event**, and `p*` is
+   recorded on the debug line and in JSON.
+
+   **`flat` at ≥ 10 s keeps A5's `dur` advance** — deliberately, and
+   visibly. The census has no ≥ 10 s `flat` candidate (pair 54 is the only
+   one ≥ 10 s), so there is no evidence to change shipped behaviour on;
+   `length_contradicted` puts the conflict in the report instead of
+   silently corrupting or silently changing the map. Consumers of the
+   cumulative offset (the stall-segmented map) must treat
+   `length_contradicted` as "no shift" or refuse it; re-deciding the
+   advance itself is latched on the first such candidate on real media
+   (record in [settled.md](settled.md) § C at archive time).
 8. **No decisions** (A5 rule 6).
 
 Cost: pair 54's candidate is ≈ 690 post lags × 40 bins; the corpus's 166
@@ -175,15 +229,21 @@ candidates are negligible next to the scan.
 - Human line unchanged in shape; "by up to +Xs" uses the advance from
   rule 7.
 - JSON v1 additive on each `scan.b_stalls[]`: `shift_secs` (f64, the
-  rule-7 advance), `evidence` (`"shoulder"` | `"length"`), `step_r`,
-  `flat_r` (f64, optional — absent when the test did not reach rule 4).
-  Changelog line per [json-output.md](../json-output.md).
-- `offset_used_secs` now means pair offset + earlier **shifts**: update
+  rule-7 advance), `evidence` (`"shoulder"` | `"length"` |
+  `"length_contradicted"`), `verdict_reason` (string, present on
+  `evidence: "length"` — `no_shoulder` / `dead_shoulder` /
+  `pre_unregistered` / `ambiguous` / `no_match`), `pre_lag_secs` (`p*`),
+  `step_r`, `flat_r` (f64, optional — absent when the test did not reach
+  the rule that produces them; a region with no evaluable lag omits its
+  r). Optional fields use `skip_serializing_if`, since `BStallCandidate`
+  serializes directly. Changelog line per
+  [json-output.md](../json-output.md).
+- `offset_used_secs` now means pair offset + earlier **advances**: update
   its doc comment (`b_stall.rs`) and [json-output.md](../json-output.md)
   § BStall. Values are identical to A5 on any pair whose reported stalls
-  all carry `evidence: "length"`.
-- `BStallScan` gains an `unconfirmed` bucket beside `suppressed` (rule 3)
-  for the rule-6 debug lines; neither reaches `GapReport`.
+  all carry `evidence` `"length"` or `"length_contradicted"`.
+- `BStallScan` gains an `unconfirmed` bucket beside `suppressed` (A5
+  A-silent rule) for the rule-6 debug lines; neither reaches `GapReport`.
 - `stall_min_secs` default → 2.0 only after § 5 passes. All § 2 constants
   are `const`s in `b_stall.rs`, not config.
 
@@ -192,10 +252,12 @@ candidates are negligible next to the scan.
 ## 4. Tests
 
 Unit (domain, pure — synthetic `BlockLevel` envelopes from a
-deterministic non-periodic dB sequence; B derived from A by edit):
+deterministic non-periodic dB sequence; B derived from A by edit; silent
+blocks at `BLOCK_LEVEL_FLOOR_DB` with `silent: true`, as the scanner
+emits them):
 
 1. **Stall.** B = A with 3 s of silence inserted → `step`, `shift*` ≈ 3.0,
-   reported, `offset` advances by `shift*`.
+   reported, `evidence: "shoulder"`, `offset` advances by `shift*`.
 2. **Dropout.** B = A with 3 s replaced by silence → `flat`, not reported,
    `offset` unchanged.
 3. **Stall that lost program.** 2.75 s silence inserted, 0.25 s of A
@@ -204,26 +266,61 @@ deterministic non-periodic dB sequence; B derived from A by edit):
    `step`, `shift*` ≈ 65.8; search range covers it.
 5. **Dead post-shoulder.** B silent/flat after the pause: 3 s →
    `undetermined(dead_shoulder)`, not reported; 12 s → reported,
-   `evidence: "length"`, `shift_secs` = `dur`.
+   `evidence: "length"`, `verdict_reason: "dead_shoulder"`,
+   `shift_secs` = `dur`.
 6. **Pre unregistered.** Pre-shoulder lag 0.8 s off the map →
    `undetermined(pre_unregistered)`.
 7. **Periodic material.** Envelope with period = `dur` → both regions
    clear the floor → `undetermined(ambiguous)`, not reported.
-8. **Cumulative map.** Dropout then stall then dropout: only the stall
-   advances `offset`; the second dropout reads `flat` through the
-   post-stall offset (its A mapping and `a_silent_fraction` use it).
+8. **Cumulative map, non-zero `p*`.** A pre-existing +0.3 s map error
+   (inside `PRE_MAX_LAG_SECS`), then dropout, stall, dropout: `p*` ≈ 0.3 on
+   each; only the stall advances `offset`, by `shift*` (≈ `dur`, **not**
+   `dur − 0.3`); the second dropout reads `flat` through the post-stall
+   offset (its A mapping and `a_silent_fraction` use it).
 9. **Shoulder outside the scan.** Post-shoulder past `scanned_end` →
    `undetermined(no_shoulder)`.
 10. **No levels.** Empty B levels → every short candidate
-    `undetermined(no_shoulder)`; ≥ 10 s still reported on length.
+    `undetermined(no_shoulder)`; ≥ 10 s still reported, `evidence: "length"`.
+11. **Quiet A stretch inside a long search.** 66.6 s stall (test 4) with a
+    1 s A silence inside the post-search range → the lags reading it are
+    skipped, verdict still `step`, `shift*` unchanged.
+12. **Long `flat`.** 12 s B dropout with live shoulders → `flat`,
+    reported, `evidence: "length_contradicted"`, advance = `dur`.
+13. **A slice past A's end.** Candidate near A's scanned end so lags near
+    `s = −POST_SEARCH_PAD_SECS` overrun `a_levels` → those lags skipped, no
+    panic, verdict decided from the rest.
+14. **Envelope clamp.** Stall case with half of B pre at digital zero
+    (still ≥ 8 live bins) → `step`; the same case without the clamp is the
+    regression it guards (assert via a pre-clamp helper, or document the
+    measured unclamped r in the test comment).
+15. **Region with no evaluable lag.** Flat region's A slices all
+    below `SHOULDER_MIN_LIVE_BINS`, step region live and matching →
+    `step` (flat reads −1); step region too → `undetermined(dead_shoulder)`.
 
-Existing A5 unit tests stay; their candidates are ≥ 10 s and keep
-reporting on length.
+Existing A5 unit tests stay; their candidates are ≥ 10 s with no levels
+passed, and keep reporting with `evidence: "length"`.
 
-Integration: extend `execute_reports_b_stall_and_attributes_later_gap`
-(`scan_gaps_integration.rs`) with `stall_min_secs = 2.0` set explicitly:
-a 3 s B dropout before the stall — not reported — and a synthetic 3 s B
-stall with a real timeline shift — reported with `evidence: "shoulder"`.
+Integration. The chirp fixture cannot exercise the shoulder test:
+`write_offset_chirp_wav_pair` is constant-amplitude, so every clamped
+envelope is flat and every candidate reads `dead_shoulder`. So:
+
+- **Existing** `execute_reports_b_stall_and_attributes_later_gap`: keep
+  as is, and additionally assert its 20 s zeroed B segment reports
+  `evidence: "length"`, `verdict_reason: "dead_shoulder"` — this pins the
+  chirp limitation rather than hiding it.
+- **New fixture** (`clip-sync-repair-fixtures`): an amplitude-modulated
+  chirp pair — the same 300–700 Hz sweep (keeps alignment behaviour close
+  to the existing fixtures) multiplied by a deterministic non-periodic
+  gain envelope (LCG-seeded gain step every 200 ms, spanning ≥ 30 dB) —
+  plus two B edits: `zero_wav_segment` (dropout, length preserved) and a
+  new `insert_silence_wav_segment` (stall: splice N s of zeros in, later
+  samples shift, file grows by N s).
+- **New test** `execute_confirms_short_b_stall_by_shoulders`
+  (`scan_gaps_integration.rs`), `stall_min_secs = 2.0` explicit: a 3 s B
+  dropout — not reported — then a 3 s inserted B stall — reported,
+  `evidence: "shoulder"`, `shift_secs` within ±0.2 s of 3.0. Place both
+  after the start clip window, and keep the end clip out of the
+  assertions (it will see the step; that is A6's concern).
 
 ---
 
@@ -233,18 +330,30 @@ Re-run the A5 census (51 pairs, floor 2 s, `RUST_LOG` debug) with the
 rule-6 line logged for every candidate. `gap-files/` is ephemeral:
 re-scan if the 2026-09-14 census directory is gone.
 
-**5.1 Pre-check — go / park.** Before pinning anything, tabulate for the
-66 rule-3 survivors: verdict, reason, `r_pre`, `p*`, `r_flat`, `r_step`,
-`shift*`, live-bin counts.
+**5.1 Pre-check — go / tune / park.** Before pinning anything, tabulate
+for the 66 A5-rule-3 survivors: verdict, reason, `r_pre`, `p*`, `r_flat`,
+`r_step`, `shift*`, B pre / B post live-bin counts, skipped-lag counts per
+region. Exactly one outcome applies, checked in order:
 
-- Go: pair 50 (B 2249.3) `step` with `shift*` in 2.3–3.0 s; pair 54
-  (B 6152.8) `step` with `shift*` within ±1 s of 65.8; zero of the 64
-  dropouts `step`.
-- Park: pair 50 is `undetermined` (dead or ambiguous shoulders). Record
-  that in [settled.md](settled.md) — the shoulder test cannot confirm the
-  corpus's one short stall at scan time and A6 is the ceiling. Do **not**
-  fall back to single-vote later-silence evidence; that is the excursion
-  failure the step-boundary rule exists to prevent.
+1. **Park** — pair 50 (B 2249.3) is `undetermined` with reason
+   `dead_shoulder`, `no_shoulder`, or `pre_unregistered` (the shoulders
+   carry no usable evidence; no constant in § 2 besides `SHOULDER_SECS`
+   can change that). Try `SHOULDER_SECS` ∈ {2, 6} once; if still one of
+   those reasons, record in [settled.md](settled.md) — the shoulder test
+   cannot confirm the corpus's one short stall at scan time and A6 is the
+   ceiling. Do **not** fall back to single-vote later-silence evidence;
+   that is the excursion failure the step-boundary rule exists to prevent.
+2. **Go** — all of: pair 50 `step` with `shift*` in 2.3–3.0 s; pair 54
+   (B 6152.8) `step` with `shift*` within ±1 s of 65.8; zero of the 64
+   dropouts `step`. Proceed to § 5.2.
+3. **Tune** — anything else: pair 50 `ambiguous` / `no_match` / `flat`,
+   or `step` with `shift*` outside 2.3–3.0 s; pair 54 not `step` or
+   `shift*` out of range; any dropout `step`. List the failing rows, adjust
+   in this order — `ENVELOPE_FLOOR_DB`, `SHOULDER_SECS`, then the
+   region / margin constants — and re-run § 5.1. Each adjustment is
+   recorded with the row it was meant to fix. If no setting reaches Go
+   without a dropout reading `step`, **park** as in (1) with the tuning
+   table as the evidence. Nothing ships from Tune.
 
 **5.2 Pin constants.** Only the two positives are stalls, so pin with
 headroom rather than at the boundary: the smallest stall margin
@@ -259,20 +368,24 @@ later-shared-silence reading in A5 § 5.1 (64 flat, 2 shifted);
 disagreements are listed and ear-checked. Pair 50's B 3241.3 candidate is
 `flat` against the post-step map.
 
-**5.4 Pass.** Pairs 50 and 54 reported; zero of the 64 dropouts reported;
-no pair's cumulative offset moves except at a reported stall; every
-`undetermined` candidate < 10 s listed for ear check. Record the verdict
-table in the archive note.
+**5.4 Pass.** Pairs 50 and 54 reported with `evidence: "shoulder"`; zero
+of the 64 dropouts reported; no pair's cumulative offset moves except at a
+reported stall; every `undetermined` candidate < 10 s listed for ear
+check; any ≥ 10 s `length_contradicted` row (none expected) listed and
+ear-checked, triggering the rule-7 latch. Record the verdict table in the
+archive note.
 
 ---
 
 ## 6. Checklist
 
-- [ ] Domain: shoulder test, verdict, measured shift, `unconfirmed` bucket in `crates/clip-sync-repair/src/domain/b_stall.rs` (reuse `pearson` / `window_indices` from `gap_equivalence.rs` — lift to `pub(crate)` rather than copy); § 4 unit tests.
+- [ ] Domain: envelope clamp, index-stepped windows, evaluable-lag skipping, shoulder test, verdict, rule-7 advance + `evidence`, `unconfirmed` bucket in `crates/clip-sync-repair/src/domain/b_stall.rs` (reuse `pearson` / `window_indices` from `gap_equivalence.rs` — lift to `pub(crate)` rather than copy); § 4 unit tests 1–15.
 - [ ] Scan: pass `a_levels` and `b_scan.levels` to the detector in `crates/clip-sync-repair/src/application/scan_gaps.rs` Step 6a; debug line per unconfirmed candidate.
-- [ ] Output + JSON (`shift_secs`, `evidence`, `step_r`, `flat_r`); `offset_used_secs` wording; [json-output.md](../json-output.md) changelog + § BStall; regenerate `full_surface_repair.json`.
+- [ ] Fixtures: amplitude-modulated chirp pair + `insert_silence_wav_segment` in `clip-sync-repair-fixtures`; new `execute_confirms_short_b_stall_by_shoulders`; `dead_shoulder` assertion on the existing A5 integration test.
+- [ ] Output + JSON (`shift_secs`, `evidence`, `verdict_reason`, `pre_lag_secs`, `step_r`, `flat_r`); `offset_used_secs` wording; [json-output.md](../json-output.md) changelog + § BStall; regenerate `full_surface_repair.json`.
 - [ ] [cli-output.md](../cli-output.md) A5 row: floor, shoulder confirmation, cumulative offset by measured shift.
-- [ ] § 5.1 pre-check (go / park) → § 5.2 pin → § 5.3 cross-check → § 5.4; set `stall_min_secs` default to 2.0.
+- [ ] § 5.1 pre-check (go / tune / park) → § 5.2 pin → § 5.3 cross-check → § 5.4; set `stall_min_secs` default to 2.0.
+- [ ] Stall-segmented map BACKLOG row: note that `length_contradicted` advances must not be consumed as shifts.
 
 ---
 
