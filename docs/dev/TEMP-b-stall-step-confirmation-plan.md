@@ -110,18 +110,25 @@ registration. Both are dropped from the rule:
 
 Candidates: A5 rules 0, 1 (floor now `stall_min_secs`, target 2.0), 3,
 4 unchanged. Process candidates in B order; `offset` is the cumulative
-offset (pair offset + measured shift of every earlier **reported** stall).
+offset (pair offset + the rule-7 advance of every earlier **reported**
+stall). The shoulder test runs only on candidates that survive A5 rule 3
+(A not silent over the mapped span).
 
 Inputs added to the detector: A and B block levels (`a_levels`,
 `b_scan.levels` — both live at Step 6a; `BlockLevel { start_secs,
 end_secs, rms_db, silent }`). Correlation is Pearson, as in
 `register_donor_window`.
 
-**Envelope.** `max(rms_db, ENVELOPE_FLOOR_DB)`. Digital-zero blocks sit at
+**Envelope.** `max(rms_db, ENVELOPE_FLOOR_DB)`, and B's silent shoulder
+bins are **masked** out of the pairs (fixed per candidate, so every lag
+correlates the same B bins). Digital-zero blocks sit at
 `BLOCK_LEVEL_FLOOR_DB = −120`; unclamped, a handful of them dominate a
 40-bin variance and the correlation aligns silence edges instead of
-program. The clamp keeps a quiet bed (−68 dB is on the corpus) distinct
-from program without letting zero blocks swamp it.
+program. The clamp alone is not enough on B — a −80 dB bin still sits
+tens of dB below program and carries the variance (found in
+implementation) — so B-silent bins are dropped; A bins are only clamped,
+which keeps a quiet A bed (−68 dB is on the corpus) distinct from
+program.
 
 **Windows by index.** Locate each base window once with `window_indices`,
 then step lags by **block index** over equal-length slices (`n` = the B
@@ -181,9 +188,11 @@ Constants below are **starting values**; § 5 pins them.
 5. **Verdict** (total — every candidate gets exactly one):
    - `step` — `r_step ≥ SHOULDER_MIN_R` ∧ `r_step − r_flat ≥ SHOULDER_MARGIN_R`
    - `flat` — `r_flat ≥ SHOULDER_MIN_R` ∧ `r_flat − r_step ≥ SHOULDER_MARGIN_R`
-   - `undetermined(reason)` — anything else, including rules 1–4
-     (`ambiguous` when both regions clear the floor within the margin —
-     the periodic-material case; `no_match` when neither clears it).
+   - `undetermined(reason)` — anything else, including rules 1–4:
+     `no_match` when neither region clears `SHOULDER_MIN_R`; otherwise
+     `ambiguous` (at least one clears the floor but the margin fails —
+     both clearing is the periodic-material case, and one at 0.75 against
+     the other at 0.68 is the same "cannot separate" answer).
    `STEP_MIN_SECS < dur` always holds at the 2 s floor, so the step region
    is non-empty. `FLAT_TOL_SECS < shift < STEP_MIN_SECS` is deliberately
    in neither region.
@@ -289,10 +298,9 @@ emits them):
 13. **A slice past A's end.** Candidate near A's scanned end so lags near
     `s = −POST_SEARCH_PAD_SECS` overrun `a_levels` → those lags skipped, no
     panic, verdict decided from the rest.
-14. **Envelope clamp.** Stall case with half of B pre at digital zero
-    (still ≥ 8 live bins) → `step`; the same case without the clamp is the
-    regression it guards (assert via a pre-clamp helper, or document the
-    measured unclamped r in the test comment).
+14. **B-silent masking.** Stall case with half of B pre at digital zero
+    (still ≥ 8 live bins) → `step`; the test comment names the unmasked
+    failure it guards.
 15. **Region with no evaluable lag.** Flat region's A slices all
     below `SHOULDER_MIN_LIVE_BINS`, step region live and matching →
     `step` (flat reads −1); step region too → `undetermined(dead_shoulder)`.
@@ -302,23 +310,26 @@ passed, and keep reporting with `evidence: "length"`.
 
 Integration. The chirp fixture cannot exercise the shoulder test:
 `write_offset_chirp_wav_pair` is constant-amplitude, so every clamped
-envelope is flat and every candidate reads `dead_shoulder`. So:
+envelope is near-flat and correlates at every lag (implementation
+measured `ambiguous`: r_flat 1.0, r_step 0.93, rather than
+`dead_shoulder`). So:
 
 - **Existing** `execute_reports_b_stall_and_attributes_later_gap`: keep
   as is, and additionally assert its 20 s zeroed B segment reports
-  `evidence: "length"`, `verdict_reason: "dead_shoulder"` — this pins the
-  chirp limitation rather than hiding it.
-- **New fixture** (`clip-sync-repair-fixtures`): an amplitude-modulated
+  `evidence: "length"` with a `verdict_reason` and `shift_secs =
+  duration_secs` — this pins the chirp limitation rather than hiding it.
+- **New fixture** (local helpers in `scan_gaps_integration.rs`, next to
+  its existing `zero_wav_segment`): an amplitude-modulated
   chirp pair — the same 300–700 Hz sweep (keeps alignment behaviour close
   to the existing fixtures) multiplied by a deterministic non-periodic
-  gain envelope (LCG-seeded gain step every 200 ms, spanning ≥ 30 dB) —
+  gain envelope (hashed gain step every 500 ms over [−24, 0) dB; 250 ms scan blocks) —
   plus two B edits: `zero_wav_segment` (dropout, length preserved) and a
-  new `insert_silence_wav_segment` (stall: splice N s of zeros in, later
+  new `insert_silence` (stall: splice N s of zeros in, later
   samples shift, file grows by N s).
 - **New test** `execute_confirms_short_b_stall_by_shoulders`
   (`scan_gaps_integration.rs`), `stall_min_secs = 2.0` explicit: a 3 s B
   dropout — not reported — then a 3 s inserted B stall — reported,
-  `evidence: "shoulder"`, `shift_secs` within ±0.2 s of 3.0. Place both
+  `evidence: "shoulder"`, `shift_secs` within one 250 ms block of 3.0. Place both
   after the start clip window, and keep the end clip out of the
   assertions (it will see the step; that is A6's concern).
 
@@ -379,13 +390,13 @@ archive note.
 
 ## 6. Checklist
 
-- [ ] Domain: envelope clamp, index-stepped windows, evaluable-lag skipping, shoulder test, verdict, rule-7 advance + `evidence`, `unconfirmed` bucket in `crates/clip-sync-repair/src/domain/b_stall.rs` (reuse `pearson` / `window_indices` from `gap_equivalence.rs` — lift to `pub(crate)` rather than copy); § 4 unit tests 1–15.
-- [ ] Scan: pass `a_levels` and `b_scan.levels` to the detector in `crates/clip-sync-repair/src/application/scan_gaps.rs` Step 6a; debug line per unconfirmed candidate.
-- [ ] Fixtures: amplitude-modulated chirp pair + `insert_silence_wav_segment` in `clip-sync-repair-fixtures`; new `execute_confirms_short_b_stall_by_shoulders`; `dead_shoulder` assertion on the existing A5 integration test.
-- [ ] Output + JSON (`shift_secs`, `evidence`, `verdict_reason`, `pre_lag_secs`, `step_r`, `flat_r`); `offset_used_secs` wording; [json-output.md](../json-output.md) changelog + § BStall; regenerate `full_surface_repair.json`.
-- [ ] [cli-output.md](../cli-output.md) A5 row: floor, shoulder confirmation, cumulative offset by measured shift.
+- [x] Domain: envelope clamp, index-stepped windows, evaluable-lag skipping, shoulder test, verdict, rule-7 advance + `evidence`, `unconfirmed` bucket in `crates/clip-sync-repair/src/domain/b_stall.rs` (reuse `pearson` / `window_indices` from `gap_equivalence.rs` — lift to `pub(crate)` rather than copy); § 4 unit tests 1–15.
+- [x] Scan: pass `a_levels` and `b_scan.levels` to the detector in `crates/clip-sync-repair/src/application/scan_gaps.rs` Step 6a; debug line per unconfirmed candidate.
+- [x] Fixtures: amplitude-modulated chirp pair + `insert_silence` (local to `scan_gaps_integration.rs`); new `execute_confirms_short_b_stall_by_shoulders`; `length` assertion on the existing A5 integration test.
+- [x] Output + JSON (`shift_secs`, `evidence`, `verdict_reason`, `pre_lag_secs`, `step_r`, `flat_r`); `offset_used_secs` wording; [json-output.md](../json-output.md) changelog + § BStall; regenerate `full_surface_repair.json`.
+- [x] [cli-output.md](../cli-output.md) A5 row: floor, shoulder confirmation, cumulative offset by measured shift.
 - [ ] § 5.1 pre-check (go / tune / park) → § 5.2 pin → § 5.3 cross-check → § 5.4; set `stall_min_secs` default to 2.0.
-- [ ] Stall-segmented map BACKLOG row: note that `length_contradicted` advances must not be consumed as shifts.
+- [x] Stall-segmented map BACKLOG row: note that `length_contradicted` advances must not be consumed as shifts.
 
 ---
 

@@ -463,7 +463,7 @@ fn format_b_stall_warnings(report: &GapReport) -> Vec<String> {
                 Some(first_gap) => format!(
                     "later gaps (from #{}) may be offset by up to {:+.1}s and fail to fill",
                     first_gap + 1,
-                    stall.duration_secs
+                    stall.shift_secs
                 ),
                 None => "no detected gaps follow it".into(),
             };
@@ -1312,15 +1312,38 @@ mod tests {
             // per-gap `after_b_stall` (absent on the first gap, `0` on the second).
             b_stall: Some(crate::domain::b_stall::BStallReport {
                 stall_min_secs: 10.0,
-                stalls: vec![crate::domain::b_stall::BStallCandidate {
-                    b_start_secs: 72.34,
-                    b_end_secs: 94.34,
-                    duration_secs: 22.0,
-                    a_start_secs: 60.0,
-                    a_end_secs: 82.0,
-                    offset_used_secs: 12.34,
-                    a_silent_fraction: 0.0,
-                }],
+                stalls: vec![
+                    crate::domain::b_stall::BStallCandidate {
+                        b_start_secs: 72.34,
+                        b_end_secs: 94.34,
+                        duration_secs: 22.0,
+                        a_start_secs: 60.0,
+                        a_end_secs: 82.0,
+                        offset_used_secs: 12.34,
+                        a_silent_fraction: 0.0,
+                        shift_secs: 21.7,
+                        evidence: Some(crate::domain::b_stall::BStallEvidence::Shoulder),
+                        pre_lag_secs: Some(0.1),
+                        step_r: Some(0.93),
+                        flat_r: Some(0.21),
+                        ..Default::default()
+                    },
+                    // A second, length-only stall after every gap pins `verdict_reason` without
+                    // moving any gap's `after_b_stall`.
+                    crate::domain::b_stall::BStallCandidate {
+                        b_start_secs: 1100.0,
+                        b_end_secs: 1112.0,
+                        duration_secs: 12.0,
+                        a_start_secs: 1066.0,
+                        a_end_secs: 1078.0,
+                        offset_used_secs: 34.04,
+                        a_silent_fraction: 0.1,
+                        shift_secs: 12.0,
+                        evidence: Some(crate::domain::b_stall::BStallEvidence::Length),
+                        verdict_reason: Some(crate::domain::b_stall::ShoulderReason::DeadShoulder),
+                        ..Default::default()
+                    },
+                ],
             }),
             // Populated for the same reason as `collar_level` and `program_levels`: a
             // `skip_serializing_if` field that is `None` in the only JSON-shape golden is a field
@@ -2422,6 +2445,9 @@ mod tests {
                 a_end_secs: 6217.1,
                 offset_used_secs: 2.2,
                 a_silent_fraction: 0.0,
+                shift_secs: 66.6,
+                evidence: Some(crate::domain::b_stall::BStallEvidence::Length),
+                ..Default::default()
             }],
         }
     }

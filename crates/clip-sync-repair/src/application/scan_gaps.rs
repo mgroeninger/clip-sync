@@ -11,7 +11,9 @@ use crate::application::align_bridge::{
 };
 use crate::application::error::RepairError;
 use crate::application::ports::Aligner;
-use crate::domain::b_stall::{detect_b_stalls, BStallReport, BStallScan};
+use crate::domain::b_stall::{
+    detect_b_stalls, BStallBScan, BStallReport, BStallScan, ShoulderVerdict,
+};
 use crate::domain::cross_check::{
     b_has_energy_from_levels, b_range_fully_scanned, check_gap_offset_agreement_in_overlap,
     mutual_silence_intervals_from_gaps, SilenceInterval,
@@ -441,17 +443,57 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
                         })
                         .collect();
                     detect_b_stalls(
-                        &b_scan.intervals,
+                        &BStallBScan {
+                            intervals: &b_scan.intervals,
+                            levels: &b_scan.levels,
+                            scanned_end_secs: b_scan.scanned_end_secs,
+                            truncated: b_scan.truncated,
+                        },
                         &a_silence,
+                        &a_levels,
                         offset,
                         overlap,
-                        b_scan.scanned_end_secs,
-                        b_scan.truncated,
                         request.stall_min_secs,
                     )
                 }
                 _ => BStallScan::default(),
             };
+            // One census line per shoulder-tested candidate, reported or not
+            // (`docs/dev/TEMP-b-stall-step-confirmation-plan.md` § 2 rule 6, § 5).
+            for (candidate, reported) in scan
+                .reported
+                .iter()
+                .map(|c| (c, true))
+                .chain(scan.unconfirmed.iter().map(|c| (c, false)))
+            {
+                let Some(shoulder) = candidate.shoulder else {
+                    continue;
+                };
+                let (verdict, shift_secs) = match shoulder.verdict {
+                    ShoulderVerdict::Step { shift_secs } => ("step".to_string(), Some(shift_secs)),
+                    ShoulderVerdict::Flat => ("flat".to_string(), None),
+                    ShoulderVerdict::Undetermined(reason) => {
+                        (format!("undetermined({reason:?})"), None)
+                    }
+                };
+                tracing::debug!(
+                    reported,
+                    b_start_secs = candidate.b_start_secs,
+                    duration_secs = candidate.duration_secs,
+                    a_start_secs = candidate.a_start_secs,
+                    offset_used_secs = candidate.offset_used_secs,
+                    verdict = verdict.as_str(),
+                    r_pre = ?shoulder.r_pre,
+                    pre_lag_secs = ?shoulder.pre_lag_secs,
+                    r_flat = ?shoulder.r_flat,
+                    r_step = ?shoulder.r_step,
+                    step_shift_secs = ?shift_secs,
+                    b_pre_live_bins = shoulder.b_pre_live_bins,
+                    b_post_live_bins = shoulder.b_post_live_bins,
+                    skipped_lags = shoulder.skipped_lags,
+                    "B-stall candidate shoulder test"
+                );
+            }
             for candidate in &scan.suppressed {
                 tracing::debug!(
                     b_start_secs = candidate.b_start_secs,

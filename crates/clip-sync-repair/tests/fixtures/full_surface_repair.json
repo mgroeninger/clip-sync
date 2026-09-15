@@ -199,7 +199,24 @@
         "a_start_secs": 60.0,
         "a_end_secs": 82.0,
         "offset_used_secs": 12.34,
-        "a_silent_fraction": 0.0
+        "a_silent_fraction": 0.0,
+        "shift_secs": 21.7,
+        "evidence": "shoulder",
+        "pre_lag_secs": 0.1,
+        "step_r": 0.93,
+        "flat_r": 0.21
+      },
+      {
+        "b_start_secs": 1100.0,
+        "b_end_secs": 1112.0,
+        "duration_secs": 12.0,
+        "a_start_secs": 1066.0,
+        "a_end_secs": 1078.0,
+        "offset_used_secs": 34.04,
+        "a_silent_fraction": 0.1,
+        "shift_secs": 12.0,
+        "evidence": "length",
+        "verdict_reason": "dead_shoulder"
       }
     ]
   },

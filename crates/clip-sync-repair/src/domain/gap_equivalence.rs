@@ -787,7 +787,7 @@ pub(crate) fn aggregate_rms_db(levels: impl Iterator<Item = f64>) -> Option<f64>
 
 /// Pearson correlation of two equal-length series. `None` when either side is flat — a constant
 /// envelope has no features to align, which is "cannot ask", not "does not match".
-fn pearson(x: &[f64], y: &[f64]) -> Option<f64> {
+pub(crate) fn pearson(x: &[f64], y: &[f64]) -> Option<f64> {
     if x.len() != y.len() || x.is_empty() {
         return None;
     }
@@ -805,7 +805,7 @@ fn pearson(x: &[f64], y: &[f64]) -> Option<f64> {
 
 /// Half-open index range of blocks whose **centre** falls in `[lo, hi)`. Blocks are sequential, so
 /// this is a contiguous run.
-fn window_indices(levels: &[BlockLevel], lo: f64, hi: f64) -> Option<(usize, usize)> {
+pub(crate) fn window_indices(levels: &[BlockLevel], lo: f64, hi: f64) -> Option<(usize, usize)> {
     let start = levels.partition_point(|b| block_center(b) < lo);
     let end = levels.partition_point(|b| block_center(b) < hi);
     (end > start).then_some((start, end))
