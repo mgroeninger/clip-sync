@@ -174,8 +174,13 @@ fn format_human(
     }
 
     if let Some(agreement) = &report.gap_offset_agreement {
+        // Pair-offset check only. Confirmed B stalls remap later gaps under `recommended`, so a
+        // large Δ next to A5 "mapped with +Xs stall advance" is expected — soft-label, no WARNING.
+        let shoulder_stall_explains = !agreement.agrees && report_has_shoulder_stall(report);
         let verdict = if agreement.agrees {
             "AGREE"
+        } else if shoulder_stall_explains {
+            "pair-offset check; see A5 stall advance"
         } else {
             "MISMATCH"
         };
@@ -185,7 +190,7 @@ fn format_human(
             agreement.alignment_offset_secs,
             agreement.delta_secs,
         ));
-        if !agreement.agrees {
+        if !agreement.agrees && !shoulder_stall_explains {
             out.push_str(
                 "           WARNING: silence structure disagrees with Chromaprint alignment\n",
             );
@@ -442,6 +447,13 @@ fn b_stall_attribution(report: &GapReport) -> Vec<Option<usize>> {
     let stalls = crate::domain::b_stall::reported_stalls(report.b_stall.as_ref());
     let gap_starts: Vec<f64> = report.gaps.iter().map(|g| g.video_a_start_secs).collect();
     crate::domain::b_stall::attribute_gaps_to_b_stalls(&gap_starts, stalls)
+}
+
+/// True when A5 reported at least one `evidence: shoulder` stall (fill map may advance).
+fn report_has_shoulder_stall(report: &GapReport) -> bool {
+    crate::domain::b_stall::reported_stalls(report.b_stall.as_ref())
+        .iter()
+        .any(|s| s.evidence == Some(crate::domain::b_stall::BStallEvidence::Shoulder))
 }
 
 /// One A5 warning line per reported B stall (`docs/dev/archive/TEMP-b-stall-warning-plan.md` § 3.1;
@@ -2101,6 +2113,42 @@ mod tests {
         let text = super::format_human(&report, &alignment_detail, None, None, false, None);
         assert!(text.contains("MISMATCH"));
         assert!(text.contains("WARNING"));
+    }
+
+    #[test]
+    fn human_report_softens_cross_check_mismatch_when_shoulder_stall_explains() {
+        use crate::domain::gap::GapOffsetAgreement;
+        let mut report = minimal_report();
+        report.gap_offset_agreement = Some(GapOffsetAgreement {
+            silence_based_offset_secs: 26.842,
+            alignment_offset_secs: 2.058,
+            delta_secs: 24.784,
+            agrees: false,
+        });
+        let mut stall = pair_54_like_stall();
+        stall.stalls[0].evidence = Some(crate::domain::b_stall::BStallEvidence::Shoulder);
+        stall.stalls[0].shift_secs = 65.7;
+        report.b_stall = Some(stall);
+        let text = super::format_human(
+            &report,
+            &minimal_alignment_detail(),
+            None,
+            None,
+            false,
+            None,
+        );
+        assert!(
+            text.contains("pair-offset check; see A5 stall advance"),
+            "expected soft cross-check label: {text}"
+        );
+        assert!(
+            !text.contains("MISMATCH"),
+            "MISMATCH should be suppressed: {text}"
+        );
+        assert!(
+            !text.contains("WARNING: silence structure disagrees"),
+            "WARNING should be suppressed beside A5: {text}"
+        );
     }
 
     #[test]

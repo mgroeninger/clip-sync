@@ -75,9 +75,9 @@ A is decoded and scanned for **silent runs** ≥ `min_gap_ms` (default 500) wher
 
 For each fillable gap, the **B offset map** translates A's gap time to a nominal location on B, governed by `fill_offset_mode`:
 
-- **`recommended`** (default) — every gap uses the alignment's `recommended_offset_secs`, plus the measured `shift*` of every confirmed (`evidence: shoulder`) B stall whose mapped A start is at or before the gap. `length` / `length_contradicted` stalls do not move the map. See [TEMP-stall-segmented-map-plan.md](dev/TEMP-stall-segmented-map-plan.md).
-- **`interpolated`** — linearly interpolates between the start- and end-clip offsets by the gap's position on A (use on drift-heavy pairs).
-- **`anchored_retry`** — pass 1 uses the clip offset; **pass 2** (phase 4, after all gaps in pass 1) retries seam failures using offset anchors from confident pass-1 successes.
+- **`recommended`** (default) — every gap uses the alignment's `recommended_offset_secs`, plus the measured `shift*` of every confirmed (`evidence: shoulder`) B stall whose mapped A start is at or before the gap. `length` / `length_contradicted` stalls do not move the map. See [archive/TEMP-stall-segmented-map-plan.md](dev/archive/TEMP-stall-segmented-map-plan.md).
+- **`interpolated`** — linearly interpolates between the start- and end-clip offsets by the gap's position on A (use on drift-heavy pairs). Does **not** add B-stall advances (an unconstrained end clip that already contains the step would double-count — pair 54; latched [settled.md](dev/settled.md) § C).
+- **`anchored_retry`** — pass 1 uses the clip offset; **pass 2** (phase 4, after all gaps in pass 1) retries seam failures using offset anchors from confident pass-1 successes. Same as interpolated: **no** stall advance in v1; pass-1 anchors store the clip/mode offset only.
 
 Gaps are also tagged `plan_kind` (`fillable` / `unfillable` / `not_planned`). See [gap-fill-modes.md](gap-fill-modes.md) § Patch anchors and README § Gap patching pipeline (1).
 

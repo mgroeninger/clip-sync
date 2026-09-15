@@ -334,6 +334,8 @@ contract change.
 
 ### GapOffsetAgreement
 
+Pair-offset check only (start-clip / `recommended_offset_secs`). Confirmed B-stall remapping does **not** change these fields; the human report softens a `MISMATCH` label when a Shoulder stall is present (see [cli-output.md](cli-output.md)).
+
 | Field | Type | Presence | Meaning |
 |-------|------|----------|---------|
 | `silence_based_offset_secs` | number | always | Offset derived from silence structure |

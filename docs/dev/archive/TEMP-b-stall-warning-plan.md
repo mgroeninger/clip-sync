@@ -28,9 +28,7 @@ Spec pins from the 2026-09-14 review are folded in (§ 2 rules 0, 3, 4;
   boolean built from the same B intervals. It fired on pair 54
   (`agrees: false`, Δ 24.8 s) and said nothing locatable. A5 does not
   replace or re-tune it.
-- BACKLOG *End-clip constrained search hides a timeline step* and
-  *Stall-segmented map* (same § *Timeline integrity*) — separate
-  deliverables. This plan is only the warning.
+- BACKLOG *End-clip constrained search hides a timeline step* (same § *Timeline integrity*) — separate deliverable. *Stall-segmented map* shipped ([TEMP-stall-segmented-map-plan.md](TEMP-stall-segmented-map-plan.md)). This plan is only the warning.
 
 **Media hygiene:** pair index + gap index only.
 

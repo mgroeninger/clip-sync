@@ -53,6 +53,12 @@ pub(super) fn build_patch_anchor_candidates(
                 return None;
             };
             let gap_time_on_a = (region.a_start_secs + region.a_end_secs) / 2.0;
+            // Clip / mode offset only — deliberately *not* `gap_offset_with_stall_map`.
+            // Stall advances apply under `FillOffsetMode::Recommended` alone; `anchored_retry`
+            // skips them so an unconstrained end clip cannot double-count a B-stall step
+            // (pair 54). If a future Change adds stalls to AR pass 1, store the *effective*
+            // fill offset here or pass 2 will under-map by ~stall length. See
+            // `docs/dev/archive/TEMP-stall-segmented-map-plan.md` and settled.md § C.
             let base_gap_offset_secs = resolve_gap_offset_secs(
                 &request.report.alignment,
                 request.fill_offset_mode,

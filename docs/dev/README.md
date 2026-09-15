@@ -69,7 +69,6 @@ is untracked — that is a bug in the catalog, not a state a doc may sit in.
 | [TEMP-flac-output-plan.md](TEMP-flac-output-plan.md) | In-process `--flac` lossless output, peer of `--wav`. Motivated by the RIFF `u32` data-chunk limit | [BACKLOG.md](../../BACKLOG.md) § *Repair R6* |
 | [TEMP-nway-donor-alignment-plan.md](TEMP-nway-donor-alignment-plan.md) | Repair one damaged copy from **multiple** donors with sparse non-overlapping damage | [settled.md](settled.md) § C — latched, no corpus |
 | [TEMP-end-clip-override-warning-plan.md](TEMP-end-clip-override-warning-plan.md) | Alignment-time A6 warning: the default end-clip constraint overrode a high-confidence independent end estimate. Motivated by pair 54 (+66.472 s hidden behind +1.861 s) | [BACKLOG.md](../../BACKLOG.md) § *Timeline integrity* |
-| [TEMP-stall-segmented-map-plan.md](TEMP-stall-segmented-map-plan.md) | After a confirmed B-stall step, later gaps map at `recommended_offset + Σ shift*`; ±600 ms seam refines. Customer: 54/g012 | [BACKLOG.md](../../BACKLOG.md) § *Timeline integrity* |
 
 ### Findings notes (not Changes)
 

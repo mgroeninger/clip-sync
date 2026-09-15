@@ -62,9 +62,15 @@ floor in rule 2.
 
 ## 2. Rule (normative)
 
-At `align_videos.rs` end-clip branch, the **constrained** arm only
-(Chromaprint disagrees, `constrain_end_clip_to_start_offset`,
-`refine_offset_with_pcm`, start confidence ≥ `min_match_score`):
+At `align_videos.rs` end-clip branch, the **constrained** arm only — the
+`else if` at `align_videos.rs:832`. It is reached when all of:
+
+- `end_refine_candidate` (line 764): `window.label == End`,
+  `refine_end_clip_around_start_offset`, and start prior confidence
+  ≥ `min_match_score * 0.5`;
+- Chromaprint disagrees (`|prior − independent| > 0.5 s`);
+- `constrain_end_clip_to_start_offset`, `refine_offset_with_pcm`, and
+  start prior confidence ≥ `min_match_score`.
 
 1. **Record** `EndClipOverride` whenever the constrained arm runs:
    - `independent_offset_secs`, `independent_confidence` — the
@@ -83,14 +89,35 @@ At `align_videos.rs` end-clip branch, the **constrained** arm only
    `tracing::debug!` line (for the § 5 census).
 4. Agree arm, unconstrained arm, single-clip and query-reference runs:
    no record (`None`).
-5. Values are pre high-rate refinement. High-rate may nudge the clip
-   offsets afterward; the record describes the constraint decision, not
+5. Values are pre high-rate refinement **and pre repetition downgrade**.
+   High-rate may nudge the clip offsets afterward, and the repetition
+   check (`align_videos.rs:926`) may halve `clip.confidence` after the
+   loop, so `independent_confidence` can differ from the end clip's
+   reported confidence. The record describes the constraint decision, not
    the final clip.
 
 Surface it on `AlignmentResult.end_clip_override: Option<EndClipOverride>`
 (domain, `clip-sync`). The warn decision is a pure function
 `end_clip_override_warns(&EndClipOverride, min_match_score) -> bool` so
 both CLIs and the report share one rule.
+
+**Plumbing.** The record is produced inside the per-window loop, but
+`AlignmentResult` is only built afterwards by `build_alignment_result`
+(`align_videos.rs:893`). Hold an `Option<EndClipOverride>` local across the
+loop and assign it to `result.end_clip_override` after the build. The
+query-reference path builds its result separately and stays `None`.
+
+**Measured confidence.** `refine_offset_around_prior` has a second caller
+(`locate_query.rs:469`). Add a sibling that returns
+`(ClipMatchEstimate, Option<f32>)` (the un-maxed
+`correlation_to_confidence(score)` from `pcm_search_near_offset`, `None`
+when it found nothing) and make the existing function a thin wrapper over
+it, so its return value and the query caller are unchanged. The score is
+taken at the discovered offset, before the trailing lag adjustment.
+
+**Facade.** Application crates use only `crates/clip-sync/src/lib.rs`
+re-exports: add `EndClipOverride`, `end_clip_override_warns`, the § 3.1
+formatter, and the § 3.2 DTO there (as `format_end_clip_anchor_line` is).
 
 ---
 
@@ -111,8 +138,10 @@ Warning:   end clip matched independently at +66.472s (confidence 0.95) but was 
   print it; format lives in one shared function in `clip-sync`
   (`report.rs` neighbourhood) so the text cannot diverge.
 - Verbose: the end-clip progress line gains
-  `(independent +66.472s @ 0.95 overridden)` after `(refined ±5s around
-  start)` whenever a record exists, warned or not.
+  `(independent +66.472s @ 0.95 overridden; measured 0.41)` after
+  `(refined ±5s around start)` whenever a record exists, warned or not.
+  `; measured …` is omitted when `constrained_measured_confidence` is
+  `None`. (0.41 is illustrative, as in § 3.2.)
 
 ### 3.2 JSON (additive, stays v1)
 
@@ -137,6 +166,10 @@ real value is unmeasured until the domain item lands.)
 - DTO in `clip-sync/src/application/report.rs`; [json-output.md](../json-output.md)
   additive entry. Goldens: regenerate only those whose fixture takes the
   constrained arm (expected: none — check, don't assume).
+- One field covers **both** binaries: the repair CLI's human output and
+  its JSON are both built from `AlignmentReport::from(&AlignmentResult)`
+  (`clip-sync-repair/src/infrastructure/cli/output.rs:47`, `:869`). No
+  plumbing through the repair-domain `ScanAlignment` is needed.
 
 ---
 
@@ -167,16 +200,24 @@ Output: human line present / absent in both CLIs; JSON field absent when
 
 Before shipping the warning at default verbosity:
 
+- **Before running**, write down the known-flat pair list and its source
+  (settled map steps, ear-verified pairs, A5 stalls) in this plan, so the
+  pass/stop call is not made after seeing the results. A pair on neither
+  list that warns is recorded as *unclassified* and needs its own look
+  before shipping.
 - Run every corpus pair scan-only via
-  `scripts/measure/scan-registration.ps1` with
-  `RUST_LOG=warn,clip_sync=debug` (debug line from rule 3 gives every
-  constrained-arm event, warned or not).
+  `scripts/measure/scan-registration.ps1`. Every constrained-arm event
+  produces a record, and scan-only JSON carries it, so read
+  `alignment.end_clip_override` from the per-pair JSON the script already
+  writes. Rule 3's `debug!` line is a fallback, not the census source.
 - Tabulate per pair: constrained arm taken?, independent offset /
-  confidence, constrained offset, measured confidence, Δ.
-- Classify each warned pair against known ground truth (settled map
-  steps, ear-verified pairs, A5 stalls).
+  confidence, constrained offset, measured confidence, Δ, `warned`.
+- Classify each warned pair against the pre-registered list.
+- Keep a pre-change scan JSON set (same script, same binary minus this
+  change) for the offset-identity check in § 8.
 
-**Pass:** pair 54 warns; no warned pair has a known-flat map.
+**Pass:** pair 54 warns; no warned pair is on the known-flat list; no
+warned pair is left unclassified.
 **Stop and redesign** if a known-flat pair warns (the presumed trailing-
 silence case exists at conf ≥ floor) — the floor alone is not enough and
 § 2 needs a second condition (e.g. independent end window silent on
@@ -194,7 +235,8 @@ constrained arm fires, and the measured-vs-inherited confidence gap.
   → fills. Needs its own plan gated on the § 5 table. Open a BACKLOG row
   from the census result.
 - **Changing the default** of `constrain_end_clip_to_start_offset`.
-- **Stall-segmented map** — separate BACKLOG row.
+- **Stall-segmented map** — shipped 2026-09-15
+  ([archive/TEMP-stall-segmented-map-plan.md](archive/TEMP-stall-segmented-map-plan.md)).
 - **The ≈ 1.4 s residual** on pair 54 (+66.47 s end clip vs +67.9 s at
   the end silence).
 
@@ -202,12 +244,14 @@ constrained arm fires, and the measured-vs-inherited confidence gap.
 
 ## 7. Checklist
 
-- [ ] Domain: `EndClipOverride` + `AlignmentResult.end_clip_override` + pure `end_clip_override_warns` (`crates/clip-sync/src/domain/alignment.rs`); fill `None` in every `AlignmentResult` literal.
-- [ ] Measured confidence: expose the un-maxed PCM score from `refine_offset_around_prior` (`crates/clip-sync/src/application/offset_refinement.rs:193`) without changing its return value.
-- [ ] Record in the constrained arm (`crates/clip-sync/src/application/align_videos.rs:832`); debug line; verbose progress suffix. Tests § 4 1–6.
+- [ ] Domain: `EndClipOverride` + `AlignmentResult.end_clip_override` + pure `end_clip_override_warns` (`crates/clip-sync/src/domain/alignment.rs`); fill `None` in every `AlignmentResult` literal — ~50 across 13 files, including `clip-sync-repair-harness`, `clip-sync-cli/tests/cli_output.rs` (9), `clip-sync-repair` `output.rs` (7) and `test_support.rs` (7). Mechanical, but the bulk of the diff.
+- [ ] Measured confidence: sibling of `refine_offset_around_prior` (`crates/clip-sync/src/application/offset_refinement.rs:193`) returning `(ClipMatchEstimate, Option<f32>)`; the existing fn wraps it, so `locate_query.rs:469` is untouched.
+- [ ] Record in the constrained arm (`crates/clip-sync/src/application/align_videos.rs:832`), carried out of the loop and assigned after `build_alignment_result` (`:893`); debug line; verbose progress suffix. Tests § 4 1–6.
+- [ ] `lib.rs` facade re-exports for the new domain type, pure fn, formatter and DTO.
 - [ ] Shared human formatter + print in `crates/clip-sync-cli/src/infrastructure/cli/output.rs` and `crates/clip-sync-repair/src/infrastructure/cli/output.rs`; `tracing::warn!`.
 - [ ] JSON DTO (`crates/clip-sync/src/application/report.rs`) + [json-output.md](../json-output.md) + goldens if any take the arm.
 - [ ] [cli-output.md](../cli-output.md): *Multi-clip offset merge* row + *Timeline / duration warnings* A6 row.
+- [ ] Known-flat list written into § 5 before the census runs.
 - [ ] § 5 census; pair 54 warns; BACKLOG row for § 6 opened from the table.
 
 ---
@@ -215,6 +259,8 @@ constrained arm fires, and the measured-vs-inherited confidence gap.
 ## 8. Done when
 
 A default scan of pair 54 prints the § 3.1 line with +66.472 s / +1.861 s,
-its JSON carries `end_clip_override.warned: true`, the § 5 census shows
-no known-flat pair warning, and no offset or fill changed on any corpus
-pair.
+its JSON carries `end_clip_override.warned: true`, the § 5 census passes,
+and every corpus pair's scan-only JSON is identical to its pre-change
+report apart from the added `alignment.end_clip_override` field. Fills
+are unchanged by construction — no decision reads the new field — and
+this plan does not run a patch-outcomes pass to re-prove it.

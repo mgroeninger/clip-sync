@@ -1,13 +1,20 @@
 # TEMP — Stall-segmented map
 
-**Status:** implementing, 2026-09-15. Code and synthetic tests are in tree. Remaining
-ship-gate: 54/g012 ear-check on licensed media (no `gap-files/` / corpus env in
-this workspace).
+> **Archived 2026-09-15. Shipped.** Post-stall holes map at
+> `recommended_offset + Σ Shoulder shift*`; ±600 ms seam refines.
+> Customer 54/g012 (display `#13`) ear-checked patched high at fill
+> offset +67.758 s (= 2.058 + 65.7). Current behaviour:
+> [pipeline.md](../../pipeline.md) § 3, [cli-output.md](../../cli-output.md)
+> § Timeline / duration warnings (A5), [gap-fill-modes.md](../../gap-fill-modes.md)
+> step 1. See [settled.md](../settled.md) § E (Shoulder-only / Recommended-only)
+> and § C (anchored-retry / interpolated latch).
 
-**Tracked as:** [BACKLOG.md](../../BACKLOG.md) § *Timeline integrity* →
+**Status:** shipped 2026-09-15. Ship gate met on licensed media (54/g012).
+
+**Tracked as:** was [BACKLOG.md](../../../BACKLOG.md) § *Timeline integrity* →
 *Stall-segmented map*. Customer: **54/g012** (display `#13`).
 
-**Depends on (do not merge):** [archive/TEMP-b-stall-step-confirmation-plan.md](archive/TEMP-b-stall-step-confirmation-plan.md)
+**Depends on (do not merge):** [TEMP-b-stall-step-confirmation-plan.md](TEMP-b-stall-step-confirmation-plan.md)
 — shipped 2026-09-15 at `stall_min_secs = 2.0`. This plan **consumes**
 `shift_secs` + `evidence`; it does not change the detector. § 5.5 census
 already gives pair 54 `evidence: shoulder` at `shift* = 65.7 s` (within
@@ -19,10 +26,11 @@ no-op for remapping, which is the safety property.
 - `fill_offset_mode` interpolated / anchored-retry — slow drift or other-gap
   anchors. A stall is a **step**. Unconstrained pair-54 end clip is already
   +66.47 s; adding the stall on top of interpolated would double-count.
+  **v1 leaves both modes without stall advances** (latched [settled.md](../settled.md) § C).
 - A6 end-clip override warning
-  ([TEMP-end-clip-override-warning-plan.md](TEMP-end-clip-override-warning-plan.md))
+  ([TEMP-end-clip-override-warning-plan.md](../TEMP-end-clip-override-warning-plan.md))
   — sees *that* a step exists, not *where*.
-- Far-unique interpolate — latched ([settled.md](settled.md) § C); 54/`#13`
+- Far-unique interpolate — latched ([settled.md](../settled.md) § C); 54/`#13`
   is this map problem, not a locatable lag on a locally-correct map.
 
 **Media hygiene:** pair index + gap index only.
@@ -186,18 +194,19 @@ confirmation). This Change is a map consumer:
 ## 6. Checklist
 
 - [x] Domain helper `trusted_stall_advance_secs` +
-      `segmented_fill_offset_secs` + tests 1–4 in
+      `segmented_fill_offset_secs` / `gap_offset_with_stall_map` + tests 1–4 in
       `crates/clip-sync-repair/src/domain/b_stall.rs`.
 - [x] `scan_gaps.rs`: detect stalls before the gap loop; map `video_b_*` /
       energy / equivalence through `delta`; keep stamping
       `GapReport.b_stall`.
 - [x] `characterize.rs` (+ A4 pre-pass): add the advance only when
-      `FillOffsetMode::Recommended`.
+      `FillOffsetMode::Recommended`, via `gap_offset_with_stall_map` (scan-seed
+      fallback must not double-count).
 - [x] A5 warning copy; JSON `stall_map_advance_secs`; changelog;
       pipeline / cli-output / gap-fill-modes.
 - [x] Integration tests 5–7; regenerate `full_surface_repair.json` if the
       golden’s Shoulder stall now emits `stall_map_advance_secs`.
-- [ ] § 5 ship gate (54/g012 ear-check on licensed media); archive this TEMP with a [settled.md](settled.md)
+- [x] § 5 ship gate (54/g012 ear-check on licensed media); archive this TEMP with a [settled.md](../settled.md)
       row; remove the BACKLOG row.
 
 ---

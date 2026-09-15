@@ -24,9 +24,9 @@ says otherwise.
 
 **Companions (do not merge):**
 
-- *Stall-segmented map* (BACKLOG, same section) — consumes the cumulative
-  offset. This plan changes what that offset is built from (measured
-  shift, not silence length); it does not re-map gaps.
+- *Stall-segmented map* — shipped
+  ([TEMP-stall-segmented-map-plan.md](TEMP-stall-segmented-map-plan.md));
+  consumes measured `shift*` under `recommended` only.
 - A6 end-clip override warning
   ([TEMP-end-clip-override-warning-plan.md](../TEMP-end-clip-override-warning-plan.md))
   — sees pair 50's step from alignment (end clip +2.92 s vs start +0.60 s)

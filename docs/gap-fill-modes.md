@@ -32,7 +32,7 @@ Reference for `clip-sync-repair` gap patching: how `fill_mode` interacts with CL
 #### Per-gap setup (every bracket)
 
 ```text
-1. Offset map on A → B (`fill_offset_mode`; see pipeline.md §3). Default `recommended` also adds confirmed B-stall `shift*` advances.
+1. Offset map on A → B (`fill_offset_mode`; see pipeline.md §3). Default `recommended` also adds confirmed B-stall `shift*` advances (`interpolated` / `anchored_retry` do not — [settled.md](dev/settled.md) § C).
 2. Refine A gap edges; slice B haystack from full decoded B
 3. Bracket routing (G1–G4 + R) — see below
 4. On gate skip (except structure alignment failed): dual-fit rescue (G6, default on) → re-validate → patch or skip
@@ -408,6 +408,7 @@ Pass 2 (anchored_retry): retry failed gaps with improved gap_offset_secs
     → re-run the same fill_mode (fit or gate) with a centered haystack
 ```
 
+Pass-1 anchors store the **clip / mode** `base_gap_offset_secs` only — not a B-stall segmented advance. Stall remapping is `recommended`-only ([settled.md](dev/settled.md) § C); if a future Change adds stalls to AR, the anchor table must record the *effective* fill offset or pass 2 under-maps by ~stall length.
 Single-pass `anchored` was removed (never wired under collect-then-splice); use `anchored_retry`.
 
 **Orthogonal to `fill_mode`:** anchors only change step 1 (`fill_offset_mode` / `gap_offset_secs`). Structure match, unified fit, marginal tier, gate trust, and extension behavior are unchanged.

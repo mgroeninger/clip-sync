@@ -485,6 +485,25 @@ pub fn segmented_fill_offset_secs(
     }
 }
 
+/// Compose a mode-resolved base with the stall-segmented map.
+///
+/// - `Some(base)` — alignment/mode offset **without** stall advances; apply
+///   [`segmented_fill_offset_secs`].
+/// - `None` — use `scan_seeded_offset_secs` (`video_b − video_a` from the scan) as-is. That delta
+///   already includes the scan-time stall map; adding advances again would double-count.
+pub fn gap_offset_with_stall_map(
+    mode: FillOffsetMode,
+    base_offset_secs: Option<f64>,
+    scan_seeded_offset_secs: f64,
+    stalls: &[BStallCandidate],
+    gap_a_start_secs: f64,
+) -> f64 {
+    match base_offset_secs {
+        Some(base) => segmented_fill_offset_secs(mode, base, stalls, gap_a_start_secs),
+        None => scan_seeded_offset_secs,
+    }
+}
+
 /// Reported stalls on a scan, or empty when the scan never stamped a report.
 pub fn reported_stalls(report: Option<&BStallReport>) -> &[BStallCandidate] {
     report.map(|r| r.stalls.as_slice()).unwrap_or(&[])
@@ -759,6 +778,34 @@ mod tests {
         assert_eq!(
             segmented_fill_offset_secs(FillOffsetMode::AnchoredRetry, 2.0, &stalls, 200.0),
             2.0
+        );
+    }
+
+    #[test]
+    fn gap_offset_with_stall_map_does_not_double_count_scan_seed() {
+        let stalls = [stall_at(100.0, 3.0, Some(BStallEvidence::Shoulder))];
+        // Scan seeded b−a already includes the 3 s advance (pair 2 + stall 3).
+        let scan_seeded = 5.0;
+        assert_eq!(
+            gap_offset_with_stall_map(
+                FillOffsetMode::Recommended,
+                Some(2.0),
+                scan_seeded,
+                &stalls,
+                200.0,
+            ),
+            5.0
+        );
+        assert_eq!(
+            gap_offset_with_stall_map(
+                FillOffsetMode::Recommended,
+                None,
+                scan_seeded,
+                &stalls,
+                200.0,
+            ),
+            scan_seeded,
+            "None base must not add stall on top of the scan seed"
         );
     }
 

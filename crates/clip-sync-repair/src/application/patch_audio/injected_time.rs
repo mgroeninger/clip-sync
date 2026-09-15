@@ -5,7 +5,7 @@
 use clip_sync::MultiChannelPcm;
 
 use super::PatchAudioRequest;
-use crate::domain::b_stall::{reported_stalls, segmented_fill_offset_secs};
+use crate::domain::b_stall::{gap_offset_with_stall_map, reported_stalls};
 use crate::domain::fill_offset::{resolve_gap_offset_secs, AnchoredRetryPass};
 use crate::domain::gap_fill::GapFillPlan;
 use crate::domain::injected_time::{
@@ -44,17 +44,16 @@ pub(super) fn detect_injected_time(
     for region in &plan.regions {
         times.push((region.gap_index, region.a_start_secs, region.a_end_secs));
         let gap_time_on_a = (region.a_start_secs + region.a_end_secs) / 2.0;
-        let base_gap_offset_secs = resolve_gap_offset_secs(
-            &request.report.alignment,
+        let gap_offset_secs = gap_offset_with_stall_map(
             request.fill_offset_mode,
-            gap_time_on_a,
-            None,
-            AnchoredRetryPass::First,
-        )
-        .unwrap_or(region.b_start_secs - region.a_start_secs);
-        let gap_offset_secs = segmented_fill_offset_secs(
-            request.fill_offset_mode,
-            base_gap_offset_secs,
+            resolve_gap_offset_secs(
+                &request.report.alignment,
+                request.fill_offset_mode,
+                gap_time_on_a,
+                None,
+                AnchoredRetryPass::First,
+            ),
+            region.b_start_secs - region.a_start_secs,
             reported_stalls(request.report.b_stall.as_ref()),
             region.a_start_secs,
         );

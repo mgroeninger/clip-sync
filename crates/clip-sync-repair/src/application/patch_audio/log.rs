@@ -18,6 +18,16 @@ fn fill_offset_mode_label(mode: FillOffsetMode) -> &'static str {
     }
 }
 
+/// Mode label for the verbose fill-offset line, including a stall advance when applied.
+fn fill_offset_plan_label(mode: FillOffsetMode, stall_map_advance_secs: f64) -> String {
+    let base = fill_offset_mode_label(mode);
+    if matches!(mode, FillOffsetMode::Recommended) && stall_map_advance_secs.abs() > 1e-12 {
+        format!("{base} {:+.3}s stall", stall_map_advance_secs)
+    } else {
+        base.to_string()
+    }
+}
+
 /// Per-gap A/B timeline fields for verbose fill planning logs.
 pub(crate) struct GapFillPlanLog<'a> {
     pub scan_a_start_secs: f64,
@@ -26,6 +36,8 @@ pub(crate) struct GapFillPlanLog<'a> {
     pub refined_a_end_secs: f64,
     pub gap_offset_secs: f64,
     pub fill_offset_mode: FillOffsetMode,
+    /// Trusted Shoulder advance folded into `gap_offset_secs` under `recommended` (else 0).
+    pub stall_map_advance_secs: f64,
     pub mapped_b_start_secs: f64,
     pub mapped_b_end_secs: f64,
     pub b_search_start_secs: f64,
@@ -56,7 +68,7 @@ pub(crate) fn format_gap_fill_plan_lines(plan: &GapFillPlanLog<'_>) -> Vec<Strin
     let mut lines = vec![format!(
         "           fill offset {:+.3}s ({})",
         plan.gap_offset_secs,
-        fill_offset_mode_label(plan.fill_offset_mode),
+        fill_offset_plan_label(plan.fill_offset_mode, plan.stall_map_advance_secs),
     )];
     if (plan.refined_a_start_secs - plan.scan_a_start_secs).abs() > 0.001
         || (plan.refined_a_end_secs - plan.scan_a_end_secs).abs() > 0.001
@@ -286,6 +298,7 @@ mod tests {
             refined_a_end_secs: 2.9,
             gap_offset_secs: 61.199,
             fill_offset_mode: FillOffsetMode::Interpolated,
+            stall_map_advance_secs: 0.0,
             mapped_b_start_secs: 61.299,
             mapped_b_end_secs: 64.099,
             b_search_start_secs: 50.0,
@@ -300,6 +313,30 @@ mod tests {
         assert!(lines.iter().any(|l| l.contains("B gap (mapped):")));
         assert!(lines.iter().any(|l| l.contains("0:50 – 1:20")));
         assert!(lines.iter().any(|l| l.contains("signature_mode=energy")));
+    }
+
+    #[test]
+    fn format_gap_fill_plan_lines_names_stall_advance_under_recommended() {
+        let lines = format_gap_fill_plan_lines(&GapFillPlanLog {
+            scan_a_start_secs: 100.0,
+            scan_a_end_secs: 101.0,
+            refined_a_start_secs: 100.0,
+            refined_a_end_secs: 101.0,
+            gap_offset_secs: 67.758,
+            fill_offset_mode: FillOffsetMode::Recommended,
+            stall_map_advance_secs: 65.7,
+            mapped_b_start_secs: 167.758,
+            mapped_b_end_secs: 168.758,
+            b_search_start_secs: 160.0,
+            b_search_end_secs: 180.0,
+            signature_mode_label: "energy",
+        });
+        assert!(
+            lines
+                .iter()
+                .any(|l| { l.contains("fill offset +67.758s (recommended +65.700s stall)") }),
+            "expected stall component in mode label: {lines:?}"
+        );
     }
 
     #[test]
