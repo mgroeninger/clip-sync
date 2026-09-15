@@ -6,7 +6,7 @@
 > shifts the timeline — is **refuted below ~6.5 s** (64 of 66 short
 > reports were flat dropouts), and pair 50 has a real 2.75 s stall no
 > length floor can catch. Successor:
-> [TEMP-b-stall-step-confirmation-plan.md](../TEMP-b-stall-step-confirmation-plan.md).
+> [TEMP-b-stall-step-confirmation-plan.md](TEMP-b-stall-step-confirmation-plan.md) (shipped 2026-09-15 at 2.0 s).
 > Current behaviour: [cli-output.md](../../cli-output.md) § Timeline /
 > duration warnings. See [settled.md](../settled.md) § E.
 

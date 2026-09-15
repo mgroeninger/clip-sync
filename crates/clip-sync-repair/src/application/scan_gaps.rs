@@ -459,7 +459,7 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
                 _ => BStallScan::default(),
             };
             // One census line per shoulder-tested candidate, reported or not
-            // (`docs/dev/TEMP-b-stall-step-confirmation-plan.md` § 2 rule 6, § 5).
+            // (`docs/dev/archive/TEMP-b-stall-step-confirmation-plan.md` § 2 rule 6, § 5).
             for (candidate, reported) in scan
                 .reported
                 .iter()

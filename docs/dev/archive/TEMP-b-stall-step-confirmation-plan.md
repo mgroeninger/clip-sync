@@ -1,14 +1,23 @@
 # TEMP — B-stall step confirmation (short stalls)
 
-**Status:** draft, rewritten 2026-09-14. A Change to the shipped A5 B-stall
+> **Archived 2026-09-15. Shipped** at `stall_min_secs = 2.0` with the
+> shoulder test. § 5.5 census (51 pairs): both stalls `step` (pair 50
+> shift 2.8 s, pair 54 65.7 s), 0 of 35 dropouts reported, constants
+> unchanged; all three `undetermined` rows ear-checked as dropouts. 29 of
+> the predecessor's 66 short reports were cumulative-offset artifacts.
+> Current behaviour: [cli-output.md](../../cli-output.md) § Timeline /
+> duration warnings. See [settled.md](../settled.md) § E (floor) and § C
+> (`length_contradicted` advance latch).
+
+**Status:** implemented; § 5 census passed 2026-09-15, default 2.0 s (see § 5.5). Rewritten 2026-09-14. A Change to the shipped A5 B-stall
 warning: a **shoulder test** at each B silence, so the floor can drop from
 10 s to 2 s. Scan-time only; changes no patch / skip decision.
 
-**Tracked as:** [BACKLOG.md](../../BACKLOG.md) § *Timeline integrity* →
+**Tracked as:** [BACKLOG.md](../../../BACKLOG.md) § *Timeline integrity* →
 *B-stall step confirmation*.
 
 **Predecessor:** A5
-([archive/TEMP-b-stall-warning-plan.md](archive/TEMP-b-stall-warning-plan.md)),
+([archive/TEMP-b-stall-warning-plan.md](TEMP-b-stall-warning-plan.md)),
 shipped at `stall_min_secs = 10.0`. Its § 5.1 census is the evidence base
 here and its § 2 rules 0, 1, 3, 4, 5 stay as written unless § 2 below
 says otherwise.
@@ -19,14 +28,14 @@ says otherwise.
   offset. This plan changes what that offset is built from (measured
   shift, not silence length); it does not re-map gaps.
 - A6 end-clip override warning
-  ([TEMP-end-clip-override-warning-plan.md](TEMP-end-clip-override-warning-plan.md))
+  ([TEMP-end-clip-override-warning-plan.md](../TEMP-end-clip-override-warning-plan.md))
   — sees pair 50's step from alignment (end clip +2.92 s vs start +0.60 s)
   but cannot say **where** it is. This plan locates it.
 - `gap_offset_agreement` — reads `agrees` on pair 50 across the real step
   because it compares inside the start-clip-clipped `start_overlap`.
   Evidence only; not in scope.
 - Step-boundary rule
-  ([archive/TEMP-step-boundary-census-plan.md](archive/TEMP-step-boundary-census-plan.md)
+  ([archive/TEMP-step-boundary-census-plan.md](TEMP-step-boundary-census-plan.md)
   §4–§5) — the canonical **multi-gap level-change** classifier. This plan
   is not one: it fits two shoulders of a single event, the shape of
   seam-splice dual-fit. The sequence test therefore does not transfer;
@@ -225,7 +234,7 @@ Constants below are **starting values**; § 5 pins them.
    cumulative offset (the stall-segmented map) must treat
    `length_contradicted` as "no shift" or refuse it; re-deciding the
    advance itself is latched on the first such candidate on real media
-   (record in [settled.md](settled.md) § C at archive time).
+   (record in [settled.md](../settled.md) § C at archive time).
 8. **No decisions** (A5 rule 6).
 
 Cost: pair 54's candidate is ≈ 690 post lags × 40 bins; the corpus's 166
@@ -246,9 +255,9 @@ candidates are negligible next to the scan.
   the rule that produces them; a region with no evaluable lag omits its
   r). Optional fields use `skip_serializing_if`, since `BStallCandidate`
   serializes directly. Changelog line per
-  [json-output.md](../json-output.md).
+  [json-output.md](../../json-output.md).
 - `offset_used_secs` now means pair offset + earlier **advances**: update
-  its doc comment (`b_stall.rs`) and [json-output.md](../json-output.md)
+  its doc comment (`b_stall.rs`) and [json-output.md](../../json-output.md)
   § BStall. Values are identical to A5 on any pair whose reported stalls
   all carry `evidence` `"length"` or `"length_contradicted"`.
 - `BStallScan` gains an `unconfirmed` bucket beside `suppressed` (A5
@@ -350,7 +359,7 @@ region. Exactly one outcome applies, checked in order:
    `dead_shoulder`, `no_shoulder`, or `pre_unregistered` (the shoulders
    carry no usable evidence; no constant in § 2 besides `SHOULDER_SECS`
    can change that). Try `SHOULDER_SECS` ∈ {2, 6} once; if still one of
-   those reasons, record in [settled.md](settled.md) — the shoulder test
+   those reasons, record in [settled.md](../settled.md) — the shoulder test
    cannot confirm the corpus's one short stall at scan time and A6 is the
    ceiling. Do **not** fall back to single-vote later-silence evidence;
    that is the excursion failure the step-boundary rule exists to prevent.
@@ -386,6 +395,52 @@ check; any ≥ 10 s `length_contradicted` row (none expected) listed and
 ear-checked, triggering the rule-7 latch. Record the verdict table in the
 archive note.
 
+### 5.5 Result (2026-09-15)
+
+51 pairs (1–54 minus 6 and 16), floor 2.0 s, same binary as the
+shipped code. Scan parity with the 09-14 census: identical gap counts and
+B scanned ends on every pair.
+
+**Candidate set.** 265 candidates both runs, but 37 reach the shoulder
+test, not 66. The other 29 of 09-14's 66 were all dropouts reported at a
+cumulative offset polluted by earlier dropout reports (drift up to +21 s on
+pair 18, +18 s on pair 25; pairs 18, 25 and 49 hold 19 of them). At an
+offset that advances only at reported stalls, A is silent over the same
+span (A-silent fraction 0.54–1.00) and they suppress. Nearest the cut:
+pair 25 B 2264.4 (0.54), pair 49 B 2455.7 (0.73). No new candidate.
+
+**§ 5.1: Go.** No lag skipped anywhere; every shoulder live (40/40 bins,
+one 40/30).
+
+| Verdict | n | Rows |
+|---------|---|------|
+| `step`, reported `shoulder` | 2 | pair 50 B 2249.3: shift 2.8 s, r_step 0.88 / r_flat 0.22; pair 54 B 6152.8: shift 65.7 s, r_step 0.87 / r_flat 0.10 |
+| `flat` | 32 | all 09-14 dropouts |
+| `undetermined` (< 10 s, not reported) | 3 | pair 13 B 7461.1 `no_match`; pair 21 B 2047.9 `ambiguous`; pair 39 B 3479.5 `no_match` |
+| dropout reading `step` | 0 | |
+
+Measured shifts agree with the 09-14 later-silence residuals (pair 54
+shift − duration = −0.9 s vs residual −0.85 s; pair 50 +0.05 s vs +0.05 s).
+
+**§ 5.2: constants unchanged.** Smallest stall margin +0.66; largest
+dropout `r_step − r_flat` −0.11 (pair 21 B 1239.2), separation 0.77 ≫
+`SHOULDER_MARGIN_R`. Lowest flat `r_flat` 0.818 (pair 47 B 5847.3), clears
+`SHOULDER_MIN_R` by 0.068. Thin flat margins (pair 21 0.11, pair 1 B
+2918.7 0.13) fail safe: tipping over reads `ambiguous`, not `step`.
+
+**§ 5.3: no disagreement.** Every `step` / `flat` matches the 09-14
+reading; pair 50 B 3241.3 is `flat` (r_flat 0.9997) at the post-step map
+(+3.40 = +0.60 + 2.8).
+
+**§ 5.4: pass.** Pairs 50 and 54 reported `shoulder`; 0 dropouts reported;
+offsets move only at a reported stall (pair 54 at +2.06, as the 10 s
+re-scan); no `length_contradicted` row. Ear-check 2026-09-15: all three
+`undetermined` candidates are dropped sound in B, not pauses. The census
+config is the new default, so it doubles as the default re-scan.
+Near-cut suppressions (pair 25 B 2264.4, pair 49 B 2455.7) ear-checked on
+A and B: silence over silence, aligned, no skip or pause — consistent with
+shared silence; not conclusive either way.
+
 ---
 
 ## 6. Checklist
@@ -393,9 +448,9 @@ archive note.
 - [x] Domain: envelope clamp, index-stepped windows, evaluable-lag skipping, shoulder test, verdict, rule-7 advance + `evidence`, `unconfirmed` bucket in `crates/clip-sync-repair/src/domain/b_stall.rs` (reuse `pearson` / `window_indices` from `gap_equivalence.rs` — lift to `pub(crate)` rather than copy); § 4 unit tests 1–15.
 - [x] Scan: pass `a_levels` and `b_scan.levels` to the detector in `crates/clip-sync-repair/src/application/scan_gaps.rs` Step 6a; debug line per unconfirmed candidate.
 - [x] Fixtures: amplitude-modulated chirp pair + `insert_silence` (local to `scan_gaps_integration.rs`); new `execute_confirms_short_b_stall_by_shoulders`; `length` assertion on the existing A5 integration test.
-- [x] Output + JSON (`shift_secs`, `evidence`, `verdict_reason`, `pre_lag_secs`, `step_r`, `flat_r`); `offset_used_secs` wording; [json-output.md](../json-output.md) changelog + § BStall; regenerate `full_surface_repair.json`.
-- [x] [cli-output.md](../cli-output.md) A5 row: floor, shoulder confirmation, cumulative offset by measured shift.
-- [ ] § 5.1 pre-check (go / tune / park) → § 5.2 pin → § 5.3 cross-check → § 5.4; set `stall_min_secs` default to 2.0.
+- [x] Output + JSON (`shift_secs`, `evidence`, `verdict_reason`, `pre_lag_secs`, `step_r`, `flat_r`); `offset_used_secs` wording; [json-output.md](../../json-output.md) changelog + § BStall; regenerate `full_surface_repair.json`.
+- [x] [cli-output.md](../../cli-output.md) A5 row: floor, shoulder confirmation, cumulative offset by measured shift.
+- [x] § 5.1 pre-check (go / tune / park) → § 5.2 pin → § 5.3 cross-check → § 5.4; set `stall_min_secs` default to 2.0.
 - [x] Stall-segmented map BACKLOG row: note that `length_contradicted` advances must not be consumed as shifts.
 
 ---
@@ -404,6 +459,6 @@ archive note.
 
 The census passes § 5.4 at the 2.0 s default, pair 50's scan warns at
 B 2249 s with a measured shift near +2.5–2.8 s and pair 54's still warns
-at B 6152.8 s, and this plan is archived with a [settled.md](settled.md)
+at B 6152.8 s, and this plan is archived with a [settled.md](../settled.md)
 row plus removal of its BACKLOG row. **Or** § 5.1 parks it, with the
 settled.md row recording why.

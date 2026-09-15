@@ -6,16 +6,17 @@
 //! Below [`LENGTH_REPORT_SECS`] a silence is reported only when its **shoulders** show the timeline
 //! shifted (B's audio after the silence registers against A at the start of the mapped span, not
 //! its end). Advisory only: nothing here changes a patch or skip decision. See
-//! `docs/dev/archive/TEMP-b-stall-warning-plan.md` and `docs/dev/TEMP-b-stall-step-confirmation-plan.md`.
+//! `docs/dev/archive/TEMP-b-stall-warning-plan.md` and `docs/dev/archive/TEMP-b-stall-step-confirmation-plan.md`.
 
 use crate::domain::align::TimelineOverlap;
 use crate::domain::cross_check::SilenceInterval;
 use crate::domain::gap_equivalence::{pearson, window_indices};
 use crate::domain::policies::BlockLevel;
 
-/// Minimum B silence (seconds, after overlap clipping) that is a candidate. Starting value; the
-/// step-confirmation plan's § 5 census decides whether it drops to 2.0.
-pub const DEFAULT_STALL_MIN_SECS: f64 = 10.0;
+/// Minimum B silence (seconds, after overlap clipping) that is a candidate. Below
+/// [`LENGTH_REPORT_SECS`] a candidate reports only on a shoulder `step`; chosen by the 2026-09-15
+/// shoulder census (51 pairs: both stalls `step`, 0 of 35 dropouts reported).
+pub const DEFAULT_STALL_MIN_SECS: f64 = 2.0;
 /// A candidate is suppressed when A's silent runs cover at least this fraction of the mapped span.
 pub const B_STALL_MAX_A_SILENT_FRACTION: f64 = 0.5;
 /// At or above this length a candidate is reported whatever its shoulders say (A5's shipped floor).
@@ -571,7 +572,7 @@ mod tests {
 
     #[test]
     fn short_silence_ignored() {
-        let scan = detect(&[interval(100.0, 109.9)], &[]);
+        let scan = detect(&[interval(100.0, 101.9)], &[]);
         assert_eq!(scan, BStallScan::default());
     }
 
@@ -634,7 +635,7 @@ mod tests {
         assert_eq!(long.reported[0].b_end_secs, 1002.0);
         assert_eq!(long.reported[0].duration_secs, 52.0);
 
-        let short_inside = detect(&[interval(995.0, 1060.0)], &[]);
+        let short_inside = detect(&[interval(1000.5, 1060.0)], &[]);
         assert_eq!(short_inside, BStallScan::default());
     }
 
