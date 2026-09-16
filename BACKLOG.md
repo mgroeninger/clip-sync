@@ -4,7 +4,7 @@ Open follow-up work for `clip-sync`. Architecture: [PLAN.md](PLAN.md). Repair pi
 [docs/pipeline.md](docs/pipeline.md). Test corpus: [docs/dev/corpus-validation.md](docs/dev/corpus-validation.md).
 Error handling: [docs/error-mapping.md](docs/error-mapping.md).
 
-Last updated: 2026-09-14.
+Last updated: 2026-09-16.
 
 **How this doc works**
 
@@ -24,20 +24,6 @@ Last updated: 2026-09-14.
 ([settled.md](docs/dev/settled.md) § C). Remaining post-join rows below are startable.
 
 ---
-
-## Timeline integrity
-
-Pair 54 (2026-09-14): B has a 66.6 s digital-silence stall at B 1:42:32.7 that A does not; every A
-position after it maps to B at ≈ +68 s instead of the pair's +2.06 s (end of soundtrack measured at
-+67.9 s). g012 (display `#13`) was the customer for the stall-segmented map — patched high at
-+67.758 s after the Shoulder remap shipped 2026-09-15
-([archive/TEMP-stall-segmented-map-plan.md](docs/dev/archive/TEMP-stall-segmented-map-plan.md)).
-Numbers: [archive/TEMP-b-stall-warning-plan.md](docs/dev/archive/TEMP-b-stall-warning-plan.md) § 1;
-the shipped A5 warning names that stall and attributes later gaps.
-
-| Item | Next action | Done when |
-|------|-------------|-----------|
-| **End-clip constrained search hides a timeline step** | Pair 54's end clip reported +1.82 s, `end_aligned: true`, `offsets_consistent: true` — true offset there is +67.9 s. Suspected: the independent end-clip Chromaprint disagreed with start, so the default `constrain_end_clip_to_start_offset` PCM-searched ±`end_clip_refine_radius_secs` (5 s) around the start offset and returned `prior.confidence.max(…)` (both clips read the identical 0.9218163). **Mechanism CONFIRMED 2026-09-14** (scan-only re-run, pair 54): default → `end clip (refined ±5s around start): +1.861s (confidence 0.92)`, recommended +2.058 s "(clip offsets agree)"; `--no-constrain-end-clip-to-start-offset` → `end clip: +66.472s (confidence 0.95)`, drift +64.180 s, recommended +2.292 s "(clip offsets disagree; using start clip)" plus the "alignment unstable" warning. So the constraint turns a real, high-confidence step into false agreement, and the constrained clip's confidence is inherited, not measured. Residual: +66.47 s vs +67.9 s at the end silence (≈1.4 s) is unexplained; the 66.6 s B stall ([archive/TEMP-b-stall-warning-plan.md](docs/dev/archive/TEMP-b-stall-warning-plan.md)) accounts for most of the step. Plan: [TEMP-end-clip-override-warning-plan.md](docs/dev/TEMP-end-clip-override-warning-plan.md) (A6 warning; confidence de-inheritance deferred to a census-gated follow-up, plan § 6) | Plan § 8 |
 
 ## Fill placement
 

@@ -1,10 +1,20 @@
 # TEMP — End-clip override warning (A6)
 
-**Status:** design, 2026-09-14. A Change (user-visible warning + additive
-JSON field). Changes no offset, confidence, or fill decision.
+> **Latched 2026-09-16 — not implemented.** The no-code census (§ 9) found
+> the constraint hides a step on **1 of 52** pairs (pair 54), which A5
+> already warns on and the shipped stall-segmented map already remaps.
+> Every other disagreeing pair's step sits inside the ±5 s refine radius,
+> where the constrained search finds the same offset (≤ 41 µs). Trigger:
+> [settled.md](settled.md) § C.
 
-**Tracked as:** [BACKLOG.md](../../BACKLOG.md) § *Timeline integrity* →
-*End-clip constrained search hides a timeline step*.
+**Status:** design, 2026-09-14; latched 2026-09-16. A Change (user-visible
+warning + additive JSON field). Changes no offset, confidence, or fill
+decision — **the warning** is fill-neutral; the constraint itself is not
+(§ 9).
+
+**Tracked as:** [settled.md](settled.md) § C — latched. Was
+[BACKLOG.md](../../BACKLOG.md) § *Timeline integrity* → *End-clip
+constrained search hides a timeline step*.
 
 **Companions (do not merge):**
 
@@ -34,7 +44,10 @@ That is the whole plan. If a later sentence disagrees with this one,
 this one wins.
 
 The chosen offset, per-clip confidence, `offsets_consistent`,
-`recommended_offset_secs`, and every downstream fill are unchanged.
+`recommended_offset_secs`, and every downstream fill are unchanged **by
+this plan** — nothing reads the new field. That is not a claim that the
+constraint is fill-neutral: turning it off changed 6 of 1087 gap outcomes
+(§ 9).
 
 ---
 
@@ -46,6 +59,13 @@ Scan-only re-run, 2026-09-14:
 |-----|----------|-------------|-------|
 | default (constrained) | +1.861 s, conf 0.92, "refined ±5s around start" | +2.058 s | clip offsets agree |
 | `--no-constrain-end-clip-to-start-offset` | +66.472 s, conf 0.95 | +2.292 s | clip offsets disagree; using start clip |
+
+The +1.861 s is the verbose **progress line**, printed inside the clip loop
+before high-rate refinement. The final end clip in the 2026-09-15 corpus
+dump reads **+1.824 s** (same run shape, same 0.9218163 confidence) — the
+37 ms is most likely high-rate refinement, within its 0.1 s adjustment cap,
+not re-verified. A6's record is pre-high-rate (§ 2 rule 5), so § 8's
++1.861 s is the value the warning would print.
 
 The independent estimate is **higher** confidence than the start clip
 (0.92), and it is thrown away. The constrained 0.92 is not a measurement:
@@ -232,8 +252,8 @@ constrained arm fires, and the measured-vs-inherited confidence gap.
 
 - **Confidence de-inheritance** (stop `prior.confidence.max(…)`): changes
   `end_aligned`, fusion weighting, and possibly `recommended_offset_secs`
-  → fills. Needs its own plan gated on the § 5 table. Open a BACKLOG row
-  from the census result.
+  → fills. Needs its own plan gated on the § 5 table. Sized in § 9 and
+  latched in [settled.md](settled.md) § C — no defect traced to it yet.
 - **Changing the default** of `constrain_end_clip_to_start_offset`.
 - **Stall-segmented map** — shipped 2026-09-15
   ([archive/TEMP-stall-segmented-map-plan.md](archive/TEMP-stall-segmented-map-plan.md)).
@@ -264,3 +284,47 @@ and every corpus pair's scan-only JSON is identical to its pre-change
 report apart from the added `alignment.end_clip_override` field. Fills
 are unchanged by construction — no decision reads the new field — and
 this plan does not run a patch-outcomes pass to re-prove it.
+
+---
+
+## 9. Census result (2026-09-16) — latched
+
+Run without implementing: every corpus pair through `--gap-fingerprints`
+twice, default vs `--no-constrain-end-clip-to-start-offset`
+(`gap-files/2026-09-15-corpus` and `…-corpus-no-contrain`, both build
+`174a3be2a7dc` dirty, identical scan/gate/probe recipes; 52 pairs — 6 and
+16 absent). The `source.alignment` block in each `corpus.json` carries both
+clips' offset and confidence, which is the § 5 table minus the measured
+column. Scan-only would have been enough; the fingerprint pass was not
+needed for this question.
+
+**End offset.** 29 pairs disagree with the start clip by > 0.5 s (drift
+−4.12 … +3.67 s), so they take the constrained arm by default. On every one
+the step is inside `end_clip_refine_radius_secs` (5 s) and the constrained
+search lands on the independent offset: max |Δ end offset| across runs is
+**41 µs** over 51 pairs. Only pair 54 moves: +1.824 → **+66.472 s** (conf
+0.9516), drift −0.468 → **+64.180 s**, `offsets_consistent` true → false.
+Under § 2 rule 2, A6 warns on **1 of 52**. The constraint hides a step only
+when it exceeds the refine radius.
+
+**Confidence (§ 6 sizing).** On the 29 constrained pairs, inherited −
+measured end confidence: min **−0.333**, median **+0.007**, max **+0.075**.
+The measurement is *higher* than the inherited value on 8 pairs (23, 27, 28,
+33, 38, 39, 43, 45; pair 38 0.548 → 0.881). No measured value falls below
+0.88, so de-inheritance would not flip `end_aligned` at `min_match_score`
+0.5 on this corpus.
+
+**Fill outcomes.** 6 of 1087 gap outcomes differ between runs (48
+summary-tier g000 entries carry no outcome and are excluded; identical in
+both). Pair 54 g002 and g006 skip → patch, from its 234 ms recommended-offset
+change (+2.058 → +2.292 s). Pair 3 g013 patch → skip, pair 24 g001 patch →
+skip, pair 37 g001 skip → patch and g002 patch → skip, from recommended
+shifts of 1.4–5.0 ms — knife-edge gate decisions, not steps. The build
+predates `5537d8d`, so pair 54 g012 reads skip in both runs; the shipped
+stall-segmented map patches it.
+
+**Why latch, not ship.** Pair 54 is already covered twice: A5 names the
+66.6 s stall, and the stall-segmented map remaps later gaps from its
+`shoulder` shift. A6 would add a third voice on the only case, for ~50
+struct-literal edits. Pair 50's 2.75 s stall (`shoulder`, shift 2.8 s) is
+inside the radius and is already handled by the same map.
