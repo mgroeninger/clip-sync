@@ -648,9 +648,17 @@ run predates the field.
 `align_adjustment_secs` is the signed slide of the chosen fill start off mapped nominal — the placement the unified fit search won, **not** a measured A→B lag. A companion `waveform_adjustment_secs` ("additional slide from waveform search after structure match") was removed 2026-08-12: the unified search assigns the placement once, so the field was identically `0.0` on every patched gap and read as evidence that placement had been decided in the structure domain.
 
 `registration_residual_ms` (S1, added 2026-08-20) is `applied_ms − shoulder_lag_ms`: the applied placement
-(`align_adjustment_secs * 1000`, or `0.0` for dual-fit — see below) minus an independent seam-local
-correlation-peak read of the same shoulder, taking whichever of pre/post has the smaller `|residual|` among
-shoulders whose peak `r` clears the same `min_fill_correlation`/`fill_absolute_floor` bar the gate itself uses.
+minus an independent seam-local correlation-peak read of the same shoulder, taking whichever of pre/post has
+the smaller `|residual|` among shoulders whose peak `r` clears the same `min_fill_correlation`/`fill_absolute_floor`
+bar the gate itself uses. Positive means the fill sits late of the shoulder. On a bracket patch `applied_ms` is
+the **written** fill's start relative to mapped nominal: `align_adjustment_secs * 1000` plus Fit's trim-head move,
+which `align_adjustment_secs` does not carry. It is `0.0` for dual-fit (see below). Each shoulder read is
+anchored at its template's gap-facing edge, not at the gap edge, the same map coordinates `lag_decision` uses.
+That edge sits outward by walk-off plus `border_standoff_secs` plus the low-energy trim, so a perfectly
+registered shoulder reads 0.
+**Values from before 2026-09-18 are not registration.** They omitted both corrections, so they mostly read the
+~350 ms standoff: median |value| 329 ms over the 209 non-dual-fit patched gaps of a 2026-09-16 corpus run.
+Re-run instead of reading old dumps. The shape is unchanged, so the version marker is not bumped.
 It is **record-only** — no gate reads it, and it does not affect the verdict, same as `fill_level` never
 affecting the verdict. Omitted when neither shoulder's independent read is confident, or when the run predates
 the field. On the dual-fit path (`dual_fit_used: true`) it is computed from the same `pre_lag`/`post_lag`/

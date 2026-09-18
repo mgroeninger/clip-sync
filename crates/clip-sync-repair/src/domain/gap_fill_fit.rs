@@ -1834,6 +1834,16 @@ pub fn score_extend_short_fill_to_gap_frames(
     fit_fill_to_gap_frames(&out, channels, gap_frames)
 }
 
+/// A length-fitted fill plus how far its first frame sits past the first frame of the B slice it was cut
+/// from. Only [`pick_fill_length_anchor`]'s trim-head choice moves the start; extension and trim-tail keep it.
+/// Placement readers (the registration residual) must add `head_trim_frames` to the slide — the fill actually
+/// written starts that much later in B than `FillAlignment::start_frame`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FittedFill {
+    pub pcm: Vec<f32>,
+    pub head_trim_frames: usize,
+}
+
 /// Fit-mode length adjust: score-based extend when short, dual-anchor trim when long.
 pub fn fit_fill_length_for_gap(
     fill_interleaved: &[f32],
@@ -1843,23 +1853,29 @@ pub fn fit_fill_length_for_gap(
     borders: &BorderSeamTemplates<'_>,
     repeat_window_frames: usize,
     seam_ctx: SpliceSeamContext<'_>,
-) -> Vec<f32> {
+) -> FittedFill {
     let channels = channels.max(1);
     let source_frames = fill_interleaved.len() / channels;
     if source_frames > gap_frames {
         pick_fill_length_anchor(fill_interleaved, channels, gap_frames, borders, seam_ctx)
     } else if source_frames < gap_frames {
-        score_extend_short_fill_to_gap_frames(
-            fill_interleaved,
-            extension_interleaved,
-            channels,
-            gap_frames,
-            borders,
-            repeat_window_frames,
-            seam_ctx,
-        )
+        FittedFill {
+            pcm: score_extend_short_fill_to_gap_frames(
+                fill_interleaved,
+                extension_interleaved,
+                channels,
+                gap_frames,
+                borders,
+                repeat_window_frames,
+                seam_ctx,
+            ),
+            head_trim_frames: 0,
+        }
     } else {
-        fill_interleaved.to_vec()
+        FittedFill {
+            pcm: fill_interleaved.to_vec(),
+            head_trim_frames: 0,
+        }
     }
 }
 
@@ -1870,11 +1886,14 @@ pub fn pick_fill_length_anchor(
     gap_frames: usize,
     borders: &BorderSeamTemplates<'_>,
     seam_ctx: SpliceSeamContext<'_>,
-) -> Vec<f32> {
+) -> FittedFill {
     let channels = channels.max(1);
     let source_frames = fill_interleaved.len() / channels;
     if source_frames <= gap_frames {
-        return fit_fill_to_gap_frames(fill_interleaved, channels, gap_frames);
+        return FittedFill {
+            pcm: fit_fill_to_gap_frames(fill_interleaved, channels, gap_frames),
+            head_trim_frames: 0,
+        };
     }
 
     let trim_tail = fit_fill_to_gap_frames(fill_interleaved, channels, gap_frames);
@@ -1888,9 +1907,15 @@ pub fn pick_fill_length_anchor(
         fill_splice_seam_correlations_interleaved(&trim_head, channels, borders, seam_ctx);
 
     if fill_anchor_better(seams_head, seams_tail) {
-        trim_head
+        FittedFill {
+            pcm: trim_head,
+            head_trim_frames: skip_frames,
+        }
     } else {
-        trim_tail
+        FittedFill {
+            pcm: trim_tail,
+            head_trim_frames: 0,
+        }
     }
 }
 
@@ -3120,7 +3145,8 @@ mod tests {
             &test_borders(&a_pre, &a_post, &[], &[], pre_w, post_w),
             seam_ctx,
         );
-        assert_eq!(picked, vec![0.0, 0.0, post[0], post[1]]);
+        assert_eq!(picked.pcm, vec![0.0, 0.0, post[0], post[1]]);
+        assert_eq!(picked.head_trim_frames, 2);
     }
 
     #[test]
@@ -3148,7 +3174,8 @@ mod tests {
             &test_borders(&a_pre, &a_post, &a_pre_ch, &a_post_ch, pre_w, post_w),
             seam_ctx,
         );
-        assert_eq!(picked, vec![0.0, 0.0, post[0], post[1]]);
+        assert_eq!(picked.pcm, vec![0.0, 0.0, post[0], post[1]]);
+        assert_eq!(picked.head_trim_frames, 4);
     }
 
     #[test]
@@ -3234,7 +3261,11 @@ mod tests {
             window,
             no_seam_ctx(&[]),
         );
-        assert_eq!(via_api, direct);
+        assert_eq!(via_api.pcm, direct);
+        assert_eq!(
+            via_api.head_trim_frames, 0,
+            "extension keeps the fill start"
+        );
     }
 
     #[test]

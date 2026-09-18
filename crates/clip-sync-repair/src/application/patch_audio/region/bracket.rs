@@ -7,7 +7,8 @@
 use crate::domain::{
     fill_mode::FillMode,
     gap_fill_fit::{
-        fit_fill_length_for_gap, fit_fill_to_gap_frames, FillConfidence, UnifiedFitBreakdown,
+        fit_fill_length_for_gap, fit_fill_to_gap_frames, FillConfidence, FittedFill,
+        UnifiedFitBreakdown,
     },
     policies::{self, GapBorderSpec, RefinedGapFrames},
 };
@@ -42,6 +43,10 @@ pub(in crate::application::patch_audio::region) struct BracketFill {
     /// Gate mode only: frames appended from contiguous B because the bracket was shorter than the A gap.
     /// `None` in Fit mode (length fitting handles it) and when no extension was needed or available.
     pub(in crate::application::patch_audio::region) extended_frames: Option<usize>,
+    /// Fit mode only: frames cut from the head of the B slice when the trim-head anchor won
+    /// ([`FittedFill::head_trim_frames`]). The written fill starts this much later in B than
+    /// `FillAlignment::start_frame`, so a placement reader must add it to the slide. `0` in Gate mode.
+    pub(in crate::application::patch_audio::region) head_trim_frames: usize,
 }
 
 /// Assemble the bracket fill PCM to exactly `gap_frames` from the sliced B: **Fit** length-fits against the A
@@ -82,17 +87,22 @@ pub(in crate::application::patch_audio::region) fn assemble_bracket_fill(
             pre_window: pre_gate_frames,
             post_window: post_gate_frames,
         };
+        let FittedFill {
+            pcm,
+            head_trim_frames,
+        } = fit_fill_length_for_gap(
+            &b_fill_raw,
+            b_extension,
+            channels,
+            gap_frames,
+            &borders,
+            repeat_window_frames,
+            seam_ctx,
+        );
         BracketFill {
-            pcm: fit_fill_length_for_gap(
-                &b_fill_raw,
-                b_extension,
-                channels,
-                gap_frames,
-                &borders,
-                repeat_window_frames,
-                seam_ctx,
-            ),
+            pcm,
             extended_frames: None,
+            head_trim_frames,
         }
     } else {
         let mut gate_fill = b_fill_raw;
@@ -108,6 +118,7 @@ pub(in crate::application::patch_audio::region) fn assemble_bracket_fill(
         BracketFill {
             pcm: fit_fill_to_gap_frames(&gate_fill, channels, gap_frames),
             extended_frames,
+            head_trim_frames: 0,
         }
     }
 }

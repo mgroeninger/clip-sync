@@ -728,45 +728,6 @@ pub(in crate::application::patch_audio) fn characterize_region(
     let (a_pre_ch, a_post_ch) =
         policies::border_templates_per_channel_for_gap(&a_pcm.samples, channels, &border_spec);
 
-    // S1 (docs/dev/TEMP-registration-residual-plan.md): independent shoulder-seam read of the placement
-    // vs `slide_secs` (the applied placement), record-only — no gate reads this. Mirrors `try_dual_fit`'s
-    // own anchor arithmetic exactly: same `seam_local_peak` primitive, same `offset_nominal_start`
-    // fiducial, templates used as-returned (already trimmed for low-energy edges). Reuses the already-
-    // decoded/bounded borders and B extract — no new decode, no new sweep window.
-    let registration_residual_ms = {
-        let b_mono_for_residual = crate::domain::pcm::interleaved_to_mono(b_samples, channels);
-        let max_lag_for_residual = (border_search_secs * sample_rate as f64).round() as usize;
-        let confident_floor = f64::from(min_fill_correlation.max(request.fill_absolute_floor));
-        let pre_peak = offset_nominal_start
-            .checked_sub(a_pre_border.len())
-            .and_then(|anchor| {
-                crate::domain::seam_local::seam_local_peak(
-                    &a_pre_border,
-                    &b_mono_for_residual,
-                    anchor,
-                    max_lag_for_residual,
-                )
-            });
-        let post_peak = crate::domain::seam_local::seam_local_peak(
-            &a_post_border,
-            &b_mono_for_residual,
-            offset_nominal_start + gap_frames,
-            max_lag_for_residual,
-        );
-        let applied_ms = slide_secs * 1000.0;
-        let shoulder_ms = |peak: Option<crate::domain::seam_local::SeamPeak>| {
-            peak.and_then(|p| {
-                registration_shoulder_residual_ms(
-                    p.r,
-                    p.lag,
-                    applied_ms,
-                    sample_rate,
-                    confident_floor,
-                )
-            })
-        };
-        select_registration_residual_ms(shoulder_ms(pre_peak), shoulder_ms(post_peak))
-    };
     let pre_gate_frames = seam_gate_frames.min(a_pre_border.len().max(1));
     let post_gate_frames = if a_post_border.is_empty() {
         0
@@ -795,6 +756,7 @@ pub(in crate::application::patch_audio) fn characterize_region(
     let BracketFill {
         pcm: b_fill,
         extended_frames,
+        head_trim_frames,
     } = {
         let _s = tracing::info_span!("char_fill_assembly").entered();
         assemble_bracket_fill(BracketFillAssembly {
@@ -823,6 +785,60 @@ pub(in crate::application::patch_audio) fn characterize_region(
             "B bracket shorter than A gap; extended from contiguous B audio (gate)"
         );
     }
+
+    // S1 (docs/dev/TEMP-registration-residual-plan.md): independent shoulder-seam read of the placement
+    // vs the fill actually written, record-only — no gate reads this. Same `seam_local_peak` primitive and
+    // `offset_nominal_start` fiducial as `try_dual_fit`, reusing the already-decoded borders and B extract.
+    //
+    // Two corrections (2026-09-18, 47/g14) keep both sides of the subtraction in the same coordinates:
+    // - **Anchors in map coordinates.** Each template's gap-facing edge sits `D` frames outward of the gap
+    //   edge (silence walk-off + `border_standoff_frames` + low-energy trim), so the B anchors shift by the
+    //   same `D` — exactly as `lag_decision` does. Unshifted, a perfectly registered shoulder reads `∓D`
+    //   (≈350 ms at the default standoff), which is what the field mostly reported before.
+    // - **Applied = the written fill's start.** Fit's trim-head anchor starts the fill `head_trim_frames`
+    //   past `alignment.start_frame`; `slide_secs` alone misses that.
+    let registration_residual_ms = {
+        let (d_pre, d_post) = policies::border_edge_displacement_frames(
+            &a_pcm.samples,
+            channels,
+            &border_spec,
+            a_pre_border.len(),
+            a_post_border.len(),
+        );
+        let b_mono_for_residual = crate::domain::pcm::interleaved_to_mono(b_samples, channels);
+        let max_lag_for_residual = (border_search_secs * sample_rate as f64).round() as usize;
+        let confident_floor = f64::from(min_fill_correlation.max(request.fill_absolute_floor));
+        let pre_peak = offset_nominal_start
+            .checked_sub(d_pre + a_pre_border.len())
+            .and_then(|anchor| {
+                crate::domain::seam_local::seam_local_peak(
+                    &a_pre_border,
+                    &b_mono_for_residual,
+                    anchor,
+                    max_lag_for_residual,
+                )
+            });
+        let post_peak = crate::domain::seam_local::seam_local_peak(
+            &a_post_border,
+            &b_mono_for_residual,
+            offset_nominal_start + gap_frames + d_post,
+            max_lag_for_residual,
+        );
+        let applied_ms =
+            slide_secs * 1000.0 + head_trim_frames as f64 * 1000.0 / sample_rate as f64;
+        let shoulder_ms = |peak: Option<crate::domain::seam_local::SeamPeak>| {
+            peak.and_then(|p| {
+                registration_shoulder_residual_ms(
+                    p.r,
+                    p.lag,
+                    applied_ms,
+                    sample_rate,
+                    confident_floor,
+                )
+            })
+        };
+        select_registration_residual_ms(shoulder_ms(pre_peak), shoulder_ms(post_peak))
+    };
 
     // 6b.3a shadow: prove the executor can re-derive this exact fill from the spec + the FULL decode buffers
     // alone (re-slicing the B extract, rebuilding borders independently). Guards the characterize→execute
@@ -1222,6 +1238,43 @@ mod tests {
     /// shoulders.
     #[test]
     fn bracket_registration_residual_is_near_zero_on_a_matched_fixture() {
+        let (residual, misplacement_ms) = matched_fixture_bracket_residual_ms(0.0);
+        let residual = residual
+            .expect("both shoulders are exact zero-lag matches, well above the confidence floor");
+        assert!(
+            misplacement_ms.abs() < 1.0,
+            "fixture places the fill at zero lag"
+        );
+        assert!(
+            residual.abs() < 1.0,
+            "shoulders match at zero lag; residual should be ~0ms, got {residual}"
+        );
+    }
+
+    /// 47/g14 (2026-09-18): the shoulder templates sit `border_standoff_secs` outward of the gap edges,
+    /// so the residual's B anchors must shift by the same displacement. Before the fix the anchors sat
+    /// at the raw gap edge and a perfectly registered shoulder read `∓standoff` (here ∓30 ms).
+    ///
+    /// The residual is pinned against the fill's **true** misplacement, not against zero: with a standoff
+    /// this fixture's bracket search lands the fill ~15 ms early (seam r ≈ 0.07/0.09 — the zero floors let
+    /// it through). Both shoulders read lag 0, so a correct residual reports exactly that misplacement;
+    /// the unshifted anchors read +15 ms (the opposite sign) instead.
+    #[test]
+    fn bracket_registration_residual_tracks_true_misplacement_with_border_standoff() {
+        let (residual, misplacement_ms) = matched_fixture_bracket_residual_ms(0.03);
+        let residual = residual.expect(
+            "both shoulders are exact zero-lag matches once anchored at the template edges",
+        );
+        assert!(
+            (residual - misplacement_ms).abs() < 1.0,
+            "residual must equal the fill's true offset from the zero-lag match              ({misplacement_ms} ms); got {residual} ms"
+        );
+    }
+
+    /// The bracket residual from the zero-lag matched fixture (A silent inside a 1 s gap, B the same
+    /// band-limited noise throughout), with the given `border_standoff_secs`, paired with the written
+    /// fill's true offset (ms) from that zero-lag match — known here because B is A's own signal.
+    fn matched_fixture_bracket_residual_ms(border_standoff_secs: f64) -> (Option<f64>, f64) {
         use super::{characterize_all_regions, RegionPatchContext, RegionPatchMedia};
         use crate::domain::gap::Gap;
         use crate::domain::gap_fill::FillRegion;
@@ -1304,7 +1357,7 @@ mod tests {
             fill_length_slack_secs: 0.1,
             fill_extract_tail_slack_secs: 0.1,
             fill_seam_search_secs: 0.05,
-            border_standoff_secs: 0.0,
+            border_standoff_secs,
             max_anchor_bracket_secs: 0.2,
             max_anchors_per_side: 2,
             min_fill_correlation: 0.0,
@@ -1343,17 +1396,18 @@ mod tests {
         match &specs[0].verdict {
             crate::domain::gap_repair_spec::GapRepairVerdict::Patch(
                 GapRepairStrategy::Bracket {
+                    alignment,
                     registration_residual_ms,
                     ..
                 },
             ) => {
-                let residual = registration_residual_ms.expect(
-                    "both shoulders are exact zero-lag matches, well above the confidence floor",
-                );
-                assert!(
-                    residual.abs() < 1.0,
-                    "shoulders match at zero lag; residual should be ~0ms, got {residual}"
-                );
+                // `fill_frames == gap_frames` in this fixture, so no head trim moves the written start.
+                let misplacement_frames =
+                    alignment.start_frame as f64 - specs[0].b_extract.b_mapped_start_frame as f64;
+                (
+                    *registration_residual_ms,
+                    misplacement_frames * 1000.0 / f64::from(rate),
+                )
             }
             other => {
                 panic!("expected a Patch(Bracket) verdict for a matched fixture, got {other:?}")
