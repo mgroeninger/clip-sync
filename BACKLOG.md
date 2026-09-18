@@ -4,7 +4,7 @@ Open follow-up work for `clip-sync`. Architecture: [PLAN.md](PLAN.md). Repair pi
 [docs/pipeline.md](docs/pipeline.md). Test corpus: [docs/dev/corpus-validation.md](docs/dev/corpus-validation.md).
 Error handling: [docs/error-mapping.md](docs/error-mapping.md).
 
-Last updated: 2026-09-16.
+Last updated: 2026-09-18.
 
 **How this doc works**
 
@@ -20,8 +20,9 @@ Last updated: 2026-09-16.
 - Shipped work is recorded in `docs/dev/archive/*` and git history.
 - Out of scope: [PLAN.md](PLAN.md) § Out of scope.
 
-**Next:** 50/g10’s disjoint-offseam experiment is latched
-([settled.md](docs/dev/settled.md) § C). Remaining post-join rows below are startable.
+**Next:** the post-join section is closed — 50/g11–g13 are shared silence, not dropouts
+([settled.md](docs/dev/settled.md) § A); 50/g10’s disjoint-offseam experiment stays latched (§ C).
+Start with **47/g14** under *Fill placement* below.
 
 ---
 
@@ -55,22 +56,6 @@ gap that sits in the end-clip window). Hole 1 stays n=1.
 | **47/g14 — failure-to-move** | Ear-label as its own question. Did a licensed landmark say move, and search stay put? | Labelled. **Yes** → its own fork (not 26's "moved to the wrong tooth"). **No / cannot tell** → drop or re-categorize |
 | **31/g8 — Narrow-capture pre miss** | Capture, not the tree above. Write a TEMP. Shipped default `BorderCapture::Narrow` declines the pre at envelope +800 ms / r 0.816; Wide keeps −1146.1 / r 0.974 because the shared capture's 12% trim puts `D` at 1984 ms vs Narrow's 13 ms. Numbers: [archive/TEMP-envelope-adaptive-widen-plan.md](docs/dev/archive/TEMP-envelope-adaptive-widen-plan.md) deciding measurement 2 | A decision exists that is not "flip the default" ([settled.md](docs/dev/settled.md) § B) |
 | **α / `border_standoff_secs`** | Not Hole 1's 1.45 s. Fill sits ~25 ms late vs both shoulders; hypothesis is production's 0.35 s standoff. Run existing arms through `scripts/measure/diff-patch-adjustments.ps1`, or drop the item | Confirmed, or dropped |
-
-## Post-join defects (pairs 31 and 50)
-
-Right-when defects at the **join** of technically-successful patches, plus the skip cluster beside
-them. Promoted 2026-08-24 from the census and pair-50 notes, both now archived:
-[archive/TEMP-collapsed-bridge-census-2026-08-20.md](docs/dev/archive/TEMP-collapsed-bridge-census-2026-08-20.md)
-Q7 / Q11 and
-[archive/TEMP-pair50-anchor-seam-outcomes-2026-08-21.md](docs/dev/archive/TEMP-pair50-anchor-seam-outcomes-2026-08-21.md)
-Q1 (mechanism explained 2026-09-03; disjoint-offseam probe latched — [settled.md](docs/dev/settled.md) § C;
-ruled-out approaches in § A) / Q2. Both pairs' steps have opposite signs
-(−1.15 s vs +2.789 s) and share nothing else — same tree step 3/4 as above, not a shared class until
-a remnant comparison says so.
-
-| Item | Next action | Done when |
-|------|-------------|-----------|
-| **50/g11–g13 — skips between two correctly-resolved flanks** | First question only: at the true +2.8 s, `donor_interior_aligned.continuous` is `false` on g11/g12 (strict count two; g13/g17 gain an aligned donor that also reads discontinuous) while flanks g10/g14 stay continuous and `nominal` stays `true`. If that donor reading explains the skip, stop. Only if the donor **does** bridge: g11/g12 have no `best_attempt` — "no A-side candidate" vs "none beat baseline". Gate numbers if needed: g11 −0.018/0.393, g12 −0.072/0.567, g13 anchor attempt 0.188/0.226 | **Donor fails to bridge** → honest skip, close. **Donor bridges** → missing `best_attempt` attributed |
 
 ## Fill normalize boosts against a non-local reference
 
