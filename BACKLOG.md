@@ -70,7 +70,6 @@ a remnant comparison says so.
 
 | Item | Next action | Done when |
 |------|-------------|-----------|
-| **31/g10 — audible blip where g8 and g11 are clean** (Medium) | First: re-listen and pin locus — **post join** vs the fill's own end boundary. Then: overlap-only post remnant for g10 **and** g11 (pair-50 technique), compare residual lags. 31/g8's Narrow miss is the capture row above, not this | Locus pinned. **Same remnant as 50/g10** → one join class. **Different** → keep separate. **Cannot tell** → stop (n=1 vs two clean twins) |
 | **50/g11–g13 — skips between two correctly-resolved flanks** | First question only: at the true +2.8 s, `donor_interior_aligned.continuous` is `false` on g11/g12 (strict count two; g13/g17 gain an aligned donor that also reads discontinuous) while flanks g10/g14 stay continuous and `nominal` stays `true`. If that donor reading explains the skip, stop. Only if the donor **does** bridge: g11/g12 have no `best_attempt` — "no A-side candidate" vs "none beat baseline". Gate numbers if needed: g11 −0.018/0.393, g12 −0.072/0.567, g13 anchor attempt 0.188/0.226 | **Donor fails to bridge** → honest skip, close. **Donor bridges** → missing `best_attempt` attributed |
 
 ## Fill normalize boosts against a non-local reference
