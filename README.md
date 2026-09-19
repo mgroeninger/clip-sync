@@ -195,6 +195,7 @@ clip-sync-repair [OPTIONS] <VIDEO_A> <VIDEO_B>
 | `--gap-signature-context-secs <SECS>` | `3` | A audio on each side of the gap used for structure signatures |
 | `--fill-length-slack-secs <SECS>` | `5` | How far B fill end may differ from A gap length when locating post-border |
 | `--border-standoff-secs <SECS>` | `0.35` | A-side audio excluded adjacent to the dropout when building border templates |
+| `--residual-border-standoff-secs <SECS>` | same as `--border-standoff-secs` | Diagnostic: standoff for the record-only `registration_residual_ms` templates, so a standoff sweep can hold the instrument fixed. Placement never reads it |
 | `--fill-offset <MODE>` | `recommended` | Per-gap B mapping: `recommended`, `interpolated` (drift), or `anchored-retry` (two-pass anchor retry) |
 | `--fill-mode <MODE>` | `fit` | `fit` (unified search + tiering) or `gate` (legacy Pearson gate). See [docs/gap-fill-modes.md](docs/gap-fill-modes.md) |
 | `--fill-fit-structure-weight <N>` | `0.35` | Fit only: unified scorer structure term |
@@ -405,6 +406,7 @@ clip-sync-repair recording_with_gaps.mkv reference.mkv `
 | `--no-structure-trust` | `disable_structure_trust = true` (gate only) |
 | `--min-fill-correlation` | `min_fill_correlation` |
 | `--border-standoff-secs` | `border_standoff_secs` |
+| `--residual-border-standoff-secs` | `residual_border_standoff_secs` |
 | `--fill-border-search-secs` | `fill_border_search_secs` |
 | `--fill-align-margin-secs` | `fill_align_margin_secs` |
 | `--gap-signature-context-secs` | `gap_signature_context_secs` |

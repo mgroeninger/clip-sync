@@ -624,6 +624,12 @@ pub struct FillGeometryRecipe {
     /// as a border size on this path, so a standoff sweep that omitted it would be describing the
     /// standoff of a template whose width it never recorded.
     pub normalize_window_secs: f64,
+    /// `--residual-border-standoff-secs`: the standoff `registration_residual_ms` was **measured**
+    /// with, when it differs from placement's. Omitted when unset (the residual then reads with
+    /// `border_standoff_secs`), so default output is unchanged. Added 2026-09-19 so the fixed-instrument
+    /// standoff sweep's arms are told apart by the report, not by their directory names.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub residual_border_standoff_secs: Option<f64>,
 }
 
 /// User-visible summary of a `PatchAudio` run (no PCM payload).

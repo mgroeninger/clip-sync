@@ -30,7 +30,7 @@ For each gap, A's audio on both sides is captured into **border templates** (`ga
 
 1. **Capture window** — `border_frames` of A immediately before the gap (`pre`) and after it (`post`).
 2. **Silence walk-off** — frames adjacent to the gap that are below the silence floor (`silence_peak_fraction`, `absolute_silence_rms`) are walked off the gap-facing edge, so the template starts at real audio, not the leading/trailing silence of the dropout.
-3. **Standoff** — `border_standoff_frames` (`--border-standoff-secs`, default 0.35 s) drops the audio *immediately* adjacent to the dropout, so the seam is not graded against the click/fade right at the gap edge.
+3. **Standoff** — `border_standoff_frames` (`--border-standoff-secs`, default 0.35 s) drops the audio *immediately* adjacent to the dropout, so the seam is not graded against the click/fade right at the gap edge. *That rationale has never been measured, and neither has the 0.35 value.* See [dev/TEMP-border-standoff-plan.md](dev/TEMP-border-standoff-plan.md) for its provenance and the evidence required before changing it.
 4. **Low-energy trim** — `trim_low_energy_suffix` (pre) / `trim_low_energy_prefix` (post) drop the quiet tail/head below **12 % of the template's own peak**, so a fade into/out of the dropout doesn't dominate the template.
 
 The result is the loudest, gap-adjacent A audio available on each side. Templates are built both as a **mono downmix** and **per channel**.
@@ -141,6 +141,7 @@ A companion `fill residual channel breakdown` line (same debug target) reports `
 | Knob | Effect |
 |------|--------|
 | `--border-standoff-secs` (`border_standoff_secs`, 0.35) | Audio excluded immediately adjacent to the dropout |
+| `--residual-border-standoff-secs` (`residual_border_standoff_secs`, unset) | Diagnostic: standoff for the `registration_residual_ms` measuring templates only; unset = `border_standoff_secs`. Placement never reads it |
 | `fill_seam_search_secs` (0.25) | Seam comparison window `seam_gate_frames` (~250 ms) |
 | `silence_peak_fraction`, `absolute_silence_rms` | Silence floor for the gap-edge walk-off |
 | `min_fill_correlation` (0.35) | High-tier floor on `min(pre, post)` |

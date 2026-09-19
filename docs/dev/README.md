@@ -64,6 +64,7 @@ is untracked — that is a bug in the catalog, not a state a doc may sit in.
 
 | Draft | What it is | Tracked as |
 |-------|-----------|-----------|
+| [TEMP-border-standoff-plan.md](TEMP-border-standoff-plan.md) | Provenance of the unmeasured 0.35 s `border_standoff_secs` default, the confounded 2026-09-18 α sweep, and the fixed-instrument re-sweep. Nothing changes the default without adding evidence here | [BACKLOG.md](../../BACKLOG.md) § *Fill placement* → α |
 | [TEMP-post-splice-introduced-silence-collapse-plan.md](TEMP-post-splice-introduced-silence-collapse-plan.md) | After splice, fill `visit_shoulders_abut`: concat-confirm → **warn by default**; `--collapse-introduced-silence` drains A PCM and the current mux takes that buffer | [settled.md](settled.md) § C — latched |
 | [TEMP-disjoint-offseam-lock-plan.md](TEMP-disjoint-offseam-lock-plan.md) | Diagnostic: 1 s Pearson lock on A **disjoint** from production’s seam template, vs a same-window on-seam control. The § 0 test the predecessor did not run | [settled.md](settled.md) § C — latched |
 | [TEMP-flac-output-plan.md](TEMP-flac-output-plan.md) | In-process `--flac` lossless output, peer of `--wav`. Motivated by the RIFF `u32` data-chunk limit | [BACKLOG.md](../../BACKLOG.md) § *Repair R6* |

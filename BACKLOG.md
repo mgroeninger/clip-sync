@@ -20,10 +20,10 @@ Last updated: 2026-09-18.
 - Shipped work is recorded in `docs/dev/archive/*` and git history.
 - Out of scope: [PLAN.md](PLAN.md) § Out of scope.
 
-**Next:** **α / `border_standoff_secs`** under *Fill placement* below — re-measure it first.
-`registration_residual_ms` was fixed 2026-09-18: until then it read the border standoff, not
-registration (47/g14 reported 137 ms; the true value is +1.0 ms). Every dump before that date carries
-the artifact, so α's evidence has to be re-read on a fresh `--patch-only` run.
+**Next:** **α / `border_standoff_secs`** under *Fill placement* below: run sweep 2 with the instrument
+pinned ([docs/dev/TEMP-border-standoff-plan.md](docs/dev/TEMP-border-standoff-plan.md) § 5). The fixed
+`registration_residual_ms` (2026-09-18) confirms a +20.5 ms median late bias on the corpus. Sweep 1
+moved the measuring templates together with placement, so it cannot say which of the two it measured.
 
 ---
 
@@ -58,7 +58,7 @@ gap that sits in the end-clip window). Hole 1 stays n=1. 47/g14 ear-pass 2026-09
 | Item | Next action | Done when |
 |------|-------------|-----------|
 | **31/g8 — Narrow-capture pre miss** | Capture, not the tree above. Write a TEMP. Shipped default `BorderCapture::Narrow` declines the pre at envelope +800 ms / r 0.816; Wide keeps −1146.1 / r 0.974 because the shared capture's 12% trim puts `D` at 1984 ms vs Narrow's 13 ms. Numbers: [archive/TEMP-envelope-adaptive-widen-plan.md](docs/dev/archive/TEMP-envelope-adaptive-widen-plan.md) deciding measurement 2 | A decision exists that is not "flip the default" ([settled.md](docs/dev/settled.md) § B) |
-| **α / `border_standoff_secs`** | Not Hole 1's 1.45 s. Claim: the fill sits ~25 ms late vs both shoulders because production's placement search scores standoff-displaced templates against flush B windows ([archive/TEMP-fill-placement-registration-plan.md](docs/dev/archive/TEMP-fill-placement-registration-plan.md) Step 5). **The ~25 ms needs re-measuring.** It was `align_adjustment_secs` minus fingerprint lags: that slide leaves out Fit's trim-head move, and the lags sit in a different map frame (the 47/g14 lesson, settled.md § A). 47/g14 is **not** an instance: the WAV read of 11 ms late was that slip, and the true value is +1.0 ms. Unexplained: the listen WAV places the fill at +224.3 ms vs production's +214.3 ms. **For the mechanism:** the characterize unit fixture (zero-lag noise) is placed exactly with no standoff. With a 30 ms standoff it is placed **−15 ms** off, but its seam r is only 0.07 / 0.09, so this is a lead, not a measurement. Next: run `--patch-only --format json` on the corpus and histogram the fixed `registration_residual_ms`. If it is ≈ 0, drop the item. If it is biased, sweep `border_standoff_secs` on a handful of gaps | Confirmed, or dropped |
+| **α / `border_standoff_secs`** | Bracket fills sit late of their shoulders: fixed `registration_residual_ms` over the 52-pair corpus (2026-09-18) has median **+20.5 ms**, 173/209 late. Sweep 1 (0.35 / 0.175 / 0 on 27 gaps) read +34.8 / +34.9 / +8.7 ms, but it is **confounded**: the residual's measuring templates moved with the swept value. Provenance, sweep 1, and the evidence a default change needs: [docs/dev/TEMP-border-standoff-plan.md](docs/dev/TEMP-border-standoff-plan.md). The 0.35 default has **no recorded measurement**, so do not change it without adding the evidence there first. Next: sweep 2 with the instrument pinned (`--residual-border-standoff-secs 0.35`, plan § 5) | α moves with placement at a fixed instrument (then plan § 4 items 2–4), or it does not (drop) |
 
 ## Fill normalize boosts against a non-local reference
 

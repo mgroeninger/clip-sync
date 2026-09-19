@@ -1536,6 +1536,7 @@ mod tests {
             min_border_discovery_secs: 1.0,
             fill_seam_search_secs: 0.25,
             normalize_window_secs: 5.0,
+            residual_border_standoff_secs: None,
         })
         // Likewise stamped by every real patch run (`patch_audio::program_gain_report`). Derived
         // from the golden's own scan rather than hand-written, so the applied number and the

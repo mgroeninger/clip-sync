@@ -134,6 +134,11 @@ pub struct PatchRequestSettings {
     /// A-side only: skip this much audio (seconds) immediately adjacent to the dropout when
     /// building border templates (avoids corrupted seam audio on A).
     pub border_standoff_secs: f64,
+    /// Diagnostic: standoff for the **measuring** templates of `registration_residual_ms` only.
+    /// `None` = same as `border_standoff_secs`. Lets a `border_standoff_secs` sweep move placement
+    /// while the residual instrument stays fixed; never read by placement or any gate. Bracket path
+    /// only: a dual-fit residual derives from `try_dual_fit`'s own fit lags and ignores it.
+    pub residual_border_standoff_secs: Option<f64>,
     /// Gaps at or below this length (seconds) pass when mean(pre, post) correlation meets the
     /// threshold instead of requiring both seams individually.
     pub short_gap_mean_correlation_secs: f64,

@@ -123,6 +123,10 @@ pub struct RepairConfig {
     /// A-side only: exclude audio this close (seconds) to the dropout when building border templates.
     #[serde(default = "default_border_standoff_secs")]
     pub border_standoff_secs: f64,
+    /// Diagnostic: standoff (seconds) for the `registration_residual_ms` measuring templates only.
+    /// Unset = `border_standoff_secs`. Record-only; placement never reads it.
+    #[serde(default)]
+    pub residual_border_standoff_secs: Option<f64>,
     /// Gaps at or below this length use mean(pre, post) correlation for the fill gate.
     #[serde(default = "default_short_gap_mean_correlation_secs")]
     pub short_gap_mean_correlation_secs: f64,
@@ -662,6 +666,7 @@ impl Default for RepairConfig {
             fill_border_search_secs: default_fill_border_search_secs(),
             min_border_discovery_secs: default_min_border_discovery_secs(),
             border_standoff_secs: default_border_standoff_secs(),
+            residual_border_standoff_secs: None,
             short_gap_mean_correlation_secs: default_short_gap_mean_correlation_secs(),
             fill_length_slack_secs: default_fill_length_slack_secs(),
             fill_extract_tail_slack_secs: default_fill_extract_tail_slack_secs(),
@@ -825,6 +830,7 @@ impl RepairConfig {
             fill_border_search_secs: self.fill_border_search_secs,
             min_border_discovery_secs: self.min_border_discovery_secs,
             border_standoff_secs: self.border_standoff_secs,
+            residual_border_standoff_secs: self.residual_border_standoff_secs,
             short_gap_mean_correlation_secs: self.short_gap_mean_correlation_secs,
             fill_length_slack_secs: self.fill_length_slack_secs,
             fill_extract_tail_slack_secs: self.fill_extract_tail_slack_secs,
@@ -1090,6 +1096,14 @@ impl RepairConfig {
                 field: "border_standoff_secs".into(),
                 reason: "must be non-negative".into(),
             });
+        }
+        if let Some(secs) = self.residual_border_standoff_secs {
+            if !secs.is_finite() || secs < 0.0 {
+                return Err(ConfigError::InvalidValue {
+                    field: "residual_border_standoff_secs".into(),
+                    reason: "must be finite and non-negative".into(),
+                });
+            }
         }
         if self.short_gap_mean_correlation_secs < 0.0 {
             return Err(ConfigError::InvalidValue {
@@ -1621,6 +1635,27 @@ dry_run = true
             ..RepairConfig::default()
         };
         config.validate().expect("disable gate should be valid");
+    }
+
+    #[test]
+    fn rejects_negative_or_non_finite_residual_border_standoff() {
+        for bad in [-0.01, f64::NAN, f64::INFINITY] {
+            let config = RepairConfig {
+                residual_border_standoff_secs: Some(bad),
+                ..RepairConfig::default()
+            };
+            let err = config.validate().expect_err("invalid residual standoff");
+            assert!(
+                format!("{err:?}").contains("residual_border_standoff_secs"),
+                "unexpected error for {bad}: {err:?}"
+            );
+        }
+        RepairConfig {
+            residual_border_standoff_secs: Some(0.0),
+            ..RepairConfig::default()
+        }
+        .validate()
+        .expect("zero is a valid instrument standoff");
     }
 
     #[test]

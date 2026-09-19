@@ -155,6 +155,9 @@ pub fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     if let Some(secs) = args.border_standoff_secs {
         config.repair.border_standoff_secs = secs;
     }
+    if let Some(secs) = args.residual_border_standoff_secs {
+        config.repair.residual_border_standoff_secs = Some(secs);
+    }
     if let Some(mode) = args.fill_offset {
         config.repair.fill_offset_mode = mode;
     }
@@ -522,6 +525,8 @@ mod cli_override_tests {
             "0.45",
             "--border-standoff-secs",
             "0.5",
+            "--residual-border-standoff-secs",
+            "0.35",
             "--fill-border-search-secs",
             "5",
             "--fill-align-margin-secs",
@@ -560,6 +565,7 @@ mod cli_override_tests {
         assert!((config.repair.gap_signature_context_secs - 2.0).abs() < f64::EPSILON);
         assert!((config.repair.fill_length_slack_secs - 3.0).abs() < f64::EPSILON);
         assert!((config.repair.border_standoff_secs - 0.5).abs() < f64::EPSILON);
+        assert_eq!(config.repair.residual_border_standoff_secs, Some(0.35));
         assert_eq!(config.repair.fill_offset_mode, FillOffsetMode::Interpolated);
         assert!((config.repair.fill_fit_structure_weight - 0.4).abs() < f64::EPSILON);
         assert!((config.repair.fill_fit_waveform_weight - 0.6).abs() < f64::EPSILON);

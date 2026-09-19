@@ -797,11 +797,28 @@ pub(in crate::application::patch_audio) fn characterize_region(
     //   (≈350 ms at the default standoff), which is what the field mostly reported before.
     // - **Applied = the written fill's start.** Fit's trim-head anchor starts the fill `head_trim_frames`
     //   past `alignment.start_frame`; `slide_secs` alone misses that.
+    //
+    // `residual_border_standoff_secs` (diagnostic, 2026-09-19) rebuilds the measuring templates at their
+    // own standoff so a `border_standoff_secs` sweep moves placement without moving the instrument —
+    // otherwise every arm reads its residual with templates held off by the very value being swept.
     let registration_residual_ms = {
+        let residual_override = request.residual_border_standoff_secs;
+        let residual_spec = GapBorderSpec {
+            border_standoff_frames: residual_override.map_or(border_standoff_frames, |secs| {
+                (secs * sample_rate as f64).round() as usize
+            }),
+            ..border_spec
+        };
+        let residual_templates = residual_override
+            .map(|_| policies::border_templates_for_gap(&a_pcm.samples, channels, &residual_spec));
+        let (a_pre_border, a_post_border) = match &residual_templates {
+            Some((pre, post)) => (pre, post),
+            None => (&a_pre_border, &a_post_border),
+        };
         let (d_pre, d_post) = policies::border_edge_displacement_frames(
             &a_pcm.samples,
             channels,
-            &border_spec,
+            &residual_spec,
             a_pre_border.len(),
             a_post_border.len(),
         );
@@ -812,14 +829,14 @@ pub(in crate::application::patch_audio) fn characterize_region(
             .checked_sub(d_pre + a_pre_border.len())
             .and_then(|anchor| {
                 crate::domain::seam_local::seam_local_peak(
-                    &a_pre_border,
+                    a_pre_border,
                     &b_mono_for_residual,
                     anchor,
                     max_lag_for_residual,
                 )
             });
         let post_peak = crate::domain::seam_local::seam_local_peak(
-            &a_post_border,
+            a_post_border,
             &b_mono_for_residual,
             offset_nominal_start + gap_frames + d_post,
             max_lag_for_residual,
@@ -1238,7 +1255,7 @@ mod tests {
     /// shoulders.
     #[test]
     fn bracket_registration_residual_is_near_zero_on_a_matched_fixture() {
-        let (residual, misplacement_ms) = matched_fixture_bracket_residual_ms(0.0);
+        let (residual, misplacement_ms) = matched_fixture_bracket_residual_ms(0.0, None);
         let residual = residual
             .expect("both shoulders are exact zero-lag matches, well above the confidence floor");
         assert!(
@@ -1261,7 +1278,7 @@ mod tests {
     /// the unshifted anchors read +15 ms (the opposite sign) instead.
     #[test]
     fn bracket_registration_residual_tracks_true_misplacement_with_border_standoff() {
-        let (residual, misplacement_ms) = matched_fixture_bracket_residual_ms(0.03);
+        let (residual, misplacement_ms) = matched_fixture_bracket_residual_ms(0.03, None);
         let residual = residual.expect(
             "both shoulders are exact zero-lag matches once anchored at the template edges",
         );
@@ -1271,10 +1288,50 @@ mod tests {
         );
     }
 
+    /// `residual_border_standoff_secs` (2026-09-19): the measuring templates take their own standoff
+    /// while placement keeps `border_standoff_secs`. Both directions: placement at 30 ms read by a
+    /// flush (0 ms) instrument, and flush placement read by a 30 ms instrument. In each, placement must
+    /// be exactly what it is without the override, and the residual must still equal the true
+    /// misplacement — the instrument moved, the thing it measures did not.
+    #[test]
+    fn residual_border_standoff_override_moves_the_instrument_not_the_placement() {
+        for (placement, instrument) in [(0.03, 0.0), (0.0, 0.03)] {
+            let (_, baseline_misplacement) = matched_fixture_bracket_residual_ms(placement, None);
+            let (residual, misplacement_ms) =
+                matched_fixture_bracket_residual_ms(placement, Some(instrument));
+            assert_eq!(
+                misplacement_ms, baseline_misplacement,
+                "placement {placement}: the override must not move the written fill"
+            );
+            let residual = residual.expect("both shoulders are exact zero-lag matches");
+            assert!(
+                (residual - misplacement_ms).abs() < 1.0,
+                "placement {placement}, instrument {instrument}: residual {residual} ms must equal                  the true misplacement {misplacement_ms} ms"
+            );
+        }
+
+        // The two cases above pass whether or not the override is read (a correct instrument reads
+        // the true misplacement at any standoff). This one cannot: a 5 s instrument standoff leaves
+        // the 1 s shoulders no template material, so the residual must vanish while placement,
+        // which never sees the override, still patches exactly where it did.
+        let (baseline_residual, baseline_misplacement) =
+            matched_fixture_bracket_residual_ms(0.0, None);
+        assert!(baseline_residual.is_some());
+        let (residual, misplacement_ms) = matched_fixture_bracket_residual_ms(0.0, Some(5.0));
+        assert_eq!(misplacement_ms, baseline_misplacement);
+        assert_eq!(
+            residual, None,
+            "an instrument standoff wider than the shoulders must leave nothing to read"
+        );
+    }
+
     /// The bracket residual from the zero-lag matched fixture (A silent inside a 1 s gap, B the same
     /// band-limited noise throughout), with the given `border_standoff_secs`, paired with the written
     /// fill's true offset (ms) from that zero-lag match — known here because B is A's own signal.
-    fn matched_fixture_bracket_residual_ms(border_standoff_secs: f64) -> (Option<f64>, f64) {
+    fn matched_fixture_bracket_residual_ms(
+        border_standoff_secs: f64,
+        residual_border_standoff_secs: Option<f64>,
+    ) -> (Option<f64>, f64) {
         use super::{characterize_all_regions, RegionPatchContext, RegionPatchMedia};
         use crate::domain::gap::Gap;
         use crate::domain::gap_fill::FillRegion;
@@ -1358,6 +1415,7 @@ mod tests {
             fill_extract_tail_slack_secs: 0.1,
             fill_seam_search_secs: 0.05,
             border_standoff_secs,
+            residual_border_standoff_secs,
             max_anchor_bracket_secs: 0.2,
             max_anchors_per_side: 2,
             min_fill_correlation: 0.0,

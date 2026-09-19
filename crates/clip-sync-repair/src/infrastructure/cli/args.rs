@@ -325,6 +325,12 @@ pub struct Args {
     #[arg(long, value_name = "SECS")]
     pub border_standoff_secs: Option<f64>,
 
+    /// Diagnostic: standoff (seconds) for the `registration_residual_ms` measuring templates only,
+    /// so a `--border-standoff-secs` sweep moves placement without moving the instrument
+    /// [default: same as --border-standoff-secs].
+    #[arg(long, value_name = "SECS")]
+    pub residual_border_standoff_secs: Option<f64>,
+
     /// Per-gap B mapping [default: recommended]: `recommended`, `interpolated` (clip drift),
     /// or `anchored-retry` (two-pass patch anchors).
     #[arg(long, value_parser = clap::value_parser!(FillOffsetMode), value_name = "MODE")]
