@@ -20,11 +20,6 @@ Last updated: 2026-09-18.
 - Shipped work is recorded in `docs/dev/archive/*` and git history.
 - Out of scope: [PLAN.md](PLAN.md) § Out of scope.
 
-**Next:** **α / `border_standoff_secs`** under *Fill placement* below: run sweep 2 with the instrument
-pinned ([docs/dev/TEMP-border-standoff-plan.md](docs/dev/TEMP-border-standoff-plan.md) § 5). The fixed
-`registration_residual_ms` (2026-09-18) confirms a +20.5 ms median late bias on the corpus. Sweep 1
-moved the measuring templates together with placement, so it cannot say which of the two it measured.
-
 ---
 
 ## Fill placement
@@ -58,7 +53,6 @@ gap that sits in the end-clip window). Hole 1 stays n=1. 47/g14 ear-pass 2026-09
 | Item | Next action | Done when |
 |------|-------------|-----------|
 | **31/g8 — Narrow-capture pre miss** | Capture, not the tree above. Write a TEMP. Shipped default `BorderCapture::Narrow` declines the pre at envelope +800 ms / r 0.816; Wide keeps −1146.1 / r 0.974 because the shared capture's 12% trim puts `D` at 1984 ms vs Narrow's 13 ms. Numbers: [archive/TEMP-envelope-adaptive-widen-plan.md](docs/dev/archive/TEMP-envelope-adaptive-widen-plan.md) deciding measurement 2 | A decision exists that is not "flip the default" ([settled.md](docs/dev/settled.md) § B) |
-| **α / `border_standoff_secs`** | Bracket fills sit late of their shoulders: fixed `registration_residual_ms` over the 52-pair corpus (2026-09-18) has median **+20.5 ms**, 173/209 late. Sweep 1 (0.35 / 0.175 / 0 on 27 gaps) read +34.8 / +34.9 / +8.7 ms, but it is **confounded**: the residual's measuring templates moved with the swept value. Provenance, sweep 1, and the evidence a default change needs: [docs/dev/TEMP-border-standoff-plan.md](docs/dev/TEMP-border-standoff-plan.md). The 0.35 default has **no recorded measurement**, so do not change it without adding the evidence there first. Next: sweep 2 with the instrument pinned (`--residual-border-standoff-secs 0.35`, plan § 5) | α moves with placement at a fixed instrument (then plan § 4 items 2–4), or it does not (drop) |
 
 ## Fill normalize boosts against a non-local reference
 

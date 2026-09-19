@@ -96,6 +96,7 @@ Shipped thin selection v1 + v1.5 ranges first; recipe stayed parked until a same
 | [TEMP-region-characterization-collapse-plan.md](TEMP-region-characterization-collapse-plan.md) | `RegionCharacterization` collapse |
 | [TEMP-repeat-band-plan.md](TEMP-repeat-band-plan.md) | FFT repeat-band (lever 1b(b); numbers in [../repair-perf.md](../repair-perf.md) §1c / §3) |
 | [TEMP-seam-step-masking-plan.md](TEMP-seam-step-masking-plan.md) | Ear-label study, closed 2026-09-17 on its own § 3.2: does **masking** decide which seam steps are heard? No — 0 audible in 14 blind clips, the most exposed gap in the corpus (41/g5, step +8 dB over local RMS) clean on both presentations. **Read § 0 and § 3 as the method**: score and stop rule pre-registered before listening, blind presentation, 2 repeats as the stability control (they agreed — the ear was not the weak link). Holds the corpus's seam-step baseline (0.0007 … 0.027, implied timing error 0.10 … 0.42 ms, inherent to splicing separate AAC encodes) and the 16 ear labels, which are not reproducible from code |
+| [TEMP-border-standoff-plan.md](TEMP-border-standoff-plan.md) | Provenance of the unmeasured 0.35 s `border_standoff_secs` default, the 2026-09-18/19 α standoff sweeps, and a blind listen test closed 2026-09-19 on its own § 7 branch 4: no late fill (up to +125 ms) heard as audible in 5 gaps; the only audible test clip was standoff 0's early overshoot (53 @ 7250.6, −63 ms). Default kept |
 
 ## Testing
 
