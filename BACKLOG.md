@@ -4,7 +4,7 @@ Open follow-up work for `clip-sync`. Architecture: [PLAN.md](PLAN.md). Repair pi
 [docs/pipeline.md](docs/pipeline.md). Test corpus: [docs/dev/corpus-validation.md](docs/dev/corpus-validation.md).
 Error handling: [docs/error-mapping.md](docs/error-mapping.md).
 
-Last updated: 2026-09-18.
+Last updated: 2026-09-19.
 
 **How this doc works**
 
@@ -52,7 +52,7 @@ gap that sits in the end-clip window). Hole 1 stays n=1. 47/g14 ear-pass 2026-09
 
 | Item | Next action | Done when |
 |------|-------------|-----------|
-| **31/g8 — Narrow-capture pre miss** | Capture, not the tree above. Write a TEMP. Shipped default `BorderCapture::Narrow` declines the pre at envelope +800 ms / r 0.816; Wide keeps −1146.1 / r 0.974 because the shared capture's 12% trim puts `D` at 1984 ms vs Narrow's 13 ms. Numbers: [archive/TEMP-envelope-adaptive-widen-plan.md](docs/dev/archive/TEMP-envelope-adaptive-widen-plan.md) deciding measurement 2 | A decision exists that is not "flip the default" ([settled.md](docs/dev/settled.md) § B) |
+| **31/g8 — Narrow-capture pre miss** | Capture, not the tree above. Plan: [TEMP-rescue-wide-anchor-plan.md](docs/dev/TEMP-rescue-wide-anchor-plan.md). Diagnosis is a coordinate bug, not a reach or floor one — the rescue branch correlated the lazily-built **wide** capture at the **narrow** capture's anchor, so its curve sat `D_wide − D_narrow` (1971 ms here) out of frame and the true peak fell outside the ±2000 ms reach. Blast radius 14 shoulders corpus-wide (plan § 3); production reads it only through the report-only injected-time warning (§ 2.1). § 5 Change **implemented** 2026-09-19: envelope anchored on its own capture, new `envelope_border_displacement_ms`, `LagSideSweep::gap_edge_frame`, one `WideBorderCut` helper for both call sites. The § 4 fixture flipped (`rescue_wide_capture_is_anchored_in_its_own_frame`): `Narrow` now rescues at −1160.0 ms, `timing_offset`, `Wide` unmoved; PR gate green. Targeted re-fingerprint 2026-09-20 (9 gaps, 4 pairs, 23 min): **exits 4 and 5 met** — 31/g8 pre reads −1146.1 ms, `peak_r` 0.994, `decorrelated` → `timing_offset`, with `envelope_border_displacement_ms` 1983.8 vs 13.0 narrow (the 1971 ms term); 12 of 14 shoulders have `D_wide − D_narrow` under one 100 ms bin and none moved `frac_lag_ms`; 49/g38 pre cancels its own 305.8 ms displacement (−300 → 0) as a second confirmation. Next: full-corpus re-fingerprint (exit 3, and mandatory anyway — `envelope_lag_ms` changed meaning, so `2026-09-15-corpus` is no longer field-comparable), then an ear pass (exit 7) | A decision exists that is not "flip the default" ([settled.md](docs/dev/settled.md) § B) |
 
 ## Fill normalize boosts against a non-local reference
 

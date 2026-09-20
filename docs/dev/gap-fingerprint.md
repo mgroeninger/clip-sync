@@ -926,8 +926,11 @@ A shoulder whose nominal fine result is recoverable (`peak_r ≥ 0.5`) keeps tha
 envelope is never consulted for movement (`envelope_rescue: not_consulted`). A dead shoulder
 (`peak_r < 0.5`) may retry at `b_mapped + envelope_lag` when that shoulder's coarse 100 ms-bin
 envelope peak is interior and ≥ 0.70; the retry is kept only if it is itself recoverable
-(`rescued` vs `declined`). On `narrow`, the envelope pass may lazy-fetch a wider A buffer, but
-`anchor_frame` still carries the **narrow** `D`. `frac_lag_ms` stays **gross to original `b_mapped`**. The envelope-first
+(`rescued` vs `declined`). On `narrow`, the envelope pass may lazy-fetch a wider A buffer; since
+2026-09-19 that search is anchored on **that buffer's own** `D_wide`, recorded as
+`envelope_border_displacement_ms` ([TEMP-rescue-wide-anchor-plan.md](TEMP-rescue-wide-anchor-plan.md)).
+Before then it reused the shared capture's `D_narrow`, which put the coarse curve `D_wide − D_narrow`
+out of frame — on 31/g8 pre, 1971 ms, past the ±2000 ms reach. `frac_lag_ms` stays **gross to original `b_mapped`**. The envelope-first
 ordering ([TEMP-lag-envelope-recenter-plan.md](archive/TEMP-lag-envelope-recenter-plan.md)) is
 superseded: it never took the nominal reading and false-locked 26/g6 onto a +1.88 s comb tooth.
 The post shoulder is then registered **sequentially, but only when the *nominal* pre is a landmark**
@@ -970,6 +973,18 @@ healthy locks sit at `peak_z` ≈ 6). Per shoulder,
   Absent when the knob is 0.
 - **`border_displacement_ms`** — this shoulder's template-edge walk-off + 12 %-of-peak trim, in ms
   (`D` above). Measured on the shared `--border-capture` buffer, not on the lazy envelope fetch.
+- **`envelope_border_displacement_ms`** — the same quantity for the buffer the **envelope** actually
+  correlated, when the rescue lazily re-cut a wider one (`D_wide`). The trim threshold is relative to
+  each buffer's own peak, so the two captures need not share an edge; the envelope search is anchored
+  on this value, which is what keeps `envelope_lag_ms` in the same frame as `frac_lag_ms`. Present
+  only on a `rescued` / `declined` shoulder that used a re-cut capture — absent on `not_consulted`,
+  when the envelope is off, when the shared capture already covered the envelope's reach (there it
+  would duplicate `border_displacement_ms`), and on corpora written before 2026-09-19.
+
+  **Corpus break:** on the 14 corpus shoulders that take this branch, `envelope_lag_ms` changed
+  meaning on that date — it was previously a lag in a frame no other field shared, so pre-2026-09-19
+  arithmetic on `frac_lag_ms − envelope_lag_ms` is not comparable with post-.
+
 
 ### `splice` — the registration step
 

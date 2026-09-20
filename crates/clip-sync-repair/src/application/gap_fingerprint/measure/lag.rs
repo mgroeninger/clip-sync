@@ -3,14 +3,15 @@
 use crate::application::gap_fingerprint::schema::*;
 
 use crate::domain::policies::{
-    border_edge_displacement_frames, border_templates_per_channel_for_gap, RefinedGapFrames,
+    border_edge_displacement_frames, border_templates_per_channel_for_gap, GapBorderSpec,
+    RefinedGapFrames,
 };
 
 use super::config::*;
 
 use crate::domain::lag_decision::{
     lag_decision_geometry, lag_pair, probe_lag_border_spec, shoulder_lags_at_b_mapped,
-    LagPairInput, LagSweepParams, ShoulderLagKnobs,
+    LagPairInput, LagSweepParams, ShoulderLagKnobs, WideBorder, WideBorderCut,
 };
 
 /// Inputs for [`lag_at_placement`] — A/B windows + gate placement for a single lag fingerprint.
@@ -92,26 +93,24 @@ pub(in crate::application::gap_fingerprint::measure) fn lag_at_placement(
                 a_pre_ch[sel].len(),
                 a_post_ch[sel].len(),
             );
-            let pre_wide_ch = || -> Option<Vec<f64>> {
-                let spec = probe_lag_border_spec(
-                    &refined,
-                    geo.wide_need,
-                    knobs.silence_peak_fraction,
-                    knobs.absolute_silence_rms,
-                );
-                let (pre_ch, _post_ch) = border_templates_per_channel_for_gap(a_samples, ch, &spec);
-                pre_ch.get(sel).filter(|v| !v.is_empty()).cloned()
+            // Same helper as the mono path, so the selected-channel wide capture cannot be
+            // anchored on a displacement measured from a different buffer.
+            let wide_templates_ch = |spec: &GapBorderSpec| {
+                let (pre_ch, post_ch) = border_templates_per_channel_for_gap(a_samples, ch, spec);
+                (
+                    pre_ch.get(sel).cloned().unwrap_or_default(),
+                    post_ch.get(sel).cloned().unwrap_or_default(),
+                )
             };
-            let post_wide_ch = || -> Option<Vec<f64>> {
-                let spec = probe_lag_border_spec(
-                    &refined,
-                    geo.wide_need,
-                    knobs.silence_peak_fraction,
-                    knobs.absolute_silence_rms,
-                );
-                let (_pre_ch, post_ch) = border_templates_per_channel_for_gap(a_samples, ch, &spec);
-                post_ch.get(sel).filter(|v| !v.is_empty()).cloned()
+            let wide_cut = WideBorderCut {
+                refined: &refined,
+                wide_need: geo.wide_need,
+                knobs: &knobs,
+                a_samples,
+                channels: ch,
             };
+            let pre_wide_ch = || wide_cut.side(true, &wide_templates_ch);
+            let post_wide_ch = || wide_cut.side(false, &wide_templates_ch);
             let (pre, post) = lag_pair(&LagPairInput {
                 a_pre: &a_pre_ch[sel],
                 a_post: &a_post_ch[sel],
@@ -127,9 +126,9 @@ pub(in crate::application::gap_fingerprint::measure) fn lag_at_placement(
                 displacement: Some(sel_disp),
                 envelope: geo.envelope_cfg,
                 pre_wide: (!geo.shared_covers_wide)
-                    .then_some(&pre_wide_ch as &dyn Fn() -> Option<Vec<f64>>),
+                    .then_some(&pre_wide_ch as &dyn Fn() -> Option<WideBorder>),
                 post_wide: (!geo.shared_covers_wide)
-                    .then_some(&post_wide_ch as &dyn Fn() -> Option<Vec<f64>>),
+                    .then_some(&post_wide_ch as &dyn Fn() -> Option<WideBorder>),
             });
             add(pre, post);
         }
@@ -615,6 +614,7 @@ mod tests {
             edge_pinned: Some(false),
             border_displacement_ms: None,
             envelope_window_ms: None,
+            envelope_border_displacement_ms: None,
             envelope_lag_ms: None,
             envelope_peak_r: None,
             envelope_edge_pinned: None,
@@ -636,6 +636,8 @@ mod tests {
                 pre_shoulder: true,
                 gross_lag_shift: 0,
                 border_displacement_frames: None,
+                // No wide capture in this test, so the raw edge is the anchor itself.
+                gap_edge_frame: 11_500,
             },
             params,
             None,
@@ -674,6 +676,7 @@ mod tests {
             edge_pinned: Some(false),
             border_displacement_ms: None,
             envelope_window_ms: None,
+            envelope_border_displacement_ms: None,
             envelope_lag_ms: None,
             envelope_peak_r: None,
             envelope_edge_pinned: None,
@@ -700,6 +703,8 @@ mod tests {
                 pre_shoulder: true,
                 gross_lag_shift: 0,
                 border_displacement_frames: None,
+                // No wide capture in this test, so the raw edge is the anchor itself.
+                gap_edge_frame: 150,
             },
             LagSweepParams {
                 window: 100,
@@ -736,6 +741,7 @@ mod tests {
             edge_pinned: Some(false),
             border_displacement_ms: None,
             envelope_window_ms: None,
+            envelope_border_displacement_ms: None,
             envelope_lag_ms: None,
             envelope_peak_r: None,
             envelope_edge_pinned: None,
@@ -764,6 +770,8 @@ mod tests {
                 pre_shoulder: true,
                 gross_lag_shift: 0,
                 border_displacement_frames: None,
+                // No wide capture in this test, so the raw edge is the anchor itself.
+                gap_edge_frame: 5000,
             },
             params,
             None,
@@ -1098,6 +1106,170 @@ mod tests {
         );
     }
 
+    /// **Regression for [TEMP-rescue-wide-anchor-plan.md](docs/dev/TEMP-rescue-wide-anchor-plan.md) § 4/§ 5.**
+    /// The rescue branch used to correlate the lazily-built **wide** capture at the **shared
+    /// narrow** capture's anchor, so its curve sat `D_wide − D_narrow` out of frame. It is now
+    /// anchored on the capture it actually correlates.
+    ///
+    /// The border-capture test above cannot see this: its pre shoulder is uniform, so both captures
+    /// trim to the same edge and the mismatch is zero. This fixture makes the two captures disagree
+    /// the way 31/g8's do. A loud 3 s passage is followed by a quiet (never silent) 2 s that runs up
+    /// to the gap:
+    ///
+    /// - the 1.6 s narrow capture is all quiet, its own peak is ~0.03, the 12 % trim keeps it — `D_narrow ≈ 0`;
+    /// - the 4.0 s wide capture reaches the loud passage, its peak is ~0.5, and 12 % of that is
+    ///   above the quiet material, so the trim eats all 2 s of it — `D_wide ≈ 2000 ms`.
+    ///
+    /// True lag is −1160 ms, outside the ±600 ms fine sweep, so only the envelope can find it.
+    /// Correctly anchored it sits well inside the ±2000 ms reach; anchored 2000 ms late it would
+    /// have to appear at −3160 ms, and no floor, statistic or wider rung can reach it.
+    ///
+    /// `Wide` is the control: there the shared capture *is* the wide one, `D_narrow = D_wide`, and
+    /// the same shoulder rescues. The two arms disagreeing was the defect (measured 2026-09-19,
+    /// § 4's Result: `Narrow` ran off its window at r 0.000, edge-pinned, and kept `decorrelated`);
+    /// they must now agree, and the `Wide` arm must not have moved.
+    #[test]
+    fn rescue_wide_capture_is_anchored_in_its_own_frame() {
+        use crate::domain::policies::border_templates_for_gap;
+
+        const RATE: u32 = 48_000;
+        const TRUE_LAG_MS: f64 = -1160.0;
+
+        let pre_lag = lag_at_ms(RATE, 1160);
+        let loud_len = lag_at_ms(RATE, 3000);
+        let quiet_len = lag_at_ms(RATE, 2000);
+        let pre_len = loud_len + quiet_len;
+        let gap = lag_at_ms(RATE, 2000);
+        let post_len = lag_at_ms(RATE, 3000);
+        // Lead-in: the corrected pre anchor is `gap_start − D_wide`, and `envelope_shoulder` needs
+        // `window + max_lag` (2 s + 2 s) of B before it.
+        let front_pad = pre_lag + lag_at_ms(RATE, 2000);
+        let gap_start = front_pad + pre_len;
+        let gap_end = gap_start + gap;
+        let total = gap_end + post_len;
+
+        let mut a = vec![0.0f32; total];
+        // Loud, shaped so a 100 ms-bin envelope can lock on it.
+        write_shaped_noise(&mut a, front_pad, front_pad + loud_len, 11, 0.5, true);
+        // Quiet but never silent: 0.03 is ~6x under the wide capture's 12 % floor (0.06) and ~8x
+        // over the narrow capture's (0.0036).
+        write_noise(&mut a, gap_start - quiet_len, gap_start, 17, 0.03);
+        write_shaped_noise(&mut a, gap_end, gap_end + post_len, 23, 0.5, false);
+
+        let mut b_mono = vec![0.0f64; total];
+        for i in 0..post_len {
+            b_mono[gap_end + i] = f64::from(a[gap_end + i]);
+        }
+        let b_pre_at = gap_start - pre_lag - pre_len;
+        for i in 0..pre_len {
+            b_mono[b_pre_at + i] = f64::from(a[front_pad + i]);
+        }
+
+        // 1. The fixture's premise: the two captures do not share an edge.
+        let refined = RefinedGapFrames {
+            start_frame: gap_start,
+            end_frame: gap_end,
+        };
+        let displacement_ms = |need_ms: i64| {
+            let spec = probe_lag_border_spec(&refined, lag_at_ms(RATE, need_ms), 0.01, 0.0);
+            let (pre, post) = border_templates_for_gap(&a, 1, &spec);
+            let (d_pre, _) = border_edge_displacement_frames(&a, 1, &spec, pre.len(), post.len());
+            d_pre as f64 * 1000.0 / f64::from(RATE)
+        };
+        let d_narrow = displacement_ms(1600);
+        let d_wide = displacement_ms(4000);
+        assert!(
+            d_narrow < 50.0,
+            "narrow capture should keep the quiet shoulder, D_narrow = {d_narrow} ms"
+        );
+        assert!(
+            d_wide > 1900.0,
+            "wide capture should trim the quiet shoulder, D_wide = {d_wide} ms"
+        );
+
+        let run = |capture: BorderCapture| {
+            let config = FingerprintConfig {
+                border_capture: capture,
+                ..FingerprintConfig::default()
+            };
+            lag_at_placement(&LagAtPlacementInput {
+                a_samples: &a,
+                channels: 1,
+                refined,
+                b_mono: &b_mono,
+                b_ch: &[],
+                selected: None,
+                start_frame: gap_start,
+                cfg: &config,
+                sample_rate: RATE,
+            })
+            .pre_anchor
+            .first()
+            .copied()
+            .expect("pre shoulder")
+        };
+
+        // 2. `Wide` — self-consistent, and the ground truth for this shoulder.
+        let wide = run(BorderCapture::Wide);
+        assert_eq!(
+            wide.envelope_rescue,
+            Some(EnvelopeRescue::Rescued),
+            "wide arm must rescue: {wide:?}"
+        );
+        assert!(
+            (wide.frac_lag_ms - TRUE_LAG_MS).abs() < 100.0,
+            "wide arm lag drifted: {} ms",
+            wide.frac_lag_ms
+        );
+        // On this arm the shared capture already covers the envelope's reach, so nothing is re-cut
+        // and the field stays absent — the presence rule `LagSummary` documents.
+        assert_eq!(
+            wide.envelope_border_displacement_ms, None,
+            "shared_covers_wide must not stamp an envelope displacement: {wide:?}"
+        );
+
+        // 3. `Narrow` — the shoulder the defect used to lose. Before the anchor fix the wide
+        //    capture was correlated at the narrow capture's anchor, so the true peak sat at
+        //    −3160 ms, outside the ±2000 ms reach, and no floor or guard could reach it. With the
+        //    envelope anchored on `D_wide` the two arms now agree.
+        let narrow = run(BorderCapture::Narrow);
+        assert_eq!(
+            narrow.envelope_rescue,
+            Some(EnvelopeRescue::Rescued),
+            "narrow arm must rescue once the envelope is anchored on its own capture: {narrow:?}"
+        );
+        assert!(
+            (narrow.frac_lag_ms - TRUE_LAG_MS).abs() < 100.0,
+            "narrow arm lag drifted: {} ms",
+            narrow.frac_lag_ms
+        );
+
+        // 4. The re-anchoring is *recorded*, and it is the wide capture's displacement — not the
+        //    shared capture's, which `border_displacement_ms` still reports.
+        assert!(
+            narrow
+                .envelope_border_displacement_ms
+                .is_some_and(|d| (d - d_wide).abs() < 50.0),
+            "envelope displacement should be D_wide ({d_wide} ms): {narrow:?}"
+        );
+        assert!(
+            narrow
+                .border_displacement_ms
+                .is_some_and(|d| (d - d_narrow).abs() < 50.0),
+            "shared-capture displacement must stay D_narrow ({d_narrow} ms): {narrow:?}"
+        );
+
+        // 5. No translation term (plan § 5, point 3): the fine retry reads the *same* lag the
+        //    coarse envelope proposed, to within one 100 ms bin. A reader's first instinct is that
+        //    `D_wide - D_narrow` must be added back somewhere; it must not be.
+        let envelope_lag = narrow.envelope_lag_ms.expect("envelope ran");
+        assert!(
+            (narrow.frac_lag_ms - envelope_lag).abs() < 100.0,
+            "coarse and fine lag must share a frame: envelope {envelope_lag} ms vs fine {} ms",
+            narrow.frac_lag_ms
+        );
+    }
+
     /// Chain-isolation shape: dead pre + alive post. The post's reported summary must be
     /// unaffected by whatever the pre's rescue does — bit-identical whether or not the envelope
     /// (and therefore the pre's rescue) runs at all. `pre_shift` is derived from the *nominal*
@@ -1203,6 +1375,8 @@ mod tests {
                 pre_shoulder: false,
                 gross_lag_shift: 0,
                 border_displacement_frames: None,
+                // No wide capture in this test, so the raw edge is the anchor itself.
+                gap_edge_frame: start_frame + gap_frames,
             },
             params,
         )

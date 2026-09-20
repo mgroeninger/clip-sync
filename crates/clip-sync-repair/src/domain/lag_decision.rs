@@ -127,6 +127,21 @@ pub struct LagSummary {
     /// before correlating, which is exactly when knowing the template length explains the refusal.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub envelope_window_ms: Option<f64>,
+    /// **Template-edge displacement of the capture the envelope actually correlated (ms).**
+    /// Peer of [`Self::border_displacement_ms`], for the other template: when a dead shoulder's
+    /// rescue re-cuts a *wider* A capture than the shared one, the 12 %-of-peak trim is relative to
+    /// that buffer's own peak, so the wide capture's gap-facing edge sits a **different** distance
+    /// `D_wide` from the gap than the shared capture's `D_narrow`. The envelope search is anchored
+    /// on `D_wide` (`docs/dev/TEMP-rescue-wide-anchor-plan.md` § 5), which is what puts
+    /// [`Self::envelope_lag_ms`] in the same frame as [`Self::frac_lag_ms`]; before that plan it was
+    /// anchored on `D_narrow` and read in a frame no other field shared.
+    ///
+    /// Present only where the two can differ: a `rescued` / `declined` shoulder that used a lazily
+    /// re-cut wide capture. `None` on `not_consulted`, when the envelope is off, and on the
+    /// `shared_covers_wide` path — there the envelope correlated the shared capture, so this would
+    /// duplicate `border_displacement_ms`.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub envelope_border_displacement_ms: Option<f64>,
     /// Coarse 100 ms-bin envelope peak at `b_mapped` (ms). Present on `rescued` / `declined`
     /// shoulders (the envelope ran). Absent on `not_consulted` (alive at nominal — envelope never
     /// run), when `lag_envelope_max_lag_ms` is 0, and on corpora from before this field.
@@ -257,7 +272,75 @@ pub(crate) struct LagSideSweep<'a> {
     /// recorded as `LagSummary::border_displacement_ms`. `None` where the caller builds no border
     /// templates (seam-local / dual-fit windows), which is what an absent field then means.
     pub(crate) border_displacement_frames: Option<usize>,
+    /// This shoulder's **raw** gap edge in B-mapped frames — `gap_start` for pre, `gap_end` for
+    /// post — before any displacement is applied. `anchor_frame` above is already that edge
+    /// displaced by *this* template's `D`; the raw edge is what lets [`rescue_shoulder`] re-derive
+    /// an anchor for a **different** template (`D_wide`) instead of adding `D_narrow` back, where a
+    /// `None` displacement would silently read as zero
+    /// (`docs/dev/TEMP-rescue-wide-anchor-plan.md` § 5, point 2).
+    pub(crate) gap_edge_frame: usize,
 }
+
+/// A lazily re-cut wide A capture for the envelope rescue, carried **with its own displacement**.
+///
+/// The 12 %-of-peak trim is relative to the buffer's own peak, so a capture cut at `wide_need` does
+/// not have the same gap-facing edge as the shared capture cut at `border_need`. A correlation is
+/// anchored on the template it actually correlates: the envelope search must use `D_wide`, not the
+/// shared capture's `D_narrow` (`docs/dev/TEMP-rescue-wide-anchor-plan.md` § 0).
+pub(crate) struct WideBorder {
+    pub(crate) samples: Vec<f64>,
+    pub(crate) displacement_frames: usize,
+}
+
+/// One caller's A material, ready to be re-cut at the envelope's own `wide_need`.
+///
+/// Both wide call sites (`shoulder_lags_at_b_mapped` here, and the per-channel closures in the
+/// fingerprint's `measure::lag`) go through [`Self::side`] so the spec, the templates, and the
+/// displacement can never be derived from three different buffers.
+pub(crate) struct WideBorderCut<'a> {
+    pub(crate) refined: &'a RefinedGapFrames,
+    pub(crate) wide_need: usize,
+    pub(crate) knobs: &'a ShoulderLagKnobs,
+    pub(crate) a_samples: &'a [f32],
+    pub(crate) channels: usize,
+}
+
+/// A caller's own cut of a spec into (pre, post) templates — mono, or one selected channel.
+pub(crate) type BorderTemplateCut<'a> = dyn Fn(&GapBorderSpec) -> (Vec<f64>, Vec<f64>) + 'a;
+
+impl WideBorderCut<'_> {
+    /// Cut one side's wide capture and measure *that* capture's edge displacement together.
+    pub(crate) fn side(
+        &self,
+        pre_shoulder: bool,
+        templates: &BorderTemplateCut<'_>,
+    ) -> Option<WideBorder> {
+        let spec = probe_lag_border_spec(
+            self.refined,
+            self.wide_need,
+            self.knobs.silence_peak_fraction,
+            self.knobs.absolute_silence_rms,
+        );
+        let (pre, post) = templates(&spec);
+        let (d_pre, d_post) = border_edge_displacement_frames(
+            self.a_samples,
+            self.channels.max(1),
+            &spec,
+            pre.len(),
+            post.len(),
+        );
+        let (samples, displacement_frames) = if pre_shoulder {
+            (pre, d_pre)
+        } else {
+            (post, d_post)
+        };
+        (!samples.is_empty()).then_some(WideBorder {
+            samples,
+            displacement_frames,
+        })
+    }
+}
+
 /// Prominence of a seam's placement peak over its tallest rival within ±`max_lag`. `b_ctx` must be laid
 /// out so lag 0 aligns `a_win` at the placement (`b_ctx[max_lag .. max_lag + a_win.len()]`). Low prominence
 /// ⇒ the seam matches at many lags (periodic) ⇒ the dual-fit placement is not a unique registration.
@@ -345,6 +428,7 @@ pub fn summarize_lag_curve(
         // Nominal sweep: the envelope has not run, so there is no template length to report. Set by
         // `stamp_rescue` on the paths that do consult it.
         envelope_window_ms: None,
+        envelope_border_displacement_ms: None,
         envelope_lag_ms: None,
         envelope_peak_r: None,
         envelope_edge_pinned: None,
@@ -459,8 +543,10 @@ pub(crate) fn stamp_rescue(
     peak: Option<EnvelopePeak>,
     rescue: EnvelopeRescue,
     window_ms: f64,
+    border_displacement_ms: Option<f64>,
 ) -> LagSummary {
     s.envelope_window_ms = Some(window_ms);
+    s.envelope_border_displacement_ms = border_displacement_ms;
     if let Some(p) = peak {
         s.envelope_lag_ms = Some(p.lag_ms);
         s.envelope_peak_r = Some(p.peak_r);
@@ -485,13 +571,23 @@ pub(crate) fn stamp_rescue(
 /// (`docs/dev/archive/TEMP-lag-nominal-first-plan.md` § Change). The narrow nominal capture in `side.a_border`
 /// is enough for the fine ±`max_lag` sweep (both here and the retry below); only
 /// `envelope_shoulder`'s coarse search needs the wider reach. `None` — env off, no source supplied
-/// (e.g. direct test calls), or the source returns nothing usable — falls back to `side.a_border`.
+/// (e.g. direct test calls), or the source returns nothing usable — falls back to `side.a_border`
+/// **at the caller's anchor**, which is then the right anchor because it is that template's own.
+///
+/// When a wide capture *is* used, its own `displacement_frames` re-derives the anchor from
+/// `side.gap_edge_frame`; `side.anchor_frame` (built from the shared capture's `D`) would put the
+/// coarse curve `D_wide − D_narrow` out of frame. The fine retry below still runs the **narrow**
+/// template at `side.anchor_frame`, and needs no translation term: a lag is frame-independent once
+/// each correlation is anchored on the template it actually correlates
+/// (`docs/dev/TEMP-rescue-wide-anchor-plan.md`). A pre anchor moved earlier by `D_wide` can fall
+/// under `envelope_shoulder`'s lead-in guard, and a post anchor moved later can run into the tail
+/// of `b_signal`; both refuse (`declined`) rather than reading a displaced window.
 pub(crate) fn rescue_shoulder(
     nominal: Option<LagSummary>,
     envelope: Option<EnvelopeCfg>,
     side: LagSideSweep<'_>,
     params: LagSweepParams,
-    wide_a_border: Option<&dyn Fn() -> Option<Vec<f64>>>,
+    wide_a_border: Option<&dyn Fn() -> Option<WideBorder>>,
 ) -> Option<LagSummary> {
     let nominal = nominal?;
     let Some(env_cfg) = envelope else {
@@ -504,10 +600,28 @@ pub(crate) fn rescue_shoulder(
         });
     }
     let wide_border = wide_a_border.and_then(|f| f());
-    let envelope_side = LagSideSweep {
-        a_border: wide_border.as_deref().unwrap_or(side.a_border),
-        ..side
+    // A correlation is anchored on the template it actually correlates. A re-cut wide capture has
+    // its **own** edge displacement (the 12 %-of-peak trim is peak-relative), so its search must be
+    // re-anchored on `D_wide` from the raw gap edge — pre `gap_start − D_wide`, post
+    // `gap_end + D_wide` — not left on the shared capture's `D_narrow`, which put the coarse curve
+    // `D_wide − D_narrow` out of frame (`docs/dev/TEMP-rescue-wide-anchor-plan.md` § 1). With the
+    // anchor corrected the peak is already in the map frame, so the fine retry below needs **no**
+    // translation term (§ 5, point 3).
+    let envelope_side = match &wide_border {
+        Some(w) => LagSideSweep {
+            a_border: &w.samples,
+            anchor_frame: if side.pre_shoulder {
+                side.gap_edge_frame.saturating_sub(w.displacement_frames)
+            } else {
+                side.gap_edge_frame + w.displacement_frames
+            },
+            ..side
+        },
+        None => side,
     };
+    let env_displacement_ms = wide_border
+        .as_ref()
+        .map(|w| w.displacement_frames as f64 * 1000.0 / f64::from(params.sample_rate).max(1.0));
     // What the envelope will actually correlate — `envelope_shoulder` clamps the requested window
     // to the trimmed border, and on the `shared_covers_wide` path that border is the shared capture
     // rather than one cut to `wide_need`. Recorded on every path below so a reader never has to
@@ -531,6 +645,7 @@ pub(crate) fn rescue_shoulder(
             peak,
             EnvelopeRescue::Declined,
             env_window_ms,
+            env_displacement_ms,
         ));
     }
     let rescued = lag_side_sweep(
@@ -548,12 +663,14 @@ pub(crate) fn rescue_shoulder(
             peak,
             EnvelopeRescue::Rescued,
             env_window_ms,
+            env_displacement_ms,
         )),
         _ => Some(stamp_rescue(
             nominal,
             peak,
             EnvelopeRescue::Declined,
             env_window_ms,
+            env_displacement_ms,
         )),
     }
 }
@@ -572,8 +689,8 @@ pub(crate) struct LagPairInput<'a> {
     /// Lazy wide-capture sources for [`rescue_shoulder`]'s envelope search — see its doc comment.
     /// `None` (env off, or a caller that never rescues, e.g. tests) falls back to the narrow
     /// `a_pre`/`a_post` already above.
-    pub(crate) pre_wide: Option<&'a dyn Fn() -> Option<Vec<f64>>>,
-    pub(crate) post_wide: Option<&'a dyn Fn() -> Option<Vec<f64>>>,
+    pub(crate) pre_wide: Option<&'a dyn Fn() -> Option<WideBorder>>,
+    pub(crate) post_wide: Option<&'a dyn Fn() -> Option<WideBorder>>,
 }
 /// Measure → triage → rescue → accept ordering for one shoulder pair
 /// (`docs/dev/archive/TEMP-lag-nominal-first-plan.md` § Change). Both shoulders are always swept at their
@@ -605,6 +722,7 @@ pub(crate) fn lag_pair(input: &LagPairInput<'_>) -> (Option<LagSummary>, Option<
         pre_shoulder: true,
         gross_lag_shift: 0,
         border_displacement_frames: displacement.map(|(pre, _)| pre),
+        gap_edge_frame: start_frame,
     };
     let pre_nominal = lag_side_sweep(pre_side, params);
     // Sequential per-shoulder registration (ledger A2): center the post search on
@@ -628,6 +746,7 @@ pub(crate) fn lag_pair(input: &LagPairInput<'_>) -> (Option<LagSummary>, Option<
             pre_shoulder: false,
             gross_lag_shift: pre_shift,
             border_displacement_frames: displacement.map(|(_, post)| post),
+            gap_edge_frame: start_frame + gap_frames,
         },
         params,
     );
@@ -644,6 +763,7 @@ pub(crate) fn lag_pair(input: &LagPairInput<'_>) -> (Option<LagSummary>, Option<
             pre_shoulder: false,
             gross_lag_shift: pre_shift,
             border_displacement_frames: displacement.map(|(_, post)| post),
+            gap_edge_frame: start_frame + gap_frames,
         },
         params,
         post_wide,
@@ -800,26 +920,16 @@ pub fn shoulder_lags_at_b_mapped(
         knobs.absolute_silence_rms,
     );
     let (a_pre, a_post) = border_templates_for_gap(a_samples, ch, &border_spec);
-    let pre_wide_mono = || -> Option<Vec<f64>> {
-        let spec = probe_lag_border_spec(
-            refined,
-            geo.wide_need,
-            knobs.silence_peak_fraction,
-            knobs.absolute_silence_rms,
-        );
-        let (pre, _post) = border_templates_for_gap(a_samples, ch, &spec);
-        (!pre.is_empty()).then_some(pre)
+    let wide_templates = |spec: &GapBorderSpec| border_templates_for_gap(a_samples, ch, spec);
+    let wide_cut = WideBorderCut {
+        refined,
+        wide_need: geo.wide_need,
+        knobs,
+        a_samples,
+        channels: ch,
     };
-    let post_wide_mono = || -> Option<Vec<f64>> {
-        let spec = probe_lag_border_spec(
-            refined,
-            geo.wide_need,
-            knobs.silence_peak_fraction,
-            knobs.absolute_silence_rms,
-        );
-        let (_pre, post) = border_templates_for_gap(a_samples, ch, &spec);
-        (!post.is_empty()).then_some(post)
-    };
+    let pre_wide_mono = || wide_cut.side(true, &wide_templates);
+    let post_wide_mono = || wide_cut.side(false, &wide_templates);
     let sweep = LagSweepParams {
         window: geo.window,
         max_lag: geo.max_lag,
@@ -838,8 +948,8 @@ pub fn shoulder_lags_at_b_mapped(
         displacement: Some(mono_displacement),
         envelope: geo.envelope_cfg,
         pre_wide: (!geo.shared_covers_wide)
-            .then_some(&pre_wide_mono as &dyn Fn() -> Option<Vec<f64>>),
+            .then_some(&pre_wide_mono as &dyn Fn() -> Option<WideBorder>),
         post_wide: (!geo.shared_covers_wide)
-            .then_some(&post_wide_mono as &dyn Fn() -> Option<Vec<f64>>),
+            .then_some(&post_wide_mono as &dyn Fn() -> Option<WideBorder>),
     })
 }

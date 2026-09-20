@@ -2214,6 +2214,7 @@ mod tests {
                         edge_pinned: Some(false),
                         border_displacement_ms: None,
                         envelope_window_ms: None,
+                        envelope_border_displacement_ms: None,
                         envelope_lag_ms: None,
                         envelope_peak_r: None,
                         envelope_edge_pinned: None,
