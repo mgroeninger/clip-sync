@@ -1106,7 +1106,7 @@ mod tests {
         );
     }
 
-    /// **Regression for [TEMP-rescue-wide-anchor-plan.md](docs/dev/TEMP-rescue-wide-anchor-plan.md) § 4/§ 5.**
+    /// **Regression for [TEMP-rescue-wide-anchor-plan.md](docs/dev/archive/TEMP-rescue-wide-anchor-plan.md) § 4/§ 5.**
     /// The rescue branch used to correlate the lazily-built **wide** capture at the **shared
     /// narrow** capture's anchor, so its curve sat `D_wide − D_narrow` out of frame. It is now
     /// anchored on the capture it actually correlates.

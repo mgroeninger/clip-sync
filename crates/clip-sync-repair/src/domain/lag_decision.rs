@@ -132,7 +132,7 @@ pub struct LagSummary {
     /// rescue re-cuts a *wider* A capture than the shared one, the 12 %-of-peak trim is relative to
     /// that buffer's own peak, so the wide capture's gap-facing edge sits a **different** distance
     /// `D_wide` from the gap than the shared capture's `D_narrow`. The envelope search is anchored
-    /// on `D_wide` (`docs/dev/TEMP-rescue-wide-anchor-plan.md` § 5), which is what puts
+    /// on `D_wide` (`docs/dev/archive/TEMP-rescue-wide-anchor-plan.md` § 5), which is what puts
     /// [`Self::envelope_lag_ms`] in the same frame as [`Self::frac_lag_ms`]; before that plan it was
     /// anchored on `D_narrow` and read in a frame no other field shared.
     ///
@@ -277,7 +277,7 @@ pub(crate) struct LagSideSweep<'a> {
     /// displaced by *this* template's `D`; the raw edge is what lets [`rescue_shoulder`] re-derive
     /// an anchor for a **different** template (`D_wide`) instead of adding `D_narrow` back, where a
     /// `None` displacement would silently read as zero
-    /// (`docs/dev/TEMP-rescue-wide-anchor-plan.md` § 5, point 2).
+    /// (`docs/dev/archive/TEMP-rescue-wide-anchor-plan.md` § 5, point 2).
     pub(crate) gap_edge_frame: usize,
 }
 
@@ -286,7 +286,7 @@ pub(crate) struct LagSideSweep<'a> {
 /// The 12 %-of-peak trim is relative to the buffer's own peak, so a capture cut at `wide_need` does
 /// not have the same gap-facing edge as the shared capture cut at `border_need`. A correlation is
 /// anchored on the template it actually correlates: the envelope search must use `D_wide`, not the
-/// shared capture's `D_narrow` (`docs/dev/TEMP-rescue-wide-anchor-plan.md` § 0).
+/// shared capture's `D_narrow` (`docs/dev/archive/TEMP-rescue-wide-anchor-plan.md` § 0).
 pub(crate) struct WideBorder {
     pub(crate) samples: Vec<f64>,
     pub(crate) displacement_frames: usize,
@@ -579,7 +579,7 @@ pub(crate) fn stamp_rescue(
 /// coarse curve `D_wide − D_narrow` out of frame. The fine retry below still runs the **narrow**
 /// template at `side.anchor_frame`, and needs no translation term: a lag is frame-independent once
 /// each correlation is anchored on the template it actually correlates
-/// (`docs/dev/TEMP-rescue-wide-anchor-plan.md`). A pre anchor moved earlier by `D_wide` can fall
+/// (`docs/dev/archive/TEMP-rescue-wide-anchor-plan.md`). A pre anchor moved earlier by `D_wide` can fall
 /// under `envelope_shoulder`'s lead-in guard, and a post anchor moved later can run into the tail
 /// of `b_signal`; both refuse (`declined`) rather than reading a displaced window.
 pub(crate) fn rescue_shoulder(
@@ -604,7 +604,7 @@ pub(crate) fn rescue_shoulder(
     // its **own** edge displacement (the 12 %-of-peak trim is peak-relative), so its search must be
     // re-anchored on `D_wide` from the raw gap edge — pre `gap_start − D_wide`, post
     // `gap_end + D_wide` — not left on the shared capture's `D_narrow`, which put the coarse curve
-    // `D_wide − D_narrow` out of frame (`docs/dev/TEMP-rescue-wide-anchor-plan.md` § 1). With the
+    // `D_wide − D_narrow` out of frame (`docs/dev/archive/TEMP-rescue-wide-anchor-plan.md` § 1). With the
     // anchor corrected the peak is already in the map frame, so the fine retry below needs **no**
     // translation term (§ 5, point 3).
     let envelope_side = match &wide_border {

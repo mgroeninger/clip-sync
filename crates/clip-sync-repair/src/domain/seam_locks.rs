@@ -808,6 +808,186 @@ mod tests {
         );
     }
 
+    /// **The wide border is flush with the gap edge — a plain slice, nothing trimmed or walked off.**
+    ///
+    /// `lock_shoulder` anchors the envelope at the nominal seam and hands `envelope_shoulder` a border
+    /// with no position attached, so it silently assumes the pre border *ends* at `gap_start` and the
+    /// post border *starts* at `gap_end`. A silence trim or walk-off added here would move the coarse
+    /// curve by exactly the distance cut — the `lag_decision` defect
+    /// (`docs/dev/archive/TEMP-rescue-wide-anchor-plan.md`), which the ±600 ms fine reach hid on 12 of 14
+    /// shoulders. Every frame value is distinct and the channels differ, so an off-by-one or a
+    /// skipped downmix reads as a wrong value, not a near miss.
+    #[test]
+    fn wide_a_slicer_is_flush_with_the_gap_edge() {
+        let ch = 2;
+        let frames = 1_000usize;
+        let a: Vec<f32> = (0..frames)
+            .flat_map(|i| [i as f32, i as f32 + 0.5])
+            .collect();
+        let mono = |i: usize| i as f64 + 0.25;
+        let (gap_start, gap_end, window) = (400, 600, 150);
+        let wide = wide_a_slicer(&a, ch, gap_start, gap_end, window);
+
+        let pre = wide(true).expect("pre border in range");
+        assert_eq!(pre.len(), window, "pre border must be the full window");
+        assert_eq!(
+            pre.last().copied(),
+            Some(mono(gap_start - 1)),
+            "pre border must END at the gap start"
+        );
+        assert_eq!(pre[0], mono(gap_start - window));
+
+        let post = wide(false).expect("post border in range");
+        assert_eq!(post.len(), window, "post border must be the full window");
+        assert_eq!(
+            post[0],
+            mono(gap_end),
+            "post border must START at the gap end"
+        );
+        assert_eq!(post.last().copied(), Some(mono(gap_end + window - 1)));
+
+        // Out of range refuses rather than returning a shorter border — a shorter border is a trim
+        // by another name, and would move the envelope's frame the same way.
+        assert!(wide_a_slicer(&a, ch, 100, gap_end, window)(true).is_none());
+        assert!(wide_a_slicer(&a, ch, gap_start, 900, window)(false).is_none());
+        assert!(
+            wide_a_slicer(&a, ch, gap_start, gap_end, 0)(true).is_none(),
+            "window 0 is the envelope-off arm"
+        );
+    }
+
+    /// **A successful rescue lands on the true far lag, through the production slicer** — with a
+    /// fixture built so the ±600 ms fine reach cannot mask a coordinate error in the wide border.
+    ///
+    /// The masking: coarse→fine absorbs any coarse error smaller than the fine reach, so a
+    /// mis-anchored border usually still lands (`settled.md` § E). Here A's pre border is a verbatim
+    /// copy of B from 1146 ms earlier (pair 31's map step) whose last **700 ms is near-silent** — the
+    /// shape a silence trim or walk-off acts on — with loud, non-repeating contour beyond it. A border
+    /// moved off the gap edge by that silence misplaces the coarse curve by 700 ms, beyond the fine
+    /// reach, and the rescue declines. The last arm asserts exactly that, as a premise: if it ever
+    /// lands anyway, this fixture has stopped defeating the masking and guards nothing.
+    #[test]
+    fn a_rescue_lands_on_the_true_far_lag_through_the_production_slicer() {
+        let sr = 48_000u32;
+        let rate = sr as usize;
+        let ms = |v: usize| rate * v / 1000;
+        let w = ms(250); // seam template
+        let bin = ms(100); // envelope bin
+        let gap_frames = ms(500);
+        let seam_max_lag = ms(600); // the fine reach the envelope must get the retry within
+        let quiet = ms(700); // near-silent run at A's pre edge — longer than the fine reach
+        let true_lag = -(ms(1_146) as i64);
+        let floor = 0.35; // the recipe's `min_fill_correlation`, as both callers pass
+        let cfg = EnvelopeCfg::from_knobs(2_000, 1.0, sr).expect("envelope enabled");
+        assert!(
+            true_lag.unsigned_abs() as usize > seam_max_lag && quiet > seam_max_lag,
+            "fixture premise: both the true lag and the quiet run must exceed the fine reach"
+        );
+
+        // B: noise under a non-repeating per-bin contour, with one near-silent run ending where A's
+        // pre border truly ends. Nowhere else in B is quiet for that long, so the match is unique.
+        let n = rate * 6; // nominal pre-seam end in B
+        let b_len = rate * 12;
+        let match_end = (n as i64 + true_lag) as usize;
+        let gains = bin_gains(b_len / bin + 2, 0x5ca1_e001);
+        let b: Vec<f64> = noise(b_len, 0xb0a7_0002)
+            .iter()
+            .enumerate()
+            .map(|(i, x)| {
+                let g = if (match_end - quiet..match_end).contains(&i) {
+                    0.02
+                } else {
+                    gains[i / bin]
+                };
+                x * g
+            })
+            .collect();
+
+        // A: independent filler, with 3 s of B ending at `match_end` as the pre shoulder and verbatim
+        // B at nominal as the post shoulder (locks at lag 0, never consults the envelope).
+        let a_gap_start = rate * 4;
+        let a_gap_end = a_gap_start + gap_frames;
+        let mut a_mono: Vec<f64> = noise(rate * 8, 0xf111_0003)
+            .iter()
+            .map(|x| 0.5 * x)
+            .collect();
+        let lead = rate * 3;
+        a_mono[a_gap_start - lead..a_gap_start].copy_from_slice(&b[match_end - lead..match_end]);
+        a_mono[a_gap_start..a_gap_end].fill(0.0);
+        a_mono[a_gap_end..a_gap_end + w].copy_from_slice(&b[n + gap_frames..n + gap_frames + w]);
+        let a: Vec<f32> = a_mono.iter().flat_map(|&v| [v as f32, v as f32]).collect();
+
+        let templates =
+            SeamLockTemplates::build(&a, 2, a_gap_start, a_gap_end, n, w).expect("templates");
+        let floors = SeamGateFloors {
+            min_fill_correlation: floor,
+            fill_absolute_floor: 0.12,
+        };
+
+        // Premise: the nominal read fails triage, so the envelope IS consulted.
+        let nominal =
+            seam_local_peak(templates.a_pre(), &b, n - w, seam_max_lag).expect("nominal peak");
+        assert!(
+            nominal.r < floor,
+            "fixture premise: nominal must be a rescue candidate, got r={}",
+            nominal.r
+        );
+
+        // The production slicer, sized exactly as `region/characterize.rs` sizes it.
+        let slicer: Box<WideA<'_>> =
+            Box::new(wide_a_slicer(&a, 2, a_gap_start, a_gap_end, cfg.window));
+        let locks = nominal_first_seam_locks(
+            &templates,
+            &b,
+            seam_max_lag,
+            EnvelopeSearch {
+                cfg: Some(cfg),
+                wide_a: Some(slicer.as_ref()),
+            },
+            sr,
+            floors,
+            floor,
+        )
+        .expect("locks");
+        assert!(
+            locks.pre.rescued,
+            "the far shoulder must be rescued, got r={} lag={}",
+            locks.pre.r, locks.pre.lag
+        );
+        assert!(
+            (locks.pre.lag - true_lag).abs() <= 1,
+            "the rescue must land on the true lag {true_lag}, got {}",
+            locks.pre.lag
+        );
+        assert!(locks.gate_pass, "and the pair must pass the gate");
+
+        // Premise: a border walked off the edge by the quiet run — what a silence trim produces when
+        // nothing re-anchors it — must NOT land. If it does, the fine reach is absorbing the error.
+        let walked: Box<WideA<'_>> = Box::new(|pre: bool| {
+            pre.then(|| a_mono[a_gap_start - quiet - cfg.window..a_gap_start - quiet].to_vec())
+        });
+        let footgun = nominal_first_seam_locks(
+            &templates,
+            &b,
+            seam_max_lag,
+            EnvelopeSearch {
+                cfg: Some(cfg),
+                wide_a: Some(walked.as_ref()),
+            },
+            sr,
+            floors,
+            floor,
+        )
+        .expect("locks");
+        assert!(
+            !(footgun.pre.rescued && (footgun.pre.lag - true_lag).abs() <= 1),
+            "fixture premise: a border walked {quiet} frames off the gap edge must not reach the \
+             truth — got rescued={} lag={}",
+            footgun.pre.rescued,
+            footgun.pre.lag
+        );
+    }
+
     fn frames_at_ms(rate: u32, ms: u64) -> usize {
         ((u64::from(rate) * ms) / 1000) as usize
     }

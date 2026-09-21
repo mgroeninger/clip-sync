@@ -153,6 +153,23 @@ production gate by design, so splicing from it would answer a different question
 this tool would actually make any good?". On a production skip **no patched WAV is written** — an
 invented fill would be worse than a missing file, and the skip reason is printed instead.
 
+> **Widening the clip context changes the fill — only the default is production's patch.** The clip
+> width is `gap_signature_context_secs` (TOML `[repair]`, default 3.0, no CLI flag). That setting
+> also sizes the fingerprint measurement's buffers. Raising it to 8.0 on 31/g8 (2026-09-21), to get
+> more lead-in, made the listen run patch a **different** fill: 100 ms longer, placed about 0.8 s
+> earlier, with the post seam at r 0.30 instead of 0.31. At the default 3.0 the patched clip matches
+> the `--patch-only` splice span to ±10 ms (crossfades). No `patch_audio` code reads the setting
+> directly. The likely path is the fingerprint's B decode padding (context +
+> `fill_border_search_secs` + margin) bounding the anchor-seam search; that path is not verified.
+> So a listener who widens the context to hear a seam better can hear a fill production never made,
+> which inverts the finding. `listen.json` does not record the splice span, so the mismatch is not
+> detectable from the listen output alone. **For a longer clip, render at the default, then splice
+> `_a_patched.wav` into a wider run's `_a_surround.wav`** (raw A, which the fill does not affect).
+> Prove the offset first: the narrow raw clip must be a byte-identical slice of the wide one. Also
+> compare the patched span against the `--patch-only` report before listening. An earlier 10 ms
+> listen-vs-production disagreement on 47/g14 is recorded in the header of
+> `scripts/measure/build-standoff-listen-set.ps1`.
+
 **Selector and run modes.** `--only-gaps` / `--skip-gaps` are rejected (one selector must drive both
 the corpus and the fill plan, or they cover different sets). `--wav`, `--mux` and `--repair-preview`
 are rejected too — each makes the patched clip impossible or ambiguous, and unlike the `--mux` /
@@ -928,7 +945,7 @@ envelope is never consulted for movement (`envelope_rescue: not_consulted`). A d
 envelope peak is interior and ≥ 0.70; the retry is kept only if it is itself recoverable
 (`rescued` vs `declined`). On `narrow`, the envelope pass may lazy-fetch a wider A buffer; since
 2026-09-19 that search is anchored on **that buffer's own** `D_wide`, recorded as
-`envelope_border_displacement_ms` ([TEMP-rescue-wide-anchor-plan.md](TEMP-rescue-wide-anchor-plan.md)).
+`envelope_border_displacement_ms` ([archive/TEMP-rescue-wide-anchor-plan.md](archive/TEMP-rescue-wide-anchor-plan.md)).
 Before then it reused the shared capture's `D_narrow`, which put the coarse curve `D_wide − D_narrow`
 out of frame — on 31/g8 pre, 1971 ms, past the ±2000 ms reach. `frac_lag_ms` stays **gross to original `b_mapped`**. The envelope-first
 ordering ([TEMP-lag-envelope-recenter-plan.md](archive/TEMP-lag-envelope-recenter-plan.md)) is

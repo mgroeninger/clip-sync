@@ -1,26 +1,29 @@
 # TEMP — Rescue branch: anchor the envelope on the capture it correlates
 
-**Status:** § 5 Change **implemented** 2026-09-19 (unreleased). Deciding
-measurement (§ 4) run and reproduced the same day. **Exits 1–6 are met** —
-the targeted re-fingerprint of 2026-09-20 closed 4 and 5, the full-corpus
-pass of 2026-09-21 closed 3 (2032 of 2046 shoulders bit-identical) and found
-one unpredicted downstream move in `splice` on 31/g8 (§ 7). Only **exit 7**,
-the ear pass, is outstanding.
+**Status: CLOSED 2026-09-21 — all seven exits met.** The § 5 Change was
+implemented 2026-09-19. The deciding measurement (§ 4) was run and
+reproduced the same day. The targeted re-fingerprint of 2026-09-20 closed
+exits 4 and 5. The full-corpus pass of 2026-09-21 closed exit 3 (2032 of
+2046 shoulders bit-identical) and found one unpredicted downstream move in
+`splice` on 31/g8. The production check and the reworded ear pass closed
+exit 7 the same day (§ 7, last Result). The measurement defect is fixed.
+Production placement was never affected. One false A4 warning on pair 31
+is gone.
 
-**Tracked as:** [BACKLOG.md](../../BACKLOG.md) § *Fill placement* — the
-31/g8 Narrow-capture item.
+**Tracked as:** [settled.md](../settled.md) § E — the coarse→fine masking
+row (verdict + guard).
 
 **Companions:** the refuted ladder and the deciding measurement that sent
 31/g8 here
-[archive/TEMP-envelope-adaptive-widen-plan.md](archive/TEMP-envelope-adaptive-widen-plan.md)
+[archive/TEMP-envelope-adaptive-widen-plan.md](TEMP-envelope-adaptive-widen-plan.md)
 § *Deciding measurements* 2; nominal-first ordering and the lazy wide
 capture it introduced
-[archive/TEMP-lag-nominal-first-plan.md](archive/TEMP-lag-nominal-first-plan.md);
+[archive/TEMP-lag-nominal-first-plan.md](TEMP-lag-nominal-first-plan.md);
 map coordinates and the `D` shift
-[archive/TEMP-lag-decision-map-coordinates-plan.md](archive/TEMP-lag-decision-map-coordinates-plan.md)
+[archive/TEMP-lag-decision-map-coordinates-plan.md](TEMP-lag-decision-map-coordinates-plan.md)
 § Change point 1; durable field behaviour
-[gap-fingerprint.md](gap-fingerprint.md) § *`lag_decision`*; the refused
-default flip [settled.md](settled.md) § B.
+[gap-fingerprint.md](../gap-fingerprint.md) § *`lag_decision`*; the refused
+default flip [settled.md](../settled.md) § B.
 
 **Media hygiene:** pair index + gap index only.
 
@@ -40,6 +43,14 @@ bit-identical.**
 
 One sentence: **the envelope search is given a wide template and a narrow
 template's zero; give it its own zero.**
+
+**The defect, stated** *(added at close, 2026-09-21)*. On the rescue branch,
+`lag_decision` reported an envelope lag of `Δ − (D_wide − D_narrow)`, not Δ,
+and it searched a B span displaced by the same amount. That is a
+measurement defect in `lag_decision`. It is not a fill-placement defect:
+production placement never reads `lag_decision` (§ 2.1). § 4 proved the
+defect on a fixture before any code changed. It is named here because the
+plan otherwise leaves the claim implicit.
 
 ---
 
@@ -137,7 +148,7 @@ the anchor is wrong.
 
 ## 2. Why this is not "flip the default"
 
-[settled.md](settled.md) § B refuses `--border-capture wide` as the default
+[settled.md](../settled.md) § B refuses `--border-capture wide` as the default
 because it **re-baselines `border_displacement_ms` corpus-wide**: the shared
 capture sizes every template, so 505 shoulders moved 161 displacements by
 more than 1 ms.
@@ -173,8 +184,16 @@ So § 5 edits production-path code, but it moves **no patch placement**.
 `InjectedTimeReport` is stamped onto `PatchSummary` and printed as a progress
 warning; nothing reads it back. The patch path's own envelope use — seam
 locks (`domain/seam_locks.rs`, via `characterize.rs`) — calls
-`envelope_shoulder` directly, never `rescue_shoulder`, builds no wide
-capture, and is untouched.
+`envelope_shoulder` directly, never `rescue_shoulder`, and is untouched.
+
+> **[Corrected 2026-09-21]** The text previously said seam locks "build no
+> wide capture". That is wrong. `characterize.rs` supplies one through
+> `wide_a_slicer`, a **plain slice** of A (`window` long, ending at the gap
+> edge) with no silence walk and no trim. Its border displacement is therefore
+> 0 by construction, and the seam-lock envelope and its fine retry share one
+> anchor. So the conclusion stands for a better reason: this defect cannot
+> occur there. It would occur if seam templates ever gained a trim (see the
+> `settled.md` § E row on coarse→fine masking).
 
 `border_capture` itself is fingerprint-only ("Probe-only — production repair
 never reads it", `infrastructure/config.rs`), so the Wide control arm of § 7
@@ -183,7 +202,8 @@ stays a dump-side instrument.
 Practical consequence for § 7: a production-side regression check is cheap
 (the injected-time warning must not appear or disappear on a pair whose
 rescue population did not move), but the real exit remains the corpus
-re-fingerprint.
+re-fingerprint. *(Run 2026-09-21 on pair 31, whose rescue population **did**
+move. The warning disappeared, correctly. See § 7, last Result.)*
 
 ---
 
@@ -354,7 +374,7 @@ retry is byte-unchanged, and the no-translation-term claim is now an
 assertion, not a comment (point 3): the fixture requires coarse and fine to
 agree to within one 100 ms bin. The lead-in guard was not touched (point 4).
 `envelope_border_displacement_ms` is stamped, documented on `LagSummary`, in
-[gap-fingerprint.md](gap-fingerprint.md) § *`lag_decision`* with its corpus
+[gap-fingerprint.md](../gap-fingerprint.md) § *`lag_decision`* with its corpus
 break, and the `lag_decision` contract's `placement` string now says the
 envelope is anchored on its own capture (point 5).
 
@@ -373,7 +393,7 @@ wide path, a lag in a frame no other field shares. After the Change it is in
 the same frame as `frac_lag_ms`, so `frac_lag_ms − envelope_lag_ms` becomes
 the honest "how far did the fine sweep move from the coarse proposal"
 quantity that § 3 could only approximate. Update the `lag_decision` contract
-string and [gap-fingerprint.md](gap-fingerprint.md) § *`lag_decision`* in the
+string and [gap-fingerprint.md](../gap-fingerprint.md) § *`lag_decision`* in the
 same commit — this is a **field-meaning** change on 14 corpus shoulders, and
 it silently invalidates any pre-Change arithmetic on that difference.
 
@@ -386,7 +406,7 @@ it silently invalidates any pre-Change arithmetic on that difference.
 2. `border_capture_wide_matches_narrow_when_the_envelope_is_off` still passes
    unmodified, both contracts.
 3. Corpus re-fingerprint (`--features calibration,he-aac`, one pair at a
-   time; protocol in [gap-fingerprint.md](gap-fingerprint.md)) against
+   time; protocol in [gap-fingerprint.md](../gap-fingerprint.md)) against
    `2026-09-15-corpus`: **no shoulder with `envelope_rescue: not_consulted`
    moves in any field.** That is 2032 of 2046 shoulders bit-identical, and it
    is the property § 2 is claiming.
@@ -413,6 +433,12 @@ it silently invalidates any pre-Change arithmetic on that difference.
    over the rescue population is the cheap regression probe afterwards.
 7. Ear-pass 31/g8 under the new placement before calling the *defect* closed.
    Exit 4 closes the measurement; only ears close the patch.
+
+   > **[Reworded 2026-09-21]** As written this exit is ill-posed: it presumes a
+   > placement change, and there is none (§ 2.1; confirmed below). What ears
+   > can test is whether production's **unchanged** 31/g8 fill is clean. That
+   > is a production-quality check the corrected measurement motivates, not a
+   > test of this Change.
 
 ### Measured 2026-09-20 — targeted re-fingerprint: exits 4 and 5 **met**
 
@@ -515,19 +541,78 @@ production reads `lag_decision` only through the report-only injected-time
 warning.
 
 This *strengthens* the `shared_far_offset` classification 31/g8 already
-carried (see [settled.md](settled.md), the `collapsed_bridge` entry): the
+carried (see [settled.md](../settled.md), the `collapsed_bridge` entry): the
 pair's step was being read off a shoulder that had no valid lag.
 
-**Still open:** exit 7, the ear pass. `2026-09-20-corpus` replaces
-`2026-09-15-corpus` as the comparison baseline from here — `envelope_lag_ms`
-and `_contract.placement` both changed meaning, so the older dump is no
-longer field-comparable.
+**Still open:** exit 7, the ear pass *(met 2026-09-21, in
+reworded form; see below)*. `2026-09-20-corpus` replaces `2026-09-15-corpus`
+as the comparison baseline from here — `envelope_lag_ms` and
+`_contract.placement` both changed meaning, so the older dump is no longer
+field-comparable.
+
+### Measured 2026-09-21 — production check and ear pass: exit 7 **met**; plan closed
+
+**Production check (§ 2.1's "cheap" regression check, never run until now).**
+Pair 31 was run with `--patch-only --format json` and identical arguments,
+using binaries built at `9b56ea9` (the Change's parent) and `7062431` (the
+Change). Exactly **one field** differs across the whole report. The
+`patch.injected_time` run over gaps 7–8 (0-based; A 1725.70 → 2853.00 s) is
+present before and absent after. The stderr A4 warning ("…injected time …
+around gap #8–#9…") also disappears. Every placement, correlation, gain, fill
+level and count is bit-identical: 5 patched, 1 marginal, 1 skipped,
+7 not planned.
+
+This was predicted before the run from the detector's rule (|post − pre| >
+150 ms on ≥ 2 consecutive gaps). The g8 shoulder disagreement fell from
+1688.5 ms to 8.4 ms, and g7 (a real map step) was left as a run of 1, below
+`MIN_RUN`. The removal is **correct**: the offset steps once at g7 and stays
+stepped (g8–g11 read ≈ −1.14 s on both shoulders), so there is no bounded
+injected span to warn about. Before the Change, the corrupted report
+instrument drove a false user-facing warning. That warning is the only
+production effect this plan had.
+
+**Placement was already right.** 31/g8 is patched in both binaries at
+`align_adjustment_secs` −1.114 s on the anchor-seam path, 32 ms from the
+corrected `lag_decision` −1146 ms. The gate extended the fill to ≈ 4 s
+(start −2.7 s, end +0.7 s). It carries `marginal` confidence, seam r
+0.319 / 0.313, and `edge_delta_db` −18.6. The Change made the report agree
+with placement. It did not move placement.
+
+**Ear pass (exit 7, reworded): clean.** Two clips of production's fill were
+heard:
+- the default `--gap-listen` clip at 3 s context, whose fill matches the
+  `--patch-only` splice span to ±10 ms (crossfades);
+- a 16.6 s clip built by splicing that patched clip into a wider **unpatched**
+  A clip, after byte-proving the offset.
+
+No artifact was heard in either. The wider clip was built this way because
+re-rendering at `gap_signature_context_secs = 8` placed a **different** fill
+(≈ 0.8 s earlier). That clip was discarded, and the hazard is documented in
+[gap-fingerprint.md](../gap-fingerprint.md) § *`--gap-listen`*.
+
+**Verdict.** The measurement defect is fixed and validated corpus-wide.
+Production placement was never affected. One false production warning is
+gone. There is **no optimization lesson**: the lever this plan touched is a
+lazy slice on a 14-shoulder branch. The lesson is a design invariant, which
+is recorded as a standing caution in [settled.md](../settled.md) § E (coarse→fine
+masking).
+
+**Latched, not a plan:** whether `lag_decision`'s wide capture should be a
+plain slice like `wide_a_slicer`'s. The Change above already fixes the defect
+at its cause (the anchor is derived from the capture it correlates), so a plain
+slice would be **hardening** that makes the defect impossible to reintroduce.
+It would not be a further fix. The wide cut has its own spec
+(`WideBorderCut::side`), so it would move only `envelope_border_displacement_ms`
+on the 14 rescue-branch shoulders. It would **not** move `border_displacement_ms`,
+which comes from the shared capture. Recorded with its trigger in
+[settled.md](../settled.md) § C. Production's slicer was pinned against the same
+foot gun on 2026-09-21 (two `seam_locks.rs` tests, named in § E's masking row).
 
 ---
 
 ## 8. Non-goals
 
-- **Do not flip `--border-capture`.** [settled.md](settled.md) § B, and § 2
+- **Do not flip `--border-capture`.** [settled.md](../settled.md) § B, and § 2
   above. If this Change makes the arms agree on the rescue population, that
   is a reason to keep Narrow, not a reason to revisit the default.
 - **Do not touch `min_envelope_r = 0.70`, the 2000 ms reach, or the 12 % trim
@@ -535,7 +620,7 @@ longer field-comparable.
   The trim constant in particular is shared with seam splicing and is not
   this plan's to move.
 - **Do not revive the adaptive widen ladder.** Refuted, trigger empty
-  ([archive/TEMP-envelope-adaptive-widen-plan.md](archive/TEMP-envelope-adaptive-widen-plan.md)
+  ([archive/TEMP-envelope-adaptive-widen-plan.md](TEMP-envelope-adaptive-widen-plan.md)
   deciding measurement 1).
 - **Do not make the envelope build its own capture.** The lazy wide cut is a
   deliberate cost decision from nominal-first; this Change keeps it and fixes
