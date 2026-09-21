@@ -983,7 +983,12 @@ healthy locks sit at `peak_z` ≈ 6). Per shoulder,
 
   **Corpus break:** on the 14 corpus shoulders that take this branch, `envelope_lag_ms` changed
   meaning on that date — it was previously a lag in a frame no other field shared, so pre-2026-09-19
-  arithmetic on `frac_lag_ms − envelope_lag_ms` is not comparable with post-.
+  arithmetic on `frac_lag_ms − envelope_lag_ms` is not comparable with post-. The corpus was
+  re-dumped on 2026-09-21 as `2026-09-20-corpus`, which supersedes `2026-09-15-corpus` as the
+  comparison baseline; 2032 of the 2046 shoulders are bit-identical across the two, and the 14 that
+  move are exactly the ones that enter this branch. One of them, 31/g8 pre, also moves its gap's
+  [`splice`](#splice--the-registration-step) — `step_ms` −1688.4 → 8.4, since the step is a
+  difference of the two shoulders' `frac_lag_ms` and one of them had been unrecoverable.
 
 
 ### `splice` — the registration step

@@ -1,9 +1,11 @@
 # TEMP — Rescue branch: anchor the envelope on the capture it correlates
 
 **Status:** § 5 Change **implemented** 2026-09-19 (unreleased). Deciding
-measurement (§ 4) run and reproduced the same day. Exits 1, 2 and 6 (fixture
-arms agree) are met, and the targeted re-fingerprint of 2026-09-20 met **4
-and 5** (§ 7). Exit 3 waits on the full-corpus pass, exit 7 on an ear pass.
+measurement (§ 4) run and reproduced the same day. **Exits 1–6 are met** —
+the targeted re-fingerprint of 2026-09-20 closed 4 and 5, the full-corpus
+pass of 2026-09-21 closed 3 (2032 of 2046 shoulders bit-identical) and found
+one unpredicted downstream move in `splice` on 31/g8 (§ 7). Only **exit 7**,
+the ear pass, is outstanding.
 
 **Tracked as:** [BACKLOG.md](../../BACKLOG.md) § *Fill placement* — the
 31/g8 Narrow-capture item.
@@ -460,6 +462,66 @@ expected bit-stable.
 **Exit 3, partial.** The four `not_consulted` shoulders inside this run
 (25/g11 post, 31/g7 pre, 32/g1 pre, 49/g37 pre) are bit-identical in every
 field. The claim over all 2032 still needs the full-corpus pass.
+
+### Measured 2026-09-21 — full corpus: exit 3 **met**, and one downstream find
+
+`gap-files/2026-09-20-corpus`, all 52 pair directories, 1063 `full` + 24
+`summary` gaps, ~9.0 h (the `2026-09-15-corpus` reference took 9.8 h). Clean
+tree at `7062431` (`build.dirty: false`; the reference was dirty).
+
+**Exit 3 — met, exactly.** 2046 shoulders, same census as the reference.
+**2032 `not_consulted`, and 0 moved in any field.** The 14 that moved are
+precisely the rescue-branch population § 3 predicted — no more, no fewer, and
+no shoulder changed *which* branch it took except the one that was supposed
+to (31/g8 pre, `declined` → `rescued`).
+
+Both targeted findings reproduced bit-for-bit in the unnarrowed run: I
+diffed every gap file the two runs share (pairs 25/31/32/49, 10 gaps),
+excluding only `source` provenance — **0 differing fields.** So
+`--fingerprint-gap` narrowing does not perturb the measurement, and the
+23-minute targeted run is a sound stand-in for the 9-hour one on this axis.
+
+Whole-file path census against the reference, all 52 pairs (file sets
+identical, `scan_recipe` / `gap_count` / entry counts identical):
+
+| path | gaps | expected? |
+| --- | --- | --- |
+| `lag_decision._contract.placement` | 1063 | yes — the reworded string |
+| `source.build.{commit,dirty}` | 1063 | yes — new binary, clean tree |
+| `lag_decision.*.envelope_border_displacement_ms` | 14 | yes — the new field, on exactly the rescue population |
+| `lag_decision.*.envelope_{peak_r,lag_ms,rescue}` + the 31/g8 pre fine fields | ≤14 | yes — § 7's 2026-09-20 rows |
+| **`splice.*` and `donor_interior_aligned`** | **2** | **not predicted — see below** |
+
+**Downstream find: the Change moves `splice`, which the plan did not say.**
+Two gaps, both in pair 31, and both follow from the corrected lag rather than
+from any new code path:
+
+- **31/g8** — `splice.pre_peak_r` 0.152 → **0.994**, `pre_peak_z` 5.32 →
+  13.74, and `splice.step_ms` **−1688.4 → 8.4**. The −1688 ms "step" was an
+  artifact of the garbage pre lag: with pre at +550.8 and post at −1137.7 the
+  two shoulders disagreed by 1688 ms. Corrected, they agree to **8.4 ms**,
+  which is the *shared far offset* reading, not a step. `donor_interior_aligned`
+  also appears where it was `null` — the aligned bridge is now measurable, and
+  it reads `rms_db` −37.3, `silence_fraction` 0.0, `continuous: true`: the
+  donor is genuinely continuous across the span a fill would take.
+- **31/g9** — `splice.post_peak_z` 42.05 → 41.53 (`post_peak_r` moves in the
+  13th decimal). The one-bin `envelope_lag_ms` move re-centred the retry
+  window, so the z-normalisation pool is drawn over a shifted sweep. Expected
+  once the bin move is; no decision rides on it.
+
+**No gap's `outcome` changed anywhere in the corpus**, so the production
+patch/skip verdict is untouched — consistent with § 2.1's finding that
+production reads `lag_decision` only through the report-only injected-time
+warning.
+
+This *strengthens* the `shared_far_offset` classification 31/g8 already
+carried (see [settled.md](settled.md), the `collapsed_bridge` entry): the
+pair's step was being read off a shoulder that had no valid lag.
+
+**Still open:** exit 7, the ear pass. `2026-09-20-corpus` replaces
+`2026-09-15-corpus` as the comparison baseline from here — `envelope_lag_ms`
+and `_contract.placement` both changed meaning, so the older dump is no
+longer field-comparable.
 
 ---
 
