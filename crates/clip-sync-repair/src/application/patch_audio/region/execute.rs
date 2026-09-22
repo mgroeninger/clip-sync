@@ -59,7 +59,7 @@ pub(in crate::application::patch_audio) fn execute_region_spec(
             normalize_gain,
             local_gain,
             fit_terms,
-            registration_residual_ms,
+            registration_residual,
             ..
         }) => {
             // F1: re-derive the fill from the spec alone. The window trio comes from the *pre*-gate
@@ -115,7 +115,7 @@ pub(in crate::application::patch_audio) fn execute_region_spec(
                 alignment_start_frame: alignment.start_frame,
                 offset_nominal_start: b_extract.b_mapped_start_frame,
                 sample_rate,
-                registration_residual_ms,
+                registration_residual: registration_residual.map(|r| *r),
             });
             (Some(patch), outcome)
         }
@@ -125,7 +125,7 @@ pub(in crate::application::patch_audio) fn execute_region_spec(
             post_seam_r,
             residual,
             confidence,
-            registration_residual_ms,
+            registration_residual,
             normalize_gain,
             local_gain,
             step_real,
@@ -163,7 +163,7 @@ pub(in crate::application::patch_audio) fn execute_region_spec(
                 // strategy, so this and the preview-only `outcome_from_spec` read the same values.
                 normalize_gain,
                 local_gain,
-                registration_residual_ms,
+                registration_residual: registration_residual.map(|r| *r),
             };
             (Some(patch), outcome)
         }

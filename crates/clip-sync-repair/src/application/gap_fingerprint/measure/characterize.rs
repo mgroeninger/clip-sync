@@ -243,7 +243,7 @@ pub fn characterize_gaps_from_decode(
                 step_real: false,
                 residual: None,
                 confidence: crate::domain::gap_fill_fit::FillConfidence::High,
-                registration_residual_ms: None,
+                registration_residual: None,
                 // Placeholder strategy on a probe path — nothing here is ever spliced.
                 normalize_gain: 1.0,
                 local_gain: crate::domain::LocalGainDecision::OFF,

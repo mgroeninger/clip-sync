@@ -42,8 +42,8 @@ use super::bracket::{
     ExecuteBracketFillCtx,
 };
 use super::dual_fit::{
-    build_dual_fit_input, finalize_dual_fit, registration_shoulder_residual_ms,
-    select_registration_residual_ms, skip_or_dual_fit, DualFitAttempt, DualFitInputSpec,
+    build_dual_fit_input, finalize_dual_fit, registration_residual_from_shoulders,
+    registration_shoulder_residual_ms, skip_or_dual_fit, DualFitAttempt, DualFitInputSpec,
 };
 use super::execute::execute_region_spec;
 use super::pcm::{b_extract_frames, b_mapped_start_frame, slice_b_extract};
@@ -801,7 +801,7 @@ pub(in crate::application::patch_audio) fn characterize_region(
     // `residual_border_standoff_secs` (diagnostic, 2026-09-19) rebuilds the measuring templates at their
     // own standoff so a `border_standoff_secs` sweep moves placement without moving the instrument —
     // otherwise every arm reads its residual with templates held off by the very value being swept.
-    let registration_residual_ms = {
+    let registration_residual = {
         let residual_override = request.residual_border_standoff_secs;
         let residual_spec = GapBorderSpec {
             border_standoff_frames: residual_override.map_or(border_standoff_frames, |secs| {
@@ -854,7 +854,11 @@ pub(in crate::application::patch_audio) fn characterize_region(
                 )
             })
         };
-        select_registration_residual_ms(shoulder_ms(pre_peak), shoulder_ms(post_peak))
+        registration_residual_from_shoulders(
+            shoulder_ms(pre_peak),
+            shoulder_ms(post_peak),
+            applied_ms,
+        )
     };
 
     // 6b.3a shadow: prove the executor can re-derive this exact fill from the spec + the FULL decode buffers
@@ -1001,7 +1005,7 @@ pub(in crate::application::patch_audio) fn characterize_region(
             normalize_gain: gain,
             local_gain,
             fit_terms,
-            registration_residual_ms,
+            registration_residual: registration_residual.map(Box::new),
         }),
         tags_ctx: GapRepairTags::default(),
     };
@@ -1268,6 +1272,35 @@ mod tests {
         );
     }
 
+    /// Routing plan § 3 (2026-09-22): the bracket record keeps **both** shoulder reads, not only the
+    /// selected one, and carries the minuend they share. On the standoff fixture both shoulders read
+    /// lag 0 and the fill lands ~15 ms early, so each seam's residual and `registration_applied_ms` all
+    /// equal that misplacement — which is the identity `residual = applied − shoulder_lag` per seam.
+    #[test]
+    fn bracket_registration_keeps_both_seams_and_the_applied_placement() {
+        let (registration, misplacement_ms) = matched_fixture_bracket_registration(0.03, None);
+        let r = registration.expect("both shoulders confident on the matched fixture");
+        let pre = r
+            .registration_residual_pre_ms
+            .expect("pre shoulder is licensed");
+        let post = r
+            .registration_residual_post_ms
+            .expect("post shoulder is licensed");
+        assert!(
+            (r.registration_applied_ms - misplacement_ms).abs() < 0.5,
+            "applied {} vs written misplacement {misplacement_ms}",
+            r.registration_applied_ms
+        );
+        for (side, v) in [("pre", pre), ("post", post)] {
+            assert!(
+                (v - misplacement_ms).abs() < 1.0,
+                "{side} seam reads lag 0, so its residual is the misplacement: {v} vs {misplacement_ms}"
+            );
+        }
+        let selected = if pre.abs() <= post.abs() { pre } else { post };
+        assert_eq!(r.registration_residual_ms, selected);
+    }
+
     /// 47/g14 (2026-09-18): the shoulder templates sit `border_standoff_secs` outward of the gap edges,
     /// so the residual's B anchors must shift by the same displacement. Before the fix the anchors sat
     /// at the raw gap edge and a perfectly registered shoulder read `∓standoff` (here ∓30 ms).
@@ -1332,6 +1365,23 @@ mod tests {
         border_standoff_secs: f64,
         residual_border_standoff_secs: Option<f64>,
     ) -> (Option<f64>, f64) {
+        let (registration, misplacement_ms) = matched_fixture_bracket_registration(
+            border_standoff_secs,
+            residual_border_standoff_secs,
+        );
+        (
+            registration.map(|r| r.registration_residual_ms),
+            misplacement_ms,
+        )
+    }
+
+    fn matched_fixture_bracket_registration(
+        border_standoff_secs: f64,
+        residual_border_standoff_secs: Option<f64>,
+    ) -> (
+        Option<crate::domain::patch_result::RegistrationResidual>,
+        f64,
+    ) {
         use super::{characterize_all_regions, RegionPatchContext, RegionPatchMedia};
         use crate::domain::gap::Gap;
         use crate::domain::gap_fill::FillRegion;
@@ -1455,7 +1505,7 @@ mod tests {
             crate::domain::gap_repair_spec::GapRepairVerdict::Patch(
                 GapRepairStrategy::Bracket {
                     alignment,
-                    registration_residual_ms,
+                    registration_residual,
                     ..
                 },
             ) => {
@@ -1463,7 +1513,7 @@ mod tests {
                 let misplacement_frames =
                     alignment.start_frame as f64 - specs[0].b_extract.b_mapped_start_frame as f64;
                 (
-                    *registration_residual_ms,
+                    registration_residual.as_deref().copied(),
                     misplacement_frames * 1000.0 / f64::from(rate),
                 )
             }

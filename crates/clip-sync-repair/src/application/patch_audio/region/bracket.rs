@@ -268,7 +268,8 @@ pub(in crate::application::patch_audio::region) struct ExecuteBracketOutputCtx {
     /// are never recomputed here, for the same single-authority reason as the seam correlations.
     pub(in crate::application::patch_audio::region) fit_terms: Option<UnifiedFitBreakdown>,
     /// S1: read straight off the spec — decided at characterize time, never recomputed here.
-    pub(in crate::application::patch_audio::region) registration_residual_ms: Option<f64>,
+    pub(in crate::application::patch_audio::region) registration_residual:
+        Option<crate::domain::patch_result::RegistrationResidual>,
 }
 
 /// The executor's bracket `(RegionPatch, RegionPatchOutcome)` assembly. Recomputes the geometry slides
@@ -307,7 +308,7 @@ pub(in crate::application::patch_audio::region) fn execute_bracket_output(
         fit_terms: ctx.fit_terms,
         normalize_gain: ctx.gain,
         local_gain: ctx.local_gain,
-        registration_residual_ms: ctx.registration_residual_ms,
+        registration_residual: ctx.registration_residual,
     };
     (patch, outcome)
 }

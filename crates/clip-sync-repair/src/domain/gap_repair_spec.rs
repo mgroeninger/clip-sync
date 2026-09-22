@@ -240,7 +240,7 @@ pub enum GapRepairStrategy {
         fit_terms: Option<UnifiedFitBreakdown>,
         /// S1: independent shoulder-seam read of the placement vs. the applied placement, `applied_ms −
         /// shoulder_lag_ms` for whichever shoulder is more confident. Record-only — no gate reads this.
-        registration_residual_ms: Option<f64>,
+        registration_residual: Option<Box<crate::domain::patch_result::RegistrationResidual>>,
     },
     SilenceSplice {
         /// Filled, length-reconciled interleaved PCM (`gap_frames × channels`).
@@ -263,7 +263,7 @@ pub enum GapRepairStrategy {
         confidence: FillConfidence,
         /// S1: independent shoulder-seam read vs. the applied placement, derived from `pre_lag`/`post_lag`/
         /// `pre_seam_r`/`post_seam_r` above — no new sweep. Record-only — no gate reads this.
-        registration_residual_ms: Option<f64>,
+        registration_residual: Option<Box<crate::domain::patch_result::RegistrationResidual>>,
         /// Whole-program master match for this run (`domain::program_gain`), or `1.0` when refused.
         /// Carried on the strategy — rather than read from the request at the splice — so the
         /// executor and the preview-only `outcome_from_spec` cannot disagree about what was applied.
@@ -610,7 +610,7 @@ mod tests {
             normalize_gain: 1.0,
             local_gain: crate::domain::LocalGainDecision::OFF,
             fit_terms: None,
-            registration_residual_ms: None,
+            registration_residual: None,
         }
     }
 
@@ -625,7 +625,7 @@ mod tests {
             step_real: true,
             residual: None,
             confidence: FillConfidence::High,
-            registration_residual_ms: None,
+            registration_residual: None,
             normalize_gain: 1.0,
             local_gain: crate::domain::LocalGainDecision::OFF,
             dual_fit_post_window_ms: None,

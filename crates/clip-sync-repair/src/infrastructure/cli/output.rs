@@ -1471,7 +1471,18 @@ mod tests {
                         repeat_pre: 0.31,
                         repeat_post: 0.42,
                     }),
-                    registration_residual_ms: None,
+                    // Populated for the same reason as `fit_terms`: the flattened keys (the historical
+                    // `registration_residual_ms` plus the 2026-09-22 per-seam keys) are part of the
+                    // pinned contract. Applied 20.0 ms = `align_adjustment_secs` above with no head
+                    // trim; the shoulders sit 37 ms apart (a map step), so the seams differ by it.
+                    registration_residual: Some(
+                        crate::domain::patch_result::RegistrationResidual {
+                            registration_residual_ms: 12.5,
+                            registration_residual_pre_ms: Some(12.5),
+                            registration_residual_post_ms: Some(-24.5),
+                            registration_applied_ms: 20.0,
+                        },
+                    ),
                 },
             ),
             gap_patch_outcome(
@@ -1516,7 +1527,16 @@ mod tests {
                     // Dual-fit placement does not come from the unified objective — omitted, per
                     // json-output.md's `fit_terms` note.
                     fit_terms: None,
-                    registration_residual_ms: None,
+                    // Pins the other per-seam state: an unlicensed post shoulder leaves its key
+                    // absent, and dual-fit's applied placement is 0.0 (its `align_adjustment_secs`).
+                    registration_residual: Some(
+                        crate::domain::patch_result::RegistrationResidual {
+                            registration_residual_ms: -3.0,
+                            registration_residual_pre_ms: Some(-3.0),
+                            registration_residual_post_ms: None,
+                            registration_applied_ms: 0.0,
+                        },
+                    ),
                 },
             ),
             gap_patch_outcome(
@@ -1828,7 +1848,7 @@ mod tests {
                 local_gain: 1.0,
                 local_gain_reason: crate::domain::LocalGainReason::FlagOff,
                 fit_terms: None,
-                registration_residual_ms: None,
+                registration_residual: None,
             },
         )]);
         let payload = RepairJsonOutput {
@@ -1876,7 +1896,7 @@ mod tests {
                     local_gain: 1.0,
                     local_gain_reason: crate::domain::LocalGainReason::FlagOff,
                     fit_terms: None,
-                    registration_residual_ms: None,
+                    registration_residual: None,
                 },
             ),
             gap_patch_outcome(
@@ -2255,7 +2275,7 @@ mod tests {
                 local_gain: 1.0,
                 local_gain_reason: crate::domain::LocalGainReason::FlagOff,
                 fit_terms: None,
-                registration_residual_ms: None,
+                registration_residual: None,
             },
         )]);
 
@@ -2297,7 +2317,7 @@ mod tests {
             local_gain: 1.0,
             local_gain_reason: crate::domain::LocalGainReason::FlagOff,
             fit_terms: None,
-            registration_residual_ms: None,
+            registration_residual: None,
         };
         let tags = derive_gap_tags_from_patch_outcome(
             &GapPatchTierInput::Patched {
@@ -2385,7 +2405,7 @@ mod tests {
             local_gain: 1.0,
             local_gain_reason: crate::domain::LocalGainReason::FlagOff,
             fit_terms: None,
-            registration_residual_ms: None,
+            registration_residual: None,
         };
         let tags = derive_gap_tags_from_patch_outcome(
             &GapPatchTierInput::Patched {
@@ -2464,7 +2484,7 @@ mod tests {
                 local_gain: 1.0,
                 local_gain_reason: crate::domain::LocalGainReason::FlagOff,
                 fit_terms: None,
-                registration_residual_ms: None,
+                registration_residual: None,
             },
         )]);
 
@@ -2741,7 +2761,7 @@ mod tests {
                     local_gain: 1.0,
                     local_gain_reason: crate::domain::LocalGainReason::FlagOff,
                     fit_terms: None,
-                    registration_residual_ms: None,
+                    registration_residual: None,
                 },
             ),
             gap_patch_outcome(
@@ -2830,7 +2850,7 @@ mod tests {
                     local_gain: 1.0,
                     local_gain_reason: crate::domain::LocalGainReason::FlagOff,
                     fit_terms: None,
-                    registration_residual_ms: None,
+                    registration_residual: None,
                 },
             ),
             gap_patch_outcome(

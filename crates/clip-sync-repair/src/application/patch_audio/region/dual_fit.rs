@@ -7,6 +7,7 @@
 use clip_sync::ProgressReporter;
 
 use crate::application::patch_region::SeamGateFailure;
+use crate::domain::patch_result::RegistrationResidual;
 use crate::domain::{
     gap_fill::FillRegion,
     gap_fill_fit::classify_fill_waveform_confidence,
@@ -231,19 +232,32 @@ pub(in crate::application::patch_audio::region) fn registration_shoulder_residua
     Some(applied_ms - shoulder_lag_ms)
 }
 
-/// Among shoulders whose seam-local peak is confident, take the one whose independent read agrees
-/// most closely with the applied placement (smallest `|residual|`). `None` when neither is confident
-/// — record-only, never a fallback to an unconfident reading.
-pub(in crate::application::patch_audio::region) fn select_registration_residual_ms(
-    pre: Option<f64>,
-    post: Option<f64>,
-) -> Option<f64> {
-    match (pre, post) {
-        (Some(p), Some(q)) => Some(if p.abs() <= q.abs() { p } else { q }),
-        (Some(p), None) => Some(p),
-        (None, Some(q)) => Some(q),
-        (None, None) => None,
-    }
+/// Keep both shoulders' reads and select the one that agrees more closely with the placement
+/// (smallest `|residual|`, pre on a tie) as the historical `registration_residual_ms`. `None` when
+/// neither is confident — record-only, never a fallback to an unconfident reading.
+pub(in crate::application::patch_audio::region) fn registration_residual_from_shoulders(
+    pre_ms: Option<f64>,
+    post_ms: Option<f64>,
+    applied_ms: f64,
+) -> Option<RegistrationResidual> {
+    let selected_ms = match (pre_ms, post_ms) {
+        (Some(p), Some(q)) => {
+            if p.abs() <= q.abs() {
+                p
+            } else {
+                q
+            }
+        }
+        (Some(p), None) => p,
+        (None, Some(q)) => q,
+        (None, None) => return None,
+    };
+    Some(RegistrationResidual {
+        registration_residual_ms: selected_ms,
+        registration_residual_pre_ms: pre_ms,
+        registration_residual_post_ms: post_ms,
+        registration_applied_ms: applied_ms,
+    })
 }
 
 /// A dual-fit attempt's two halves, which are only ever available together.
@@ -463,7 +477,7 @@ pub(in crate::application::patch_audio::region) fn skip_or_dual_fit(
                                 .min_fill_correlation
                                 .max(request.fill_absolute_floor),
                         );
-                        let registration_residual_ms = select_registration_residual_ms(
+                        let registration_residual = registration_residual_from_shoulders(
                             registration_shoulder_residual_ms(
                                 r.pre_seam_r,
                                 r.pre_lag,
@@ -478,6 +492,7 @@ pub(in crate::application::patch_audio::region) fn skip_or_dual_fit(
                                 df.params.sample_rate,
                                 confident_floor,
                             ),
+                            0.0,
                         );
                         return (
                             DualFitDecision::Rescued(Box::new(DualFitRescue {
@@ -491,7 +506,7 @@ pub(in crate::application::patch_audio::region) fn skip_or_dual_fit(
                                     step_real: r.step_real,
                                     residual,
                                     confidence,
-                                    registration_residual_ms,
+                                    registration_residual: registration_residual.map(Box::new),
                                     // Since 2026-08-31 dual-fit takes the hole-local half too:
                                     // the paired collar reads A-versus-B blocks flanking the gap
                                     // and never the fill, so nothing about a dual-fit interior is
@@ -1003,28 +1018,48 @@ mod tests {
         );
     }
 
-    /// `select_registration_residual_ms` never falls back to an unconfident reading, and among two
-    /// confident readings prefers the one closer to the applied placement.
+    /// `registration_residual_from_shoulders` never falls back to an unconfident reading, among two
+    /// confident readings selects the one closer to the applied placement, and keeps both per-seam
+    /// reads either way (the far seam is what the routing trigger reads).
     #[test]
-    fn select_registration_residual_ms_prefers_smaller_magnitude_never_falls_back() {
-        assert_eq!(select_registration_residual_ms(None, None), None);
+    fn registration_residual_selects_smaller_magnitude_and_keeps_both_seams() {
+        let sel = |pre, post| {
+            registration_residual_from_shoulders(pre, post, 0.0).map(|r| r.registration_residual_ms)
+        };
+        assert_eq!(sel(None, None), None);
+        assert_eq!(sel(Some(12.0), None), Some(12.0));
+        assert_eq!(sel(None, Some(-7.0)), Some(-7.0));
         assert_eq!(
-            select_registration_residual_ms(Some(12.0), None),
-            Some(12.0)
-        );
-        assert_eq!(
-            select_registration_residual_ms(None, Some(-7.0)),
-            Some(-7.0)
-        );
-        assert_eq!(
-            select_registration_residual_ms(Some(-3.0), Some(9.0)),
+            sel(Some(-3.0), Some(9.0)),
             Some(-3.0),
             "smaller |residual| wins regardless of sign"
         );
         assert_eq!(
-            select_registration_residual_ms(Some(5.0), Some(-5.0)),
+            sel(Some(5.0), Some(-5.0)),
             Some(5.0),
             "tie: pre (first argument) wins"
+        );
+
+        let r = registration_residual_from_shoulders(Some(-72.8), Some(-109.8), 163.3)
+            .expect("both shoulders confident");
+        assert_eq!(r.registration_residual_ms, -72.8);
+        assert_eq!(r.registration_residual_pre_ms, Some(-72.8));
+        assert_eq!(
+            r.registration_residual_post_ms,
+            Some(-109.8),
+            "the far seam is kept, not discarded by the selection"
+        );
+        assert_eq!(r.registration_applied_ms, 163.3);
+
+        let one =
+            registration_residual_from_shoulders(None, Some(4.0), 1.0).expect("post confident");
+        assert_eq!(
+            (
+                one.registration_residual_pre_ms,
+                one.registration_residual_post_ms
+            ),
+            (None, Some(4.0)),
+            "an unconfident seam stays None"
         );
     }
 
@@ -1082,15 +1117,17 @@ mod tests {
                 .expect("dual-fit target");
 
         let confident_floor = params.min_fill_correlation.max(params.fill_absolute_floor);
-        let registration_residual_ms = select_registration_residual_ms(
+        let registration_residual = registration_residual_from_shoulders(
             registration_shoulder_residual_ms(r.pre_seam_r, r.pre_lag, 0.0, sr, confident_floor),
             registration_shoulder_residual_ms(r.post_seam_r, r.post_lag, 0.0, sr, confident_floor),
-        );
+            0.0,
+        )
+        .map(|r| r.registration_residual_ms);
 
         // Pre matches at lag 0 (residual 0.0), post at +step frames (residual −step ms);
         // pre has the smaller magnitude and wins.
         assert_eq!(
-            registration_residual_ms,
+            registration_residual,
             Some(0.0),
             "pre shoulder (lag 0, residual 0.0) has the smaller magnitude vs. post's \
              (−{step} frames), so it is selected: r={r:?}"

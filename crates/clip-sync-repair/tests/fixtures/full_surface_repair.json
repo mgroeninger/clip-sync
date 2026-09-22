@@ -254,7 +254,11 @@
               "repeat_penalty": 0.02,
               "repeat_pre": 0.31,
               "repeat_post": 0.42
-            }
+            },
+            "registration_residual_ms": 12.5,
+            "registration_residual_pre_ms": 12.5,
+            "registration_residual_post_ms": -24.5,
+            "registration_applied_ms": 20.0
           }
         },
         "tags": {
@@ -309,7 +313,10 @@
             "normalize_gain": 0.76647854,
             "program_gain": 0.76647854,
             "local_gain": 1.0,
-            "local_gain_reason": "flag_off"
+            "local_gain_reason": "flag_off",
+            "registration_residual_ms": -3.0,
+            "registration_residual_pre_ms": -3.0,
+            "registration_applied_ms": 0.0
           }
         },
         "tags": {

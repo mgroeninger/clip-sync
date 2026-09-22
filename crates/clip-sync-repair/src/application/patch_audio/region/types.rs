@@ -78,7 +78,7 @@ pub(in crate::application::patch_audio) enum RegionPatchOutcome {
         fit_terms: Option<UnifiedFitBreakdown>,
         /// S1: independent shoulder-seam read of the placement vs. the applied placement. Record-only —
         /// no gate reads this. Carried through to `GapPatchStatus::Patched::registration_residual_ms`.
-        registration_residual_ms: Option<f64>,
+        registration_residual: Option<crate::domain::patch_result::RegistrationResidual>,
     },
     Skipped {
         reason: GapPatchSkipReason,
@@ -221,7 +221,7 @@ pub(in crate::application::patch_audio) fn outcomes_in_report_order(
                 normalize_gain,
                 local_gain,
                 fit_terms,
-                registration_residual_ms,
+                registration_residual,
                 ..
             } => {
                 if let Some(verdict) = residual {
@@ -250,7 +250,7 @@ pub(in crate::application::patch_audio) fn outcomes_in_report_order(
                     dual_fit_step_real: *dual_fit_step_real,
                     dual_fit_post_window_ms: *dual_fit_post_window_ms,
                     fit_terms: *fit_terms,
-                    registration_residual_ms: *registration_residual_ms,
+                    registration_residual: *registration_residual,
                 }
             }
             RegionPatchOutcome::Skipped { reason, residual } => {
@@ -473,7 +473,7 @@ pub(in crate::application::patch_audio) fn outcome_from_spec(
             normalize_gain,
             local_gain,
             fit_terms,
-            registration_residual_ms,
+            registration_residual,
             ..
         }) => {
             let offset_nominal_start = spec.b_extract.b_mapped_start_frame;
@@ -497,7 +497,7 @@ pub(in crate::application::patch_audio) fn outcome_from_spec(
                 fit_terms: *fit_terms,
                 normalize_gain: *normalize_gain,
                 local_gain: *local_gain,
-                registration_residual_ms: *registration_residual_ms,
+                registration_residual: registration_residual.as_deref().copied(),
             }
         }
         GapRepairVerdict::Patch(GapRepairStrategy::SilenceSplice {
@@ -505,7 +505,7 @@ pub(in crate::application::patch_audio) fn outcome_from_spec(
             post_seam_r,
             residual,
             confidence,
-            registration_residual_ms,
+            registration_residual,
             normalize_gain,
             local_gain,
             step_real,
@@ -533,7 +533,7 @@ pub(in crate::application::patch_audio) fn outcome_from_spec(
             // preview read and `region/execute.rs`'s splice cannot diverge.
             normalize_gain: *normalize_gain,
             local_gain: *local_gain,
-            registration_residual_ms: *registration_residual_ms,
+            registration_residual: registration_residual.as_deref().copied(),
         },
         GapRepairVerdict::Skip { reason, .. } => {
             skip_outcome_from_fields(reason, spec.tags_ctx.gate.residual)
@@ -614,7 +614,7 @@ mod tests {
                 step_real: true,
                 residual: None,
                 confidence: crate::domain::FillConfidence::High,
-                registration_residual_ms: None,
+                registration_residual: None,
                 normalize_gain: g_program * g_local.gain(),
                 local_gain: g_local,
                 dual_fit_post_window_ms: None,
@@ -704,7 +704,7 @@ mod tests {
             normalize_gain: 1.0,
             local_gain: crate::domain::LocalGainDecision::OFF,
             fit_terms: None,
-            registration_residual_ms: None,
+            registration_residual: None,
         };
         let tags_for =
             |status: &GapPatchStatus| derive_gap_tags_from_status(status, fill_mode, thresholds);
@@ -829,7 +829,7 @@ mod tests {
             normalize_gain: 1.0,
             local_gain: crate::domain::LocalGainDecision::OFF,
             fit_terms: None,
-            registration_residual_ms: None,
+            registration_residual: None,
         };
         let tags = derive_gap_tags_from_status(
             &GapPatchStatus::NotPlanned {

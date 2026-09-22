@@ -278,7 +278,7 @@ mod tests {
                     normalize_gain: 1.0,
                     local_gain: crate::domain::LocalGainDecision::OFF,
                     fit_terms: None,
-                    registration_residual_ms: None,
+                    registration_residual: None,
                 },
                 dummy_region_tags(),
             ),
@@ -303,7 +303,7 @@ mod tests {
                     normalize_gain: 1.0,
                     local_gain: crate::domain::LocalGainDecision::OFF,
                     fit_terms: None,
-                    registration_residual_ms: None,
+                    registration_residual: None,
                 },
                 dummy_region_tags(),
             ),
@@ -346,7 +346,7 @@ mod tests {
             normalize_gain: 1.0,
             local_gain: crate::domain::LocalGainDecision::OFF,
             fit_terms: None,
-            registration_residual_ms: None,
+            registration_residual: None,
         };
         let high = RegionPatchOutcome::Patched {
             pre_correlation: 0.5,
@@ -367,7 +367,7 @@ mod tests {
             normalize_gain: 1.0,
             local_gain: crate::domain::LocalGainDecision::OFF,
             fit_terms: None,
-            registration_residual_ms: None,
+            registration_residual: None,
         };
         assert!(should_apply_anchored_retry_outcome(&skip, &high));
         assert!(should_apply_anchored_retry_outcome(&marginal, &high));

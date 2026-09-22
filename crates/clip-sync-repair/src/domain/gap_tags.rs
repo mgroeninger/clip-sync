@@ -928,7 +928,7 @@ mod tests {
             local_gain: 1.0,
             local_gain_reason: crate::domain::LocalGainReason::FlagOff,
             fit_terms: None,
-            registration_residual_ms: None,
+            registration_residual: None,
         };
         let tags = derive_gap_tags_from_status(&status, FillMode::Fit, FillTierThresholds::DEFAULT);
         assert!(tags.anchor_seam_used);
@@ -958,7 +958,7 @@ mod tests {
             local_gain: 1.0,
             local_gain_reason: crate::domain::LocalGainReason::FlagOff,
             fit_terms: None,
-            registration_residual_ms: None,
+            registration_residual: None,
         };
         let tags = derive_gap_tags_from_status(&status, FillMode::Fit, FillTierThresholds::DEFAULT);
         assert!(tags.dual_fit_used);

@@ -260,7 +260,7 @@ mod tests {
             trim_frames: 240,
             residual: None,
             confidence: FillConfidence::High,
-            registration_residual_ms: None,
+            registration_residual: None,
             normalize_gain: 1.0,
             local_gain: clip_sync_repair::domain::LocalGainDecision::OFF,
             dual_fit_post_window_ms: None,
@@ -293,7 +293,7 @@ mod tests {
             normalize_gain: 1.0,
             local_gain: clip_sync_repair::domain::LocalGainDecision::OFF,
             fit_terms: None,
-            registration_residual_ms: None,
+            registration_residual: None,
         }
     }
 

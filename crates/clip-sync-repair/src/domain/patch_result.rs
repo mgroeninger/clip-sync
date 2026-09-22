@@ -565,12 +565,12 @@ pub enum GapPatchStatus {
         /// run the unified objective, and on runs predating 2026-08-12.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         fit_terms: Option<crate::domain::gap_fill_fit::UnifiedFitBreakdown>,
-        /// S1: independent shoulder-seam read of the placement vs. `align_adjustment_secs`
-        /// (`applied_ms − shoulder_lag_ms`, milliseconds, signed), for whichever shoulder's
-        /// seam-local peak is more confident. `None` when neither shoulder is confident.
+        /// S1: independent shoulder-seam reads of the placement — see [`RegistrationResidual`].
+        /// Flattened, so the wire keeps `registration_residual_ms` where it always was and adds the
+        /// per-seam keys beside it. `None` (no keys at all) when neither shoulder is confident.
         /// Record-only — no gate reads this field.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        registration_residual_ms: Option<f64>,
+        #[serde(flatten)]
+        registration_residual: Option<RegistrationResidual>,
     },
     Skipped {
         reason: GapPatchSkipReason,
@@ -584,6 +584,32 @@ pub enum GapPatchStatus {
     NotApplied {
         reason: GapPatchNotAppliedReason,
     },
+}
+
+/// S1 registration read of one patched gap: each licensed shoulder's independent seam-local lag
+/// against the placement actually written, `applied_ms − shoulder_lag_ms` (ms, signed; positive =
+/// the fill sits late of that shoulder). Record-only — no gate reads it. A behaviourless record
+/// serialized directly (`docs/json-output.md` § Revision procedure): field names are the wire keys,
+/// and the selection lives with its producer (`region::dual_fit::registration_residual_from_shoulders`).
+///
+/// `registration_residual_ms` is the historical key: the licensed shoulder that agrees more closely
+/// with the placement (smaller `|·|`, pre on a tie). The per-seam keys (added
+/// 2026-09-22, `docs/dev/TEMP-dual-fit-registration-routing-plan.md` § 3) keep the other shoulder,
+/// which the selection used to discard — across a map step the two differ by the step, and the
+/// farther seam is the one a misplaced fill fails on. A per-seam key is absent when that shoulder's
+/// peak is below the confidence floor.
+///
+/// `registration_applied_ms` is the minuend both residuals share: `align_adjustment_secs × 1000` plus Fit's
+/// trim-head move, which `align_adjustment_secs` does not carry. `0.0` on dual-fit, matching that
+/// path's recorded `align_adjustment_secs`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct RegistrationResidual {
+    pub registration_residual_ms: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub registration_residual_pre_ms: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub registration_residual_post_ms: Option<f64>,
+    pub registration_applied_ms: f64,
 }
 
 /// Skip serializing `anchor_bracket_move_frames` for non-anchor patches (the common case).

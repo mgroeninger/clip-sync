@@ -62,7 +62,7 @@ fn gap_status_gating_core(status: &GapPatchStatus) -> GapPatchStatus {
             // score terms are a report of how it was reached.
             fit_terms: None,
             // Same class — a record-only independent measurement, not a gating input (S1).
-            registration_residual_ms: None,
+            registration_residual: None,
         },
         other => other.clone(),
     }
