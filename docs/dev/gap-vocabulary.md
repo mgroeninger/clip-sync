@@ -127,7 +127,7 @@ reaches this table ([pipeline.md](../pipeline.md) phases 2–3; § Silence-chara
 > registration the sensors **measured**. Pair 26 slid −1450 ms from a 0.997-correlation landmark
 > both shoulders agree on to within 19 ms; 17/g34 was the class-test candidate (~1.15 s slide in
 > the 2026-08-13 join) and the 2026-08-27 ear-pass **could not confirm** 26-class wrong-when.
-> Hole 1 stays n=1. The 2026-08-27 axis-2 start sweep diagnosed *how* 26/g6's choice was made:
+> Hole 1 stayed n=1 until 2026-09-21: 13/g16 is the second, ear-confirmed (a repeat at the pre seam; fill 73 / 110 ms early of shoulders at r 0.98 / 0.99 — BACKLOG § *Fill placement*). The 2026-08-27 axis-2 start sweep diagnosed *how* 26/g6's choice was made:
 > −50 ms was a scored candidate (rank 2) and lost on `total` because seam `waveform_min` at
 > −1450 beat better structure at −50; the 0.997 lock is a different instrument than the seam
 > Pearson the objective ranks ([findings §6.8](archive/TEMP-31g7-model-vs-findings.md)). That
