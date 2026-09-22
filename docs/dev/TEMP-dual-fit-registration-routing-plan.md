@@ -1,8 +1,9 @@
 # TEMP — Dual-fit registration routing
 
 **Status:** drafted 2026-09-22. Phase 0 code landed 2026-09-22 (per-seam
-fields, PR gate green); the corpus `--patch-only` rerun is running. The
-coverage census is done (§ 1b, § 7). Production arm (`patch_audio`
+fields, PR gate green); the corpus `--patch-only` rerun is running, with its
+processing validated on the first 33 pairs (§ 7). The coverage census is done
+(§ 1b, § 7). Production arm (`patch_audio`
 characterize → dual-fit), plus one measurement-arm Change in Phase 1c
 (fingerprint dump fields). Record-only through Phase 1; flag-gated, default
 off, through Phase 3.
@@ -239,7 +240,36 @@ selection throws that information away.
 - Also add `registration_applied_ms`, the written fill's start that the
   residuals subtract from (`align_adjustment_secs` × 1000 plus the Fit head
   trim). `align_adjustment_secs` does not carry the trim, so today the
-  per-seam values cannot be rebuilt from the report alone.
+  per-seam values cannot be rebuilt from the report alone. Measured on the
+  2026-09-22 rerun, the trim is nonzero on **25 of 127** bracket gaps (up to
+  610 ms), so a fifth of the population would be unreconstructable without it.
+- **The field is overloaded on the dual-fit arm — filter before any census.**
+  The two arms feed the same helper two different quantities:
+
+  | | shoulder lag fed in | `applied_ms` | so the residual is |
+  |---|---|---|---|
+  | bracket (`characterize.rs:828–861`) | `seam_local_peak`, an **independent** registration search | real placement | **the seam error** |
+  | dual-fit (`dual_fit.rs:480–495`) | `r.pre_lag` / `r.post_lag`, dual-fit's **own** placement | hardcoded `0.0` | **minus the displacement from nominal** |
+
+  `applied_ms = 0.0` is deliberate — dual-fit has no single rigid applied lag,
+  so the field mirrors the `align_adjustment_secs: 0.0` that the SilenceSplice
+  arm records. The consequence is that a dual-fit fill's *seam error* is ~0 by
+  construction and never appears, while a large |residual| means dual-fit
+  **corrected** a large offset. The sign of merit is inverted between the arms:
+  on bracket, large is the defect; on dual-fit, large is a success.
+
+  This is not a corner case — 84 of 211 patched gaps (40%) took the dual-fit
+  path, median |residual| 133.7 ms. Including them in § 4's table takes the
+  > 75 ms routed set from **12 to 62**. Pair 31 shows both readings side by
+  side: a bracket gap at applied −1073.8 with residual +72.3 (it landed 72 ms
+  short), and the next gap, dual-fit, reporting +1146.7 — which is just
+  `0 − (−1146.7)`, the pair's known −1.15 s map step read off dual-fit's own
+  placement. Same physical offset, opposite meanings.
+
+  Every consumer must filter on `dual_fit_used == false`. Better, before the
+  field acquires more readers: suppress it on the dual-fit arm, or give the
+  dual-fit quantity its own name. Phase 1c item 3 needs dual-fit's *error*,
+  which this field does not contain on either arm.
 - **The instrument is already settled; the frame is not.**
   - The S1 shoulder read equals `lag_decision` exactly: on every trim-free
     gap, `registration_residual_ms` = `align_adjustment − lag_decision` for
@@ -375,13 +405,19 @@ them; nothing on disk says whether its placement differs, or by how much. That
 delta is the routing rule's own evidence, and it is measurable without a single
 listen.
 
-**Why it is nearly free.** `compute_region_measurements` (`overlay.rs`) already
-computes `splice_dualfit` **unconditionally**, patched or skipped. Only the
-derived verdict is suppressed: `dual_fit_rescue_flag` returns `None` when
-`patched` (`gap_fingerprint/schema.rs`, "a patched gap never reaches
-`skip_or_dual_fit`"). That is a statement about production control flow, not
-about data availability. No new decode, no new search — so no measurable cost
-on a corpus fingerprint run.
+**Why it is cheap.** `compute_region_measurements` (`overlay.rs`) already
+computes `splice_dualfit` **unconditionally**, patched or skipped, and the
+`SeamLocks` it is built from carry everything below. Nothing here needs a new
+decode or a new search, so there is no measurable cost on a corpus fingerprint
+run — but items 2 and 3 are **new emissions, not un-suppressions**. An earlier
+draft of this section claimed they were already computed and merely hidden;
+that was wrong, and § 4c's cost was understated as a result. See the correction
+under item 2.
+
+What *is* suppressed is only the derived verdict: `dual_fit_rescue_flag`
+returns `None` when `patched` (`gap_fingerprint/schema.rs`, "a patched gap never
+reaches `skip_or_dual_fit`"). That is a statement about production control flow,
+not about data availability, and it is item 1.
 
 **Change, three additive fields/blocks:**
 
@@ -416,19 +452,69 @@ on a corpus fingerprint run.
    registration-independence deliberate. An aligned variant would be a policy
    nothing reads, and § 1b measured that it would decide nothing: zero of 412
    gaps flip between the two registrations.
-2. **Emit dual-fit's assembled per-shoulder lags on patched gaps** — pre/post
-   seam lag and the r it reaches at its own lag. Computed already; suppressed
-   only by (1).
-3. **Emit the derived delta** per shoulder: dual-fit's lag minus the keep-path
-   fill lag. Paired with Phase 0's `registration_residual_pre_ms` /
-   `_post_ms` on the patch side, this puts **both arms' seam errors on the same
-   gap** — the direct comparison, with no listening at all.
+2. **Emit dual-fit's absolute seam placement.** This is the item the phase
+   turns on, and the one an earlier draft got wrong.
 
-**Cost:** emission plumbing, one `_contract` entry per new key (the macro
-requires `measures` / `placement` / `window` / `not`, and the aligned-vs-nominal
-confusion in § 1b is exactly what those `not:` lines exist to prevent), and
-golden regeneration. Fingerprint dumps are not the frozen v1 CLI contract, but
-check `docs/json-output.md` before assuming a key is free.
+   **The existing `*_seam_lag_ms` keys are not placements — do not build on
+   them.** `splice_dualfit.pre_seam_lag_ms` / `post_seam_lag_ms` are
+   `frac_lag_ms` from a Pearson peak measured **at dual-fit's own seam lock**
+   (`measure/probes.rs:442`), so they are the residual error *after* placement,
+   which is ~0 by construction. Measured over the 2026-09-20 dump, 983 gaps:
+
+   | | med | p99 | max | > 1 ms |
+   |---|---|---|---|---|
+   | `\|pre_seam_lag_ms\|` | 0.0052 | 0.0103 | **0.0104** | 0 |
+   | `\|post_seam_lag_ms\|` | 0.0051 | 0.0103 | **0.0104** | 0 |
+
+   0.0104 ms is exactly half a sample at 48 kHz: the integer lag is *always*
+   zero and only the sub-sample interpolation term survives. These keys are a
+   seam-lock quality check, and they are already emitted on every gap, patched
+   included — nothing about them is suppressed, and nothing about them answers
+   this phase's question.
+
+   **Emit the locks instead.** `SeamLocks` (`domain/seam_locks.rs:126–151`)
+   carries `pre.lag` / `post.lag` — the absolute accepted lag per shoulder — and
+   `b_pre_seam` / `b_post_seam`, documented as "the matched B frame for each
+   shoulder — **the placement a fill would be cut at**". That is exactly the
+   quantity wanted, and `locks` is already in scope at the emission site:
+   `probes.rs:446–449` reads `locks.pre.rescued` and `locks.pre.edge_pinned`
+   from the same struct. Emit the lag (and the B frame) beside them, with
+   `pre.r` / `pre.z` so the placement can be weighted by how well it is
+   determined.
+
+   **State the frame in the `_contract`.** Three frames are already in play —
+   `lag_decision`'s B-at-nominal, the patch report's frame (§ 3's unattributed
+   −10 ms), and the audio frame § 1's bounds are quoted in. A placement emitted
+   without its frame named is not comparable to anything.
+3. **Emit the per-shoulder delta against the keep-path fill.** Paired with
+   Phase 0's `registration_residual_pre_ms` / `_post_ms`, this puts **both arms'
+   placements on the same gap** — the direct comparison, with no listening.
+
+   The dump has no keep-path placement to difference against: its `outcome`
+   block carries `plan_kind` / `tier` / `skip_reason` / `dual_fit_rescue` and no
+   geometry, and its characterize path is a probe that never splices. So either
+   emit the keep-path bracket placement into the dump as well, or compute the
+   delta in the census script by joining the dump to the `--patch-only` report
+   on `geometry.a_start_secs` rounded to 1 ms. **Prefer the join**: differencing
+   two absolute, frame-stamped numbers is arithmetic, not a re-derived decision,
+   and it is decisions (item 1) that must not live in a consumer.
+
+   **What is recoverable today, without any of this.** `trim_frames =
+   bridge_frames − gap_frames` is the *difference* between the two seam lags.
+   Verified on the 2026-09-22 reports: 84 dual-fit gaps joined on
+   `a_start_secs`, and `|trim_ms|` equals the patch-side `|post − pre|` within
+   1 ms on **83 of 84**. So dual-fit's step geometry is already on disk
+   corpus-wide; only the common-mode component — both seams displaced together,
+   and the larger half of § 1's routed set — needs item 2.
+
+**Cost:** emission plumbing for items 1–3, one `_contract` entry per new key
+(the macro requires `measures` / `placement` / `window` / `not` — the
+aligned-vs-nominal confusion in § 1b and the `*_seam_lag_ms` misreading above
+are both exactly what those lines exist to prevent; the `not:` line on a new
+placement key should name `*_seam_lag_ms` directly), and golden regeneration.
+Larger than the "un-suppress a flag" framing of the earlier draft, though still
+small. Fingerprint dumps are not the frozen v1 CLI contract, but check
+`docs/json-output.md` before assuming a key is free.
 
 **Sequencing.** Fold this into the same Change as Phase 2, so **one** corpus
 fingerprint run serves both this and the routing work. A corpus run costs hours
@@ -436,11 +522,14 @@ and ~15 GB RSS; two would be a self-inflicted cost. It does not block Phase 0 or
 Phase 1, which read `--patch-only` reports.
 
 - **Done when:**
-  - a patched gap's dump carries dual-fit's verdict, its per-shoulder lags and
-    the per-shoulder delta;
+  - a patched gap's dump carries dual-fit's verdict, its **absolute** per-shoulder
+    placement with the frame named in the `_contract`, and the per-shoulder delta
+    against the keep-path fill;
   - `dualfit-coverage-census.ps1` reads the emitted verdict instead of
     re-deriving it (and its default predicate drops the stale `step_real` leg);
-  - the delta distribution over the corpus is recorded in § 7, per kind.
+  - the delta distribution over the corpus is recorded in § 7, per kind, with
+    the common-mode half distinguished from the step half that `trim_frames`
+    already gives.
 - **Reads out as:** the § 6 cohort can then be sampled on *measured placement
   disagreement* rather than on the single-lag residual alone. Where both arms
   land within a few ms of each other, routing cannot change what is heard, and
@@ -584,6 +673,58 @@ hypotheses died here and should not be re-proposed: donor misregistration
 (zero of 412 gaps flip between registrations) and "bracket patches
 non-dropouts" (199 of those 202 never reach the patch path). The remaining
 question is placement quality, which Phase 1c instruments.
+
+**Processing validation on the partial rerun (33 pairs, 211 patched gaps) —
+done 2026-09-22.** Run at pair 33 of 53; every check below is independent of
+the remaining pairs.
+
+- **Placement is bit-identical.** `diff-patch-outcomes.ps1` over 746 joined
+  gaps: **0 changed**. The only differences are four run-level fields, all of
+  pair 31's `injected_time` block disappearing — the known, already-validated
+  consequence of 7062431. Phase 0 changed no placement; invariant 2's spirit
+  holds on the real corpus, not just the goldens.
+- **The § 1 reconstruction was accurate.** Restated in the audio frame, the
+  measured bracket set tracks the provisional table closely (median 43.5 vs
+  44.4, p75 60.5 vs 61.2, p95 96.7 vs 93.4, max 894.5 vs 894.5 exactly).
+  Remaining differences are subset effects. § 1's table can be replaced
+  wholesale when the run finishes, not reinterpreted.
+- **The −10 ms is confirmed, constant and signed:** report frame = audio frame
+  − 10.0 ms, on all 14 plan-named gaps, both error signs, 10 pairs. 13/g16
+  reads −72.8 / −109.8 and 32/g13 reads −26.0 / −34.0 — both exact. Still
+  unattributed (§ 3), but it is a fixed frame offset, not an artefact of the
+  new fields, and a bound converts by +10 ms with no ambiguity.
+- **The selection and licensing assumptions hold.** `registration_residual_ms`
+  is the smaller-|·| seam in 211/211, and `one_seam` **never occurs** — both
+  shoulders are licensed on every patched gap, so invariant 4 excludes nothing
+  and the census `kind` needs only two values, not three.
+- **Two processing defects found, both recorded where they bite.** The patch
+  field is overloaded on the dual-fit arm (§ 3) and the dump's
+  `*_seam_lag_ms` keys are post-placement residuals, not placements (§ 4c
+  item 2). The second one invalidated Phase 1c's central premise and would
+  have surfaced as a column of zeros *after* a corpus fingerprint run.
+- **Gap indices do not join.** The dump's `gap.index` is 0-based and the patch
+  report carries no index at all, so plan `gN` = dump index `N` = report array
+  position `N+1`, confirmed on all 14 named gaps. Report position 6 in pair 26
+  is a +25.8 / +56.4 gap, so rendering "26/g6" by position would put the wrong
+  clip in front of § 4b's listener. Join on `geometry.a_start_secs` rounded to
+  1 ms, always.
+
+**Contracts for the three blocks that caused the misreads — done 2026-09-22.**
+Both defects above were *reader* defects: nothing in the dump said what
+`splice_dualfit.*_seam_lag_ms` was measured against, or that `outcome.tier` is
+the bracket gate in isolation. `splice`, `splice_dualfit` and `outcome` now
+ship a `_contract` (C3 in `docs/dev/gap-fingerprint.md`), joining the nine
+existing groups. The three strings say, respectively: `splice` is the
+single-lag registration step derived from `lag_decision`, not `splice_dualfit`;
+`splice_dualfit` places each shoulder at its **own** seam-local lock and its
+`*_seam_lag_ms` is residual **at** that lock (~0 by construction), never a
+placement; `outcome` is the bracket gate, upstream of `skip_equivalent_gaps`,
+so `tier: patch` is not `equivalence_production`'s disposition.
+
+Caveat that matters for Phase 1: **contracts are write-time.** The dumps
+already on disk do not gain them — only a fingerprint run made from this build
+carries them. The census scripts must keep reading the values, never the
+contract.
 
 *(other phases — fill as they land)*
 

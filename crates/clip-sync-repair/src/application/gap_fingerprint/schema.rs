@@ -599,8 +599,8 @@ pub struct GapFingerprint {
     pub tier: DetailTier,
     pub sample_rate: u32,
     pub channels: u16,
-    pub geometry: GapGeometry,
-    pub levels: LevelProfile,
+    pub geometry: Contracted<GapGeometry>,
+    pub levels: Contracted<LevelProfile>,
     /// Collar / relative-silence test. Omitted by the spec projector; restored by the from-decode
     /// overlay. `None` means unmeasured (pre-overlay dump, or never reached pass 1).
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -620,9 +620,9 @@ pub struct GapFingerprint {
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub brackets: Vec<BracketInfo>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub structure: Option<StructureScores>,
+    pub structure: Option<Contracted<StructureScores>>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub seams: Option<SeamScores>,
+    pub seams: Option<Contracted<SeamScores>>,
     /// Lag at the best-structure **editorial bracket** — a *diagnostic* placement that can sit far
     /// from the throat the gate actually scores. Nothing decides on it; prefer `lag_decision` for
     /// anything registration-shaped.
@@ -681,11 +681,11 @@ pub struct GapFingerprint {
     /// `levels` (A), computed by the same `level_profile` logic. Lets "quiet in both masters ⇒ not a
     /// dropout" compare B's gap level against B's *own* noise floor (D11). Full tier, gate path.
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub b_levels: Option<LevelProfile>,
+    pub b_levels: Option<Contracted<LevelProfile>>,
     /// First-class splice summary: the per-side registration step + peaks/uniqueness the repair predicate
     /// reads directly (instead of re-deriving from `lag_decision`). Full tier, gate path.
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub splice: Option<SpliceSummary>,
+    pub splice: Option<Contracted<SpliceSummary>>,
     /// Wide (100 ms-bin) envelope segment-identity confirmer at the decision seam — its peak lag should
     /// agree with the fine-waveform lag (§3.6a cross-scale check). Full tier, gate path.
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -693,7 +693,7 @@ pub struct GapFingerprint {
     /// Dual-fit repair viability at the per-shoulder placement — the gate-equivalent seam score for a
     /// length-reconciled fill (ledger C3/C7). Full tier, gate path.
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub splice_dualfit: Option<SpliceDualfit>,
+    pub splice_dualfit: Option<Contracted<SpliceDualfit>>,
     /// Post-seam window ladder (`docs/dev/archive/TEMP-dual-fit-post-window-ladder-plan.md`) — same-start
     /// re-locks of the **post** seam at `{250, 375, 500, 625, 750, 1000}` ms, envelope off, ±600 ms.
     /// Sibling of `splice_dualfit`, not nested in it: `splice_dualfit` stays the 250 ms
@@ -707,7 +707,7 @@ pub struct GapFingerprint {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub pre_window_ladder: Option<Vec<PreWindowLadderRung>>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub outcome: Option<GateOutcome>,
+    pub outcome: Option<Contracted<GateOutcome>>,
     /// Gap-equivalence classification (`docs/dev/gap-vocabulary.md` § Silence-character pre-gate): does this gap need patching?
     /// Derived from the **silence character** — A's gap RMS vs the recording's noise floor (dropout vs room
     /// tone) + donor silence (is B occupied) — the signals that separate real dropouts from mutual/program
@@ -1627,7 +1627,9 @@ pub struct GateOutcome {
 #[cfg(test)]
 mod tests {
     use super::super::contract::{
-        stamp, DONOR_INTERIOR_ALIGNED_CONTRACT, RESIDUAL_CONTRACT, SEAM_PROBE_CONTRACT,
+        stamp, Contracted, DONOR_INTERIOR_ALIGNED_CONTRACT, GATE_OUTCOME_CONTRACT,
+        GEOMETRY_CONTRACT, LEVELS_CONTRACT, RESIDUAL_CONTRACT, SEAMS_CONTRACT, SEAM_PROBE_CONTRACT,
+        SPLICE_CONTRACT, STRUCTURE_CONTRACT,
     };
     use super::*;
 
@@ -2059,24 +2061,30 @@ mod tests {
             tier: DetailTier::Summary,
             sample_rate: 48_000,
             channels: 6,
-            geometry: GapGeometry {
-                a_start_secs: 832.5,
-                a_end_secs: 834.0,
-                a_refined_start_secs: 832.304,
-                a_refined_end_secs: 834.133,
-                duration_secs: 1.829,
-                b_mapped_start_secs: Some(826.752),
-                b_mapped_end_secs: Some(828.581),
-                fill_offset_secs: Some(-5.552),
-            },
-            levels: LevelProfile {
-                bin_ms: Some(50),
-                profile_db: vec![-45.0, -24.0, -45.0],
-                floor_db: Some(-120.0),
-                speech_peak_db: Some(-22.0),
-                noise_floor_db: -45.0,
-                gap_floor_db: -120.0,
-            },
+            geometry: Contracted::new(
+                GapGeometry {
+                    a_start_secs: 832.5,
+                    a_end_secs: 834.0,
+                    a_refined_start_secs: 832.304,
+                    a_refined_end_secs: 834.133,
+                    duration_secs: 1.829,
+                    b_mapped_start_secs: Some(826.752),
+                    b_mapped_end_secs: Some(828.581),
+                    fill_offset_secs: Some(-5.552),
+                },
+                GEOMETRY_CONTRACT,
+            ),
+            levels: Contracted::new(
+                LevelProfile {
+                    bin_ms: Some(50),
+                    profile_db: vec![-45.0, -24.0, -45.0],
+                    floor_db: Some(-120.0),
+                    speech_peak_db: Some(-22.0),
+                    noise_floor_db: -45.0,
+                    gap_floor_db: -120.0,
+                },
+                LEVELS_CONTRACT,
+            ),
             silence: Some(SilenceProfile {
                 collar_rms_peak_ratio: 0.42,
                 collar_above_relative_floor: true,
@@ -2159,18 +2167,24 @@ mod tests {
                 },
             }),
             brackets: vec![],
-            structure: Some(StructureScores {
-                baseline_pre: 0.996,
-                baseline_post: 0.926,
-            }),
-            seams: Some(SeamScores {
-                baseline_pre: 0.030,
-                baseline_post: 0.030,
-                selected_channels: vec![2],
-                per_channel: vec![(0.030, -0.050), (0.030, 0.030)],
-                mono_pre: 0.0296,
-                mono_post: 0.0290,
-            }),
+            structure: stamp(
+                Some(StructureScores {
+                    baseline_pre: 0.996,
+                    baseline_post: 0.926,
+                }),
+                STRUCTURE_CONTRACT,
+            ),
+            seams: stamp(
+                Some(SeamScores {
+                    baseline_pre: 0.030,
+                    baseline_post: 0.030,
+                    selected_channels: vec![2],
+                    per_channel: vec![(0.030, -0.050), (0.030, 0.030)],
+                    mono_pre: 0.0296,
+                    mono_post: 0.0290,
+                }),
+                SEAMS_CONTRACT,
+            ),
             lag_editorial: None,
             lag_decision: None,
             residual: stamp(
@@ -2215,14 +2229,17 @@ mod tests {
                 }),
                 DONOR_INTERIOR_ALIGNED_CONTRACT,
             ),
-            splice: Some(SpliceSummary {
-                step_ms: 4.2,
-                pre_peak_r: 0.99,
-                post_peak_r: 0.96,
-                pre_peak_z: Some(15.0),
-                post_peak_z: Some(14.0),
-                edge_pinned: Some(false),
-            }),
+            splice: stamp(
+                Some(SpliceSummary {
+                    step_ms: 4.2,
+                    pre_peak_r: 0.99,
+                    post_peak_r: 0.96,
+                    pre_peak_z: Some(15.0),
+                    post_peak_z: Some(14.0),
+                    edge_pinned: Some(false),
+                }),
+                SPLICE_CONTRACT,
+            ),
             wide_envelope: Some(WideEnvelopeFingerprint {
                 pre: Some(EnvPeak {
                     peak_r: 0.98,
@@ -2236,15 +2253,18 @@ mod tests {
             pre_window_ladder: None,
             donor_interior_nominal: None,
             b_levels: None,
-            outcome: Some(GateOutcome {
-                plan_kind: "fillable".into(),
-                tier: "hard_skip".into(),
-                seam_shape: Some("symmetric_weak".into()),
-                fit_path: Some("baseline_only".into()),
-                signature_mode: Some("energy".into()),
-                skip_reason: Some("boundary correlation below threshold".into()),
-                dual_fit_rescue: None,
-            }),
+            outcome: stamp(
+                Some(GateOutcome {
+                    plan_kind: "fillable".into(),
+                    tier: "hard_skip".into(),
+                    seam_shape: Some("symmetric_weak".into()),
+                    fit_path: Some("baseline_only".into()),
+                    signature_mode: Some("energy".into()),
+                    skip_reason: Some("boundary correlation below threshold".into()),
+                    dual_fit_rescue: None,
+                }),
+                GATE_OUTCOME_CONTRACT,
+            ),
             equivalence_diagnostic: None,
             equivalence_production: None,
         };

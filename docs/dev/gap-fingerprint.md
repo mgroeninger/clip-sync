@@ -337,14 +337,37 @@ too easy to skip, and too far from the value it explains.
 | **Wire shape** | Unchanged — `#[serde(flatten)]` keeps the group's own keys where they were, with `_contract` beside them |
 | **Absence** | Always valid. Old corpora, and any path that stamps nothing, deserialize to `None` |
 | **Goldens** | Not a Tier-1/2 axis. Curated fixtures stay contract-free until an intentional harvest |
-| **Repetition** | Repeated per gap for the eight per-gap groups, deliberately. `source.alignment` is once per corpus |
+| **Repetition** | Repeated per gap for the sixteen per-gap groups, deliberately. `source.alignment` is once per corpus |
+| **Shape** | Only a group that serializes as a **map**. `#[serde(flatten)]` cannot wrap an array, so `brackets`, `pre_window_ladder` and `post_window_ladder` cannot carry one as they stand |
 
-Carried today by nine groups: `equivalence_diagnostic` and `equivalence_production` (C1,
+Carried today by seventeen groups: `equivalence_diagnostic` and `equivalence_production` (C1,
 2026-08-07), then `lag_decision`, `lag_editorial`, `donor_interior_aligned`,
 `donor_interior_nominal`, `residual` and `seam_probe` (C2, 2026-08-08) — the four confusable pairs
 this corpus is actually misread on — plus `source.alignment` (2026-08-21), the pair-level scan map
-that is not `lag_decision` and not per-gap `fill_offset_secs`. Source of truth for the strings is
-`application/gap_fingerprint/contract.rs`; do not retype them elsewhere.
+that is not `lag_decision` and not per-gap `fill_offset_secs`, and `splice`, `splice_dualfit` and
+`outcome` (C3, 2026-09-22). C3 covers the three blocks that were misread in practice while
+uncontracted: `splice` vs `splice_dualfit` (one single-lag registration step vs two independent
+seam-local locks), `splice_dualfit.*_seam_lag_ms` (residual **at** the lock, ~0 by construction —
+not a placement), and `outcome.tier`, which is the bracket gate in isolation and sits upstream of
+`skip_equivalent_gaps`, so `tier: patch` is not "production patched". Source of truth for the
+strings is `application/gap_fingerprint/contract.rs`; do not retype them elsewhere.
+
+C3 also covers three pairs whose halves are distinguished only by a prefix or not at all:
+`structure` / `seams` (the coarse and waveform tiers, which share the field names `baseline_pre`
+and `baseline_post`, are **absent on every from-decode dump**, and on the projection path carry the
+stored minimum duplicated across pre and post rather than a measured pair), `levels` / `b_levels`
+(the same envelope on A and on B, where `noise_floor_db` is a *median over context bins* and
+`gap_floor_db` a *max inside the gap* — two reductions, not two ends of a range), and `geometry`,
+whose contract records that `duration_secs` is the **refined** span and that `a_start_secs` rounded
+to 1 ms is the join key for a gap, the gap index being 0-based and joining nothing.
+
+Two contracts were **corrected** in C3 rather than added. `donor_interior_nominal` claimed
+`silence_fraction ~1 => program-quiet, not a dropout`; that reading was refuted by ear, because the
+donor test asks whether B is non-silent rather than whether B is silent where A is, and because the
+nominal map it is measured at has been observed misregistered by up to ~400 ms. Its `measures` now
+states the quantities only, and the caveat moved to `placement` / `window` / `not`.
+`equivalence_production`'s `placement` gained the same caveat about which map the donor window is
+taken on.
 
 Two things the contract strings deliberately do **not** do:
 

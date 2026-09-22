@@ -8,8 +8,11 @@
 // Explicit, not a glob: `contract::*` would pull every future contract const into this module's
 // namespace, and the point of the write sites is that each names the one contract it stamps.
 use super::contract::{
-    stamp, DONOR_INTERIOR_ALIGNED_CONTRACT, DONOR_INTERIOR_NOMINAL_CONTRACT, LAG_DECISION_CONTRACT,
-    LAG_EDITORIAL_CONTRACT, RESIDUAL_CONTRACT, SEAM_PROBE_CONTRACT,
+    stamp, Contracted, B_LEVELS_CONTRACT, DONOR_INTERIOR_ALIGNED_CONTRACT,
+    DONOR_INTERIOR_NOMINAL_CONTRACT, GATE_OUTCOME_CONTRACT, GEOMETRY_CONTRACT,
+    LAG_DECISION_CONTRACT, LAG_EDITORIAL_CONTRACT, LEVELS_CONTRACT, RESIDUAL_CONTRACT,
+    SEAMS_CONTRACT, SEAM_PROBE_CONTRACT, SPLICE_CONTRACT, SPLICE_DUALFIT_CONTRACT,
+    STRUCTURE_CONTRACT,
 };
 use super::schema::*;
 use crate::domain::gap_repair_spec::{GapRepairSpec, GapRepairVerdict, LevelTags};
@@ -233,47 +236,56 @@ pub fn spec_to_fingerprint_summary(
         tier: DetailTier::Full,
         sample_rate,
         channels,
-        geometry: GapGeometry {
-            a_start_secs: spec.a_start_secs,
-            a_end_secs: spec.a_end_secs,
-            a_refined_start_secs: refined_start_secs,
-            a_refined_end_secs: refined_end_secs,
-            duration_secs: (refined_end_secs - refined_start_secs).max(0.0),
-            b_mapped_start_secs: Some(refined_start_secs + spec.gap_offset_secs),
-            b_mapped_end_secs: Some(refined_end_secs + spec.gap_offset_secs),
-            fill_offset_secs: Some(spec.gap_offset_secs),
-        },
-        levels: projected_level_profile(tags.levels.as_ref()),
+        geometry: Contracted::new(
+            GapGeometry {
+                a_start_secs: spec.a_start_secs,
+                a_end_secs: spec.a_end_secs,
+                a_refined_start_secs: refined_start_secs,
+                a_refined_end_secs: refined_end_secs,
+                duration_secs: (refined_end_secs - refined_start_secs).max(0.0),
+                b_mapped_start_secs: Some(refined_start_secs + spec.gap_offset_secs),
+                b_mapped_end_secs: Some(refined_end_secs + spec.gap_offset_secs),
+                fill_offset_secs: Some(spec.gap_offset_secs),
+            },
+            GEOMETRY_CONTRACT,
+        ),
+        levels: Contracted::new(
+            projected_level_profile(tags.levels.as_ref()),
+            LEVELS_CONTRACT,
+        ),
         silence: None,
         contour: None,
         anchors: None,
         constellation: None,
         brackets,
-        structure,
-        seams,
+        structure: stamp(structure, STRUCTURE_CONTRACT),
+        seams: stamp(seams, SEAMS_CONTRACT),
         lag_editorial: stamp(x.lag_editorial, LAG_EDITORIAL_CONTRACT),
         lag_decision: stamp(lag_decision, LAG_DECISION_CONTRACT),
         residual: stamp(residual, RESIDUAL_CONTRACT),
         seam_probe: stamp(x.seam_probe, SEAM_PROBE_CONTRACT),
         donor_interior_aligned: stamp(tags.donor_aligned, DONOR_INTERIOR_ALIGNED_CONTRACT),
         donor_interior_nominal: stamp(tags.donor_nominal, DONOR_INTERIOR_NOMINAL_CONTRACT),
-        b_levels: x.b_levels,
-        splice,
+        b_levels: stamp(x.b_levels, B_LEVELS_CONTRACT),
+        splice: stamp(splice, SPLICE_CONTRACT),
         wide_envelope: x.wide_envelope,
-        splice_dualfit,
+        splice_dualfit: stamp(splice_dualfit, SPLICE_DUALFIT_CONTRACT),
         // Ladder is a from-decode-loop overlay (not a spec projection, like `equivalence_*` below);
         // the projection leaves it None.
         post_window_ladder: None,
         pre_window_ladder: None,
-        outcome: Some(GateOutcome {
-            plan_kind: "fillable".into(),
-            dual_fit_rescue,
-            tier,
-            seam_shape: None,
-            fit_path: None,
-            signature_mode: None,
-            skip_reason,
-        }),
+        outcome: stamp(
+            Some(GateOutcome {
+                plan_kind: "fillable".into(),
+                dual_fit_rescue,
+                tier,
+                seam_shape: None,
+                fit_path: None,
+                signature_mode: None,
+                skip_reason,
+            }),
+            GATE_OUTCOME_CONTRACT,
+        ),
         // Equivalence is a from-decode-loop overlay (not a spec projection); the projection leaves it None.
         equivalence_diagnostic: None,
         equivalence_production: None,
@@ -592,11 +604,11 @@ pub fn tags_from_fingerprint(fp: &GapFingerprint) -> crate::domain::gap_repair_s
     tags_from_fields(TagFieldSources {
         lag_decision: fp.lag_decision_fingerprint(),
         diag_lag: fp.lag_editorial_fingerprint(),
-        splice: fp.splice.as_ref(),
-        splice_dualfit: fp.splice_dualfit,
+        splice: fp.splice.as_deref(),
+        splice_dualfit: fp.splice_dualfit.as_deref().copied(),
         brackets: &fp.brackets,
-        structure: fp.structure.as_ref(),
-        seams: fp.seams.as_ref(),
+        structure: fp.structure.as_deref(),
+        seams: fp.seams.as_deref(),
         residual: fp.residual_info().copied(),
         donor_interior_aligned: fp.donor_interior_aligned_span().copied(),
         donor_interior_nominal: fp.donor_interior_nominal_span().copied(),
@@ -675,11 +687,11 @@ pub fn fingerprint_to_spec(fp: &GapFingerprint) -> crate::domain::gap_repair_spe
 
 #[cfg(test)]
 mod tests {
-    use super::super::contract::Contracted;
+    use super::super::contract::{Contracted, MetricContract};
     use super::*;
     use crate::domain::gap_repair_spec::{
         BExtractWindow, GapRepairCell, GapRepairSpec, GapRepairTags, GapRepairVerdict, GateTags,
-        SeamLocalTags,
+        RegistrationTags, SeamLocalTags,
     };
     use crate::domain::patch_result::GapPatchSkipReason;
     use crate::domain::policies::RefinedGapFrames;
@@ -858,6 +870,7 @@ mod tests {
         // non-positive bridge raises.
         let df = fp
             .splice_dualfit
+            .as_ref()
             .expect("seam_local projects a splice_dualfit");
         assert_eq!(
             (
@@ -883,7 +896,10 @@ mod tests {
         assert_eq!(o.skip_reason.as_deref(), Some("waveform_floor"));
 
         // splice_dualfit — single-source copies of seam_local (A7), gate_pass + step-real inputs preserved.
-        let df = fp.splice_dualfit.expect("splice_dualfit projected");
+        let df = fp
+            .splice_dualfit
+            .as_ref()
+            .expect("splice_dualfit projected");
         assert_eq!(df.pre_seam_r, 0.97);
         assert_eq!(df.post_seam_r, 0.95);
         assert_eq!(df.post_seam_global_r, 0.40);
@@ -906,7 +922,7 @@ mod tests {
         );
     }
 
-    /// C2: this projection is the **only** write site for four of the six contracted groups, so a
+    /// C2/C3: this projection is the **only** write site for seven of the twelve contracted groups, so a
     /// dropped `stamp(...)` here would ship a contract-free dump with nothing failing. C1 pinned its
     /// own write side (`from_decode_dump_stamps_a_contract_on_both_equivalence_verdicts`); this is the
     /// C2 counterpart.
@@ -916,7 +932,7 @@ mod tests {
     /// swapped pair of `stamp` arguments is both easy to write and invisible to a presence check. Each
     /// contract's `not` names its sibling, which makes a swap detectable from the text alone.
     #[test]
-    fn projection_stamps_each_c2_group_with_its_own_contract() {
+    fn projection_stamps_each_contracted_group_with_its_own_contract() {
         use crate::domain::policies::{SeamFloorSource, SeamResidualVerdict};
 
         let donor = |rms_db: f64| crate::domain::donor::DonorInterior {
@@ -956,6 +972,42 @@ mod tests {
         let tags = GapRepairTags {
             donor_aligned: Some(donor(-22.0)),
             donor_nominal: Some(donor(-25.0)),
+            // C3: `splice` and `splice_dualfit` project only when their source tags are present, so
+            // the stamp assertions below need both arms populated, not just the C2 six.
+            registration: RegistrationTags {
+                step_ms: Some(4.0),
+                pre_peak_r: Some(0.97),
+                post_peak_r: Some(0.95),
+                ..RegistrationTags::default()
+            },
+            seam_local: Some(SeamLocalTags {
+                pre_seam_r: 0.97,
+                post_seam_r: 0.95,
+                post_seam_global_r: 0.40,
+                trim_frames: 480,
+                gate_pass: true,
+                pre_lag: 12,
+                post_lag: -8,
+                pre_seam_prom: None,
+                post_seam_prom: None,
+                pre_seam_z: None,
+                post_seam_z: None,
+                pre_seam_phat_r: None,
+                post_seam_phat_r: None,
+                pre_seam_phat_prom: None,
+                post_seam_phat_prom: None,
+                pre_seam_phat_z: None,
+                post_seam_phat_z: None,
+                pre_seam_lag_ms: None,
+                post_seam_lag_ms: None,
+                pre_seam_phat_lag_ms: None,
+                post_seam_phat_lag_ms: None,
+                pre_seam_rescued: None,
+                post_seam_rescued: None,
+                pre_seam_edge_pinned: None,
+                post_seam_edge_pinned: None,
+                seams_clamped: None,
+            }),
             gate: GateTags {
                 residual: Some(SeamResidualVerdict {
                     chosen_pre_db: -42.0,
@@ -970,6 +1022,9 @@ mod tests {
                     uninformative_pre: None,
                     uninformative_post: None,
                 }),
+                // C3: `structure` / `seams` project only from these two stored minima.
+                structure_min: Some(0.92),
+                seam_min: Some(0.31),
                 ..GateTags::default()
             },
             ..GapRepairTags::default()
@@ -1015,6 +1070,14 @@ mod tests {
                 post: None,
             }),
             lag_editorial: Some(lag(0.80)),
+            b_levels: Some(LevelProfile {
+                bin_ms: Some(50),
+                profile_db: vec![-40.0],
+                floor_db: Some(-120.0),
+                speech_peak_db: Some(-12.0),
+                noise_floor_db: -52.0,
+                gap_floor_db: -98.0,
+            }),
             ..FingerprintXSet::default()
         };
 
@@ -1076,6 +1139,47 @@ mod tests {
             .and_then(|c| c.not.as_deref())
             .is_some_and(|n| n.starts_with("residual")));
 
+        // C3: the registration trio. `splice` and `splice_dualfit` are the pair a reader actually
+        // confuses (one single-lag step vs two independent seam-local locks), so the same swap
+        // detector applies; `outcome` points at the production disposition it is not.
+        assert!(fp
+            .splice
+            .as_ref()
+            .and_then(|s| s.contract.as_ref())
+            .and_then(|c| c.not.as_deref())
+            .is_some_and(|n| n.starts_with("splice_dualfit")));
+        assert!(fp
+            .splice_dualfit
+            .as_ref()
+            .and_then(|s| s.contract.as_ref())
+            .and_then(|c| c.not.as_deref())
+            .is_some_and(|n| n.starts_with("splice ")));
+        assert!(fp
+            .outcome
+            .as_ref()
+            .and_then(|o| o.contract.as_ref())
+            .and_then(|c| c.not.as_deref())
+            .is_some_and(|n| n.starts_with("equivalence_production")));
+
+        // The three remaining sibling pairs. `structure` / `seams` share the field names
+        // `baseline_pre` / `baseline_post`, so a swapped stamp is invisible without this.
+        let not_of = |c: Option<&MetricContract>| {
+            c.and_then(|c| c.not.as_deref())
+                .expect("group stamped with a `not`")
+                .to_string()
+        };
+        assert!(
+            not_of(fp.structure.as_ref().and_then(|g| g.contract.as_ref())).starts_with("seams")
+        );
+        assert!(
+            not_of(fp.seams.as_ref().and_then(|g| g.contract.as_ref())).starts_with("structure")
+        );
+        assert!(not_of(fp.levels.contract.as_ref()).starts_with("b_levels"));
+        assert!(
+            not_of(fp.b_levels.as_ref().and_then(|g| g.contract.as_ref())).starts_with("levels")
+        );
+        assert!(not_of(fp.geometry.contract.as_ref()).starts_with("alignment"));
+
         // Flatten: `_contract` sits beside each group's own keys, and displaces none of them.
         let json = serde_json::to_value(&fp).expect("serialize");
         for (group, key) in [
@@ -1085,6 +1189,14 @@ mod tests {
             ("donor_interior_nominal", "rms_db"),
             ("residual", "informative"),
             ("seam_probe", "pre"),
+            ("splice", "step_ms"),
+            ("splice_dualfit", "pre_seam_r"),
+            ("outcome", "tier"),
+            ("geometry", "a_start_secs"),
+            ("levels", "noise_floor_db"),
+            ("b_levels", "noise_floor_db"),
+            ("structure", "baseline_pre"),
+            ("seams", "mono_pre"),
         ] {
             assert!(
                 json[group]["_contract"]["measures"].is_string(),

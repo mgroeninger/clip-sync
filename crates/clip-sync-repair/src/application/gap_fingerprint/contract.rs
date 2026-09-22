@@ -162,7 +162,7 @@ contracts! {
     /// Contract for `equivalence_production` — the authoritative silence-character verdict.
     EQUIVALENCE_PRODUCTION_CONTRACT for "equivalence_production" {
         measures: "silence-character class the production gate acted on: dropout vs mutual/program silence",
-        placement: "scan-time gap: A's silent core, donor window = that core offset-mapped onto B",
+        placement: "scan-time gap: A's silent core; donor window = that core on B via the NOMINAL map, which can be off",
         window: "scan blocks of `scan_recipe.scan_block_ms`; noise floor = median over +/-2.0s context",
         not: "equivalence_diagnostic (second opinion, gates nothing); not a seam or lag measurement",
     }
@@ -201,10 +201,10 @@ contracts! {
 
     /// Contract for `donor_interior_nominal` — the registration-independent program-quiet read.
     DONOR_INTERIOR_NOMINAL_CONTRACT for "donor_interior_nominal" {
-        measures: "is B quiet at the same program time as A's gap? silence_fraction ~1 => program-quiet, not a dropout",
-        placement: "nominal b_mapped span with NO lag adjustment - registration-independent by construction",
-        window: "the nominal gap span; continuous = no sub-floor run longer than 150ms",
-        not: "donor_interior_aligned (the lag-adjusted bridge); silence here is not a fill failure",
+        measures: "B occupancy at nominal program time: rms_db, silence_fraction, longest_silence_ms, continuous",
+        placement: "nominal b_mapped span, NO lag adjustment - registration-independent, so it inherits the map's error",
+        window: "the nominal gap span; continuous = no sub-floor run longer than 150ms; map error to ~400ms observed",
+        not: "donor_interior_aligned (the lag-adjusted bridge); silence_fraction ~1 is not by itself program-quiet",
     }
 
     /// Contract for `residual` — the same-source cancellation confirm at the throat.
@@ -223,7 +223,71 @@ contracts! {
         not: "residual (the gate's same-source confirm at the throat); no gate reads seam_probe",
     }
 
+    /// Contract for `splice` — the single-lag registration step the length-reconciliation acts on.
+    SPLICE_CONTRACT for "splice" {
+        measures: "registration step (post_lag - pre_lag) + per-side peak r and robust uniqueness peak_z",
+        placement: "derived from lag_decision's gross per-shoulder lags at b_mapped - not re-measured here",
+        window: "inherits lag_decision's window/max_lag; edge_pinned=true makes step_ms GIGO (A5/C6)",
+        not: "splice_dualfit (per-shoulder seam-local locks); this step is single-lag, one number per gap",
+    }
+
+    /// Contract for `splice_dualfit` — dual-fit viability, whose `*_seam_lag_ms` are not placements.
+    SPLICE_DUALFIT_CONTRACT for "splice_dualfit" {
+        measures: "dual-fit viability: per-shoulder seam r/z/prominence + gate_pass for a length-reconciled fill",
+        placement: "each shoulder at its OWN seam-local lock re-anchored on nominal b_mapped, not on lag_decision",
+        window: "fill_seam_search_secs (250ms default); trim_frames = bridge - gap = the step, in frames",
+        not: "splice (single-lag step); *_seam_lag_ms is residual AT the lock, ~0, never a placement",
+    }
+
+    /// Contract for `outcome` — the bracket gate in isolation, upstream of the equivalence gate.
+    GATE_OUTCOME_CONTRACT for "outcome" {
+        measures: "bracket-gate disposition: plan_kind, tier (any_ok), closest failing stage, dual-fit rescue",
+        placement: "per gap, over the fingerprint's own bracket enumeration - the production patch gate never runs",
+        window: "dual_fit_rescue is predictive (assumes --dual-fit), not an observed production result",
+        not: "equivalence_production, the real disposition; tier is upstream of skip_equivalent_gaps",
+    }
+
     /// Contract for `source.alignment` — pair-level chromaprint scan map, not a gap shoulder.
+    /// Contract for `geometry` — the gap's edges, and the join key every census must use.
+    GEOMETRY_CONTRACT for "geometry" {
+        measures: "gap edges: a_start/a_end as scanned, a_refined_* as spliced, duration_secs = the REFINED span",
+        placement: "a_* on A's timeline; b_mapped_* = the refined edges + fill_offset_secs, nominal map, no lag",
+        window: "a_start_secs rounded to 1ms is this gap's join key; the gap index is 0-based and joins nothing",
+        not: "alignment, the pair-level map fill_offset_secs came from; b_mapped_* carry no per-shoulder lag",
+    }
+
+    /// Contract for `levels` — A's envelope, and the two floors that are not the same reduction.
+    LEVELS_CONTRACT for "levels" {
+        measures: "A's RMS envelope: noise_floor_db = MEDIAN of context bins, gap_floor_db = MAX of the gap's bins",
+        placement: "A's own timeline: the refined gap span plus gap_signature_context_secs either side",
+        window: "bins of gap_signature_bin_ms; gap bins excluded from noise_floor_db; floor_db substitutes silence",
+        not: "b_levels (the same profile on B); the two floors are different reductions, not a range",
+    }
+
+    /// Contract for `b_levels` — the same profile on B, at the nominal map, Tier-3 only.
+    B_LEVELS_CONTRACT for "b_levels" {
+        measures: "the same RMS envelope as levels, measured on B - occupancy context only, no gate reads it",
+        placement: "NOMINAL b_mapped span with no lag adjustment - donor_interior_nominal's frame, not the bridge",
+        window: "Tier-3: present only with --fingerprint-diagnostics; same bin_ms and context span as levels",
+        not: "levels (A's own profile); a quiet b_levels is not a dropout - see donor_interior_nominal",
+    }
+
+    /// Contract for `structure` — the coarse tier, and the sibling it shares field names with.
+    STRUCTURE_CONTRACT for "structure" {
+        measures: "structure-tier baseline correlation per shoulder - the coarse match that precedes seam fit",
+        placement: "the baseline placement at nominal b_mapped (place_on_b), not the fill's final seam",
+        window: "ABSENT on every from-decode dump (skip_baseline_placement); projected rows set pre==post==the min",
+        not: "seams, whose baseline_pre/baseline_post are the SAME field names one tier finer",
+    }
+
+    /// Contract for `seams` — the waveform tier, same field names as `structure`.
+    SEAMS_CONTRACT for "seams" {
+        measures: "waveform-tier baseline correlation: baseline_pre/post plus per_channel and mono_pre/mono_post",
+        placement: "the same baseline placement at nominal b_mapped as structure - not the throat residual uses",
+        window: "ABSENT on from-decode dumps; projected rows fabricate pre==post==mono==the min, per_channel empty",
+        not: "structure, one tier coarser with the SAME baseline_pre/baseline_post field names",
+    }
+
     ALIGNMENT_CONTRACT for "alignment" {
         measures: "pair-level chromaprint scan alignment that mapped A onto B",
         placement: "scan-time, whole pair - not a gap shoulder",
@@ -527,6 +591,75 @@ mod tests {
                 "`{key}` is quoted by the alignment contract but CorpusScanAlignment no longer emits it"
             );
         }
+
+        // C3. `geometry` and the two `LevelProfile` halves name their own fields; `seams` names the
+        // per-channel detail that separates it from `structure`, whose two fields it also shares.
+        let geometry = serde_json::to_value(super::super::GapGeometry {
+            a_start_secs: 10.0,
+            a_end_secs: 10.5,
+            a_refined_start_secs: 10.01,
+            a_refined_end_secs: 10.49,
+            duration_secs: 0.48,
+            b_mapped_start_secs: Some(4.0),
+            b_mapped_end_secs: Some(4.48),
+            fill_offset_secs: Some(-6.0),
+        })
+        .expect("geometry");
+        for key in [
+            "a_start_secs",
+            "a_refined_start_secs",
+            "duration_secs",
+            "b_mapped_start_secs",
+            "fill_offset_secs",
+        ] {
+            assert!(
+                geometry.get(key).is_some(),
+                "`{key}` is quoted by the geometry contract but GapGeometry no longer emits it"
+            );
+        }
+
+        let levels = serde_json::to_value(super::super::LevelProfile {
+            bin_ms: Some(50),
+            profile_db: vec![-40.0],
+            floor_db: Some(-120.0),
+            speech_peak_db: Some(-12.0),
+            noise_floor_db: -52.0,
+            gap_floor_db: -98.0,
+        })
+        .expect("levels");
+        for key in ["noise_floor_db", "gap_floor_db", "floor_db", "bin_ms"] {
+            assert!(
+                levels.get(key).is_some(),
+                "`{key}` is quoted by the levels contracts but LevelProfile no longer emits it"
+            );
+        }
+
+        let seams = serde_json::to_value(super::super::SeamScores {
+            baseline_pre: 0.3,
+            baseline_post: 0.3,
+            selected_channels: vec![0],
+            per_channel: vec![(0.3, 0.3)],
+            mono_pre: 0.3,
+            mono_post: 0.3,
+        })
+        .expect("seams");
+        for key in ["baseline_pre", "baseline_post", "per_channel", "mono_pre"] {
+            assert!(
+                seams.get(key).is_some(),
+                "`{key}` is quoted by the seams contract but SeamScores no longer emits it"
+            );
+        }
+        let structure = serde_json::to_value(super::super::StructureScores {
+            baseline_pre: 0.9,
+            baseline_post: 0.9,
+        })
+        .expect("structure");
+        for key in ["baseline_pre", "baseline_post"] {
+            assert!(
+                structure.get(key).is_some(),
+                "`{key}` is the name collision the structure/seams contracts exist to disambiguate"
+            );
+        }
     }
 
     /// Look a contract up by its wire key, failing loudly if the registry lost it.
@@ -549,6 +682,14 @@ mod tests {
             "donor_interior_nominal",
             "residual",
             "seam_probe",
+            "splice",
+            "splice_dualfit",
+            "outcome",
+            "geometry",
+            "levels",
+            "b_levels",
+            "structure",
+            "seams",
         ] {
             let c = shipped(key);
             // Presence is the point (the registry sweep only validates the contracts that exist), but

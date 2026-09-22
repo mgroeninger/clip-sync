@@ -22,7 +22,7 @@ pub fn project_corpus(orig: &GapCorpus) -> GapCorpus {
         .map(|fp| {
             let spec = fingerprint_to_spec(fp);
             let x = FingerprintXSet {
-                b_levels: fp.b_levels.clone(),
+                b_levels: fp.b_levels.as_deref().cloned(),
                 ..Default::default()
             };
             // Default `MeasuredDetail`: this is the oracle path — the spec (from stored tags) carries
