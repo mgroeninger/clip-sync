@@ -1,7 +1,10 @@
 # TEMP — Dual-fit registration routing
 
-**Status:** drafted 2026-09-22, not started. Production arm (`patch_audio`
-characterize → dual-fit). Record-only through Phase 1; flag-gated, default
+**Status:** drafted 2026-09-22. Phase 0 code landed 2026-09-22 (per-seam
+fields, PR gate green); the corpus `--patch-only` rerun is running. The
+coverage census is done (§ 1b, § 7). Production arm (`patch_audio`
+characterize → dual-fit), plus one measurement-arm Change in Phase 1c
+(fingerprint dump fields). Record-only through Phase 1; flag-gated, default
 off, through Phase 3.
 
 **Tracked as:** [BACKLOG.md](../../BACKLOG.md) § Fill placement, Hole 1 row
@@ -123,6 +126,84 @@ otherwise. Every count, tag and decision below is kept per kind.
   audibility:** α's late +125 was clean, and 13/g16's +88 / +51 was not. Phase
   1 therefore sizes a *candidate* bound, and Phase 3's ear pass is the test.
   Phase 1 does not settle the bound.
+
+### 1b. Coverage is not the obstacle (measured 2026-09-22)
+
+A standing question — *is dual-fit simply more capable than the bracket path,
+since its assumptions are weaker?* — was sized from existing fingerprint dumps
+with `scripts/measure/dualfit-coverage-census.ps1` (52 pairs, 1063 gaps, 982
+measurable; consumer-only, no media, no repair). The script had been built for
+exactly this and never run to a verdict.
+
+Read the census's default predicate in two halves, because it mixes
+**capability** legs with **routing** legs:
+
+| Population (keep-path `tier: patch` — the bracket gate in isolation, **not** the gaps production patches; see the caution below) | n |
+|---|---|
+| all | 412 |
+| program-quiet donor (B empty too) | 202 |
+| **real donor** | **210** |
+| real donor, dual-fit capability legs pass (`gate_pass` + `bridge_frames > 0` + `donor_continuous`) | **207 (99%)** |
+
+Only 3 real-donor gaps fail a capability leg (1 gate, 2 continuity). The
+declines that make the raw quadrant look bad (171 accept / 241 decline) are
+routing legs that do not belong in a counterfactual:
+
+- `eligible` reads the *keep path's* bracket failure stage. For a gap the keep
+  path patched, it says nothing about dual-fit (24 gaps).
+- `step_real` has been stale since the rigid-fill arm shipped 2026-09-01
+  ([settled.md](settled.md) § "G6's `!step_real` arm"): `!step_real` is a
+  rescue, not a decline (16 gaps). Pass `-InclRigidFill`, or fix the script's
+  default.
+
+**A misregistration explanation was tested and refuted.** The predicate reads
+continuity from `donor_interior_aligned` but program-quiet from
+`donor_interior_nominal`, so the obvious suspicion was that the quiet read sits
+at the wrong registration. Recomputing every donor leg at the **aligned** span
+changes nothing: 202 program-quiet at nominal, 204 at aligned, and **zero** gaps
+flip from quiet to usable. Those donors are genuinely empty — aligned donor
+`rms_db` median **−82 dBFS** (p90 −72) against −44 for the rest. The nominal
+read is doing its documented job. This is *not* the known donor defect, which
+lives in the scan-time equivalence gate's `donor_silence_fraction`
+(`gap_equivalence.rs`) — a different test on a different code path. Do not
+merge the two.
+
+**The program-quiet half is not a coverage deficit at all — production never
+reaches those gaps.** `tier` is the bracket gate *in isolation*, upstream of the
+scan-time equivalence gate (`skip_equivalent_gaps`, on by default since
+2026-07-20), so a `tier: patch` gap is not a gap production patches. The dump
+already records that gate's own verdict per gap in `equivalence_production`
+(`class` + `drop` — by contract "the class the production gate acted on"):
+
+| | n |
+|---|---|
+| gaps with an equivalence verdict | 1087 |
+| `shared_silence` (drop) / `ambient_quiet` (drop) | 662 / 39 |
+| `repairable_dropout` / `not_evaluated` (kept) | 288 / 98 |
+| `tier: patch` | 413 |
+| …of those, `drop: true` | **203** |
+| …of the 202 program-quiet-donor gaps, dropped | **199** (185 `shared_silence`, 14 `ambient_quiet`) |
+
+413 − 203 ≈ **210**, which is the real-donor population above and matches the
+209 bracket patches in the 2026-09-18 `--patch-only` reports. So the hypothesis
+that "bracket patches non-dropouts" is **refuted, not open**: those gaps are
+skipped before the patch path runs. It also means dual-fit's donor decline and
+the equivalence gate's drop independently agree on 199 of the same gaps — two
+different tests, same verdict.
+
+**Consequence for this plan.** Dual-fit's admission test accepts essentially
+every gap the bracket gate patches with a real donor, so the capability
+question reduces entirely to **placement and fill quality** — which is what this
+plan already tests. It also means invariant 1's "decline is harmless" arm will
+rarely fire on routed gaps: expect routing to reach dual-fit, not bounce off it.
+
+**Caution for any future census.** Never read `tier: patch` as "production
+patched this". Join it to `equivalence_production.drop` first, or the
+population is inflated by ~50%. That error is what made the raw quadrant look
+like a coverage deficit.
+
+**What no dump can answer today:** whether dual-fit's *placement* would be
+better on a gap the bracket path already filled. Phase 1c adds that.
 
 ## 2. Invariants (hard; any violation stops the plan)
 
@@ -286,6 +367,85 @@ Phase 2 exists.
   first listen set on late fills chosen by error magnitude rather than by
   standoff.
 
+### 4c. Phase 1c — dual-fit counterfactual in the fingerprint (Change, additive dump fields)
+
+**Question this closes.** For a gap the keep path patched, *where would
+dual-fit have put the fill?* § 1b shows dual-fit would accept almost all of
+them; nothing on disk says whether its placement differs, or by how much. That
+delta is the routing rule's own evidence, and it is measurable without a single
+listen.
+
+**Why it is nearly free.** `compute_region_measurements` (`overlay.rs`) already
+computes `splice_dualfit` **unconditionally**, patched or skipped. Only the
+derived verdict is suppressed: `dual_fit_rescue_flag` returns `None` when
+`patched` (`gap_fingerprint/schema.rs`, "a patched gap never reaches
+`skip_or_dual_fit`"). That is a statement about production control flow, not
+about data availability. No new decode, no new search — so no measurable cost
+on a corpus fingerprint run.
+
+**Change, three additive fields/blocks:**
+
+1. **Emit the verdict on patched gaps.** Either un-suppress
+   `dual_fit_rescue_flag` or add an always-emitted `dual_fit_counterfactual`
+   block. The point is that the predicate lives in Rust, evaluated once, rather
+   than being re-implemented by each consumer — § 1b's stale `step_real` leg is
+   what that costs. If the flag itself must keep its production meaning, the
+   new block carries the legs and the verdict separately.
+
+   **Including the donor legs.** `donor_interior_aligned` and
+   `donor_interior_nominal` already carry `rms_db`, `silence_fraction`,
+   `longest_silence_ms`, `continuous` and `basis` — the *numbers* are not
+   missing. The **decision** is: `program_quiet` is computed at
+   `gap_fingerprint/schema.rs:1131` for the rescue flag and discarded, and
+   production's `domain::donor::program_quiet_at_nominal` never reaches the
+   dump. § 1b's analysis therefore had to re-threshold
+   `PROGRAM_QUIET_SILENCE_FRAC` (0.5) in a throwaway script — the same
+   re-derivation this item exists to stop. Emit the program-quiet and
+   continuity verdicts production acts on, next to the raw blocks.
+
+   **The equivalence gate is already done right — copy it.** `skip_equivalent_gaps`
+   emits its verdict per gap as `equivalence_production` (`class`, `drop`, both
+   sides' silent-block counts, the floors, the thresholds it used and its
+   `donor_registration`), with `equivalence_diagnostic` as a second opinion
+   marked "gates nothing". That is the pattern the donor and dual-fit verdicts
+   should follow: the decision, the inputs it was made from, and the thresholds,
+   all emitted together. Nothing new is needed for the equivalence gate itself.
+
+   **Do not add an aligned program-quiet read.** The policy is nominal by name
+   and by construction, and `donor_interior_nominal`'s contract calls that
+   registration-independence deliberate. An aligned variant would be a policy
+   nothing reads, and § 1b measured that it would decide nothing: zero of 412
+   gaps flip between the two registrations.
+2. **Emit dual-fit's assembled per-shoulder lags on patched gaps** — pre/post
+   seam lag and the r it reaches at its own lag. Computed already; suppressed
+   only by (1).
+3. **Emit the derived delta** per shoulder: dual-fit's lag minus the keep-path
+   fill lag. Paired with Phase 0's `registration_residual_pre_ms` /
+   `_post_ms` on the patch side, this puts **both arms' seam errors on the same
+   gap** — the direct comparison, with no listening at all.
+
+**Cost:** emission plumbing, one `_contract` entry per new key (the macro
+requires `measures` / `placement` / `window` / `not`, and the aligned-vs-nominal
+confusion in § 1b is exactly what those `not:` lines exist to prevent), and
+golden regeneration. Fingerprint dumps are not the frozen v1 CLI contract, but
+check `docs/json-output.md` before assuming a key is free.
+
+**Sequencing.** Fold this into the same Change as Phase 2, so **one** corpus
+fingerprint run serves both this and the routing work. A corpus run costs hours
+and ~15 GB RSS; two would be a self-inflicted cost. It does not block Phase 0 or
+Phase 1, which read `--patch-only` reports.
+
+- **Done when:**
+  - a patched gap's dump carries dual-fit's verdict, its per-shoulder lags and
+    the per-shoulder delta;
+  - `dualfit-coverage-census.ps1` reads the emitted verdict instead of
+    re-deriving it (and its default predicate drops the stale `step_real` leg);
+  - the delta distribution over the corpus is recorded in § 7, per kind.
+- **Reads out as:** the § 6 cohort can then be sampled on *measured placement
+  disagreement* rather than on the single-lag residual alone. Where both arms
+  land within a few ms of each other, routing cannot change what is heard, and
+  those gaps need no listen.
+
 ## 5. Phase 2 — implementation (flag, default off)
 
 **Knob.** `dual_fit_registration_bound_ms: Option<f64>` on
@@ -414,7 +574,18 @@ Any late-of-both single-lag fill heard as audible here, or in § 4b, fires the
 
 ## 7. Results
 
-*(empty — fill per phase)*
+**Coverage census (§ 1b) — done 2026-09-22.** Full numbers and the two refuted
+explanations are in § 1b. Verdict: dual-fit's admission test is not what limits
+it — 207 of 210 keep-path patches with a real donor pass its capability legs.
+The raw 42% accept rate is an artefact of two routing legs in the census
+predicate (`eligible`, and the stale `step_real`) plus an inflated population
+(`tier: patch` counts 203 gaps the equivalence gate drops). Two side
+hypotheses died here and should not be re-proposed: donor misregistration
+(zero of 412 gaps flip between registrations) and "bracket patches
+non-dropouts" (199 of those 202 never reach the patch path). The remaining
+question is placement quality, which Phase 1c instruments.
+
+*(other phases — fill as they land)*
 
 ## 8. Non-goals
 
@@ -430,6 +601,13 @@ Any late-of-both single-lag fill heard as audible here, or in § 4b, fires the
 - **Attributing the step to A or B.** Routing does not need it, and
   `ffprobe` cannot decide it.
 - **Single-shoulder routing** (invariant 4).
+- **Making dual-fit the primary mechanism.** § 1b sizes the coverage half of
+  that question and leaves it unfalsified, not supported: the accept/decline
+  axis cannot say whether dual-fit's fill would *sound* as good on the gaps
+  both arms would take. This plan routes a bounded cohort and keeps the
+  single-lag fill everywhere else (invariant 1). Phase 1c's delta plus § 6's
+  paired listen are what a later plan would need to argue the general case;
+  swapping the primary mechanism on coverage numbers alone is not licensed.
 
 ## 9. Close
 
