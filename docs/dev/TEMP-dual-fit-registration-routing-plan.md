@@ -78,46 +78,61 @@ otherwise. Every count, tag and decision below is kept per kind.
   to route.
 - 43-gap audio census, far-seam error: median +54.5 ms, max +96.7 ms. Only 3
   of these gaps have been heard.
-- **Preliminary corpus distribution (2026-09-22, provisional).**
-  - Source: rebuilt from the 2026-09-18 `--patch-only` reports plus the
-    2026-09-20 fingerprint dump's `lag_decision`. The method is in § 3.
-  - Scope: patched single-lag gaps with both shoulders at r ≥ 0.35, with
-    duplicate pairs 6 and 16 dropped. 196 gaps resolved exactly. Of the 13
-    unresolved, 12 have a step ≤ 8 ms, so their max error is pinned to within
-    8 ms regardless of side. 51/g4 (87 ms, common-mode) is the only one
-    above 75 ms. 32/g2 is genuinely ambiguous but ≤ 50 ms. Every patched
-    single-lag gap has both shoulders licensed, so invariant 4 excludes
-    nothing.
-  - Frame: the audio frame, in which 13/g16 reads −72.8 / −109.8.
+- **Corpus distribution (2026-09-22, measured — replaces the provisional
+  reconstruction).**
+  - Source: the Phase 0 `--patch-only` rerun, 53 pairs, read straight from
+    `registration_residual_pre_ms` / `_post_ms`. No fingerprint-dump join and
+    no head-trim solve, so the reconstruction's 13 unresolved gaps are gone:
+    **0 patched gaps are missing a per-seam value.**
+  - Scope: 327 patched gaps over 51 pairs (6 and 16 dropped as duplicates);
+    118 took the dual-fit arm and are excluded per § 3's filter
+    (`dual_fit_used == false`), leaving **209 single-lag gaps over 48 pairs**.
+    Every one has both shoulders licensed, so invariant 4 excludes nothing.
+  - Frame: the audio frame (report value + 10.0 ms), in which 13/g16 reads
+    −72.8 / −109.8. The rerun confirms the constant on the whole corpus, not
+    just the 43-gap census: 13/g16's report pair is −82.79 / −119.79.
 
-  | | ms |
-  |---|---|
-  | max seam error, median | 44.4 |
-  | p75 | 61.2 |
-  | p90 | 74.1 |
-  | p95 | 93.4 |
-  | max | 894.5 (26/g6) |
+  | | ms | provisional |
+  |---|---|---|
+  | max seam error, median | 44.3 | 44.4 |
+  | p75 | 61.2 | 61.2 |
+  | p90 | 73.5 | 74.1 |
+  | p95 | 90.3 | 93.4 |
+  | max | 894.5 (26/g6) | 894.5 |
 
-  Direction: 175 fills are late of both shoulders, 11 early of both, and 10
-  have errors of opposite sign. 47 gaps have a shoulder step larger than
+  Per kind: step-kind n = 48, median 56.8, p90 79.2, max 174.0; common-mode
+  n = 161, median 39.0, p90 71.1, max 894.5. Step-kind sits about 18 ms
+  higher at the median — the step is a real contributor to the far-seam
+  error, not a bystander.
+
+  Direction: 187 fills are late of both shoulders, 12 early of both, and 10
+  have errors of opposite sign. 48 gaps have a shoulder step larger than
   20 ms. Routed count by candidate bound:
 
   | Bound | Routed | Step-kind | Common-mode |
   |---|---|---|---|
-  | > 50 ms | 79 gaps / 39 pairs | — | — |
+  | > 50 ms | 84 gaps / 42 pairs | 34 | 50 |
   | > 75 ms | 20 / 15 | 5 | 15 |
   | > 100 ms | 7 / 6 | 2 | 5 |
 
-  The two kinds within the > 75 ms set:
-  - **Step:** 13/g16, 19/g2, 29/g20, 44/g11, 5/g5.
+  **The > 75 ms and > 100 ms rows are unchanged from the provisional table,
+  gap for gap** — same 20 gaps, same 15 pairs, same 5/15 split. The
+  reconstruction was accurate where it mattered; the correction is confined
+  to the > 50 ms row (79 → 84 gaps, 39 → 42 pairs), whose per-kind split was
+  previously unavailable.
+
+  The two kinds within the > 75 ms set, now with both seams measured
+  (pre / post, audio frame, ms):
+  - **Step:** 19/g2 (−110 / −174), 13/g16 (−73 / −110), 29/g20 (+62 / +97),
+    44/g11 (+94 / +57), 5/g5 (+55 / +91). Steps 34–64 ms.
   - **Common-mode, grossly off:**
-    - 26/g6 at −894 ms (heard audible);
-    - 17/g34 at −520 ms;
-    - 3/g10, 13/g30 and 53/g2, all 115–150 ms late.
+    - 26/g6 at −894 / −891 (heard audible);
+    - 17/g34 at −520 / −514;
+    - 3/g10 (+135 / +150), 13/g30 (+143 / +141) and 53/g2 (+120 / +117).
   - **Common-mode, modestly off:**
-    - 1/g14 at −88 ms (early);
+    - 1/g14 at −88 / −82 (early);
     - 13/g28, 51/g4, 53/g8, 9/g7, 31/g8, 11/g10, 3/g7, 3/g2 and 23/g4, all
-      74–93 ms late.
+      73–93 ms late.
 
     31/g8 was heard clean on 2026-09-21. α's 5 clips were heard clean up to
     +125 ms late.
@@ -303,27 +318,26 @@ selection throws that information away.
     7062431.
   - It is good enough for sizing, not for the record.
 - **Accurate source: one corpus `--patch-only` rerun** after the fields land.
-  - The 2026-09-18 run took about 6.5 h for 53 pairs, with no oracle cost.
-  - The rerun replaces the provisional § 1 table and resolves the 13 gaps.
-  - It doubles as a placement check: every placement must be bit-identical
-    to the 2026-09-18 run's, apart from builds that changed placement
-    between the two.
+  **Done 2026-09-22** — it replaced § 1's table, resolved all 13 gaps, and
+  came back bit-identical at the gap level (§ 7). The 2026-09-18 run took
+  about 6.5 h for 53 pairs, with no oracle cost.
 - **Done when:**
-  - all three fields appear in `--patch-only --format json` on the corpus;
+  - ✅ all three fields appear in `--patch-only --format json` on the corpus;
   - the 10 ms is attributed and the bound's frame is named;
   - the goldens are regenerated and `.\scripts\test-tier.ps1 -Tier pr` is
     green.
 
 ## 4. Phase 1 — sizing and scope (corpus, `--patch-only`, no oracle)
 
-**Preliminary pass done 2026-09-22** (§ 1 table, provisional; the Phase 0
-reconstruction). Redo the counts on the Phase 0 rerun. For every gap that is
-patched single-lag with both shoulders licensed, compute
-`max_seam_err = max(|pre|, |post|)` and the kind (§ 0).
+**Sizing pass done 2026-09-22 on the Phase 0 rerun** — § 1's table is now
+measured, not reconstructed. For every gap that is patched single-lag with
+both shoulders licensed, `max_seam_err = max(|pre|, |post|)` and the kind
+(§ 0) are computed from the report's per-seam fields.
 
-- Report the distribution per kind: n, median, p90 and max.
-- **Pre-registered candidate bounds:** 50, 75 and 100 ms, per kind. For each,
-  list the routed gaps by pair/gap index.
+- ✅ Distribution per kind: recorded in § 1 (step n = 48, median 56.8, p90
+  79.2, max 174.0; common-mode n = 161, median 39.0, p90 71.1, max 894.5).
+- ✅ **Pre-registered candidate bounds** 50, 75 and 100 ms, per kind, with the
+  routed gaps listed by pair/gap index: § 1.
 - **Dual-fit feasibility on the routed set.** Until Phase 2's flag exists, a
   forced-dual-fit run is the only way to know whether dual-fit passes its own
   gate there. That is the 13/g16 recipe: patch at a raised floor so the gate
@@ -343,8 +357,8 @@ patched single-lag with both shoulders licensed, compute
     step 8 ms. BACKLOG named it for the ear pass as one of the 7 early fills
     at or below −30 ms. It stays in § 6 as a **negative control**, not a
     cohort member.
-- **Scope decision (replaces the earlier stop condition).** The preliminary
-  pass leaves no doubt a cohort exists: 20 gaps at > 75 ms and 7 at > 100 ms.
+- **Scope decision (replaces the earlier stop condition).** The measured
+  table leaves no doubt a cohort exists: 20 gaps at > 75 ms and 7 at > 100 ms.
   The open question is which kind the rule is for. Choose one of:
   - (a) step-kind only;
   - (b) both kinds, with a separate bound per kind;
@@ -353,7 +367,7 @@ patched single-lag with both shoulders licensed, compute
   Phase 1b's ear probe decides this. Record the choice and its reason in
   § 7.
 - **Done when:**
-  - the per-kind routed-count table from the rerun is recorded in § 7;
+  - ✅ the per-kind routed-count table from the rerun is recorded (§ 1, § 7);
   - the feasibility counts for the chosen scope are recorded;
   - the scope is chosen.
 
@@ -676,7 +690,7 @@ question is placement quality, which Phase 1c instruments.
 
 **Processing validation on the partial rerun (33 pairs, 211 patched gaps) —
 done 2026-09-22.** Run at pair 33 of 53; every check below is independent of
-the remaining pairs.
+the remaining pairs, and every one of them held on the full run below.
 
 - **Placement is bit-identical.** `diff-patch-outcomes.ps1` over 746 joined
   gaps: **0 changed**. The only differences are four run-level fields, all of
@@ -709,6 +723,44 @@ the remaining pairs.
   clip in front of § 4b's listener. Join on `geometry.a_start_secs` rounded to
   1 ms, always.
 
+**Phase 0 rerun complete, and Phase 1's table is measured (53 pairs) — done
+2026-09-22.** The `--patch-only` corpus rerun finished. It carries all three
+Phase 0 fields on every patched gap.
+
+- **Placement is bit-identical over the whole corpus.**
+  `diff-patch-outcomes.ps1` over 52 pair labels and **1087 joined gaps: 0
+  changed**, with the three Phase 0 fields excluded by `-IgnorePaths` (981
+  leaf hits, all new-field additions). The only differences are the same four
+  run-level fields as the partial: pair 31's `injected_time` block
+  disappearing, the already-validated consequence of 7062431. The script
+  exits 1 only because that run-level count is not zero; the gap-level bar —
+  unexplained = 0 — is met. **Invariant 2 holds on the real corpus.**
+- **The reconstruction is retired.** § 1's table is now read straight from
+  `registration_residual_pre_ms` / `_post_ms`, with no head-trim solve and no
+  dump join. All 209 single-lag gaps resolve; the 13 unresolved and the
+  ambiguity on 32/g2 are gone. 327 patched gaps, 118 of them dual-fit and
+  filtered out per § 3.
+- **The > 75 ms cohort is confirmed gap-for-gap.** The measured > 75 and
+  > 100 ms rows are identical to the provisional ones — same 20 gaps, same 15
+  pairs, same 5 step / 15 common split, same 7 at > 100 ms. Distribution
+  moved by under 3 ms at every quantile (median 44.3 vs 44.4, p90 73.5 vs
+  74.1, p95 90.3 vs 93.4). **The correction is confined to the > 50 ms row**
+  (79 → 84 gaps, 39 → 42 pairs), which is also where the per-kind split was
+  previously unavailable: 34 step / 50 common.
+- **Step-kind is not a bystander.** Split by kind for the first time on the
+  full corpus: step-kind n = 48, median 56.8 ms; common-mode n = 161, median
+  39.0 ms. The step-kind median sits ~18 ms higher. Common-mode still owns
+  the extreme tail (894.5 and 520.4 are both common-mode), so a single bound
+  catches mostly common-mode gaps while step-kind is the denser cohort just
+  above 50 ms.
+- **Phase 0's first done-criterion is met** (all three fields present across
+  the corpus, goldens regenerated, PR tier green). The remaining one is the
+  −10 ms attribution and naming the bound's frame; until then § 1 is quoted
+  in the audio frame.
+- **Phase 1's first done-criterion is met**: the per-kind routed-count table
+  is recorded (§ 1). Still open: the feasibility counts and the scope choice,
+  which wait on Phase 1b's ear probe.
+
 **Contracts for the three blocks that caused the misreads — done 2026-09-22.**
 Both defects above were *reader* defects: nothing in the dump said what
 `splice_dualfit.*_seam_lag_ms` was measured against, or that `outcome.tier` is
@@ -720,6 +772,28 @@ single-lag registration step derived from `lag_decision`, not `splice_dualfit`;
 `*_seam_lag_ms` is residual **at** that lock (~0 by construction), never a
 placement; `outcome` is the bracket gate, upstream of `skip_equivalent_gaps`,
 so `tier: patch` is not `equivalence_production`'s disposition.
+
+A second round widened the coverage to **seventeen** groups. Five more were
+added — `geometry` (the gap's edges, and the statement that
+`a_start_secs` rounded to 1 ms is the join key while the 0-based index joins
+nothing), `levels` and `b_levels` (A's and B's RMS envelopes; that
+`noise_floor_db` is a **median** of context bins while `gap_floor_db` is the
+**max** of the gap's bins — different reductions, not a range — and that
+`b_levels` is measured at the nominal `b_mapped` span with no lag adjustment,
+Tier-3 only), and `structure` and `seams` (which share the field names
+`baseline_pre` / `baseline_post` one tier apart, are **absent on every
+from-decode dump** under `skip_baseline_placement`, and on the projection path
+fabricate `pre == post == mono == the stored min` with `per_channel` empty).
+That last pair is a third latent reader trap, found by reading the write site
+rather than the data.
+
+Two existing contracts were also **corrected**, which matters more than the
+additions: `donor_interior_nominal` claimed `silence_fraction ~1` meant
+"program-quiet, not a dropout", and `equivalence_production` described the
+donor window as the core "offset-mapped onto B" with no caveat. Both assert
+readings this corpus has already refuted (see the misregistration memo — map
+error to ~400 ms observed). A contract that states a refuted reading is worse
+than no contract.
 
 Caveat that matters for Phase 1: **contracts are write-time.** The dumps
 already on disk do not gain them — only a fingerprint run made from this build
