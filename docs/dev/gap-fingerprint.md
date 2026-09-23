@@ -337,10 +337,10 @@ too easy to skip, and too far from the value it explains.
 | **Wire shape** | Unchanged — `#[serde(flatten)]` keeps the group's own keys where they were, with `_contract` beside them |
 | **Absence** | Always valid. Old corpora, and any path that stamps nothing, deserialize to `None` |
 | **Goldens** | Not a Tier-1/2 axis. Curated fixtures stay contract-free until an intentional harvest |
-| **Repetition** | Repeated per gap for the sixteen per-gap groups, deliberately. `source.alignment` is once per corpus |
+| **Repetition** | Repeated per gap for the seventeen per-gap groups, deliberately. `source.alignment` is once per corpus |
 | **Shape** | Only a group that serializes as a **map**. `#[serde(flatten)]` cannot wrap an array, so `brackets`, `pre_window_ladder` and `post_window_ladder` cannot carry one as they stand |
 
-Carried today by seventeen groups: `equivalence_diagnostic` and `equivalence_production` (C1,
+Carried today by eighteen groups: `equivalence_diagnostic` and `equivalence_production` (C1,
 2026-08-07), then `lag_decision`, `lag_editorial`, `donor_interior_aligned`,
 `donor_interior_nominal`, `residual` and `seam_probe` (C2, 2026-08-08) — the four confusable pairs
 this corpus is actually misread on — plus `source.alignment` (2026-08-21), the pair-level scan map
@@ -349,7 +349,9 @@ that is not `lag_decision` and not per-gap `fill_offset_secs`, and `splice`, `sp
 uncontracted: `splice` vs `splice_dualfit` (one single-lag registration step vs two independent
 seam-local locks), `splice_dualfit.*_seam_lag_ms` (residual **at** the lock, ~0 by construction —
 not a placement), and `outcome.tier`, which is the bracket gate in isolation and sits upstream of
-`skip_equivalent_gaps`, so `tier: patch` is not "production patched". Source of truth for the
+`skip_equivalent_gaps`, so `tier: patch` is not "production patched". `dual_fit_counterfactual`
+(2026-09-22) joins them for the same reason `outcome` needed one: it deliberately speaks about gaps
+the bracket gate never declined. Source of truth for the
 strings is `application/gap_fingerprint/contract.rs`; do not retype them elsewhere.
 
 C3 also covers three pairs whose halves are distinguished only by a prefix or not at all:
@@ -1095,6 +1097,40 @@ it under-predicts a gap that production rescues by growing the post window — t
 `gate_pass: false` here and a patch in the report. The ladder diagnostic
 (`--fingerprint-post-window-ladder`, `post_window_ladder_at` in `measure/probes.rs`) is the tool for
 checking a specific gap's grown-window behaviour; it is not folded into this block's own numbers.
+
+### `dual_fit_counterfactual` — the admission decision on gaps the keep path patched
+
+`outcome.dual_fit_rescue` answers **production's** question and is `None` on a patched gap: production's
+control flow never reaches `skip_or_dual_fit` there, so no rescue claim can be made. That is right for a
+rescue flag and useless for **routing**, which is about exactly those gaps — would dual-fit have placed
+the fill differently than the bracket patch did? This top-level block evaluates the same conjunction
+**unconditionally** and reports separately, in `reached_in_production`, whether production would have
+consulted it (`false` ⇔ the gap was patched ⇔ `outcome.dual_fit_rescue` is `None`).
+
+Top-level rather than inside `outcome` because `outcome`'s contract scopes it to the bracket gate, and
+this block is about the gaps that gate never declined.
+
+| Field | Meaning |
+|---|---|
+| `reached_in_production` | Would production have consulted dual-fit at all? `false` on a patched gap — `would_rescue` there is a counterfactual, not a prediction of anything that ran |
+| `would_rescue` | The conjunction of the six legs below (`program_quiet` negated) |
+| `brackets_eligible` | The bracket failure class admits dual-fit (`brackets_dual_fit_eligible`) |
+| `gate_pass` | `splice_dualfit.gate_pass` — both shoulders clear the seam floors |
+| `shoulders_ordered` | `bridge_frames > 0` — the shoulders do not cross |
+| `post_seam_global_finite` | `post_seam_global_r` was measured; unmeasured is a hard decline, not "a constant shift suffices" |
+| `donor_bridges` | The **aligned** donor is `continuous` over the bridge |
+| `program_quiet` | The **nominal** donor reads program-quiet, at the threshold below |
+| `program_quiet_silence_frac` | `PROGRAM_QUIET_SILENCE_FRAC`, the threshold `program_quiet` was decided at |
+
+**The legs ship beside the verdict deliberately.** Every consumer that re-implements the conjunction
+gets it wrong eventually — `dualfit-coverage-census.ps1` carried a routing leg and a stale `step_real`
+leg (dropped as an admission gate 2026-09-01), and its accept rate was an artefact of both. Read
+`would_rescue`; read a leg only to explain it; never re-derive either. The predicate lives once, in
+`dual_fit_counterfactual` (`application/gap_fingerprint/schema.rs`), with `dual_fit_rescue_flag`
+expressed on top of it so the two cannot drift.
+
+`None` (key absent) means **no claim** — a gap missing `splice_dualfit` or either donor read is not
+measurable. Never a defaulted `false`. Written only on the projection path, so summary tiers omit it.
 
 ### Diagnostic-only fields
 

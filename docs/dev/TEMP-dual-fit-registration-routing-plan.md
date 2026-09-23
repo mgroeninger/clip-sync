@@ -473,12 +473,25 @@ not about data availability, and it is item 1.
 
 **Change, three additive fields/blocks:**
 
-1. **Emit the verdict on patched gaps.** Either un-suppress
-   `dual_fit_rescue_flag` or add an always-emitted `dual_fit_counterfactual`
-   block. The point is that the predicate lives in Rust, evaluated once, rather
-   than being re-implemented by each consumer — § 1b's stale `step_real` leg is
-   what that costs. If the flag itself must keep its production meaning, the
-   new block carries the legs and the verdict separately.
+1. **Emit the verdict on patched gaps.** ✅ **Done 2026-09-22**, as a new
+   top-level `dual_fit_counterfactual` block rather than by un-suppressing
+   `dual_fit_rescue_flag`: un-suppressing would change the meaning of a shipped
+   field, a new block does not. The flag keeps its production meaning (`None`
+   once a gap is patched) and is now *expressed on top of* the counterfactual
+   (`dual_fit_rescue_flag` returns `counterfactual.would_rescue`), so the two
+   definitions cannot drift. The block carries `would_rescue` plus all six legs,
+   `reached_in_production` (`false` ⇔ the gap was patched ⇔ the flag is `None`),
+   and `program_quiet_silence_frac`, the threshold the one thresholded leg was
+   decided at. Top-level rather than inside `outcome` because `outcome`'s
+   contract scopes it to the bracket gate, and this block deliberately speaks
+   about gaps that gate never declined. Written on the projection path, which is
+   the single write site both the from-decode dump and the spec projection pass
+   through. Contract `DUAL_FIT_COUNTERFACTUAL_CONTRACT`, `not:` naming
+   `outcome.dual_fit_rescue`. Documented in `docs/dev/gap-fingerprint.md`
+   § *`dual_fit_counterfactual`*; `docs/json-output.md` needed no change (it is
+   the CLI patch-report contract, not a dump key). The point is that the
+   predicate lives in Rust, evaluated once, rather than being re-implemented by
+   each consumer — § 1b's stale `step_real` leg is what that costs.
 
    **Including the donor legs.** `donor_interior_aligned` and
    `donor_interior_nominal` already carry `rms_db`, `silence_fraction`,
@@ -578,8 +591,17 @@ Phase 1, which read `--patch-only` reports.
   - a patched gap's dump carries dual-fit's verdict, its **absolute** per-shoulder
     placement with the frame named in the `_contract`, and the per-shoulder delta
     against the keep-path fill;
-  - `dualfit-coverage-census.ps1` reads the emitted verdict instead of
-    re-deriving it (and its default predicate drops the stale `step_real` leg);
+  - ✅ `dualfit-coverage-census.ps1` reads the emitted verdict instead of
+    re-deriving it (done 2026-09-22): it reports `verdict_source` per gap and
+    rolled up, so a mixed corpus cannot average an emitted verdict against a
+    re-derived one, and its fallback for pre-2026-09-22 dumps mirrors the
+    **current** predicate — `step_real` is gone, replaced by the
+    `post_seam_global_r` finiteness leg production actually applies, and
+    `-StepRealMargin` / `-InclRigidFill` are removed (the relaxed "rigid-fill"
+    predicate they contrasted against *is* the predicate now). On the 2026-09-20
+    dump the corrected predicate moves the decisive quadrant to 229 of 412
+    keep-path patches, which is a measurement of the stale leg's cost, not a
+    change in production;
   - the delta distribution over the corpus is recorded in § 7, per kind, with
     the common-mode half distinguished from the step half that `trim_frames`
     already gives.
@@ -715,6 +737,28 @@ Any late-of-both single-lag fill heard as audible here, or in § 4b, fires the
 § B step row's reopen trigger. Update that row in the same close.
 
 ## 7. Results
+
+**Phase 1c item 1 landed — `dual_fit_counterfactual` (2026-09-22).** Dual-fit's
+admission decision and all six of its legs now ship on **every** gap, patched
+included, from one Rust predicate that `dual_fit_rescue_flag` is expressed on
+top of. Details and the reasoning in § 4c item 1. Two consequences worth
+recording here:
+
+- **The stale leg had a measurable cost.** `dualfit-coverage-census.ps1` now
+  reads the emitted verdict; correcting its fallback predicate (drop
+  `step_real`, add the `post_seam_global_r` finiteness leg) moves the decisive
+  "keep-path patches / dual-fit declines" quadrant to 229 of 412 keep-path
+  patches on the 2026-09-20 dump. That is the census being wrong before, not
+  production changing — exactly the class of error § 4c item 1 exists to stop,
+  and the reason the predicate now lives in one place.
+- **No corpus number in § 1b is invalidated.** § 1b's verdict rests on the
+  capability legs (`gate_pass`, donor, shoulders), which are unchanged; it is
+  the raw 42% accept rate — already identified there as an artefact — that the
+  correction quantifies.
+
+Still open in Phase 1c: items 2 (the absolute per-shoulder locks) and 3 (the
+per-shoulder delta, by join). No corpus run has yet written the new block, so
+every existing dump reads as `verdict_source = derived`.
 
 **Coverage census (§ 1b) — done 2026-09-22.** Full numbers and the two refuted
 explanations are in § 1b. Verdict: dual-fit's admission test is not what limits

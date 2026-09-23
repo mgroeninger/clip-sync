@@ -247,6 +247,14 @@ contracts! {
         not: "equivalence_production, the real disposition; tier is upstream of skip_equivalent_gaps",
     }
 
+    /// Contract for `dual_fit_counterfactual` — the admission decision on **every** gap, legs included.
+    DUAL_FIT_COUNTERFACTUAL_CONTRACT for "dual_fit_counterfactual" {
+        measures: "would dual-fit have admitted this gap: the verdict plus every leg it was made from, patched gaps too",
+        placement: "the six conditions skip_or_dual_fit evaluates, from this gap's brackets / splice_dualfit / donor reads",
+        window: "reached_in_production=false on a patched gap - the keep path took it, so would_rescue is counterfactual",
+        not: "outcome.dual_fit_rescue, which is None once a gap is patched; no placement or lag is claimed here",
+    }
+
     /// Contract for `source.alignment` — pair-level chromaprint scan map, not a gap shoulder.
     /// Contract for `geometry` — the gap's edges, and the join key every census must use.
     GEOMETRY_CONTRACT for "geometry" {

@@ -2245,6 +2245,7 @@ mod tests {
             outcome: None,
             equivalence_diagnostic: None,
             equivalence_production: None,
+            dual_fit_counterfactual: None,
         }
     }
 

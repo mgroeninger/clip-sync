@@ -9,10 +9,10 @@
 // namespace, and the point of the write sites is that each names the one contract it stamps.
 use super::contract::{
     stamp, Contracted, B_LEVELS_CONTRACT, DONOR_INTERIOR_ALIGNED_CONTRACT,
-    DONOR_INTERIOR_NOMINAL_CONTRACT, GATE_OUTCOME_CONTRACT, GEOMETRY_CONTRACT,
-    LAG_DECISION_CONTRACT, LAG_EDITORIAL_CONTRACT, LEVELS_CONTRACT, RESIDUAL_CONTRACT,
-    SEAMS_CONTRACT, SEAM_PROBE_CONTRACT, SPLICE_CONTRACT, SPLICE_DUALFIT_CONTRACT,
-    STRUCTURE_CONTRACT,
+    DONOR_INTERIOR_NOMINAL_CONTRACT, DUAL_FIT_COUNTERFACTUAL_CONTRACT, GATE_OUTCOME_CONTRACT,
+    GEOMETRY_CONTRACT, LAG_DECISION_CONTRACT, LAG_EDITORIAL_CONTRACT, LEVELS_CONTRACT,
+    RESIDUAL_CONTRACT, SEAMS_CONTRACT, SEAM_PROBE_CONTRACT, SPLICE_CONTRACT,
+    SPLICE_DUALFIT_CONTRACT, STRUCTURE_CONTRACT,
 };
 use super::schema::*;
 use crate::domain::gap_repair_spec::{GapRepairSpec, GapRepairVerdict, LevelTags};
@@ -223,13 +223,16 @@ pub fn spec_to_fingerprint_summary(
     // F14: same predicate the from-decode dump applies, over the projection's own brackets (real when
     // characterize supplied them, else `synth_brackets`' reconstruction — see `brackets_dual_fit_eligible`
     // for why the synthesized shape still answers the question correctly).
-    let dual_fit_rescue = dual_fit_rescue_flag(&DualFitRescueInput {
+    let rescue_input = DualFitRescueInput {
         patched: tier == "patch",
         brackets: &brackets,
         splice_dualfit: splice_dualfit.as_ref(),
         donor_aligned: tags.donor_aligned.as_ref(),
         donor_nominal: tags.donor_nominal.as_ref(),
-    });
+    };
+    let dual_fit_rescue = dual_fit_rescue_flag(&rescue_input);
+    // The same conjunction, un-suppressed on patched gaps — routing's question, not production's.
+    let counterfactual = dual_fit_counterfactual(&rescue_input);
 
     GapFingerprint {
         index: spec.gap_index,
@@ -289,6 +292,7 @@ pub fn spec_to_fingerprint_summary(
         // Equivalence is a from-decode-loop overlay (not a spec projection); the projection leaves it None.
         equivalence_diagnostic: None,
         equivalence_production: None,
+        dual_fit_counterfactual: stamp(counterfactual, DUAL_FIT_COUNTERFACTUAL_CONTRACT),
     }
 }
 

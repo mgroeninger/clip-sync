@@ -751,6 +751,14 @@ pub struct GapFingerprint {
     )]
     pub equivalence_production:
         Option<Contracted<crate::domain::gap_equivalence::GapEquivalenceVerdict>>,
+    /// Dual-fit's admission decision **and its legs**, evaluated on every gap — including the ones
+    /// the keep path patched, where [`GateOutcome::dual_fit_rescue`] is deliberately `None`.
+    ///
+    /// Top-level rather than a member of `outcome` because `outcome`'s contract scopes it to the
+    /// bracket gate, and this block deliberately speaks about gaps that gate never declined. See
+    /// [`dual_fit_counterfactual`] for why routing needs exactly those gaps.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub dual_fit_counterfactual: Option<Contracted<DualFitCounterfactual>>,
 }
 
 impl GapFingerprint {
@@ -762,6 +770,12 @@ impl GapFingerprint {
         &self,
     ) -> Option<&crate::domain::gap_equivalence::GapEquivalenceVerdict> {
         self.equivalence_production.as_deref()
+    }
+
+    /// Dual-fit's admission decision and legs, without the `_contract` wrapper. `None` on a gap
+    /// missing an input — never a defaulted `false`.
+    pub fn dual_fit_counterfactual_verdict(&self) -> Option<&DualFitCounterfactual> {
+        self.dual_fit_counterfactual.as_deref()
     }
 
     /// The diagnostic second opinion, without its `_contract` wrapper. Gates nothing — see
@@ -1124,21 +1138,85 @@ pub fn dual_fit_rescue_flag(input: &DualFitRescueInput<'_>) -> Option<bool> {
     if input.patched {
         return None;
     }
+    Some(dual_fit_counterfactual(input)?.would_rescue)
+}
+
+/// **Would dual-fit have taken this gap — including the gaps the keep path patched?**
+///
+/// [`dual_fit_rescue_flag`] answers production's question and returns `None` on a patched gap,
+/// because production's control flow never reaches `skip_or_dual_fit` there. That is the right
+/// answer for a *rescue* flag and the wrong one for routing, which is about exactly those patched
+/// gaps: routing asks where dual-fit would have put the fill instead. So this block evaluates the
+/// same conjunction unconditionally and says separately, in `reached_in_production`, whether
+/// production would have consulted it.
+///
+/// **The legs are emitted, not just the verdict.** Every consumer that re-implements the
+/// conjunction gets it wrong eventually — `dualfit-coverage-census.ps1` carried a routing leg and a
+/// stale `step_real` leg, and its 42% accept rate was an artefact of both. Emitting each leg beside
+/// the verdict, with the threshold the one thresholded leg used, is the pattern
+/// `equivalence_production` already follows: the decision, the inputs it was made from, and the
+/// thresholds, together.
+///
+/// `None` means no claim, exactly as for the flag: a gap missing any input is not measurable.
+/// Never a defaulted `false`.
+pub fn dual_fit_counterfactual(input: &DualFitRescueInput<'_>) -> Option<DualFitCounterfactual> {
     let df = input.splice_dualfit?;
     let aligned = input.donor_aligned?;
     let nominal = input.donor_nominal?;
 
-    let program_quiet =
-        nominal.silence_fraction >= crate::domain::donor::PROGRAM_QUIET_SILENCE_FRAC;
+    let program_quiet_silence_frac = crate::domain::donor::PROGRAM_QUIET_SILENCE_FRAC;
+    let brackets_eligible = brackets_dual_fit_eligible(input.brackets);
+    let gate_pass = df.gate_pass;
+    let shoulders_ordered = df.bridge_frames > 0;
+    let post_seam_global_finite = df.post_seam_global_r.is_finite();
+    let donor_bridges = aligned.continuous;
+    let program_quiet = nominal.silence_fraction >= program_quiet_silence_frac;
 
-    Some(
-        brackets_dual_fit_eligible(input.brackets)
-            && df.gate_pass
-            && df.bridge_frames > 0
-            && df.post_seam_global_r.is_finite()
-            && aligned.continuous
+    Some(DualFitCounterfactual {
+        reached_in_production: !input.patched,
+        would_rescue: brackets_eligible
+            && gate_pass
+            && shoulders_ordered
+            && post_seam_global_finite
+            && donor_bridges
             && !program_quiet,
-    )
+        brackets_eligible,
+        gate_pass,
+        shoulders_ordered,
+        post_seam_global_finite,
+        donor_bridges,
+        program_quiet,
+        program_quiet_silence_frac,
+    })
+}
+
+/// Dual-fit's admission decision and every leg it was made from, on **every** gap.
+///
+/// Built by [`dual_fit_counterfactual`]; see it for why this exists beside
+/// [`GateOutcome::dual_fit_rescue`] rather than replacing it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct DualFitCounterfactual {
+    /// Does production's control flow reach `skip_or_dual_fit` for this gap? `false` on a patched
+    /// gap — the keep path took it, so `would_rescue` there is a counterfactual, not a prediction
+    /// of anything that ran. `GateOutcome::dual_fit_rescue` is `None` on exactly these gaps.
+    pub reached_in_production: bool,
+    /// The conjunction of the six legs below (`program_quiet` negated).
+    pub would_rescue: bool,
+    /// The bracket failure class admits dual-fit (`brackets_dual_fit_eligible`).
+    pub brackets_eligible: bool,
+    /// Both shoulders clear the seam floors (`SeamGateFloors::passes`).
+    pub gate_pass: bool,
+    /// Shoulders do not cross: `bridge_frames > 0`.
+    pub shoulders_ordered: bool,
+    /// `post_seam_global_r` is finite — unmeasured is a hard decline, not "a constant shift suffices".
+    pub post_seam_global_finite: bool,
+    /// The **aligned** donor bridges the hole (`continuous`).
+    pub donor_bridges: bool,
+    /// The **nominal** donor reads as program-quiet, at the threshold below. The only thresholded
+    /// leg, and the one a consumer would otherwise re-derive.
+    pub program_quiet: bool,
+    /// `PROGRAM_QUIET_SILENCE_FRAC`, the threshold `program_quiet` was decided at.
+    pub program_quiet_silence_frac: f64,
 }
 
 /// Baseline structure-tier correlations at the throat.
@@ -2017,6 +2095,68 @@ mod tests {
         );
     }
 
+    /// The counterfactual answers on a **patched** gap, which is the whole reason it exists: routing
+    /// asks where dual-fit would have put the fill on gaps the keep path took, and that is exactly
+    /// where [`dual_fit_rescue_flag`] is deliberately silent.
+    #[test]
+    fn counterfactual_answers_where_the_rescue_flag_is_silent() {
+        let scored = [bracket(Some(FailureStage::WaveformFloor))];
+        let pass = splice_dualfit(true);
+        let occupied = donor(0.0, true);
+
+        let mut patched = rescuable(&scored, &pass, &occupied, &occupied);
+        patched.patched = true;
+
+        assert_eq!(dual_fit_rescue_flag(&patched), None, "flag stays silent");
+        let cf = dual_fit_counterfactual(&patched).expect("every input present");
+        assert!(!cf.reached_in_production, "the keep path took this gap");
+        assert!(
+            cf.would_rescue,
+            "and dual-fit would have admitted it anyway"
+        );
+
+        // Unmeasured is still "no claim" on both, never a defaulted false.
+        let mut no_df = patched;
+        no_df.splice_dualfit = None;
+        assert!(dual_fit_counterfactual(&no_df).is_none());
+    }
+
+    /// The verdict and the legs cannot disagree, and the flag is the verdict — one definition, so a
+    /// consumer reading either gets the same answer. § 1b's stale `step_real` leg is what a second
+    /// copy costs.
+    #[test]
+    fn counterfactual_legs_reconstruct_the_verdict_and_the_flag() {
+        let scored = [bracket(Some(FailureStage::WaveformFloor))];
+        let occupied = donor(0.0, true);
+        let quiet = donor(crate::domain::donor::PROGRAM_QUIET_SILENCE_FRAC, true);
+
+        for (dualfit, nominal, want) in [
+            (splice_dualfit(true), &occupied, true),
+            (splice_dualfit(false), &occupied, false),
+            (splice_dualfit(true), &quiet, false),
+        ] {
+            let input = rescuable(&scored, &dualfit, &occupied, nominal);
+            let cf = dual_fit_counterfactual(&input).expect("measured");
+            assert_eq!(cf.would_rescue, want);
+            assert_eq!(dual_fit_rescue_flag(&input), Some(cf.would_rescue));
+            assert_eq!(
+                cf.brackets_eligible
+                    && cf.gate_pass
+                    && cf.shoulders_ordered
+                    && cf.post_seam_global_finite
+                    && cf.donor_bridges
+                    && !cf.program_quiet,
+                cf.would_rescue,
+                "the emitted legs must reconstruct the emitted verdict"
+            );
+            assert_eq!(
+                cf.program_quiet_silence_frac,
+                crate::domain::donor::PROGRAM_QUIET_SILENCE_FRAC,
+                "the threshold travels with the leg it decided"
+            );
+        }
+    }
+
     /// Deterministic PRNG noise sample in [-1, 1) — local to the schema tests (the measure slice keeps
     /// its own copy for its PCM builders).
     fn noise(seed: u64, i: usize) -> f64 {
@@ -2267,6 +2407,7 @@ mod tests {
             ),
             equivalence_diagnostic: None,
             equivalence_production: None,
+            dual_fit_counterfactual: None,
         };
         let json = serde_json::to_string(&fp).expect("serialize");
         let back: GapFingerprint = serde_json::from_str(&json).expect("deserialize");

@@ -4,23 +4,26 @@
 # skip_or_dual_fit actually reaches? Answers "could dual-fit replace the keep-path gate search
 # as the primary/sole mechanism", without any production code change or fresh media run.
 #
-# WHY THIS IS POSSIBLE FROM EXISTING DUMPS: `compute_region_measurements` (overlay.rs) computes
-# `splice_dualfit` UNCONDITIONALLY for every gap, patched or skipped — it is never gated on the
-# bracket-gate outcome. The only thing suppressed on a patched gap is the derived VERDICT
-# (`dual_fit_rescue_flag` returns `None` when `patched`, schema.rs, "a patched gap never reaches
-# skip_or_dual_fit"). That suppression is about production's control flow, not data availability:
-# the raw legs the verdict is built from are already in the JSON for both patch and skip gaps.
-# So this script recomputes the verdict itself, for every gap, mirroring the exact predicate in
-# `dual_fit_rescue_flag` (crates/clip-sync-repair/src/application/gap_fingerprint/schema.rs):
+# WHERE THE VERDICT COMES FROM. Dumps written on or after 2026-09-22 carry
+# `dual_fit_counterfactual` — the verdict AND every leg, evaluated in Rust on every gap including the
+# patched ones (`dual_fit_counterfactual`, schema.rs). This script READS that block and does not
+# re-derive it. Re-deriving the predicate here is exactly how this script went stale: it carried a
+# `step_real` leg (`post_seam_r >= post_seam_global_r + 0.15`) long after 2026-09-01 dropped it as an
+# admission gate, so its accept rate was an artefact of a leg production no longer applies.
+#
+# FALLBACK for dumps predating the block (`source = derived`): the legs are recomputed here from
+# `splice_dualfit` / `donor_interior_*` / `brackets`, which the dump has always carried for both patch
+# and skip gaps (`compute_region_measurements` computes `splice_dualfit` unconditionally; only the
+# derived verdict was suppressed on a patched gap). The fallback mirrors the CURRENT predicate:
 #   1. bracket failure class is dual-fit-eligible (any bracket's failure_stage != structure_align)
 #   2. splice_dualfit.gate_pass
 #   3. splice_dualfit.bridge_frames > 0            (shoulders don't cross)
-#   4. step_real: post_seam_r >= post_seam_global_r + DUALFIT_STEP_REAL_MARGIN (0.15)
+#   4. splice_dualfit.post_seam_global_r is finite  (unmeasured is a hard decline)
 #   5. donor_interior_aligned.continuous            (aligned donor bridges the hole)
 #   6. donor_interior_nominal.silence_fraction < PROGRAM_QUIET_SILENCE_FRAC (0.5)
-# `-InclRigidFill` additionally reports the relaxed predicate from
-# docs/dev/archive/TEMP-seam-lock-rigid-fill-plan.md, which drops leg 4 (step_real) and instead requires
-# only legs 1-3 + 5-6 — i.e. "would a trim-0 rigid fill be assembled", not "would today's dual-fit".
+# `source` is reported per gap and rolled up, so a mixed corpus cannot quietly average the two.
+# `-StepRealMargin` and `-InclRigidFill` are gone: the relaxed "rigid-fill" predicate they contrasted
+# against IS the predicate now.
 #
 # THE AXIS THIS SCRIPT USES FOR "keep-path's own disposition": `outcome.tier` ("patch" / "skip").
 # That is contractually the bracket-gate `any_ok` result and nothing else (schema.rs) — it does
@@ -40,7 +43,6 @@
 # Usage:
 #   ./scripts/measure/dualfit-coverage-census.ps1 -DumpDir gap-files/<date>-complete-corpus
 #   ./scripts/measure/dualfit-coverage-census.ps1 -DumpDir gap-files/<date>-complete-corpus -CsvOut gap-files/dualfit-coverage.csv
-#   ./scripts/measure/dualfit-coverage-census.ps1 -DumpDir gap-files/<date>-complete-corpus -InclRigidFill
 #
 # Accepted layout: same as census-skip-buckets.ps1 — `<DumpDir>/<pair>/corpus.json` preferred,
 # per-gap `*_full.json` fallback when no corpus.json exists for that pair. `manifest.json` /
@@ -54,14 +56,10 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$DumpDir,
 
-    # DUALFIT_STEP_REAL_MARGIN (domain/dual_fit.rs). Only override to test sensitivity.
-    [double]$StepRealMargin = 0.15,
-
-    # PROGRAM_QUIET_SILENCE_FRAC (domain/donor.rs).
+    # PROGRAM_QUIET_SILENCE_FRAC (domain/donor.rs) — the fallback path's threshold only. An emitted
+    # block carries `program_quiet_silence_frac`, the threshold the decision was actually made at,
+    # and that one is used and reported as-is.
     [double]$ProgramQuietFrac = 0.5,
-
-    # Also report the rigid-fill plan's relaxed predicate (drops the step_real leg).
-    [switch]$InclRigidFill,
 
     # CSV of every characterized (full-tier) gap, both patch and skip.
     [string]$CsvOut = ''
@@ -92,11 +90,13 @@ function Format-Num([object]$Value) {
     return $d.ToString('R', [System.Globalization.CultureInfo]::InvariantCulture)
 }
 
-# Mirrors `partial_cmp(...).is_some_and(|ord| ord != Less)` — NaN on either side is "not real".
-function Test-StepReal([Nullable[double]]$PostR, [Nullable[double]]$PostGlobalR, [double]$Margin) {
-    if ($null -eq $PostR -or $null -eq $PostGlobalR) { return $false }
-    if ([double]::IsNaN($PostR) -or [double]::IsNaN($PostGlobalR)) { return $false }
-    return $PostR -ge ($PostGlobalR + $Margin)
+# `post_seam_global_r.is_finite()` — a JSON null, a NaN or a non-number is a hard decline, matching
+# Rust: unmeasured never reads as "a constant shift suffices".
+function Test-GlobalFinite([object]$Value) {
+    if ($null -eq $Value) { return $false }
+    $d = $Value -as [double]
+    if ($null -eq $d) { return $false }
+    return -not ([double]::IsNaN($d) -or [double]::IsInfinity($d))
 }
 
 function Test-BracketsDualFitEligible([object[]]$Brackets) {
@@ -161,25 +161,39 @@ foreach ($file in $files) {
 
         $measurable = ($null -ne $df -and $null -ne $aligned -and $null -ne $nominal)
 
-        $eligible = Test-BracketsDualFitEligible $brackets
-        $gatePass = ($null -ne $df) -and ((Get-Prop $df 'gate_pass') -eq $true)
-        $bridgePos = ($null -ne $df) -and ([double](Get-Prop $df 'bridge_frames' ) -gt 0)
         $postR = if ($null -ne $df) { Get-Prop $df 'post_seam_r' } else { $null }
         $postGlobalR = if ($null -ne $df) { Get-Prop $df 'post_seam_global_r' } else { $null }
-        $stepReal = Test-StepReal $postR $postGlobalR $StepRealMargin
-        $continuous = ($null -ne $aligned) -and ((Get-Prop $aligned 'continuous') -eq $true)
-        $programQuiet = ($null -ne $nominal) -and
-            ([double](Get-Prop $nominal 'silence_fraction') -ge $ProgramQuietFrac)
 
-        $verdict = $null
-        $verdictRigid = $null
-        if ($measurable) {
-            $verdict = $eligible -and $gatePass -and $bridgePos -and $stepReal -and
-                $continuous -and (-not $programQuiet)
-            if ($InclRigidFill) {
-                # Rigid-fill plan: drop the step_real leg (trim-0 fill covers that case instead
-                # of declining). Everything else unchanged.
-                $verdictRigid = $eligible -and $gatePass -and $bridgePos -and
+        $cf = Get-Prop $g 'dual_fit_counterfactual'
+        if ($null -ne $cf) {
+            # Emitted: read it. Every leg below is the one Rust decided on — do not recompute any of
+            # them from the raw blocks, or this script is re-implementing the predicate again.
+            $source = 'emitted'
+            $measurable = $true
+            $reached = Get-Prop $cf 'reached_in_production'
+            $eligible = (Get-Prop $cf 'brackets_eligible') -eq $true
+            $gatePass = (Get-Prop $cf 'gate_pass') -eq $true
+            $bridgePos = (Get-Prop $cf 'shoulders_ordered') -eq $true
+            $globalFinite = (Get-Prop $cf 'post_seam_global_finite') -eq $true
+            $continuous = (Get-Prop $cf 'donor_bridges') -eq $true
+            $programQuiet = (Get-Prop $cf 'program_quiet') -eq $true
+            $quietFrac = Get-Prop $cf 'program_quiet_silence_frac'
+            $verdict = (Get-Prop $cf 'would_rescue') -eq $true
+        } else {
+            $source = 'derived'
+            $reached = $null
+            $quietFrac = $ProgramQuietFrac
+            $eligible = Test-BracketsDualFitEligible $brackets
+            $gatePass = ($null -ne $df) -and ((Get-Prop $df 'gate_pass') -eq $true)
+            $bridgePos = ($null -ne $df) -and ([double](Get-Prop $df 'bridge_frames' ) -gt 0)
+            $globalFinite = Test-GlobalFinite $postGlobalR
+            $continuous = ($null -ne $aligned) -and ((Get-Prop $aligned 'continuous') -eq $true)
+            $programQuiet = ($null -ne $nominal) -and
+                ([double](Get-Prop $nominal 'silence_fraction') -ge $ProgramQuietFrac)
+
+            $verdict = $null
+            if ($measurable) {
+                $verdict = $eligible -and $gatePass -and $bridgePos -and $globalFinite -and
                     $continuous -and (-not $programQuiet)
             }
         }
@@ -189,16 +203,18 @@ foreach ($file in $files) {
             gap_index             = Get-Prop $g 'index'
             keep_path_tier        = $tier
             skip_reason           = Get-Prop $outcome 'skip_reason'
+            verdict_source        = $source
             dual_fit_rescue_field = Format-Num (Get-Prop $outcome 'dual_fit_rescue')
+            reached_in_production = Format-Num $reached
             measurable            = Format-Num $measurable
             eligible              = Format-Num $eligible
             gate_pass             = Format-Num $gatePass
             bridge_frames_pos     = Format-Num $bridgePos
-            step_real             = Format-Num $stepReal
+            post_global_finite    = Format-Num $globalFinite
             donor_continuous      = Format-Num $continuous
             program_quiet         = Format-Num $programQuiet
+            program_quiet_frac    = Format-Num $quietFrac
             dualfit_alone_verdict = Format-Num $verdict
-            dualfit_rigid_verdict = Format-Num $verdictRigid
             dualfit_pre_seam_r    = Format-Num (Get-Prop $df 'pre_seam_r')
             dualfit_post_seam_r   = Format-Num $postR
             dualfit_post_global_r = Format-Num $postGlobalR
@@ -219,7 +235,12 @@ $sorted = @($rows | Sort-Object @{ Expression = { ($_.pair -as [int]) ?? [int]::
 Write-Host ""
 Write-Host ("Corpus: {0}" -f $DumpDir)
 Write-Host ("Pairs {0} | characterized gaps {1}" -f $pairs.Count, $sorted.Count)
-Write-Host ("Predicate: eligible bracket AND gate_pass AND bridge_frames>0 AND step_real (margin {0}) AND donor continuous AND NOT program-quiet (frac >= {1})" -f $StepRealMargin, $ProgramQuietFrac)
+Write-Host "Predicate: eligible bracket AND gate_pass AND bridge_frames>0 AND post_seam_global_r finite AND donor continuous AND NOT program-quiet"
+$bySource = @($sorted | Group-Object verdict_source | Sort-Object Name)
+Write-Host ("Verdict source: {0}" -f (($bySource | ForEach-Object { '{0} {1}' -f $_.Name, $_.Count }) -join ' | '))
+if ($bySource.Name -contains 'derived') {
+    Write-Host ("  'derived' gaps predate dual_fit_counterfactual (2026-09-22); their legs are recomputed here, program-quiet at frac >= {0}" -f $ProgramQuietFrac) -ForegroundColor DarkGray
+}
 Write-Host ""
 
 $measurableRows = @($sorted | Where-Object { $_.measurable -eq 'True' })
@@ -244,14 +265,11 @@ function Show-CrossTab([object[]]$Rows, [string]$VerdictCol, [string]$Label) {
 }
 
 $decisive = Show-CrossTab $measurableRows 'dualfit_alone_verdict' "today's dual-fit predicate"
-if ($InclRigidFill) {
-    Show-CrossTab $measurableRows 'dualfit_rigid_verdict' 'rigid-fill relaxed predicate (drops step_real)' | Out-Null
-}
 
 if ($decisive.Count -gt 0) {
     Write-Host "keep-path patch / dual-fit decline (the decisive quadrant):"
     $decisive | Sort-Object @{ Expression = { ($_.pair -as [int]) ?? [int]::MaxValue } }, gap_index |
-        Format-Table pair, gap_index, gate_pass, bridge_frames_pos, step_real, donor_continuous, program_quiet -AutoSize
+        Format-Table pair, gap_index, verdict_source, gate_pass, bridge_frames_pos, post_global_finite, donor_continuous, program_quiet -AutoSize
 }
 
 if ($CsvOut -ne '') {
