@@ -517,8 +517,9 @@ not about data availability, and it is item 1.
    registration-independence deliberate. An aligned variant would be a policy
    nothing reads, and § 1b measured that it would decide nothing: zero of 412
    gaps flip between the two registrations.
-2. **Emit dual-fit's absolute seam placement.** This is the item the phase
-   turns on, and the one an earlier draft got wrong.
+2. **Emit dual-fit's absolute seam placement.** ✅ **Done 2026-09-23** as the
+   top-level `dual_fit_placement` block (`DUAL_FIT_PLACEMENT_CONTRACT`). This is
+   the item the phase turns on, and the one an earlier draft got wrong.
 
    **The existing `*_seam_lag_ms` keys are not placements — do not build on
    them.** `splice_dualfit.pre_seam_lag_ms` / `post_seam_lag_ms` are
@@ -552,7 +553,42 @@ not about data availability, and it is item 1.
    −10 ms, now attributed to the seam crossfade), and the written frame § 1's
    bounds are quoted in. A placement emitted
    without its frame named is not comparable to anything.
-3. **Emit the per-shoulder delta against the keep-path fill.** Paired with
+
+   **As built.** A new top-level `dual_fit_placement` block, *not* new fields on
+   `splice_dualfit`: that block's own contract says its `*_seam_lag_ms` are
+   residual **at** the lock and never a placement, so an absolute placement
+   inside it would contradict the contract it ships under. Fields: `pre_lag_ms`
+   / `post_lag_ms` and the same two in frames, `b_pre_seam_frames` /
+   `b_post_seam_frames` (+ a `_secs` view), and the **unclamped** pair, kept
+   because the `.max(0)` clamp can manufacture an abut. `r` / `z` are
+   deliberately *not* duplicated — `splice_dualfit.pre_seam_r` / `pre_seam_z`
+   already **are** these locks' own, single-sourced from `SeamLocks`, so the
+   weighting the item asked for is available without a second definition to
+   drift. No `step_ms` either: `trim_frames` is already the step.
+
+   `splice_dualfit_at` now returns `DualFitProbe { summary, placement }` — both
+   readings off the one `SeamLocks`, so no second ±600 ms seam search is paid.
+   It travels as a **from-decode overlay** (`RegionMeasurements` → stamped onto
+   `fp` in `characterize.rs` beside the window ladders), not through the domain
+   spec: only the decode path measured locks, so the spec-projection and oracle
+   paths honestly emit nothing rather than a reconstruction.
+
+   The contract states the frame on its `placement` and `window` axes: B
+   timeline, each lag relative to that shoulder's nominal center, **planned**
+   frame with no crossfade term — the same frame `registration_applied_ms` is
+   quoted in, so the two difference directly. Its `not:` names
+   `splice_dualfit.pre_seam_lag_ms` outright. Documented in
+   `docs/dev/gap-fingerprint.md` § *`dual_fit_placement`*; `docs/json-output.md`
+   needed no change (it is the CLI patch-report contract, not a dump key).
+
+   The unit test is the one fixture whose geometry is known by construction
+   (B continuous, A with 1.2 s spliced in): pre locks at nominal, the rescued
+   post lock reads exactly −1200 ms, and both cut B at the same frame with
+   nothing clamped. That is the frame claim being checked, not just the
+   plumbing.
+3. **Emit the per-shoulder delta against the keep-path fill.** ✅ **Done
+   2026-09-23**, by join, in `census-registration-residual.ps1
+   -FingerprintDir`. Paired with
    Phase 0's `registration_residual_pre_ms` / `_post_ms`, this puts **both arms'
    placements on the same gap** — the direct comparison, with no listening.
 
@@ -564,6 +600,24 @@ not about data availability, and it is item 1.
    on `geometry.a_start_secs` rounded to 1 ms. **Prefer the join**: differencing
    two absolute, frame-stamped numbers is arithmetic, not a re-derived decision,
    and it is decisions (item 1) that must not live in a consumer.
+
+   **As built.** `-FingerprintDir` joins the patched gaps to a fingerprint dump
+   on pair label + A start to the millisecond (never the gap index — the two
+   dumps enumerate different populations) and prints, over bracket gaps,
+   `delta_s = dual_fit_placement.<s>_lag_ms − registration_applied_ms` per
+   shoulder, plus their mean (the common-mode half) and difference (the step
+   half `trim_frames` already gave), and `delta_s + registration_residual_<s>_ms`
+   — ~0 exactly when dual-fit lands where the keep path's own residual says it
+   should have. Both terms are planned-frame, so `-FrameOffsetMs` is *not*
+   applied to them; the seam census keeps its written frame. Dual-fit rescues
+   are tallied apart, since `applied_ms` is hardcoded 0.0 on that arm.
+
+   **The join key is verified, the payload is not yet available.** Run against
+   the 2026-09-18 patch dump and the 2026-09-20 fingerprint dump, all **327**
+   patched gaps join against 1087 fingerprint gaps with **zero** misses — two
+   independent runs, so the key is sound. Both dumps predate the placement
+   block, so the section correctly reports that there is nothing to difference
+   yet. It needs the filtered run below.
 
    **What is recoverable today, without any of this.** `trim_frames =
    bridge_frames − gap_frames` is the *difference* between the two seam lags.
@@ -759,6 +813,17 @@ recording here:
 Still open in Phase 1c: items 2 (the absolute per-shoulder locks) and 3 (the
 per-shoulder delta, by join). No corpus run has yet written the new block, so
 every existing dump reads as `verdict_source = derived`.
+
+**Phase 1c items 2 and 3 landed (2026-09-23).** `dual_fit_placement` ships the
+absolute per-shoulder lock placement — planned frame, stated in its contract —
+and `census-registration-residual.ps1 -FingerprintDir` differences it against
+the keep path's `registration_applied_ms` by join. Details in § 4c items 2 and
+3. What this does **not** yet give is the distribution: no dump on disk carries
+the block, so the remaining Phase 1c done-when (the delta distribution per kind,
+common-mode distinguished from the step half) is waiting on the filtered run,
+not on any further code. The join key itself is already proven — 327 of 327
+patched gaps join across two independent runs, zero misses — so that run is the
+only thing between here and the number.
 
 **Coverage census (§ 1b) — done 2026-09-22.** Full numbers and the two refuted
 explanations are in § 1b. Verdict: dual-fit's admission test is not what limits

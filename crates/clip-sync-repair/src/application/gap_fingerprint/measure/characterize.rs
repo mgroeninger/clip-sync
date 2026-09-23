@@ -303,6 +303,12 @@ pub fn characterize_gaps_from_decode(
         fp.constellation = constellation;
         fp.post_window_ladder = m.post_window_ladder;
         fp.pre_window_ladder = m.pre_window_ladder;
+        // Measured from decode, like the ladders above: the domain spec carries `splice_dualfit`'s
+        // scores but not the locks' absolute placement, so the projection cannot have written it.
+        fp.dual_fit_placement = crate::application::gap_fingerprint::contract::stamp(
+            m.dual_fit_placement,
+            crate::application::gap_fingerprint::contract::DUAL_FIT_PLACEMENT_CONTRACT,
+        );
         // Count only gaps that ended up with a *fabricated* block. A gap with no sweep and no scalars
         // has no `lag_decision` at all, and absence needs no disowning.
         if !lag_supplied && fp.lag_decision.is_some() {
@@ -2246,6 +2252,7 @@ mod tests {
             equivalence_diagnostic: None,
             equivalence_production: None,
             dual_fit_counterfactual: None,
+            dual_fit_placement: None,
         }
     }
 

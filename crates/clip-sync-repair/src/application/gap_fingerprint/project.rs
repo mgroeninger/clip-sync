@@ -293,6 +293,8 @@ pub fn spec_to_fingerprint_summary(
         equivalence_diagnostic: None,
         equivalence_production: None,
         dual_fit_counterfactual: stamp(counterfactual, DUAL_FIT_COUNTERFACTUAL_CONTRACT),
+        // From-decode-loop overlay (the ladders' pattern): this path measured no locks.
+        dual_fit_placement: None,
     }
 }
 

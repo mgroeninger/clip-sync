@@ -364,6 +364,7 @@ pub fn build_gap_fingerprint(
         equivalence_production: None,
         // Summary tiers do not measure dual-fit's inputs; the projection is the only writer.
         dual_fit_counterfactual: None,
+        dual_fit_placement: None,
     }
 }
 

@@ -23,6 +23,15 @@
 # on that arm, so its residual is minus the displacement from nominal, not a seam error. The sign of
 # merit is inverted between the arms; see the plan's Phase 0 section.
 #
+# DUAL-FIT DELTA (Phase 1c item 3). With -FingerprintDir, the patched gaps are joined to a gap
+# fingerprint dump on pair label + A start to the millisecond, and the per-shoulder delta is printed:
+# `delta_s = dual_fit_placement.<s>_lag_ms - registration_applied_ms`, i.e. how far dual-fit would
+# move each shoulder from where the keep path actually put the fill. Both terms are PLANNED-frame, so
+# the crossfade cancels and -FrameOffsetMs is NOT applied to them. Reported beside
+# `delta_s + registration_residual_<s>_ms` (also planned-frame), which is ~0 exactly when dual-fit
+# lands where the keep path's own residual says it should have. Requires a dump written on or after
+# 2026-09-23; older ones carry no `dual_fit_placement` and the section says so and reports nothing.
+#
 # This SIZES a cohort, it does not decide one. No routing predicate lives here: the script reports
 # how many gaps sit above each pre-registered bound and names them, and the bound itself is settled
 # by the ear pass.
@@ -41,6 +50,7 @@
 #   ./scripts/measure/census-registration-residual.ps1 -DumpDir gap-files/<new> -CsvOut gap-files/residual.csv
 #   ./scripts/measure/census-registration-residual.ps1 -DumpDir gap-files/<new> -ExcludePairs 6,16
 #   ./scripts/measure/census-registration-residual.ps1 -DumpDir gap-files/<new> -RouteBoundsMs 50,75,100
+#   ./scripts/measure/census-registration-residual.ps1 -DumpDir gap-files/<patch> -FingerprintDir gap-files/<fp>
 #
 # MEDIA HYGIENE: emits pair label + gap index only — never media paths or titles.
 
@@ -74,7 +84,11 @@ param(
     [double]$StepKindMs = 20.0,
 
     # Gaps above this bound are listed individually by pair/gap index.
-    [double]$ListAboveMs = 75.0
+    [double]$ListAboveMs = 75.0,
+
+    # Optional gap-fingerprint dump joined to -DumpDir for the per-shoulder dual-fit delta.
+    # Layout is census-skip-buckets.ps1's: <dir>/<pair>/corpus.json, per-gap *_full.json otherwise.
+    [string]$FingerprintDir = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -108,6 +122,10 @@ function Read-Run([string]$Dir) {
                 residual_ms   = if ($has -and $null -ne $p.registration_residual_ms) { [double]$p.registration_residual_ms } else { $null }
                 pre_ms        = if ($null -ne $p.registration_residual_pre_ms) { [double]$p.registration_residual_pre_ms + $FrameOffsetMs } else { $null }
                 post_ms       = if ($null -ne $p.registration_residual_post_ms) { [double]$p.registration_residual_post_ms + $FrameOffsetMs } else { $null }
+                # The same two, unshifted. The dual-fit delta is planned-frame on both sides, so it
+                # must not inherit the crossfade the seam census adds for the ear.
+                pre_raw_ms    = if ($null -ne $p.registration_residual_pre_ms) { [double]$p.registration_residual_pre_ms } else { $null }
+                post_raw_ms   = if ($null -ne $p.registration_residual_post_ms) { [double]$p.registration_residual_post_ms } else { $null }
                 applied_ms    = if ($null -ne $p.registration_applied_ms) { [double]$p.registration_applied_ms } else { $null }
             })
         }
@@ -247,9 +265,119 @@ function Write-SeamCensus([object]$Run) {
     }
 }
 
+# Phase 1c item 3: dual-fit's placement, joined to the fill the keep path actually wrote.
+#
+# By JOIN rather than by emitting a keep-path placement into the fingerprint dump: the patch report
+# already carries `registration_applied_ms`, and a second copy of it written from a different code
+# path is a drift bug waiting to happen. The join key is pair label + A start to the millisecond,
+# never the gap index - the two dumps enumerate different gap populations.
+function Read-Placements([string]$Dir) {
+    if (-not (Test-Path -LiteralPath $Dir)) { throw "fingerprint dir not found: $Dir" }
+    $skipNames = @('manifest.json', 'listen.json')
+    $candidates = @(Get-ChildItem -LiteralPath $Dir -Recurse -File -Filter '*.json' |
+        Where-Object { $skipNames -notcontains $_.Name })
+    $pairOf = { param($f) ([System.IO.Path]::GetRelativePath($Dir, $f.FullName) -split '[\\/]')[0] }
+    $canonical = @{}
+    foreach ($f in $candidates) { if ($f.Name -eq 'corpus.json') { $canonical[(& $pairOf $f)] = $true } }
+    $files = @($candidates | Where-Object {
+        if ($_.Name -eq 'corpus.json') { return $true }
+        return -not $canonical.ContainsKey((& $pairOf $_))
+    })
+
+    if ($files.Count -eq 0) { throw "no fingerprint JSON under: $Dir" }
+
+    $map = @{}
+    $gaps = 0; $withPlacement = 0
+    foreach ($f in $files) {
+        try { $doc = Get-Content -LiteralPath $f.FullName -Raw | ConvertFrom-Json -Depth 64 } catch { continue }
+        if ($null -eq $doc.PSObject.Properties['gaps']) { continue }
+        $pair = & $pairOf $f
+        foreach ($g in @($doc.gaps)) {
+            $geom = $g.PSObject.Properties['geometry']
+            if ($null -eq $geom -or $null -eq $geom.Value) { continue }
+            $aStart = $geom.Value.PSObject.Properties['a_start_secs']
+            if ($null -eq $aStart) { continue }
+            $gaps++
+            $place = $g.PSObject.Properties['dual_fit_placement']
+            if ($null -eq $place -or $null -eq $place.Value) { continue }
+            $withPlacement++
+            $map['{0}|{1:0.000}' -f $pair, [double]$aStart.Value] = $place.Value
+        }
+    }
+    [pscustomobject]@{ Dir = $Dir; Map = $map; Gaps = $gaps; WithPlacement = $withPlacement }
+}
+
+function Write-DualFitDelta([object]$Run, [object]$Fp) {
+    Write-Host ""
+    Write-Host "== dual-fit delta (planned frame on BOTH sides - no crossfade term)  ($($Fp.Dir))"
+    if ($Fp.WithPlacement -eq 0) {
+        Write-Host "  no dual_fit_placement in this dump - it predates 2026-09-23. Nothing to join."
+        Write-Host ("  ({0} fingerprint gaps read)" -f $Fp.Gaps)
+        return
+    }
+
+    $joined = [System.Collections.Generic.List[object]]::new()
+    $unjoined = 0
+    foreach ($r in $Run.Rows) {
+        if ($null -eq $r.applied_ms) { continue }
+        $place = $Fp.Map['{0}|{1:0.000}' -f $r.pair, $r.a_start_secs]
+        if ($null -eq $place) { $unjoined++; continue }
+        $dPre = [double]$place.pre_lag_ms - $r.applied_ms
+        $dPost = [double]$place.post_lag_ms - $r.applied_ms
+        $joined.Add([pscustomobject]@{
+            pair      = $r.pair
+            gap       = $r.gap_index
+            dual_fit  = $r.dual_fit
+            delta_pre = $dPre
+            delta_post = $dPost
+            # ~0 when dual-fit lands where the keep path's own residual says it should have.
+            left_pre  = if ($null -ne $r.pre_raw_ms) { $dPre + $r.pre_raw_ms } else { $null }
+            left_post = if ($null -ne $r.post_raw_ms) { $dPost + $r.post_raw_ms } else { $null }
+            common_ms = ($dPre + $dPost) / 2.0
+            step_ms   = $dPre - $dPost
+        })
+    }
+
+    Write-Host ("  fingerprint gaps {0} ({1} carry a placement); patched gaps joined {2}, unjoined {3}" -f `
+        $Fp.Gaps, $Fp.WithPlacement, $joined.Count, $unjoined)
+    if ($joined.Count -eq 0) {
+        Write-Host "  nothing joined - check that both dumps cover the same pairs."
+        return
+    }
+
+    # Bracket gaps are the population the routing question is about: on the dual-fit arm
+    # `applied_ms` is hardcoded 0.0, so the delta there is dual-fit against nominal, not against a
+    # placement the keep path chose. Tallied, never pooled.
+    $bracket = @($joined | Where-Object { -not $_.dual_fit })
+    $dual = @($joined | Where-Object { $_.dual_fit })
+    Write-Host ("  bracket {0}, dual-fit rescues {1} (reported apart - applied_ms is 0.0 on that arm)" -f `
+        $bracket.Count, $dual.Count)
+
+    foreach ($axis in @('delta_pre', 'delta_post', 'common_ms', 'step_ms', 'left_pre', 'left_post')) {
+        $v = [double[]]@($bracket | ForEach-Object { $_.$axis } | Where-Object { $null -ne $_ })
+        if ($v.Count -eq 0) { Write-Host ("  {0,-10} n = 0" -f $axis); continue }
+        $st = Get-Stats $v
+        Write-Host ("  {0,-10} n {1,4}   median {2,8}   IQR {3,8} … {4,-8}  median |d| {5,7:0.0}   |d| <= 25 ms {6,4}" -f `
+            $axis, $st.n, (Fmt $st.median), (Fmt $st.q1), (Fmt $st.q3), $st.abs_median, $st.within_25)
+    }
+
+    $moved = @($bracket | Where-Object { [math]::Max([math]::Abs($_.delta_pre), [math]::Abs($_.delta_post)) -gt $ListAboveMs } |
+        Sort-Object { [math]::Max([math]::Abs($_.delta_pre), [math]::Abs($_.delta_post)) } -Descending)
+    if ($moved.Count) {
+        Write-Host ""
+        Write-Host "  bracket gaps dual-fit would move more than $ListAboveMs ms (pair/gap index only):"
+        foreach ($r in $moved) {
+            Write-Host ("    {0,-10} pre {1,9:0.0}  post {2,9:0.0}  common {3,9:0.0}  step {4,8:0.0}" -f `
+                "$($r.pair)/g$($r.gap)", $r.delta_pre, $r.delta_post, $r.common_ms, $r.step_ms)
+        }
+    }
+}
+
 $run = Read-Run $DumpDir
 Write-Run $run 'run'
 Write-SeamCensus $run
+
+if ($FingerprintDir) { Write-DualFitDelta $run (Read-Placements $FingerprintDir) }
 
 if ($BaselineDir) {
     $base = Read-Run $BaselineDir

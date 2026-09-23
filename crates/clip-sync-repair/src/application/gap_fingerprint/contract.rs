@@ -252,7 +252,15 @@ contracts! {
         measures: "would dual-fit have admitted this gap: the verdict plus every leg it was made from, patched gaps too",
         placement: "the six conditions skip_or_dual_fit evaluates, from this gap's brackets / splice_dualfit / donor reads",
         window: "reached_in_production=false on a patched gap - the keep path took it, so would_rescue is counterfactual",
-        not: "outcome.dual_fit_rescue, which is None once a gap is patched; no placement or lag is claimed here",
+        not: "outcome.dual_fit_rescue, which is None once a gap is patched; placement lives in dual_fit_placement",
+    }
+
+    /// Contract for `dual_fit_placement` — where the locks sit, not how well they score.
+    DUAL_FIT_PLACEMENT_CONTRACT for "dual_fit_placement" {
+        measures: "where dual-fit's two locks sit: the accepted lag per shoulder and the B frame a fill would be cut at",
+        placement: "B timeline; each lag is relative to that shoulder's nominal center (pre b_mapped_start, post +gap_frames)",
+        window: "the planned frame, as registration_applied_ms is - the written fill runs one crossfade_ms ahead of it",
+        not: "splice_dualfit.pre_seam_lag_ms, which is residual AT the lock (~0, half a sample) and never a placement",
     }
 
     /// Contract for `source.alignment` — pair-level chromaprint scan map, not a gap shoulder.

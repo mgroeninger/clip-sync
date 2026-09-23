@@ -337,10 +337,10 @@ too easy to skip, and too far from the value it explains.
 | **Wire shape** | Unchanged — `#[serde(flatten)]` keeps the group's own keys where they were, with `_contract` beside them |
 | **Absence** | Always valid. Old corpora, and any path that stamps nothing, deserialize to `None` |
 | **Goldens** | Not a Tier-1/2 axis. Curated fixtures stay contract-free until an intentional harvest |
-| **Repetition** | Repeated per gap for the seventeen per-gap groups, deliberately. `source.alignment` is once per corpus |
+| **Repetition** | Repeated per gap for the eighteen per-gap groups, deliberately. `source.alignment` is once per corpus |
 | **Shape** | Only a group that serializes as a **map**. `#[serde(flatten)]` cannot wrap an array, so `brackets`, `pre_window_ladder` and `post_window_ladder` cannot carry one as they stand |
 
-Carried today by eighteen groups: `equivalence_diagnostic` and `equivalence_production` (C1,
+Carried today by nineteen groups: `equivalence_diagnostic` and `equivalence_production` (C1,
 2026-08-07), then `lag_decision`, `lag_editorial`, `donor_interior_aligned`,
 `donor_interior_nominal`, `residual` and `seam_probe` (C2, 2026-08-08) — the four confusable pairs
 this corpus is actually misread on — plus `source.alignment` (2026-08-21), the pair-level scan map
@@ -1131,6 +1131,46 @@ expressed on top of it so the two cannot drift.
 
 `None` (key absent) means **no claim** — a gap missing `splice_dualfit` or either donor read is not
 measurable. Never a defaulted `false`. Written only on the projection path, so summary tiers omit it.
+
+### `dual_fit_placement` — where dual-fit's locks sit
+
+`splice_dualfit` says whether a length-reconciled fill would pass the gate. It has never said
+**where** that fill would be cut, and the field that looks like it does — `pre_seam_lag_ms` /
+`post_seam_lag_ms` — is the residual measured *at* the lock, ~0 by construction (corpus max 0.0104 ms,
+half a sample at 48 kHz). `dual_fit_placement` (2026-09-23) is the placement, read off the same
+`SeamLocks` in the same call, so no second ±600 ms seam search is paid for it.
+
+| Field | Meaning |
+| --- | --- |
+| `pre_lag_ms` / `post_lag_ms` | The accepted lag per shoulder, ms, relative to that shoulder's **nominal** center |
+| `pre_lag_frames` / `post_lag_frames` | The same two lags as the integers the search accepted, so the ms can be reproduced |
+| `b_pre_seam_frames` / `b_post_seam_frames` | The B frame a fill would be cut at, after the `.max(0)` clamp |
+| `b_pre_seam_secs` / `b_post_seam_secs` | The same two cut points in seconds, for joining without the run's sample rate |
+| `b_pre_seam_unclamped_frames` / `b_post_seam_unclamped_frames` | `nominal + lag` **before** the clamp |
+
+**The frame is load-bearing, and the contract states it.** Each lag is on **B's timeline**, relative
+to the shoulder's nominal center (pre at `b_mapped_start`, post at `b_mapped_start + gap_frames`),
+positive = the match sits later in B. That is the **planned** frame — the same one the patch report
+quotes `registration_applied_ms` in — so the two difference directly with no crossfade term. It is
+*not* the **written** frame: the seam crossfade advances the written fill by one `crossfade_ms`
+relative to the plan, a term that applies to both arms and therefore cancels in a difference, but
+must be added back before either is compared to a measurement made on the audio. A placement emitted
+without its frame named is not comparable to anything.
+
+**What is deliberately not here.** How *well* each placement is determined is
+`splice_dualfit.pre_seam_r` / `pre_seam_z` and the post pair — those are these same locks' own `r`
+and `z`, single-sourced from `SeamLocks`, and duplicating them here would create a second definition
+to drift. The **step** between the shoulders is already `splice_dualfit.trim_frames`
+(`bridge_frames − gap_frames`); what the corpus lacked, and this block supplies, is the **common-mode**
+half — the move both shoulders make together.
+
+The unclamped pair is kept because the clamp can *manufacture* an abut: two negative seams collapse
+onto frame 0 and read as `bridge_frames == 0` (flagged as `splice_dualfit.seams_clamped`). When the
+unclamped pair differs from the clamped pair, the clamped pair is not a measurement of anything on B.
+
+`None` means **no claim**. This is a from-decode overlay, like the window ladders: the domain spec
+carries `splice_dualfit`'s scores but not the locks' absolute placement, so the spec-projection and
+oracle paths honestly emit nothing rather than a reconstruction.
 
 ### Diagnostic-only fields
 

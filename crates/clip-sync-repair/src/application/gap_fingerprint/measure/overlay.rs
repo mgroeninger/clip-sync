@@ -141,6 +141,10 @@ pub(in crate::application::gap_fingerprint::measure) struct RegionMeasurements {
         Option<DonorInterior>,
     pub(in crate::application::gap_fingerprint::measure) b_levels: Option<LevelProfile>,
     pub(in crate::application::gap_fingerprint::measure) splice_dualfit: Option<SpliceDualfit>,
+    /// Where `splice_dualfit`'s two locks sit. Travels as a from-decode overlay rather than through
+    /// the domain spec: only this path measured locks, so only this path can claim a placement.
+    pub(in crate::application::gap_fingerprint::measure) dual_fit_placement:
+        Option<DualFitPlacement>,
     pub(in crate::application::gap_fingerprint::measure) wide_envelope:
         Option<WideEnvelopeFingerprint>,
     pub(in crate::application::gap_fingerprint::measure) residual: Option<ResidualInfo>,
@@ -362,7 +366,7 @@ pub(in crate::application::gap_fingerprint::measure) fn compute_region_measureme
     } else {
         None
     };
-    let splice_dualfit = splice_dualfit_at(&SpliceDualfitInput {
+    let dual_fit_probe = splice_dualfit_at(&SpliceDualfitInput {
         a_samples: &a_pcm.samples,
         channels: ch,
         refined,
@@ -371,6 +375,10 @@ pub(in crate::application::gap_fingerprint::measure) fn compute_region_measureme
         cfg,
         sample_rate,
     });
+    // One `SeamLocks`, two readings: the scored summary that ships as `splice_dualfit`, and the
+    // absolute placement those locks sit at. Split here rather than searched twice.
+    let splice_dualfit = dual_fit_probe.as_ref().map(|p| p.summary);
+    let dual_fit_placement = dual_fit_probe.as_ref().map(|p| p.placement);
     // F14: now that `splice_dualfit` exists, record whether production's dual-fit would rescue this
     // skip. Deliberately the same `dual_fit_rescue_flag` the projection calls — the two paths are
     // compared axis-by-axis by `decode_path_projection`, so a second inline copy would be a drift bug
@@ -516,6 +524,7 @@ pub(in crate::application::gap_fingerprint::measure) fn compute_region_measureme
         donor_interior_nominal,
         b_levels,
         splice_dualfit,
+        dual_fit_placement,
         wide_envelope,
         residual,
         lag_editorial,
@@ -702,6 +711,7 @@ mod tests {
             donor_interior_aligned: Some(donor(0.05, true)),
             donor_interior_nominal: Some(donor(0.10, false)),
             b_levels: None,
+            dual_fit_placement: None,
             splice_dualfit: Some(SpliceDualfit {
                 pre_seam_r: 0.97,
                 post_seam_r: 0.95,

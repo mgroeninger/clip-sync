@@ -759,6 +759,13 @@ pub struct GapFingerprint {
     /// [`dual_fit_counterfactual`] for why routing needs exactly those gaps.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub dual_fit_counterfactual: Option<Contracted<DualFitCounterfactual>>,
+    /// Where dual-fit's two shoulder locks actually sit — the placement `splice_dualfit` deliberately
+    /// does not carry. See [`DualFitPlacement`] for the frame, which is load-bearing.
+    ///
+    /// A from-decode-loop overlay, like the window ladders: the spec projection leaves it `None`
+    /// because it never measured locks, and the dump's caller attaches it after projection.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub dual_fit_placement: Option<Contracted<DualFitPlacement>>,
 }
 
 impl GapFingerprint {
@@ -776,6 +783,12 @@ impl GapFingerprint {
     /// missing an input — never a defaulted `false`.
     pub fn dual_fit_counterfactual_verdict(&self) -> Option<&DualFitCounterfactual> {
         self.dual_fit_counterfactual.as_deref()
+    }
+
+    /// Dual-fit's absolute per-shoulder placement, without the `_contract` wrapper. Read
+    /// [`DualFitPlacement`]'s frame note before differencing it against anything.
+    pub fn dual_fit_placement_locks(&self) -> Option<&DualFitPlacement> {
+        self.dual_fit_placement.as_deref()
     }
 
     /// The diagnostic second opinion, without its `_contract` wrapper. Gates nothing — see
@@ -1443,6 +1456,55 @@ pub struct SpliceSummary {
     /// neither shoulder carries the flag (older fingerprints).
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub edge_pinned: Option<bool>,
+}
+
+/// **Dual-fit's absolute per-shoulder placement** — where each shoulder's lock actually sits, not how
+/// well it scores.
+///
+/// `splice_dualfit` answers *would a length-reconciled fill pass the gate?* and deliberately says
+/// nothing about **where** that fill would be cut. Its `pre_seam_lag_ms` / `post_seam_lag_ms` are the
+/// residual error measured **at** the lock (`measure/probes.rs`), ~0 by construction — over the
+/// 2026-09-20 corpus the max was 0.0104 ms, exactly half a sample at 48 kHz. They are a lock-quality
+/// check and have never been a placement. These fields are the placement.
+///
+/// **Frame.** Every lag here is on **B's timeline**, relative to that shoulder's **nominal** center
+/// (pre at `b_mapped_start`, post at `b_mapped_start + gap_frames`), positive = the match sits *later*
+/// in B than nominal. That is the same frame the patch report's `registration_applied_ms` is quoted in
+/// — the **planned** frame — so the two difference directly, with no crossfade term. It is **not** the
+/// **written** frame: the seam crossfade advances the written fill by one `crossfade_ms` relative to
+/// the plan (`domain/policies/seam_splice.rs`), and that term applies equally to both arms, so it
+/// cancels in a difference and must be added back before comparing either to an audio measurement.
+///
+/// **How well each placement is determined** is `splice_dualfit`'s `pre_seam_r` / `pre_seam_z` (and the
+/// post pair): those are these same locks' own `r` and `z`, single-sourced from `SeamLocks`, and are
+/// deliberately not duplicated here.
+///
+/// From-decode only — the spec projection never measured locks, so it emits nothing rather than a
+/// reconstruction.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct DualFitPlacement {
+    /// The pre shoulder's accepted lag, ms, relative to its nominal center. `SeamLocks::pre.lag`.
+    pub pre_lag_ms: f64,
+    /// The post shoulder's accepted lag, ms, relative to `b_mapped_start + gap_frames`.
+    pub post_lag_ms: f64,
+    /// The same two lags in frames, before any ms conversion — the exact integers the lock search
+    /// accepted, so a consumer can reproduce the ms without inheriting a rounding.
+    pub pre_lag_frames: i64,
+    pub post_lag_frames: i64,
+    /// **The frame a fill would be cut at** on each shoulder (`SeamLocks::b_pre_seam` / `b_post_seam`),
+    /// after the `.max(0)` clamp — i.e. what the fill would really use.
+    pub b_pre_seam_frames: i64,
+    pub b_post_seam_frames: i64,
+    /// The same two cut points in seconds on B's timeline, for joining against a B-side measurement
+    /// without needing the run's sample rate.
+    pub b_pre_seam_secs: f64,
+    pub b_post_seam_secs: f64,
+    /// `nominal + lag` **before** the clamp. Kept because the clamp can *manufacture* an abut: two
+    /// negative seams collapse onto frame 0 and read as `bridge_frames == 0`
+    /// (`SeamLocks::clamped`, mirrored on `splice_dualfit.seams_clamped`). When these differ from the
+    /// clamped pair, the clamped pair is not a measurement of anything on B.
+    pub b_pre_seam_unclamped_frames: i64,
+    pub b_post_seam_unclamped_frames: i64,
 }
 
 /// **Dual-fit viability** — the offline repair simulation promoted into the scan (ledger C3/C7; supersedes
@@ -2408,6 +2470,7 @@ mod tests {
             equivalence_diagnostic: None,
             equivalence_production: None,
             dual_fit_counterfactual: None,
+            dual_fit_placement: None,
         };
         let json = serde_json::to_string(&fp).expect("serialize");
         let back: GapFingerprint = serde_json::from_str(&json).expect("deserialize");

@@ -268,9 +268,22 @@ pub(in crate::application::gap_fingerprint::measure) struct SpliceDualfitInput<'
 /// `*_seam_prom` uniqueness measurements. Production computes neither.
 ///
 /// `None` when either seam window falls out of range.
+/// What [`splice_dualfit_at`] hands back: the scored summary that ships as `splice_dualfit`, and
+/// the **placement** those same locks sit at.
+///
+/// Two parts rather than more fields on `SpliceDualfit` because that struct's contract says its
+/// `*_seam_lag_ms` are residual **at** the lock and never a placement; an absolute placement inside
+/// it would contradict the contract it ships under. They come out of one call because they come out
+/// of one `SeamLocks` — re-deriving the placement later would mean paying the ±600 ms seam search a
+/// second time per gap.
+pub(in crate::application::gap_fingerprint::measure) struct DualFitProbe {
+    pub(in crate::application::gap_fingerprint::measure) summary: SpliceDualfit,
+    pub(in crate::application::gap_fingerprint::measure) placement: DualFitPlacement,
+}
+
 pub(in crate::application::gap_fingerprint::measure) fn splice_dualfit_at(
     input: &SpliceDualfitInput<'_>,
-) -> Option<SpliceDualfit> {
+) -> Option<DualFitProbe> {
     let SpliceDualfitInput {
         a_samples,
         channels,
@@ -421,7 +434,19 @@ pub(in crate::application::gap_fingerprint::measure) fn splice_dualfit_at(
     let pre_seam_phat = pre_seam_phat.flatten();
     let post_seam_phat = post_seam_phat.flatten();
 
-    Some(SpliceDualfit {
+    let placement = DualFitPlacement {
+        pre_lag_ms: locks.pre.lag as f64 * 1000.0 / rate,
+        post_lag_ms: locks.post.lag as f64 * 1000.0 / rate,
+        pre_lag_frames: locks.pre.lag,
+        post_lag_frames: locks.post.lag,
+        b_pre_seam_frames: b_pre_seam as i64,
+        b_post_seam_frames: b_post_seam as i64,
+        b_pre_seam_secs: b_pre_seam as f64 / rate,
+        b_post_seam_secs: b_post_seam as f64 / rate,
+        b_pre_seam_unclamped_frames: locks.b_pre_seam_unclamped,
+        b_post_seam_unclamped_frames: locks.b_post_seam_unclamped,
+    };
+    let summary = SpliceDualfit {
         pre_seam_r,
         post_seam_r,
         gap_frames,
@@ -448,7 +473,8 @@ pub(in crate::application::gap_fingerprint::measure) fn splice_dualfit_at(
         pre_seam_edge_pinned: Some(locks.pre.edge_pinned),
         post_seam_edge_pinned: Some(locks.post.edge_pinned),
         seams_clamped: Some(locks.clamped()),
-    })
+    };
+    Some(DualFitProbe { summary, placement })
 }
 
 /// Fixed ladder of post-seam window widths (ms) probed by [`post_window_ladder_at`]
@@ -1039,7 +1065,8 @@ mod tests {
             .expect("seam windows in range")
         };
 
-        let on = measure(&FingerprintConfig::default());
+        let on_probe = measure(&FingerprintConfig::default());
+        let on = on_probe.summary;
         assert!(
             on.pre_seam_r > 0.8 && on.post_seam_r > 0.8,
             "both shoulders should lock: pre={} post={}",
@@ -1072,7 +1099,8 @@ mod tests {
         let off = measure(&FingerprintConfig {
             lag_envelope_max_lag_ms: 0,
             ..FingerprintConfig::default()
-        });
+        })
+        .summary;
         assert!(
             !off.gate_pass && off.post_seam_r < 0.35,
             "without the envelope the post shoulder is out of reach: r={} gate_pass={}",
@@ -1082,6 +1110,42 @@ mod tests {
         assert_eq!(
             off.pre_seam_r, on.pre_seam_r,
             "the envelope must not touch a shoulder that already reads well"
+        );
+
+        // The placement half of the same probe. This fixture is the one whose geometry is known by
+        // construction: B is continuous, so the pre shoulder is right at nominal and the post shoulder
+        // — the one the envelope rescued — sits exactly one gap length *early*, which is what makes the
+        // two locks land on the same B frame. The lag is the placement; `post_seam_lag_ms` is not, and
+        // reads ~0 on this very gap.
+        let place = on_probe.placement;
+        assert_eq!(place.pre_lag_frames, 0, "pre is at nominal");
+        assert_eq!(
+            place.post_lag_frames,
+            -(gap as i64),
+            "the rescued post lock sits one gap length early: {} frames",
+            place.post_lag_frames
+        );
+        assert!(
+            (place.post_lag_ms - (-1200.0)).abs() < 1.0,
+            "post_lag_ms must be the frames converted at the run's rate, not a residual: {}",
+            place.post_lag_ms
+        );
+        assert_eq!(
+            (place.b_pre_seam_frames, place.b_post_seam_frames),
+            (gap_start as i64, gap_start as i64),
+            "both locks cut B at the same frame - that is the abut"
+        );
+        assert_eq!(
+            (
+                place.b_pre_seam_unclamped_frames,
+                place.b_post_seam_unclamped_frames
+            ),
+            (place.b_pre_seam_frames, place.b_post_seam_frames),
+            "nothing was clamped here, so the abut is real"
+        );
+        assert!(
+            (place.b_pre_seam_secs - gap_start as f64 / f64::from(RATE)).abs() < 1e-9,
+            "the secs view must agree with the frames view"
         );
     }
 
