@@ -84,7 +84,9 @@ otherwise. Every count, tag and decision below is kept per kind.
     `registration_residual_pre_ms` / `_post_ms`. No fingerprint-dump join and
     no head-trim solve, so the reconstruction's 13 unresolved gaps are gone:
     **0 patched gaps are missing a per-seam value.**
-  - Scope: 327 patched gaps over 51 pairs (6 and 16 dropped as duplicates);
+  - Scope: 327 patched gaps over the 52 pairs that ran (labels go to 54; 6
+    and 16 are duplicate media and were never run, so `-ExcludePairs 6,16` is
+    a no-op on this run and the earlier diff);
     118 took the dual-fit arm and are excluded per § 3's filter
     (`dual_fit_used == false`), leaving **209 single-lag gaps over 48 pairs**.
     Every one has both shoulders licensed, so invariant 4 excludes nothing.
@@ -723,9 +725,11 @@ the remaining pairs, and every one of them held on the full run below.
   clip in front of § 4b's listener. Join on `geometry.a_start_secs` rounded to
   1 ms, always.
 
-**Phase 0 rerun complete, and Phase 1's table is measured (53 pairs) — done
+**Phase 0 rerun complete, and Phase 1's table is measured (52 pairs) — done
 2026-09-22.** The `--patch-only` corpus rerun finished. It carries all three
-Phase 0 fields on every patched gap.
+Phase 0 fields on every patched gap. Regenerate the table with
+`scripts/measure/census-registration-residual.ps1 -DumpDir <run>`, whose seam
+census section is the durable form of the numbers below.
 
 - **Placement is bit-identical over the whole corpus.**
   `diff-patch-outcomes.ps1` over 52 pair labels and **1087 joined gaps: 0

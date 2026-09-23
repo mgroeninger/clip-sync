@@ -15,11 +15,28 @@
 # PARTIAL RUNS are fine: zero-byte / unparseable reports (a pair still running or killed) are skipped
 # and counted, so the census can be read while `measure-patch-outcomes.ps1` is mid-manifest.
 #
+# SEAM CENSUS (Phase 1 of the dual-fit registration routing plan). When the reports carry the
+# per-seam fields (`registration_residual_pre_ms` / `_post_ms`, added 2026-09-22), the script also
+# sizes the routing cohort: `max_seam_err = max(|pre|, |post|)` per gap, split by kind
+# (step-kind when |pre - post| > -StepKindMs, common-mode otherwise), with routed counts at each
+# -RouteBoundsMs value. Dual-fit gaps are EXCLUDED from that census: `applied_ms` is hardcoded 0.0
+# on that arm, so its residual is minus the displacement from nominal, not a seam error. The sign of
+# merit is inverted between the arms; see the plan's Phase 0 section.
+#
+# This SIZES a cohort, it does not decide one. No routing predicate lives here: the script reports
+# how many gaps sit above each pre-registered bound and names them, and the bound itself is settled
+# by the ear pass.
+#
+# FRAME. Report values sit a constant -FrameOffsetMs below the audio measurement. The seam census is
+# printed in the AUDIO frame (report + offset), which is the frame the plan quotes bounds in.
+#
 # Usage:
 #   ./scripts/measure/census-registration-residual.ps1 -DumpDir gap-files/<date>-corpus-patch
 #   ./scripts/measure/census-registration-residual.ps1 -DumpDir gap-files/<new> -BaselineDir gap-files/<old>
 #   ./scripts/measure/census-registration-residual.ps1 -DumpDir gap-files/<new> -BinMs 10 -RangeMs 100
 #   ./scripts/measure/census-registration-residual.ps1 -DumpDir gap-files/<new> -CsvOut gap-files/residual.csv
+#   ./scripts/measure/census-registration-residual.ps1 -DumpDir gap-files/<new> -ExcludePairs 6,16
+#   ./scripts/measure/census-registration-residual.ps1 -DumpDir gap-files/<new> -RouteBoundsMs 50,75,100
 #
 # MEDIA HYGIENE: emits pair label + gap index only — never media paths or titles.
 
@@ -37,7 +54,22 @@ param(
     [double]$RangeMs = 400.0,
 
     # Optional CSV: one row per patched gap (pair, gap_index, a_start_secs, dual_fit, residual_ms, …).
-    [string]$CsvOut = ''
+    [string]$CsvOut = '',
+
+    # Pair labels dropped entirely (duplicate media: 6 = 22 and 16 = 28 on the current corpus).
+    [int[]]$ExcludePairs = @(),
+
+    # Candidate routing bounds for the seam census, in the audio frame. Pre-registered: 50, 75, 100.
+    [double[]]$RouteBoundsMs = @(50.0, 75.0, 100.0),
+
+    # audio frame = report frame + this. Constant, confirmed corpus-wide; not yet attributed.
+    [double]$FrameOffsetMs = 10.0,
+
+    # |pre - post| above this is step-kind; at or below it is common-mode.
+    [double]$StepKindMs = 20.0,
+
+    # Gaps above this bound are listed individually by pair/gap index.
+    [double]$ListAboveMs = 75.0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -45,10 +77,11 @@ $ErrorActionPreference = 'Stop'
 function Read-Run([string]$Dir) {
     if (-not (Test-Path -LiteralPath $Dir)) { throw "dump dir not found: $Dir" }
     $rows = [System.Collections.Generic.List[object]]::new()
-    $pairs = 0; $skipped = 0
+    $pairs = 0; $skipped = 0; $excluded = 0
     $files = Get-ChildItem -LiteralPath $Dir -Filter '*.json' -File |
         Sort-Object { [int]($_.BaseName -replace '\D', '0') }, BaseName
     foreach ($f in $files) {
+        if ($ExcludePairs.Count -and ($f.BaseName -match '^\d+$') -and ([int]$f.BaseName -in $ExcludePairs)) { $excluded++; continue }
         if ($f.Length -eq 0) { $skipped++; continue }
         try { $doc = Get-Content -LiteralPath $f.FullName -Raw | ConvertFrom-Json -Depth 64 }
         catch { $skipped++; continue }
@@ -68,10 +101,13 @@ function Read-Run([string]$Dir) {
                 confidence    = [string]$p.confidence
                 align_adj_ms  = [double]$p.align_adjustment_secs * 1000.0
                 residual_ms   = if ($has -and $null -ne $p.registration_residual_ms) { [double]$p.registration_residual_ms } else { $null }
+                pre_ms        = if ($null -ne $p.registration_residual_pre_ms) { [double]$p.registration_residual_pre_ms + $FrameOffsetMs } else { $null }
+                post_ms       = if ($null -ne $p.registration_residual_post_ms) { [double]$p.registration_residual_post_ms + $FrameOffsetMs } else { $null }
+                applied_ms    = if ($null -ne $p.registration_applied_ms) { [double]$p.registration_applied_ms } else { $null }
             })
         }
     }
-    [pscustomobject]@{ Dir = $Dir; Pairs = $pairs; Skipped = $skipped; Rows = $rows }
+    [pscustomobject]@{ Dir = $Dir; Pairs = $pairs; Skipped = $skipped; Excluded = $excluded; Rows = $rows }
 }
 
 function Get-Quantile([double[]]$Sorted, [double]$Q) {
@@ -109,8 +145,8 @@ function Write-Run([object]$Run, [string]$Title) {
 
     Write-Host ""
     Write-Host "== $Title  ($($Run.Dir))"
-    Write-Host ("pairs read {0}, unreadable/in-progress skipped {1}; patched gaps {2} (bracket {3}, dual-fit {4})" -f `
-        $Run.Pairs, $Run.Skipped, $patched.Count, $bracket.Count, $dual.Count)
+    Write-Host ("pairs read {0}, excluded {1}, unreadable/in-progress skipped {2}; patched gaps {3} (bracket {4}, dual-fit {5})" -f `
+        $Run.Pairs, $Run.Excluded, $Run.Skipped, $patched.Count, $bracket.Count, $dual.Count)
 
     foreach ($set in @(@('bracket (α population)', $bVals, $bracket.Count), @('dual-fit (applied = 0.0)', $dVals, $dual.Count))) {
         $name, $vals, $total = $set
@@ -146,8 +182,69 @@ function Write-Run([object]$Run, [string]$Title) {
     }
 }
 
+# Phase 1's seam census: max_seam_err = max(|pre|, |post|) on BRACKET gaps only, in the audio frame.
+# Sizes the routing cohort at each candidate bound. Decides nothing.
+function Write-SeamCensus([object]$Run) {
+    $bracket = @($Run.Rows | Where-Object { -not $_.dual_fit })
+    $seam = @($bracket | Where-Object { $null -ne $_.pre_ms -and $null -ne $_.post_ms } | ForEach-Object {
+        $step = $_.pre_ms - $_.post_ms
+        [pscustomobject]@{
+            pair    = $_.pair
+            gap     = $_.gap_index
+            pre_ms  = $_.pre_ms
+            post_ms = $_.post_ms
+            max_err = [math]::Max([math]::Abs($_.pre_ms), [math]::Abs($_.post_ms))
+            step_ms = $step
+            kind    = if ([math]::Abs($step) -gt $StepKindMs) { 'step' } else { 'common' }
+        }
+    })
+
+    Write-Host ""
+    Write-Host "== seam census (audio frame = report + $FrameOffsetMs ms; bracket gaps only)"
+    if ($seam.Count -eq 0) {
+        Write-Host "  no per-seam fields in this run - it predates registration_residual_pre_ms/_post_ms."
+        return
+    }
+    $missing = $bracket.Count - $seam.Count
+    Write-Host ("  bracket gaps {0} over {1} pair(s); missing a per-seam value {2}; dual-fit excluded {3}" -f `
+        $seam.Count, @($seam | Group-Object pair).Count, $missing, @($Run.Rows | Where-Object { $_.dual_fit }).Count)
+
+    foreach ($set in @(@('all', $seam), @('step-kind', @($seam | Where-Object kind -eq 'step')), @('common-mode', @($seam | Where-Object kind -eq 'common')))) {
+        $name, $sel = $set
+        if ($sel.Count -eq 0) { Write-Host ("  {0,-12} n = 0" -f $name); continue }
+        $v = [double[]]@($sel | ForEach-Object max_err | Sort-Object)
+        Write-Host ("  {0,-12} n {1,4}   median {2,6:0.0}   p75 {3,6:0.0}   p90 {4,6:0.0}   p95 {5,6:0.0}   max {6,7:0.0}" -f `
+            $name, $v.Count, (Get-Quantile $v 0.5), (Get-Quantile $v 0.75), (Get-Quantile $v 0.90), (Get-Quantile $v 0.95), $v[-1])
+    }
+
+    $late = @($seam | Where-Object { $_.pre_ms -gt 0 -and $_.post_ms -gt 0 }).Count
+    $early = @($seam | Where-Object { $_.pre_ms -lt 0 -and $_.post_ms -lt 0 }).Count
+    Write-Host ("  direction: late of both {0}, early of both {1}, opposite signs {2}; step-kind gaps {3}" -f `
+        $late, $early, ($seam.Count - $late - $early), @($seam | Where-Object kind -eq 'step').Count)
+
+    Write-Host ""
+    Write-Host "  routed count by candidate bound (sizing only - the bound is settled by ear):"
+    Write-Host ("    {0,-10} {1,6} {2,7} {3,7} {4,8}" -f 'bound', 'gaps', 'pairs', 'step', 'common')
+    foreach ($b in ($RouteBoundsMs | Sort-Object)) {
+        $sel = @($seam | Where-Object { $_.max_err -gt $b })
+        Write-Host ("    > {0,-8:0} {1,6} {2,7} {3,7} {4,8}" -f $b, $sel.Count, @($sel | Group-Object pair).Count, `
+            @($sel | Where-Object kind -eq 'step').Count, @($sel | Where-Object kind -eq 'common').Count)
+    }
+
+    $listed = @($seam | Where-Object { $_.max_err -gt $ListAboveMs } | Sort-Object max_err -Descending)
+    if ($listed.Count) {
+        Write-Host ""
+        Write-Host "  gaps above $ListAboveMs ms (pair/gap index only):"
+        foreach ($r in $listed) {
+            Write-Host ("    {0,-10} {1,-7} pre {2,9:0.0}  post {3,9:0.0}  max {4,8:0.0}  step {5,7:0.0}" -f `
+                "$($r.pair)/g$($r.gap)", $r.kind, $r.pre_ms, $r.post_ms, $r.max_err, $r.step_ms)
+        }
+    }
+}
+
 $run = Read-Run $DumpDir
 Write-Run $run 'run'
+Write-SeamCensus $run
 
 if ($BaselineDir) {
     $base = Read-Run $BaselineDir
@@ -171,7 +268,12 @@ if ($BaselineDir) {
 }
 
 if ($CsvOut) {
-    $run.Rows | Select-Object pair, gap_index, a_start_secs, dual_fit, confidence, align_adj_ms, residual_ms |
+    $run.Rows |
+        Select-Object pair, gap_index, a_start_secs, dual_fit, confidence, align_adj_ms, residual_ms,
+            pre_ms, post_ms, applied_ms,
+            @{ n = 'max_seam_err_ms'; e = { if ($null -ne $_.pre_ms -and $null -ne $_.post_ms) { [math]::Max([math]::Abs($_.pre_ms), [math]::Abs($_.post_ms)) } else { $null } } },
+            @{ n = 'step_ms'; e = { if ($null -ne $_.pre_ms -and $null -ne $_.post_ms) { $_.pre_ms - $_.post_ms } else { $null } } },
+            @{ n = 'kind'; e = { if ($null -eq $_.pre_ms -or $null -eq $_.post_ms) { $null } elseif ([math]::Abs($_.pre_ms - $_.post_ms) -gt $StepKindMs) { 'step' } else { 'common' } } } |
         Export-Csv -LiteralPath $CsvOut -NoTypeInformation -Encoding utf8
     Write-Host ""
     Write-Host "wrote $CsvOut"
