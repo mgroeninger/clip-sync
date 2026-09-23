@@ -27,8 +27,12 @@
 # how many gaps sit above each pre-registered bound and names them, and the bound itself is settled
 # by the ear pass.
 #
-# FRAME. Report values sit a constant -FrameOffsetMs below the audio measurement. The seam census is
-# printed in the AUDIO frame (report + offset), which is the frame the plan quotes bounds in.
+# FRAME. Report values describe the PLANNED placement; the written fill sits one seam crossfade
+# width ahead of it (apply_seam_crossfade starts the gap interior at b_fill[cf]), and the report
+# carries no crossfade term. The seam census is printed in the WRITTEN frame (report +
+# -FrameOffsetMs, default 10.0 = the crossfade_ms default at 48 kHz), which is what a listener
+# hears and the frame the plan quotes bounds in. Pass -FrameOffsetMs to match a run made at a
+# different --crossfade-ms.
 #
 # Usage:
 #   ./scripts/measure/census-registration-residual.ps1 -DumpDir gap-files/<date>-corpus-patch
@@ -59,10 +63,11 @@ param(
     # Pair labels dropped entirely (duplicate media: 6 = 22 and 16 = 28 on the current corpus).
     [int[]]$ExcludePairs = @(),
 
-    # Candidate routing bounds for the seam census, in the audio frame. Pre-registered: 50, 75, 100.
+    # Candidate routing bounds for the seam census, in the written frame. Pre-registered: 50, 75, 100.
     [double[]]$RouteBoundsMs = @(50.0, 75.0, 100.0),
 
-    # audio frame = report frame + this. Constant, confirmed corpus-wide; not yet attributed.
+    # written frame = planned (report) frame + this. The seam crossfade width: crossfade_ms at the
+    # run's sample rate, 10 ms = 480 frames at 48 kHz on the shipped default.
     [double]$FrameOffsetMs = 10.0,
 
     # |pre - post| above this is step-kind; at or below it is common-mode.
@@ -182,7 +187,7 @@ function Write-Run([object]$Run, [string]$Title) {
     }
 }
 
-# Phase 1's seam census: max_seam_err = max(|pre|, |post|) on BRACKET gaps only, in the audio frame.
+# Phase 1's seam census: max_seam_err = max(|pre|, |post|) on BRACKET gaps only, in the written frame.
 # Sizes the routing cohort at each candidate bound. Decides nothing.
 function Write-SeamCensus([object]$Run) {
     $bracket = @($Run.Rows | Where-Object { -not $_.dual_fit })
@@ -200,7 +205,7 @@ function Write-SeamCensus([object]$Run) {
     })
 
     Write-Host ""
-    Write-Host "== seam census (audio frame = report + $FrameOffsetMs ms; bracket gaps only)"
+    Write-Host "== seam census (written frame = report + $FrameOffsetMs ms crossfade; bracket gaps only)"
     if ($seam.Count -eq 0) {
         Write-Host "  no per-seam fields in this run - it predates registration_residual_pre_ms/_post_ms."
         return

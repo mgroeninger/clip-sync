@@ -318,6 +318,61 @@ mod tests {
         );
     }
 
+    /// The written fill is displaced from the planned one by exactly the crossfade width.
+    ///
+    /// The pre-seam bleed consumes `b_fill[..cf]` into A's pre-gap tail, so the gap interior starts
+    /// at `b_fill[cf]`: B content index `k` lands at A frame `gap_start + k - cf`, not at
+    /// `gap_start + k`. `registration_applied_ms` is assembled plan-side
+    /// (`align_adjustment_secs` plus Fit's trim head) before this writer runs and carries no
+    /// crossfade term, so the report and the written WAV differ by `cf` — one crossfade width, a
+    /// fixed config value rather than a per-gap derivation. At the `crossfade_ms` default of 10 and
+    /// 48 kHz that is 480 frames, i.e. the constant 10 ms offset between the patch report's
+    /// residual and the audio measurement (`docs/dev/TEMP-dual-fit-registration-routing-plan.md`
+    /// § 3). `fill_level`'s module note records the same displacement from the other side.
+    ///
+    /// The existing tests here fill with a constant, which is blind to displacement; the ramp is
+    /// what makes each B frame identifiable once it lands in A.
+    #[test]
+    fn apply_seam_crossfade_displaces_fill_content_by_the_crossfade_width() {
+        let cf = 4usize;
+        let gap_start = 10usize;
+        let gap_end = 20usize;
+        let gap_frames = gap_end - gap_start;
+
+        // Ramp so every B frame is identifiable by value: b_fill[k] = (k + 1) / 100.
+        let b_fill: Vec<f32> = (0..gap_frames).map(|k| (k + 1) as f32 / 100.0).collect();
+        let mut a = vec![0.5f32; 30];
+        apply_seam_crossfade(&mut a, &b_fill, 1, gap_start, gap_end, cf);
+
+        // The gap's first frame holds b_fill[cf], not b_fill[0].
+        assert!(
+            (a[gap_start] - b_fill[cf]).abs() < 1e-6,
+            "gap interior should start at b_fill[cf] (={}), got {}",
+            b_fill[cf],
+            a[gap_start]
+        );
+        assert!(
+            (a[gap_start] - b_fill[0]).abs() > 1e-6,
+            "the planned mapping (content 0 at the gap's first frame) is NOT what is written - \
+             if this ever holds, the displacement is gone and the report's frame is the audio frame"
+        );
+
+        // Across the pure-interior span the displacement is exactly cf frames, uniformly.
+        for (frame, written) in a.iter().enumerate().take(gap_end - cf).skip(gap_start) {
+            let k = frame - gap_start + cf;
+            assert!(
+                (written - b_fill[k]).abs() < 1e-6,
+                "A frame {frame} should carry B content {k} (displacement cf={cf}), got {written}"
+            );
+        }
+
+        // Magnitude: the same width the patch reports differ by, at the shipped default.
+        let crossfade_secs = 10.0 / 1000.0;
+        let sample_rate = 48_000;
+        assert_eq!((crossfade_secs * sample_rate as f64) as usize, 480);
+        assert!((480.0 / sample_rate as f64 * 1000.0 - 10.0).abs() < 1e-9);
+    }
+
     #[test]
     fn apply_seam_crossfade_is_continuous_at_pre_seam() {
         let cf = 4usize;

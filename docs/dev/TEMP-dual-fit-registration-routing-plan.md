@@ -90,7 +90,8 @@ otherwise. Every count, tag and decision below is kept per kind.
     118 took the dual-fit arm and are excluded per § 3's filter
     (`dual_fit_used == false`), leaving **209 single-lag gaps over 48 pairs**.
     Every one has both shoulders licensed, so invariant 4 excludes nothing.
-  - Frame: the audio frame (report value + 10.0 ms), in which 13/g16 reads
+  - Frame: the **written frame** (report value + the 10.0 ms crossfade width,
+    § 3), in which 13/g16 reads
     −72.8 / −109.8. The rerun confirms the constant on the whole corpus, not
     just the 43-gap census: 13/g16's report pair is −82.79 / −119.79.
 
@@ -124,7 +125,7 @@ otherwise. Every count, tag and decision below is kept per kind.
   previously unavailable.
 
   The two kinds within the > 75 ms set, now with both seams measured
-  (pre / post, audio frame, ms):
+  (pre / post, written frame, ms):
   - **Step:** 19/g2 (−110 / −174), 13/g16 (−73 / −110), 29/g20 (+62 / +97),
     44/g11 (+94 / +57), 5/g5 (+55 / +91). Steps 34–64 ms.
   - **Common-mode, grossly off:**
@@ -287,20 +288,55 @@ selection throws that information away.
   field acquires more readers: suppress it on the dual-fit arm, or give the
   dual-fit quantity its own name. Phase 1c item 3 needs dual-fit's *error*,
   which this field does not contain on either arm.
-- **The instrument is already settled; the frame is not.**
+- **The instrument is settled, and the frame is now attributed (2026-09-22).**
+  The constant 10 ms is the **seam crossfade**. `apply_seam_crossfade`
+  (`domain/policies/seam_splice.rs:116`) consumes `b_fill[..cf]` into A's
+  pre-gap tail and starts the gap interior at `b_fill[cf]`, so B content index
+  `k` lands at A frame `gap_start + k - cf`. `registration_applied_ms` is
+  assembled plan-side (`align_adjustment_secs` plus Fit's trim head,
+  `patch_result.rs:602`) before the writer runs and carries no crossfade term,
+  so the report describes the **planned** placement and the WAV carries the
+  **written** one, differing by exactly `cf`. At the `crossfade_ms` default of
+  10 that is 480 frames at 48 kHz; `effective_seam_crossfade_frames` clamps
+  only below `gap_frames / 2`, and with a 500 ms silence hold no corpus gap is
+  short enough, which is why the offset is constant across gaps, pairs and
+  both error signs rather than varying. `fill_level.rs`'s module note records
+  the same displacement independently ("the bin grid sits one crossfade width
+  off A's timeline"), from the other side and without connecting it to the
+  residual.
+
+  Mechanism and sign are pinned in-process by
+  `apply_seam_crossfade_displaces_fill_content_by_the_crossfade_width`, a ramp
+  fill asserting `k -> gap_start + k - cf`; the pre-existing crossfade tests
+  fill with a constant and are structurally blind to displacement. Mutation-
+  checked (dropping the `+ cf` fails it).
+
+  **Name the two frames and stop converting by an unexplained constant:**
+  - **planned frame** — what the patch report emits;
+  - **written frame** — planned + crossfade width, what a listener hears.
+
+  § 1 quotes bounds in the written frame, since audibility is a property of
+  the written fill. Still open, and now a BACKLOG row rather than a Phase 0
+  blocker: the advance is **uncompensated**, so every patch's fill carries B
+  material 10 ms ahead of plan. Against a 50-100 ms bound that is 10-20% of
+  the threshold. Absorbing it by cutting `b_fill` `cf` earlier would make the
+  two frames coincide.
+
+  Confirmation left for the § 1b listen run, which needs no extra sweep: render
+  one gap at `--crossfade-ms 0`, `10` and `40`. If the written-minus-planned
+  offset tracks `cf` 1:1, the crossfade accounts for all of it and not merely
+  most.
+- **The instrument's shoulder read is settled.**
   - The S1 shoulder read equals `lag_decision` exactly: on every trim-free
     gap, `registration_residual_ms` = `align_adjustment − lag_decision` for
     one side to within 0.1 ms.
-  - The open item is a **constant 10 ms**. On every trim-free gap of the
+  - The constant was measured before it was attributed: on every trim-free gap of the
     43-gap audio census, the report-side residual is exactly 10.0 ms below
     the audio measurement (fill measured in the `--gap-listen` WAV minus
     `lag_decision`). The dual-fit `seam_locks` lags on 13/g16 sit the same
     10 ms late of `lag_decision`.
-  - Find where the 10 ms lives: a splice or crossfade convention in the
-    written fill, or the template origin in one of the two reads. Then state
-    the routing bound in one named frame.
-  - The offset is constant, so it does not reorder gaps, but it moves a bound
-    by 10 ms. Until it is pinned, bounds are quoted in the audio frame (§ 1).
+  - ✅ Attributed above: the splice convention, not a template origin. The
+    routing bound is stated in the **written frame**.
 - **Preliminary source (done 2026-09-22).** Per-seam values rebuilt from
   existing reports:
   - The other seam's residual = `align_adjustment + T − other_lag`, where the
@@ -325,7 +361,7 @@ selection throws that information away.
   about 6.5 h for 53 pairs, with no oracle cost.
 - **Done when:**
   - ✅ all three fields appear in `--patch-only --format json` on the corpus;
-  - the 10 ms is attributed and the bound's frame is named;
+  - ✅ the 10 ms is attributed and the bound's frame is named;
   - the goldens are regenerated and `.\scripts\test-tier.ps1 -Tier pr` is
     green.
 
@@ -500,7 +536,8 @@ not about data availability, and it is item 1.
 
    **State the frame in the `_contract`.** Three frames are already in play —
    `lag_decision`'s B-at-nominal, the patch report's frame (§ 3's unattributed
-   −10 ms), and the audio frame § 1's bounds are quoted in. A placement emitted
+   −10 ms, now attributed to the seam crossfade), and the written frame § 1's
+   bounds are quoted in. A placement emitted
    without its frame named is not comparable to anything.
 3. **Emit the per-shoulder delta against the keep-path fill.** Paired with
    Phase 0's `registration_residual_pre_ms` / `_post_ms`, this puts **both arms'
@@ -699,13 +736,13 @@ the remaining pairs, and every one of them held on the full run below.
   pair 31's `injected_time` block disappearing — the known, already-validated
   consequence of 7062431. Phase 0 changed no placement; invariant 2's spirit
   holds on the real corpus, not just the goldens.
-- **The § 1 reconstruction was accurate.** Restated in the audio frame, the
+- **The § 1 reconstruction was accurate.** Restated in the written frame, the
   measured bracket set tracks the provisional table closely (median 43.5 vs
   44.4, p75 60.5 vs 61.2, p95 96.7 vs 93.4, max 894.5 vs 894.5 exactly).
   Remaining differences are subset effects. § 1's table can be replaced
   wholesale when the run finishes, not reinterpreted.
-- **The −10 ms is confirmed, constant and signed:** report frame = audio frame
-  − 10.0 ms, on all 14 plan-named gaps, both error signs, 10 pairs. 13/g16
+- **The −10 ms is confirmed, constant and signed:** planned (report) frame =
+  written frame − 10.0 ms, on all 14 plan-named gaps, both error signs, 10 pairs. 13/g16
   reads −72.8 / −109.8 and 32/g13 reads −26.0 / −34.0 — both exact. Still
   unattributed (§ 3), but it is a fixed frame offset, not an artefact of the
   new fields, and a bound converts by +10 ms with no ambiguity.
@@ -757,10 +794,12 @@ census section is the durable form of the numbers below.
   the extreme tail (894.5 and 520.4 are both common-mode), so a single bound
   catches mostly common-mode gaps while step-kind is the denser cohort just
   above 50 ms.
-- **Phase 0's first done-criterion is met** (all three fields present across
-  the corpus, goldens regenerated, PR tier green). The remaining one is the
-  −10 ms attribution and naming the bound's frame; until then § 1 is quoted
-  in the audio frame.
+- **Phase 0 is done.** All three fields are present across the corpus, the
+  goldens are regenerated, the PR tier is green, and the −10 ms is attributed
+  to the seam crossfade with the two frames named (§ 3). § 1's bounds are
+  quoted in the written frame. The one thing that outlived the phase is not a
+  blocker but a question: the crossfade advance is uncompensated on every
+  patch, which is now a BACKLOG row under *Fill placement*.
 - **Phase 1's first done-criterion is met**: the per-kind routed-count table
   is recorded (§ 1). Still open: the feasibility counts and the scope choice,
   which wait on Phase 1b's ear probe.
