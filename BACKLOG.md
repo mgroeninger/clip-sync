@@ -4,7 +4,7 @@ Open follow-up work for `clip-sync`. Architecture: [PLAN.md](PLAN.md). Repair pi
 [docs/pipeline.md](docs/pipeline.md). Test corpus: [docs/dev/corpus-validation.md](docs/dev/corpus-validation.md).
 Error handling: [docs/error-mapping.md](docs/error-mapping.md).
 
-Last updated: 2026-09-21.
+Last updated: 2026-09-24.
 
 **How this doc works**
 
@@ -120,6 +120,7 @@ The dual-fit oracle's pre-shoulder unpin moved to [settled.md](docs/dev/settled.
 |------|-------------|-----------|
 | **Run-mode selector** | Four modes (scan-only / `--repair-preview` / `--patch-only` / write) are selected today by three flags plus a TOML boolean, with mutual exclusions enforced pairwise in `RepairConfig::validate`. If picked up, do it as **one coherent mode selector** — not `--dry-run` / `--write` bolted on the side. Note `--patch-only` deliberately keeps `dry_run = true`, which an explicit `--write` would make incoherent | One selector, exclusions enforced centrally |
 | **`--flac` lossless output** | [TEMP-flac-output-plan.md](docs/dev/TEMP-flac-output-plan.md) — draft, not started. In-process FLAC encode as a peer of `--wav`; motivated by the RIFF `u32` data-chunk limit (a long repaired timeline overruns WAV) | `--flac` writes a lossless output alongside `--wav` |
+| **Expose `fill_marginal_margin` as a CLI flag** | Only `--min-fill-correlation` is settable; `fill_marginal_margin` (0.08) has no flag, so the real accept floor is `min_fill_correlation - fill_marginal_margin` (`gap_anchor_seam.rs:150`) — every calibration of the flag is off by a margin unless the reader knows to subtract it. Add `--fill-marginal-margin` as a peer of `--min-fill-correlation` (same clamp/validation shape), and correct [gap-fill-modes.md](docs/gap-fill-modes.md) line 115, which says the flag is a "floor on `min(pre, post)`" and names only the High-vs-Marginal split — it does not say accept happens one margin below | `--fill-marginal-margin` sets the value end to end (CLI → TOML → recipe), and the flag table states the `accept = min_fill_correlation - fill_marginal_margin` relationship |
 | Scratch-buffer regression test | Dedicated unit test for the patch PCM path | Test exists |
 | Streaming / chunked WAV encode | Large multi-gap fills without holding full PCM | Implemented |
 

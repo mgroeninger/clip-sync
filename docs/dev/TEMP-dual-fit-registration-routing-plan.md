@@ -8,6 +8,13 @@ characterize → dual-fit), plus one measurement-arm Change in Phase 1c
 (fingerprint dump fields). Record-only through Phase 1; flag-gated, default
 off, through Phase 3.
 
+**2026-09-24:** Phase 1b stays **void** (§ 7) — the post-seam crossfade
+duplication that voided it is now fixed on **both** fill paths behind
+`--seam-extend-fill`, the dual-fit half ear-confirmed on three forced-dual-fit
+gaps. The flag is still default off and the § 6 default decision is open, now as
+one decision covering both paths. Flag documented for users in
+[gap-fill-modes.md](../gap-fill-modes.md) § Seam crossfade.
+
 **Tracked as:** [BACKLOG.md](../../BACKLOG.md) § Fill placement, Hole 1 row
 ("**Next:** design the routing rule").
 
@@ -1043,10 +1050,13 @@ that probe, in either direction.
 taken from B either side of the fill (`seam_margin_from_b`, cut at
 `b_extract.start_frame + alignment.start_frame + head_trim_frames`, since the
 head-anchored trim moves the written fill's start), and
-`apply_seam_crossfade_extended` writes each destination frame once. Bracket path
-only — a dual-fit `SilenceSplice` bridge is synthesized, not a contiguous B
-slice, so it has no margin to take and keeps the shipped path. A short or absent
-margin falls back to `apply_seam_crossfade` byte-for-byte.
+`apply_seam_crossfade_extended` writes each destination frame once. ~~Bracket
+path only — a dual-fit `SilenceSplice` bridge is synthesized, not a contiguous B
+slice, so it has no margin to take and keeps the shipped path.~~ **Superseded
+2026-09-24** (see *The duplication reaches the dual-fit bridge too* below): the
+bridge is synthesized but its two shoulders are still placed in B, so margins do
+exist — they are just not co-located. Bracket path only **as of this entry**. A
+short or absent margin falls back to `apply_seam_crossfade` byte-for-byte.
 
 Two invariants are pinned by test: `plain_post_seam_duplicates_the_blended_block`
 holds the current behaviour so a cleanup cannot re-land it as intended, and
@@ -1406,6 +1416,91 @@ oracle — but it is not a one-hour job, and this plan has previously been coste
 
 *(other phases — fill as they land)*
 
+### The duplication reaches the dual-fit bridge too (2026-09-24)
+
+The entry above scoped the `--seam-extend-fill` fix to the bracket path on the
+grounds that a `SilenceSplice` bridge "has no margin to take". That was wrong,
+and a dual-fit ear probe found it.
+
+**Probe design, and one wasted run.** Forcing dual-fit on real media means
+raising `--min-fill-correlation` until the keep path scores a skip, since
+dual-fit is a *fallback*. The first probe raised it to 0.45 / 0.70 and patched
+all three gaps — `dual_fit_counterfactual.reached_in_production` (`!input.patched`)
+was `false` throughout, so nothing under test ran. Two causes, both now in
+[settled.md](settled.md) § E: the accept floor is
+`min_fill_correlation - fill_marginal_margin` (0.08, no CLI flag), so 0.45 gates
+at 0.37; and the seam scores were read from the dump's dual-fit diagnostic
+section rather than the keep-path gate, which reports a different placement.
+Re-computing each gap's floor from its surviving bracket's **weaker keep-path
+seam plus the margin** (26/g7 0.62, 23/g10 0.52, 17/g35 0.80) reached dual-fit
+on all three, `confidence: high`.
+
+**Ear verdicts: dual-fit fixed two of three.** 17/g35 (a both-seams failure) and
+23/g10 were clean. 26/g7 kept a post-seam echo, reported as "5.490 to 5.5
+repeats 5.5 to 5.510" — 10 ms, the shipped `crossfade_ms`, at a seam the user
+noted looked correctly placed at its start.
+
+**It was the same defect, not a placement error.** Pre-seam r = 0.9934, and the
+step at the seam (96.7) matched untouched A (96.3). A self-similarity scan of
+consecutive 10 ms windows, patched against untouched A, localized a replay
+signature at t = 5.4890 s (patched +0.886 vs A's −0.516), matching the ear to
+~1 ms. `--crossfade-ms 0` removed it by ear and halved the excess, confirming
+the crossfade as the source.
+
+**Why the bridge does have margins.** It is synthesized, but each shoulder is
+still *placed* in B at its own lag. What it lacks is a single `fill_start_frame`
+— and the two paths are in different coordinate spaces:
+
+| | Bracket | Dual-fit bridge |
+|---|---|---|
+| Fill shape | One contiguous B span | Two shoulders, own lags |
+| Margin cut at | Splice time, **full-B** frames, around `fill_start_frame` | Characterize time, **B-extract** frames (the space `pre_lag`/`post_lag` are anchored in) |
+| `head` | `fill_start - cf` | pre shoulder, `b_mapped_start + pre_lag - cf` |
+| `tail` | `fill_start + gap_frames` | **post** shoulder, `b_mapped_start + gap_frames + post_lag` |
+
+The tail is the load-bearing row. Deriving it from the pre shoulder plus
+`gap_frames`, as the single-lag model does, would bake the shoulder skew
+(`post_lag - pre_lag`, which is also the bridge's `trim_frames`) into the post
+seam — reintroducing as a misregistration exactly the discontinuity the margin
+exists to remove. Hence a second builder, `seam_margin_from_b_shoulders`, and
+the cut sited in `dual_fit.rs` rather than at the splice: characterize is the
+one place holding both the lags and the extract. The PCM rides the strategy on
+a new `SilenceSplice::seam_margin` field. Gain needs no new code — margins are
+gained generically off `RegionPatch.seam_margin`.
+
+**Result on 26/g7**, same scan, same window:
+
+| Arm | Replay excess at t ≈ 5.489 |
+|-----|---------------------------|
+| Dual-fit, no margin (10 ms crossfade) | **+1.403** |
+| `--crossfade-ms 0` | +0.683 |
+| `--seam-extend-fill` | **+0.271** |
+
+So the margin removes more of the duplication than suppressing the crossfade
+does, while keeping the blend. **Clean by ear, 2026-09-24** — no artefact
+audible at the seam. Two caveats on the instrument: readings *inside* the gap
+are meaningless here (A is 100 % digital silence under the write, so there is no
+ground truth to compare against, and the scan's in-gap peak is an artefact of
+that); and the patched WAV was checked to differ from the no-margin arm's, since
+`seam_margin: None` would have reproduced it byte-for-byte and the run would
+have looked successful while testing nothing.
+
+**Process note.** The first attempt at this validation ran a **stale release
+binary** — the probe script checked that the exe existed but never built it,
+against source edited hours later. Media probe scripts now build first. This is
+the same class as the `corpus.json` build-stamp caution in § E.
+
+**Default stays off.** The flag now governs both fill paths, so the default-on
+decision in § 6 is taken once rather than twice; the bracket-path arm of that
+decision is still open (13/g28 and 23/g04 pre-seam reports). Nothing about the
+dual-fit half is blocked on it — default-off is byte-for-byte the shipped
+splice.
+
+**User-facing docs:** [gap-fill-modes.md](../gap-fill-modes.md) § Seam crossfade
+and `--seam-extend-fill` now carries the mechanism, the per-path margin table
+and the config keys. Before this the flag existed only in `args.rs` help.
+
+---
 ## 8. Non-goals
 
 - **Pre-gate routing** from `seam_locks` alone, which would skip the gate

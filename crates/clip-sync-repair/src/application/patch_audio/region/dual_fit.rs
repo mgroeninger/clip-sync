@@ -494,10 +494,34 @@ pub(in crate::application::patch_audio::region) fn skip_or_dual_fit(
                             ),
                             0.0,
                         );
+                        // `--seam-extend-fill` for this arm. Cut here rather than at the splice: the
+                        // shoulder lags are anchored on nominal `b_mapped` in B-**extract** frames,
+                        // and this is the one site holding both them and the extract. The post
+                        // shoulder supplies the tail — using the pre shoulder plus `gap_frames`
+                        // would bake in the shoulder skew (`trim_frames`) at the seam.
+                        let seam_margin = if request.seam_extend_fill {
+                            let b_mapped_start = df.templates.b_mapped_start() as i64;
+                            let gap_frames = df.a_end_frame.saturating_sub(df.a_start_frame) as i64;
+                            super::pcm::seam_margin_from_b_shoulders(
+                                df.b_samples,
+                                df.params.channels,
+                                b_mapped_start + r.pre_lag,
+                                b_mapped_start + gap_frames + r.post_lag,
+                                crate::domain::policies::effective_seam_crossfade_frames(
+                                    (df.crossfade_secs * df.params.sample_rate as f64) as usize,
+                                    df.a_start_frame,
+                                    df.a_end_frame,
+                                    df.a_samples.len() / df.params.channels.max(1),
+                                ),
+                            )
+                        } else {
+                            None
+                        };
                         return (
                             DualFitDecision::Rescued(Box::new(DualFitRescue {
                                 strategy: GapRepairStrategy::SilenceSplice {
                                     fill: r.fill,
+                                    seam_margin,
                                     pre_seam_r: splice_pre,
                                     post_seam_r: splice_post,
                                     pre_lag: r.pre_lag,

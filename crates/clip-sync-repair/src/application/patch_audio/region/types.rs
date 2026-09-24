@@ -629,6 +629,7 @@ mod tests {
             crossfade_secs: 0.01,
             verdict: GapRepairVerdict::Patch(GapRepairStrategy::SilenceSplice {
                 fill: vec![0.0; 48_000],
+                seam_margin: None,
                 pre_seam_r: 0.98,
                 post_seam_r: 0.97,
                 pre_lag: 0,

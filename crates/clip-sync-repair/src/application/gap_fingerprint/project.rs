@@ -663,6 +663,7 @@ pub fn fingerprint_to_spec(fp: &GapFingerprint) -> crate::domain::gap_repair_spe
             confidence: FillConfidence::High,
             registration_residual: None,
             // Placeholder strategy on a probe path — nothing here is ever spliced.
+            seam_margin: None,
             normalize_gain: 1.0,
             local_gain: crate::domain::LocalGainDecision::OFF,
             dual_fit_post_window_ms: None,

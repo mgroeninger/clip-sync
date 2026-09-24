@@ -83,6 +83,46 @@ pub(in crate::application::patch_audio::region) fn seam_margin_from_b(
     })
 }
 
+/// As [`seam_margin_from_b`], but for a dual-fit bridge, whose two shoulders sit at their own lags.
+///
+/// [`seam_margin_from_b`] derives both margins from one `fill_start_frame` (`head` at
+/// `fill_start − cf`, `tail` at `fill_start + gap_frames`) because a bracket fill *is* one
+/// contiguous B span. A bridge is not: `tail` must be cut at the **post** shoulder's B position, not
+/// at the pre shoulder's plus the gap length — the two differ by the shoulder skew
+/// (`post_lag − pre_lag`, which is also `trim_frames`). Cutting the tail from the pre shoulder would
+/// reintroduce a seam discontinuity of exactly that skew, which is the defect this margin exists to
+/// remove.
+///
+/// Frames are **B-extract**-relative, the space `pre_lag`/`post_lag` are anchored in — not full-B as
+/// in [`seam_margin_from_b`]. Returns `None` when either slice falls outside the extract; the caller
+/// then splices exactly as it always did.
+pub(in crate::application::patch_audio::region) fn seam_margin_from_b_shoulders(
+    b_extract: &[f32],
+    channels: usize,
+    b_pre_seam_frame: i64,
+    b_post_seam_frame: i64,
+    cf: usize,
+) -> Option<(Vec<f32>, Vec<f32>)> {
+    if cf == 0 {
+        return None;
+    }
+    let ch = channels.max(1);
+    let total_frames = (b_extract.len() / ch) as i64;
+    let cf_i = cf as i64;
+    let head_start = b_pre_seam_frame.checked_sub(cf_i)?;
+    let tail_end = b_post_seam_frame.checked_add(cf_i)?;
+    if head_start < 0 || tail_end > total_frames || b_post_seam_frame < 0 {
+        return None;
+    }
+    let cut = |from: i64, to: i64| -> Vec<f32> {
+        b_extract[from as usize * ch..to as usize * ch].to_vec()
+    };
+    Some((
+        cut(head_start, b_pre_seam_frame),
+        cut(b_post_seam_frame, tail_end),
+    ))
+}
+
 /// A-side gap-interior RMS floor (dB) — approximation of the fingerprint `levels.gap_floor_db`.
 pub(in crate::application::patch_audio::region) fn a_gap_floor_db(
     a_samples: &[f32],
@@ -269,6 +309,67 @@ pub(in crate::application::patch_audio) fn splice_into_a(
 
 #[cfg(test)]
 mod tests {
+    /// Mono ramp: frame `i` holds `i as f32`, so a cut's contents name the frames it came from.
+    fn ramp(frames: usize) -> Vec<f32> {
+        (0..frames).map(|i| i as f32).collect()
+    }
+
+    /// The tail is cut at the POST shoulder, not at the pre shoulder plus `gap_frames`.
+    ///
+    /// This is the whole reason the dual-fit builder exists: with a non-zero shoulder skew the two
+    /// answers differ by exactly `trim_frames`, and the single-lag arithmetic would put that step
+    /// back at the seam the margin is meant to smooth.
+    #[test]
+    fn shoulder_margin_cuts_the_tail_at_the_post_shoulder() {
+        let b = ramp(1000);
+        let (pre, post, gap, cf) = (500_i64, 530_i64, 100_i64, 4);
+        let (head, tail) =
+            super::seam_margin_from_b_shoulders(&b, 1, pre, post + gap, cf).expect("in range");
+        assert_eq!(
+            head,
+            vec![496.0, 497.0, 498.0, 499.0],
+            "head ends at the pre shoulder"
+        );
+        assert_eq!(
+            tail,
+            vec![630.0, 631.0, 632.0, 633.0],
+            "tail starts at the post shoulder"
+        );
+        // The single-lag reading would have started the tail at pre + gap = 600.
+        assert_ne!(tail[0], (pre + gap) as f32);
+    }
+
+    /// Zero skew is the degenerate case where both models agree — a guard that the shoulder builder
+    /// does not drift from [`super::seam_margin_from_b`] when there is nothing to disagree about.
+    #[test]
+    fn zero_skew_matches_the_single_lag_cut() {
+        let b = ramp(1000);
+        let (start, gap, cf) = (500_usize, 100_usize, 4);
+        let single = super::seam_margin_from_b(&b, 1, start, gap, cf).expect("in range");
+        let dual =
+            super::seam_margin_from_b_shoulders(&b, 1, start as i64, (start + gap) as i64, cf)
+                .expect("in range");
+        assert_eq!((single.head, single.tail), dual);
+    }
+
+    /// Out-of-extract cuts abstain rather than panic or clamp — the caller then splices as before.
+    #[test]
+    fn shoulder_margin_abstains_outside_the_extract() {
+        let b = ramp(1000);
+        assert!(
+            super::seam_margin_from_b_shoulders(&b, 1, 2, 500, 4).is_none(),
+            "head would start before the extract"
+        );
+        assert!(
+            super::seam_margin_from_b_shoulders(&b, 1, 500, 998, 4).is_none(),
+            "tail would run past the extract"
+        );
+        assert!(
+            super::seam_margin_from_b_shoulders(&b, 1, 500, 600, 0).is_none(),
+            "a zero crossfade has no margin to cut"
+        );
+    }
+
     /// The pre-margin argument shape, so these cases keep testing the geometry guards only.
     fn plain_fill(b: &[f32]) -> super::SpliceFill<'_> {
         super::SpliceFill {

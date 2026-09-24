@@ -128,6 +128,7 @@ CLI flags are accepted in both modes unless noted. **Effect** differs by mode.
 | `--no-gap-start-extend` | Disables **joint grid** start axis | Disables pre-seam **retry** loop |
 | `--gap-end-extend-max-ms`, `--gap-end-extend-step-ms` | Grid span / step on A (fit) | Retry span / step (gate) |
 | `--crossfade-ms`, `--no-normalize` | **Active** | **Active** |
+| `--seam-extend-fill` / `seam_extend_fill` | **Active** — bracket **and** dual-fit fills; default off | **Active** — same |
 | `fill_fit_structure_weight`, `fill_fit_waveform_weight` | Unified scorer weights (config; CLI optional) | Ignored |
 | `fill_marginal_margin`, `fill_absolute_floor` | Warn tier / hard skip (config-only) | Ignored |
 | `anchor_seam_mode`, `max_anchor_bracket_secs`, `max_anchors_per_side`, `anchor_seam_min_*` | **Active** — editorial anchor bracket search when triggered | **No effect** (fit only) |
@@ -253,6 +254,53 @@ legacy skips on those gaps).
 
 ---
 
+## Seam crossfade and `--seam-extend-fill`
+
+`--crossfade-ms` (default **10**) blends `cf` frames of fill against A at each seam. The blend is
+double-ended, so its write region spans `gap_frames + 2*cf` — but every fill path terminates in
+`fit_fill_to_gap_frames`, which sizes the fill to exactly `gap_frames`. The fill is therefore
+structurally short by `2*cf`, and the shipped `policies::apply_seam_crossfade` covers the shortfall
+by **replaying the fill tail**: it writes the same blended block to both `[gap_end - cf, gap_end)`
+and `[gap_end, gap_end + cf)`. That is ~`2*cf` of duplicated audio at **every post seam**, whatever
+the placement quality — at the default `cf` it is audible on quiet material as a ~20 ms echo just
+after the join. The pre seam has no equivalent.
+
+`--seam-extend-fill` (TOML `seam_extend_fill`, default **off**) removes the duplication rather than
+the blend: the splice is handed `cf` frames of **B** either side of the fill, as
+`SeamMarginFill { head, fill, tail }`, and `apply_seam_crossfade_extended` writes each destination
+frame exactly once. The seams still crossfade; they just blend against real donor content instead of
+a repeat. Margins carry the same gain as the fill they bracket (`gained_seam_margin`), so the flag
+does not shift level at the seam.
+
+Where the margin comes from differs by fill path, because the two live in different coordinate
+spaces:
+
+| Fill path | Margin source |
+|-----------|---------------|
+| Bracket (both modes) | One contiguous B span, so both margins are the frames either side of a single `fill_start_frame`, cut from **full B** at splice time (`seam_margin_from_b`) |
+| Dual-fit bridge (G6) | No single start — each shoulder is placed at its **own** lag, so `head` comes from the *pre* shoulder and `tail` from the *post* shoulder, cut in **B-extract** frames at characterize time (`seam_margin_from_b_shoulders`) |
+
+The dual-fit split matters: cutting the tail at the pre shoulder plus `gap_frames` would bake the
+shoulder skew (`post_lag - pre_lag`, which is also the bridge's `trim_frames`) straight into the
+post seam — reintroducing, as a misregistration, the discontinuity the margin exists to remove.
+
+The effective width is clamped by `effective_seam_crossfade_frames`
+(`min(gap_frames / 2, pre_available, post_available)`). When a margin cannot be cut — the flag is
+off, `cf` clamps to 0, or the margin would fall outside B — the splice falls back to
+`apply_seam_crossfade` **byte-for-byte**, so a default run is unchanged. Two tests pin this:
+`plain_post_seam_duplicates_the_blended_block` (so a cleanup cannot re-land the replay as if
+intended) and `seam_extend_fill_changes_the_fill_and_nothing_outside_it`.
+
+One semantic side effect on the flag arm: with margins the gap interior starts at `b_fill[0]` rather
+than `b_fill[cf]`, so the +1 crossfade displacement disappears and a reported frame **is** the audio
+frame. Default-off keeps goldens and `registration_applied_ms` semantics as shipped.
+
+> **Status:** the flag is validated but not yet default. Bracket-path validation is open (see
+> [dev/TEMP-dual-fit-registration-routing-plan.md](dev/TEMP-dual-fit-registration-routing-plan.md)
+> § 7); the dual-fit path was ear-confirmed on 2026-09-24. One flag governs both paths, so the
+> default-on decision is taken once.
+
+---
 ## Waveform placement details
 
 > Full mechanics of how `pre`/`post` seams are identified and scored (border extraction, standoff/trim, channel selection, peak-normalized Pearson, tiers): [seam-scoring.md](seam-scoring.md).
@@ -630,6 +678,8 @@ Most keys below drive **fit** placement. `dual_fit` is shared: G6 rescue runs af
 | `anchor_seam_min_xcorr_peak` | `0.5` | — | Tier-2 xcorr rescue floor |
 | `anchor_seam_xcorr_ambiguous_band` | `0.15` | — | Pearson band that may trigger xcorr |
 | `dual_fit` | `true` | `--no-dual-fit` | G6 per-shoulder rescue after scored gate skip (**both** fit and gate) |
+| `crossfade_ms` | `10` | `--crossfade-ms` | Seam blend width; clamped by `effective_seam_crossfade_frames` |
+| `seam_extend_fill` | `false` | `--seam-extend-fill` | Take `cf` frames of B either side of the fill so the post seam stops replaying the fill tail (§ Seam crossfade); bracket **and** dual-fit |
 
 **Fit-mode short B bracket:** when structure match returns fewer frames than the A gap, fit mode greedily extends into contiguous B audio frame-by-frame while padded `min(pre, post)` does not fall and `fill_repeat_correlations` post-repeat stays bounded; remaining frames are zero-padded. Gate mode still blind-extends then pads.
 

@@ -152,13 +152,20 @@ pub(in crate::application::patch_audio) fn execute_region_spec(
             local_gain,
             step_real,
             dual_fit_post_window_ms,
+            seam_margin,
             ..
         }) => {
             // Dual-fit rescue: the fill is the synthesized bridge on the spec; seams sit at their own lags, so
             // there is no align/waveform slide and no structure trust.
+            //
+            // The margin is cut at characterize time (see the field's doc): unlike the bracket arm
+            // above, the two shoulders sit in the B-extract space their lags are anchored in, so the
+            // cut belongs where both are in hand. `None` = flag off or margin unavailable, which
+            // splices exactly as this arm always did.
             let patch = RegionPatch {
                 b_samples: fill,
-                seam_margin: None,
+                seam_margin: seam_margin
+                    .map(|(head, tail)| super::types::SeamMargin { head, tail }),
                 gain: normalize_gain,
                 a_start_frame: refined.start_frame,
                 a_end_frame: refined.end_frame,

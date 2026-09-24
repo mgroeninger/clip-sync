@@ -253,6 +253,7 @@ mod tests {
         GapRepairStrategy::SilenceSplice {
             step_real: true,
             fill: Vec::new(),
+            seam_margin: None,
             pre_seam_r: 0.96,
             post_seam_r: 0.95,
             pre_lag: 4,

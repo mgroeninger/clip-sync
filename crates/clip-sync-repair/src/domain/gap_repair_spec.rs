@@ -281,6 +281,20 @@ pub enum GapRepairStrategy {
         /// `None` when the post lock stayed at the 250 ms `fill_seam_search_secs` window — the
         /// common case, and the only one before this field existed.
         dual_fit_post_window_ms: Option<u32>,
+        /// `--seam-extend-fill` for this arm: `cf` frames of B either side of the bridge, as
+        /// `(head, tail)` interleaved PCM, so the seam blends use their own B content instead of the
+        /// post seam replaying the bridge tail (`policies::apply_seam_crossfade` — see its doc for
+        /// the `2·cf` duplication). `None` = flag off, or the margin does not exist, and the splice
+        /// is byte-for-byte what it was.
+        ///
+        /// Built **here**, not at the splice as on the `Bracket` arm, because the two are in
+        /// different coordinate spaces: a bracket fill is one contiguous B span, so its margins are
+        /// the frames either side of a single `fill_start_frame` in **full-B**. A dual-fit bridge has
+        /// no single start — each shoulder is placed at its own lag — so `head` comes from the *pre*
+        /// shoulder and `tail` from the *post* shoulder, cut in the **B-extract** frames that
+        /// `pre_lag`/`post_lag` are anchored in. Carrying the PCM keeps that conversion at the one
+        /// site that holds both.
+        seam_margin: Option<(Vec<f32>, Vec<f32>)>,
     },
 }
 
@@ -626,6 +640,7 @@ mod tests {
             residual: None,
             confidence: FillConfidence::High,
             registration_residual: None,
+            seam_margin: None,
             normalize_gain: 1.0,
             local_gain: crate::domain::LocalGainDecision::OFF,
             dual_fit_post_window_ms: None,
