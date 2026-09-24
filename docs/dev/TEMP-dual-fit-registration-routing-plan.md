@@ -952,6 +952,410 @@ already on disk do not gain them — only a fingerprint run made from this build
 carries them. The census scripts must keep reading the values, never the
 contract.
 
+### Phase 1b — common-mode ear probe: NULL, with a contaminated control arm (2026-09-23)
+
+15 gaps over 8 pairs, rendered by the 1c-cohort fingerprint run at default 3 s
+`--gap-listen` context, scored blind. Verdicts by selection stratum — the
+stratum is the **keep-path common-mode error** the cohort was chosen on, not
+the `dual_fit_placement` common-mode the same run measured:
+
+| stratum | n | audible | gaps |
+|---|---|---|---|
+| modestly-off late (74–93 ms) | 8 | **7** | 3/g7 echo, 9/g7, 11/g10, 13/g28, 23/g4 slight echo, 51/g4 maybe, 53/g8; **3/g2 clean** |
+| grossly-off late (115–150 ms) | 3 | **2** | 3/g10 (both seams), 13/g30 barely; **53/g2 clean** |
+| early (the only one) | 1 | 0 | 1/g14 clean |
+| **controls (< 50 ms bulk)** | 3 | **2** | 23/g10, 9/g4; **13/g27 clean** |
+
+**The probe does not answer its question, and the reason is the control arm.**
+Two of three controls — drawn from the < 50 ms bulk precisely to calibrate the
+listener's false-alarm rate — read audible. The audible rate is 88% modestly-off,
+67% grossly-off, 67% control: **flat, and if anything inverted**. A common-mode
+error that caused the audibility would have to show dose-response across a
+range spanning 3× in magnitude, and there is none. The pre-registered reading
+("any modestly-off late gap audible ⇒ common-mode enters scope (b)") fires on a
+literal reading, but it presumed clean controls; fired on this arm it would
+route a cohort on a defect the bulk has at the same rate. **Scope (b) is not
+licensed by this probe.** Common-mode magnitude is refuted as the audibility
+axis here, the way `peak_delta_db` was refuted as the level axis.
+
+`dual_fit_placement`'s own readings, available for the first time on this run,
+separate the verdicts no better. Over the 15, the clean four span **essentially
+the full range of both axes** — common-mode |7.2| to |395.5| ms, step |0.2| to
+|19.3| ms — and the largest step in the set (3/g2, 19.33 ms) is clean while the
+smallest (53/g8, 0.08 ms) is audible. Neither half of the placement orders
+audibility. `seams_clamped` is false on all 15, so nothing here is a clamp
+artifact, and `post_seam_r` is ≥ 0.89 on every gap except 3/g10 (0.65) — the one
+gap whose *pre* seam was also heard.
+
+**What the probe did find, unanticipated: the defect is the post seam.** Of the
+12 audible gaps, 11 name the post seam; exactly one (3/g10) names the pre seam,
+and it names both. **Zero are pre-only.** Common-mode error displaces both
+shoulders equally and cannot produce a one-sided defect, which is the
+independent reason the null above is not merely underpowered — the thing being
+heard has the wrong symmetry to be the thing being routed. This is consistent
+with the keep path's fill being **head-anchored**: `pick_fill_length_anchor`'s
+trim-head choice moves the fill's start and "extension and trim-tail keep it"
+(`gap_fill_fit.rs`), and the fill is then forced to exactly `gap_frames`. One
+lag serves both seams, so when B carries a step between the shoulders the
+anchored end is satisfied and the residual falls at the other. Stated as a
+mechanism it is a hypothesis, not a measurement; what is measured is the
+asymmetry itself.
+
+Two reports place an artifact **well after the gap end** — 51/g4 at ~4.5 s
+(gap ends ~3.65 s in a 3 s-context clip, so ~0.85 s downstream) and 53/g8
+"some distance after". Both are far beyond any crossfade width and beyond the
+fill, which ends at the gap edge. Unexplained; worth a targeted look before
+either is counted as a seam verdict, since 51/g4's "maybe" rests on it.
+
+**Consequence for this plan.** The motivating premise of § 4b was that routing
+common-mode fills buys audible quality. On this evidence it does not: the gaps
+a 75–100 ms bound would route sound like the bulk it would leave alone. That
+pushes scope toward (a) or (c) and makes § 6's paired listen the wrong next
+spend — a paired A/B against production fills cannot separate arms on a defect
+both arms would inherit from the shared head-anchored splice. The better next
+question is the one the probe raised by accident: **why the post seam**, and
+whether the anchoring end is a free choice.
+
+### The post-seam asymmetry has a cause, and it is not registration (2026-09-23)
+
+The "why the post seam" question above resolved by code inspection, confirmed by
+running the function. `apply_seam_crossfade`'s post branch writes the **same**
+blended block to two adjacent destinations — `[gap_end-cf, gap_end)` and
+`[gap_end, gap_end+cf)` — rewinding the fill by `cf` to build the second. At the
+shipped default `cf` = 10 ms that is ~20 ms of repeated audio at **every** post
+seam, unconditional on registration. The pre seam has no equivalent and is
+guarded by `apply_seam_crossfade_is_continuous_at_pre_seam`; no post-seam
+continuity test existed.
+
+Why it exists: a double-ended crossfade's write region spans `gap_frames + 2*cf`,
+but every fill path terminates in `fit_fill_to_gap_frames`, which pads or
+truncates to exactly `gap_frames`. The fill is structurally short by `2*cf`, and
+the shipped code covers the shortfall by replaying, twice over.
+
+This explains the whole Phase 1b shape at once: the post-only symmetry (11 of 12
+audible gaps, zero pre-only), the user's two uses of "echo", the absence of
+dose-response over a 3× magnitude range, and the 2-of-3 control failure. The
+nulls above were **not** underpowered — a defect orthogonal to the axis under
+test was swamping it. No conclusion about common-mode routing can be drawn from
+that probe, in either direction.
+
+**Fix, landed behind `--seam-extend-fill` (default off).** The seam margins are
+taken from B either side of the fill (`seam_margin_from_b`, cut at
+`b_extract.start_frame + alignment.start_frame + head_trim_frames`, since the
+head-anchored trim moves the written fill's start), and
+`apply_seam_crossfade_extended` writes each destination frame once. Bracket path
+only — a dual-fit `SilenceSplice` bridge is synthesized, not a contiguous B
+slice, so it has no margin to take and keeps the shipped path. A short or absent
+margin falls back to `apply_seam_crossfade` byte-for-byte.
+
+Two invariants are pinned by test: `plain_post_seam_duplicates_the_blended_block`
+holds the current behaviour so a cleanup cannot re-land it as intended, and
+`seam_extend_fill_changes_the_fill_and_nothing_outside_it` proves end to end that
+the flag reaches written audio and touches only the fill.
+
+Side effect worth noting for § 3's frame semantics: with margins the gap interior
+starts at `b_fill[0]`, not `b_fill[cf]`, so the +1 crossfade displacement is gone
+on the flag arm and the report's frame **is** the audio frame — exactly the
+condition `apply_seam_crossfade_displaces_fill_content_by_the_crossfade_width`
+anticipates. Default-off keeps goldens and `registration_applied_ms` semantics
+unchanged (`golden_baseline_invariance` passes).
+
+Phase 1b is therefore **void, not null**, and must be re-run on the fixed arm
+before § 4b's premise can be judged.
+
+### Fixed-arm render, and a second bracket-path defect (2026-09-23)
+
+The 15-gap cohort was re-rendered with `--seam-extend-fill`, same manifest, same
+3 s context. All 15 patched; write extents are **identical** between arms to
+within a frame, which is the precondition for a fair A/B — the flag changes fill
+content, not region bounds.
+
+**The duplication is gone on real media.** Comparing each patched clip against
+its own `_a_surround.wav`, then testing `[seam-cf, seam) == [seam, seam+cf)` with
+a +-6 frame search (exact equality alone is alignment-sensitive and miscounts by
+one or two either way):
+
+| arm | duplicated post seam |
+|---|---|
+| baseline | 11 / 15 |
+| `--seam-extend-fill` | **0 / 15** |
+
+Four gaps (13/g28, 13/g30, 23/g10, 53/g2) show no duplication in **either** arm.
+Three of those four were nonetheless scored audible in the Phase 1b probe, so the
+duplication does not account for every verdict — worth remembering before reading
+the re-listen as a clean sweep.
+
+**Not a defect: anchor-seam bracket moves.** Measuring each write against its
+gap, 11 of 15 write exactly `gap + cf` at each edge. Four run far past it, over
+**non-silent** A:
+
+| gap | start vs gap start | end vs gap end | overwritten raw RMS | silent blocks |
+|---|---|---|---|---|
+| 3/g7  | -10 ms   | **+2110 ms** | 122.8  | 0 / 106 |
+| 11/g10| **-1710 ms** | +10 ms   | 763.4  | 0 / 86 |
+| 9/g7  | **-1560 ms** | **+660 ms** | 1490.3 | 0 / 78 |
+| 51/g4 | -10 ms   | **+1460 ms** | 141.7  | 0 / 73 |
+| 1/g14 | -510 ms  | +10 ms       | -  | - |
+
+This is the **anchor-seam rescue**, working as designed. Pair 51's `--patch-only`
+report names it on gap #5: `anchor_seam_used: true`,
+`anchor_bracket_move_frames: 69600` and `gap_end_adjust_frames: 69600` --
+69600 / 48000 = 1450 ms, exactly the measured write minus the crossfade. The same
+pair's #3 (`anchor_bracket_move 62400`) and #6 (`72000`) follow the pattern:
+every large adjust carries `anchor_seam_used: true`.
+
+The governing bound is **`max_anchor_bracket_secs`, default 5.0** ("Maximum A
+bracket span when searching editorial seam anchors"), not
+`gap_end_extend_max_ms`, which bounds the waveform-retry path only. All four
+moves sit well inside 5 s. When the waveform seams fail, the rescue extends the A
+region to an editorial anchor and fills across it, on the theory that a cut at an
+editorial boundary is inaudible -- so replacing loud A is the intended trade, not
+a bug. An earlier revision of this section called it a defect; that was a wrong
+budget comparison.
+
+**It still matters for the probe.** An anchor-seam gap replaces 0.66-2.11 s of A,
+where a plain bracket fill replaces 0.65 s. Those are different listening objects
+and a different failure surface, and all four were scored audible in Phase 1b. The
+cohort should be **stratified on `anchor_seam_used`**, which the report already
+tags, rather than pooled -- and with only four of them, the anchor-seam arm is too
+small to read on its own. The registration question should be read from the 11
+plain-bracket gaps.
+
+### Shoulder level is a confound in the listen, and it outranks registration (2026-09-23)
+
+The fixed-arm cohort was read two more ways before concluding anything from its flatness.
+
+**Gain: refuted as an explanation for the anchor-seam arm.** Anchor-seam gaps are the only gaps
+where gain error is directly measurable — the rescue writes B over *non-silent* A, so patched/raw
+RMS isolates level with content held constant. Whole-span deltas over the four anchor-seam spans
+were −0.12, +1.66, +0.27 and −0.02 dB, and they do not order the verdicts (the +0.27 dB gap is
+clean; the −0.02 dB gap is audible). Consistent with the existing refutation that `peak_delta_db`
+does not order audibility.
+
+**What that measurement did find: a systematic ~70 ms registration error inside the anchor span.**
+The per-200 ms level spread was large about a near-zero mean, which is the signature of a time
+offset rather than a gain error. Envelope cross-correlation of patched against raw A over the four
+spans:
+
+| gap | best lag | r @ best | r @ 0 | verdict |
+|---|---|---|---|---|
+| 11/g10 | −68 ms | 0.923 | 0.603 | audible |
+| 3/g7 | −64 ms | 0.979 | 0.533 | audible |
+| 51/g4 | −76 ms | 0.934 | 0.431 | clean |
+| 9/g7 | −70 ms | 0.838 | 0.348 | audible |
+
+A null control on untouched audio from the same clips returns +0.0 ms at r = 1.000, so the lag is
+real. Note the consistency: four unrelated pairs land within 12 ms of each other, which reads as a
+common-mode offset rather than per-pair alignment error. **Anchor-seam gaps are therefore a direct
+instrument for fill-offset registration error** — the one gap class where A holds the same
+programme under the write — and they are worth using as such in Phase 1c. But note again that the
+lag does not order audibility either: the cleanest of the four carries the largest lag.
+
+**The confound.** Sorting the cohort by shoulder level (raw A, 1 s either side of the clip) orders
+the verdicts better than any registration stratum has:
+
+| | audible mean | clean mean | difference | permutation p |
+|---|---|---|---|---|
+| shoulder level | −40.9 dB | −34.8 dB | **+6.2 dB** | 0.105 |
+| busyness (mean abs log-envelope step per 10 ms) | 1.38 | 1.37 | −0.01 | 0.514 |
+
+By level the quiet half of the cohort is 5/7 audible and the loud half 2/8. It is *level*, not
+busyness — envelope flux is dead flat, so the masking that matters here is not measurable as
+activity. At n = 13 scored gaps this is suggestive, not significant, and it is a post-hoc split of
+a cohort selected on registration, so it is a hypothesis for the next listen, not a result.
+
+**Corrected by the full `--patch-only` join (all 8 pairs, join error ≤ 0.5 ms).** Three revisions to
+the paragraphs above:
+
+1. **There are five anchor-seam gaps, not four.** 1/g14 also carries `anchor_seam_used: true`
+   (`anchor_bracket_move_frames` 24000 = 500 ms) and is clean. The WAV-measured stratification
+   missed it because its bracket move is small. Anchor-seam splits 3/5 audible vs plain 4/8 —
+   no separation (permutation p = 0.587).
+2. **The ~70 ms lag is already a reported field**, `registration_residual_ms`. The envelope
+   cross-correlation reproduces it to ~1 ms with the opposite sign convention (51/g4 reported
+   +76.6 vs measured −76; 3/g7 +63.7 vs −64; 11/g10 +67.6 vs −68; 9/g7 +71.0 vs −70). That is a
+   clean mutual validation — the field is trustworthy and the envelope method is sound — but it
+   means the measurement was redundant, and future registration reads should take the field.
+3. **"Common-mode" was an artifact of the four-gap sample.** Across all 15 the residual spans
+   −92.2 ms (1/g14) to +131.3 ms (13/g30). The anchor-seam four merely clustered.
+
+With the corrected strata, the three candidate factors rank:
+
+| factor | audible | clean | difference | permutation p |
+|---|---|---|---|---|
+| shoulder level | −40.9 dB | −34.8 dB | +6.2 dB | **0.105** |
+| \|registration residual\| | 68.5 ms | 57.4 ms | +11.1 ms | 0.308 |
+| anchor-seam | 0.43 | 0.33 | +0.10 | 0.587 |
+
+Registration remains flat on the corrected strata, and its two extremes fall on the wrong side:
+23/g10 is audible at a −1.6 ms residual, 1/g14 is clean at −92.2 ms. Shoulder level and
+anchor-seam are independent (mean shoulder −36.3 vs −37.6 dB), so the level effect is not the
+anchor split in disguise. `dual_fit_used` is false on all 15, as expected for counterfactual
+records.
+
+**Consequence for the design.** A registration stratum drawn without controlling for shoulder level
+is confounded by an effect larger than the one being measured: the strata would have to differ by
+more than ~6 dB of shoulder level before a flat verdict pattern could be read as "registration does
+not predict audibility". Phase 1b's flatness is therefore still uninterpretable *after* the
+instrument fix — first it was void (the seam duplication), now it is confounded. Any successor
+listen should either level-match the strata or score enough gaps to regress the two factors
+jointly.
+
+### Third defect: short fills are silently zero-padded into a hole at the gap tail (2026-09-23)
+
+Chasing 23/g10 — the gap that stayed audible with a −1.6 ms registration residual — found a defect
+independent of both the seam duplication and the anchor-seam rescue, and the best predictor of
+audibility yet measured.
+
+**The observation.** The patched clip carries **digital silence** (exact zeros) over 4.8934–4.9030 s
+in clip coordinates. B has continuous ~−46 dB material across that span, so it is not donor
+silence. The gap ends at 4.9030 — the zero run is **flush to the gap end**.
+
+**The mechanism.** `fit_fill_to_gap_frames` (`domain/gap_fill_fit.rs:1633-1635`) zero-pads the tail
+whenever the fill is shorter than `gap_frames`:
+
+```rust
+let mut out = vec![0.0f32; target_frames * channels];
+out[..samples.len()].copy_from_slice(samples);
+out
+```
+
+The bracket path reaches it from `application/patch_audio/region/bracket.rs:108-118`, which tops a
+short fill up from `b_extension` but only by `need_samples.min(b_extension.len())`. When the
+extension is exhausted the remainder falls through and becomes silence in the written output.
+`extended_frames` records how much *was* extended; **nothing records the shortfall that was
+zero-padded**, so this is invisible in every report and dump field.
+
+**Prevalence and correlation with the ear.** Scanning all 15 fixed-arm patched clips for zero runs
+≥ 2 ms inside the fill:
+
+| gap | gap ms | hole ms | placement | verdict |
+|---|---|---|---|---|
+| 13/g28 | 644.6 | 9.4 | flush to gap end | audible (pre and post) |
+| 13/g30 | 1936.7 | 7.9 | flush to gap end | audible (post) |
+| 23/g10 | 1903.0 | 9.6 | flush to gap end | audible (post) |
+| *(other 12)* | — | 0.0 | — | 4 audible, 6 clean, 2 unsure |
+
+**Three holes, three audible gaps, zero holes in any clean gap** (3/7 audible vs 0/6 clean,
+permutation p = 0.122 — the perfect separation cannot reach 0.05 at n = 13). All three sit flush to
+the gap tail, and all three gaps were reported as **post**-seam complaints, which is where the hole
+is. This outranks shoulder level (p = 0.105) as an explanation and is mechanistically specific
+rather than a content correlation.
+
+**Consequences.**
+- 23/g10 is explained, and it was never a registration failure: near-perfect registration, an
+  unfilled 9.6 ms hole. Its status as a failing blind control is resolved.
+- Phase 1b's cohort contained a third confound. Of the 7 audible gaps, 3 are holes; re-reading the
+  registration question needs them excluded or fixed first.
+- The hole is **not** caused by `--seam-extend-fill` — it is present in both arms (baseline at
+  4.8834–4.8930, fixed at 4.8934–4.9030; the 10 ms shift is the duplication displacement being
+  removed). It is older than both.
+
+**Next step,** smallest first: record the zero-pad shortfall as a diagnostic field so it is
+visible at all, then decide whether a short fill should be held, stretched, or refused rather than
+padded with silence.
+
+### Where the padded silence comes from: nothing is mismeasured (2026-09-23)
+
+The question was whether the hole means the gap is measured wrong, or frames are handled strangely
+somewhere. Neither. Reading the chain end to end, the shortfall is a **decision taken three times
+over** and then silently converted into silence by a primitive with no policy behind it.
+
+**The chain.** `gap_frames` (the A hole, sample-exact off `refined`) is the target the fill must
+reach. The fill's length is `alignment.fill_frames`, and `b_fill_raw` is exactly that many frames
+sliced out of B (`characterize.rs:687-705`, re-sliced identically in `bracket.rs:197-199`) — so
+`source_frames == alignment.fill_frames` by construction. There is no arithmetic slack anywhere in
+that slice: both ends are `frame * channels`, no rounding, no block quantization.
+
+So the only way the fill is short is `alignment.fill_frames < gap_frames`, and three stages in a row
+are each entitled to leave it that way:
+
+1. **The end search is *allowed* to return a short bracket.** `unified_search_best_fill_end`
+   (`gap_fill_fit.rs:1358-1362`) searches ends over
+   `[start + gap_frames − fill_length_slack_frames, start + gap_frames + fill_length_slack_frames]`
+   — `fill_length_slack_secs` defaults to **1.0 s**. This is deliberate and correct: B's dropout
+   need not be exactly as long as A's hole, so the search is free to pick the end that scores best
+   rather than the end that happens to be `gap_frames` away. Nothing in the objective rewards
+   reaching gap length.
+2. **The snap that would stretch it back usually cannot fire.** `snap_fill_to_gap`
+   (`gap_signature.rs:221`) stretches `fill_frames` to `gap_frames` when the structure post-match at
+   the stretched end is within `SNAP_TOLERANCE = 0.08` of the current post — but it is
+   `if let (Bool, Bool)`, so on an **Energy**-signature gap it is a silent no-op. Energy gaps have
+   no length-reconciliation step at all.
+3. **The extension loop is guaranteed to stop early when it runs.**
+   `score_extend_short_fill_to_gap_frames` (`gap_fill_fit.rs:1819-1850`) grows the fill **one frame
+   at a time** from contiguous B, accepting a frame only when
+   `min_score >= best_min − SCORE_TIE_EPSILON` **and** the post-repeat correlation stays under 0.55
+   and does not rise. `SCORE_TIE_EPSILON` is **1e-9** — so `score_ok` is effectively "the worse seam
+   correlation must not get worse, at all" — and `best_min` is *ratcheted* upward on every accept.
+   Closing a 9 ms hole means passing that test ~400 consecutive times on real audio. It does not
+   happen. The first frame that trips either test `break`s, and everything after it is padding.
+
+**Why the score cannot object.** `score_at_length` pads the trial to `gap_frames` *before* scoring
+it, so every candidate is judged with its own hole already in place. The post seam reads the last
+`post_window` frames — `fill_seam_search_secs` defaults to **0.25 s** — so a 9 ms hole is ~4% of the
+scoring window. The objective is therefore nearly blind to the very thing the loop exists to fix: it
+cannot see closing the hole as an improvement, and a single frame moves it by roughly one part in
+twelve thousand. The accept/reject decision at that granularity is being made on noise.
+
+**So the defect is the last step, not the measurement.** Stages 1–3 are all defensible in isolation.
+What is not defensible is `fit_fill_to_gap_frames` turning "the search declined to go further" into
+**digital silence flush to the gap end**, with no record and no acceptance test on the result. A
+refusal to extend should not be spendable as silence.
+
+**What this predicts, and what would confirm it.** The cohort should be gaps where the end search
+settled short — so `zero_pad_frames > 0` should correlate with Energy-mode signatures (no snap) far
+more than with Bool, and the hole sizes should sit well inside the 1.0 s slack, which the three
+known cases (7.9–9.6 ms) do. Both are corpus questions the new field answers directly; the sweep is
+blocked on media (below), not on analysis.
+
+**Blocked: the corpus sweep cannot run.** Every corpus pair on the media volume currently fails to
+read — `os error 415`, "the specified data could not be read from any of the copies", raised at
+probe before decode. Confirmed outside the tool: the files are present and the volume reports
+`HealthStatus: Healthy`, but a bare 4 KiB read of the first five pairs' A files fails on all five,
+and a 64 KiB read hangs for minutes before failing. This is storage, not clip-sync. The
+`zero_pad_frames` sweep and the outstanding registration delta read-out both wait on it.
+
+### The pad is gone: extend unconditionally, and never write the zeros (2026-09-23)
+
+Two changes, both landed, both strictly silence-removing.
+
+**1. The Fit-mode extension no longer refuses.** `score_extend_short_fill_to_gap_frames` is now
+`extend_short_fill_to_gap_frames`: it takes `min(shortfall, contiguous B)` frames outright instead of
+growing one frame at a time behind the `min(pre, post)` + repeat gate. The gate could not do what it
+looked like it was doing — `score_at_length` padded *every* trial out to `gap_frames` before scoring,
+so each candidate on the ballot already contained the hole and the hole-free candidate was never
+scored. A refusal therefore spent digital silence in preference to donor audio already in hand. Gate
+mode has always extended unconditionally (the else arm of `assemble_bracket_fill`); Fit now agrees
+with it. `zero_pad_frames > 0` consequently means one thing only: **B ran out** (end of extract, end
+of file). The `borders`/`repeat_window_frames`/`seam_ctx` plumbing the gate needed is removed from
+`fit_fill_length_for_gap` and `BracketFillAssembly`, and `placement_repeat_post` with it.
+
+**2. When B really has run out, the pad is not written.** `execute_bracket_output` shortens the
+patch destination to `refined.start + covered_frames`. The point is that the pad was never a no-op:
+the gap is *below the silence threshold*, not literally zero, so writing zeros over A's gap tail cut
+A's own noise floor to digital black for the padded span, flush against the post seam — which is a
+far more audible event than the missing programme it stood in for. Shortening the destination writes
+the same repair minus the black stripe and leaves A's tail byte-identical: an honestly unrepaired
+sliver rather than a hole. `gained_fill` already cuts `b_samples` to the destination, so the padded
+tail reaches neither the splice nor the fill-level measurement, and `zero_pad_frames` still carries
+the shortfall onto the record. Two guards: `covered_frames == 0` is left alone (that is a geometry
+defect upstream, and `splice_into_a`'s own bails should report it, not an empty destination
+manufactured here), and a short write drops `seam_margin`, whose tail was cut `zero_pad_frames` past
+where the fill now ends and is no longer contiguous with what is written.
+
+`splice_into_a`'s exact-length contract and its `debug_assert` are untouched — the fill still arrives
+exactly as long as the destination it is given. What changed is which destination it is given.
+
+**Not done, deliberately:** over-building *past* `gap_frames` so `pick_fill_length_anchor` chooses the
+cut. Its only gain over the above is enabling trim-**head**, which slides the whole fill later in B —
+a registration change, entangled with the open question this plan is built around. Held.
+
+**Unvalidated on media.** PR gate green (819 lib tests, fmt, both clippy gates) and two new test
+pairs cover each change, but the corpus is unreadable (below), so there is no re-run and no ear
+check. Both changes only ever replace silence with donor audio or with A's own material, which is why
+they were taken under that constraint; the over-build variant was not.
+
 *(other phases — fill as they land)*
 
 ## 8. Non-goals

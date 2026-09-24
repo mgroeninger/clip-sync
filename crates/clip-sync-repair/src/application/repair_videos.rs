@@ -371,6 +371,7 @@ mod tests {
                 1.0,
                 2.0,
                 GapPatchStatus::Patched {
+                    zero_pad_frames: 0,
                     pre_correlation: 0.9,
                     post_correlation: 0.9,
                     align_adjustment_secs: 0.0,
@@ -502,6 +503,7 @@ mod tests {
             0.0,
             1.0,
             GapPatchStatus::Patched {
+                zero_pad_frames: 0,
                 pre_correlation: 1.0,
                 post_correlation: 1.0,
                 align_adjustment_secs: 0.0,

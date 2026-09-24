@@ -127,6 +127,10 @@ pub struct RepairConfig {
     /// Unset = `border_standoff_secs`. Record-only; placement never reads it.
     #[serde(default)]
     pub residual_border_standoff_secs: Option<f64>,
+    /// Extend the fill by one crossfade width past each gap edge so the seam crossfade has its
+    /// own B content. Off = the shipped path, whose post seam duplicates ~2x crossfade of audio.
+    #[serde(default)]
+    pub seam_extend_fill: bool,
     /// Gaps at or below this length use mean(pre, post) correlation for the fill gate.
     #[serde(default = "default_short_gap_mean_correlation_secs")]
     pub short_gap_mean_correlation_secs: f64,
@@ -667,6 +671,7 @@ impl Default for RepairConfig {
             min_border_discovery_secs: default_min_border_discovery_secs(),
             border_standoff_secs: default_border_standoff_secs(),
             residual_border_standoff_secs: None,
+            seam_extend_fill: false,
             short_gap_mean_correlation_secs: default_short_gap_mean_correlation_secs(),
             fill_length_slack_secs: default_fill_length_slack_secs(),
             fill_extract_tail_slack_secs: default_fill_extract_tail_slack_secs(),
@@ -831,6 +836,7 @@ impl RepairConfig {
             min_border_discovery_secs: self.min_border_discovery_secs,
             border_standoff_secs: self.border_standoff_secs,
             residual_border_standoff_secs: self.residual_border_standoff_secs,
+            seam_extend_fill: self.seam_extend_fill,
             short_gap_mean_correlation_secs: self.short_gap_mean_correlation_secs,
             fill_length_slack_secs: self.fill_length_slack_secs,
             fill_extract_tail_slack_secs: self.fill_extract_tail_slack_secs,

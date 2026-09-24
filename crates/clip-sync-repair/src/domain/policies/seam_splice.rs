@@ -139,6 +139,102 @@ pub fn apply_seam_crossfade(
     }
 }
 
+/// B content contiguous with the fill, extending `cf` frames past each gap edge.
+///
+/// `head` is the B audio immediately **before** `fill`, `tail` the B audio immediately **after** it;
+/// both must be at least `cf` frames. `fill` is exactly the gap. See
+/// [`apply_seam_crossfade_extended`] for why the plain path cannot use these.
+#[derive(Debug, Clone, Copy)]
+pub struct SeamMarginFill<'a> {
+    pub head: &'a [f32],
+    pub fill: &'a [f32],
+    pub tail: &'a [f32],
+}
+
+/// Splice with a double-ended crossfade that writes every output frame **once**.
+///
+/// [`apply_seam_crossfade`] has only `gap_frames` of fill for a region spanning
+/// `gap_frames + 2·cf`, and covers the shortfall by replaying the fill tail: the blended block is
+/// written both inside the gap and after it, and the fill rewinds `cf` frames to build it. That is
+/// ~`2·cf` of duplicated audio at **every** post seam, independent of registration — the pre seam
+/// has no equivalent. With `head` / `tail` supplying the missing `2·cf` frames the layout is
+/// symmetric:
+///
+/// - pre blend over `[gap_start-cf, gap_start)` — A out, `head` in;
+/// - interior `[gap_start, gap_end)` — `fill[0..]`, so the gap's first frame carries the **planned**
+///   content, not `fill[cf]` (the `+1 crossfade` displacement is gone on this path);
+/// - post blend over `[gap_end, gap_end+cf)` — `tail` out-blended against A.
+///
+/// Falls back to [`apply_seam_crossfade`] when `cf == 0` or either margin is short, so a caller that
+/// cannot supply margins at the edges of B degrades to current behaviour rather than failing.
+pub fn apply_seam_crossfade_extended(
+    a_samples: &mut [f32],
+    fill: SeamMarginFill<'_>,
+    channels: usize,
+    gap_start_frame: usize,
+    gap_end_frame: usize,
+    crossfade_frames: usize,
+) {
+    let channels = channels.max(1);
+    let total_frames = a_samples.len() / channels;
+    let gap_frames = gap_end_frame.saturating_sub(gap_start_frame);
+    if gap_frames == 0 || fill.fill.len() < gap_frames * channels {
+        return;
+    }
+    let cf = effective_seam_crossfade_frames(
+        crossfade_frames,
+        gap_start_frame,
+        gap_end_frame,
+        total_frames,
+    );
+    let have_margin = fill.head.len() >= cf * channels && fill.tail.len() >= cf * channels;
+    if cf == 0 || !have_margin {
+        apply_seam_crossfade(
+            a_samples,
+            fill.fill,
+            channels,
+            gap_start_frame,
+            gap_end_frame,
+            crossfade_frames,
+        );
+        return;
+    }
+
+    // Pre seam: A fades out, the fill's own lead-in fades in, over A's real pre-gap audio.
+    let head_off = fill.head.len() - cf * channels;
+    for i in 0..cf {
+        let t = i as f32 / cf as f32;
+        let a_w = (t * std::f32::consts::FRAC_PI_2).cos();
+        let b_w = (t * std::f32::consts::FRAC_PI_2).sin();
+        let dest = gap_start_frame - cf + i;
+        for ch in 0..channels {
+            let a_val = a_samples[dest * channels + ch];
+            let b_val = fill.head[head_off + i * channels + ch];
+            a_samples[dest * channels + ch] = blend_samples(a_val, b_val, a_w, b_w);
+        }
+    }
+
+    // Interior: the planned content, undisplaced.
+    for frame in gap_start_frame..gap_end_frame {
+        for ch in 0..channels {
+            a_samples[frame * channels + ch] = fill.fill[(frame - gap_start_frame) * channels + ch];
+        }
+    }
+
+    // Post seam: the fill's own lead-out fades down as A comes back, written once, past the gap.
+    for i in 0..cf {
+        let t = i as f32 / cf as f32;
+        let b_w = (t * std::f32::consts::FRAC_PI_2).cos();
+        let a_w = (t * std::f32::consts::FRAC_PI_2).sin();
+        let dest = gap_end_frame + i;
+        for ch in 0..channels {
+            let a_val = a_samples[dest * channels + ch];
+            let b_val = fill.tail[i * channels + ch];
+            a_samples[dest * channels + ch] = blend_samples(a_val, b_val, a_w, b_w);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -399,6 +495,99 @@ mod tests {
             "jump of {diff} across pre seam ({} -> {})",
             a[gap_start - 1],
             a[gap_start]
+        );
+    }
+
+    /// The defect the extended path exists to remove: the plain post seam writes the same blended
+    /// block twice (once inside the gap, once after it) and rewinds the fill `cf` frames to build
+    /// it. Pinned so a "cleanup" cannot quietly reintroduce it as intended behaviour.
+    #[test]
+    fn plain_post_seam_duplicates_the_blended_block() {
+        let cf = 4usize;
+        let (gap_start, gap_end) = (10usize, 20usize);
+        let b_fill: Vec<f32> = (0..gap_end - gap_start)
+            .map(|k| (k + 1) as f32 / 100.0)
+            .collect();
+        let mut a = vec![0.5f32; 30];
+        apply_seam_crossfade(&mut a, &b_fill, 1, gap_start, gap_end, cf);
+        assert_eq!(
+            a[gap_end - cf..gap_end],
+            a[gap_end..gap_end + cf],
+            "plain path duplicates the post-seam block across gap_end"
+        );
+    }
+
+    #[test]
+    fn extended_post_seam_writes_each_frame_once_and_does_not_rewind() {
+        let cf = 4usize;
+        let (gap_start, gap_end) = (10usize, 20usize);
+        let gap_frames = gap_end - gap_start;
+        // One continuous B ramp: head | fill | tail, so any rewind or repeat is visible as a
+        // non-monotonic run of B content.
+        let b: Vec<f32> = (0..gap_frames + 2 * cf).map(|k| k as f32 / 100.0).collect();
+        let head = &b[..cf];
+        let fill = &b[cf..cf + gap_frames];
+        let tail = &b[cf + gap_frames..];
+
+        let mut a = vec![0.5f32; 30];
+        apply_seam_crossfade_extended(
+            &mut a,
+            SeamMarginFill { head, fill, tail },
+            1,
+            gap_start,
+            gap_end,
+            cf,
+        );
+
+        // Interior is the planned content, undisplaced: no `+1 crossfade` shift on this path.
+        for frame in gap_start..gap_end {
+            let expected = fill[frame - gap_start];
+            assert!(
+                (a[frame] - expected).abs() < 1e-6,
+                "frame {frame} should carry planned fill {expected}, got {}",
+                a[frame]
+            );
+        }
+        // The block after the gap is a blend, not a copy of the block before it.
+        assert_ne!(
+            a[gap_end - cf..gap_end],
+            a[gap_end..gap_end + cf],
+            "extended path must not duplicate across gap_end"
+        );
+        // Post-seam blend ends on A: last blended frame is ~pure A.
+        let last = gap_end + cf - 1;
+        let t = (cf - 1) as f32 / cf as f32;
+        let expect = 0.5 * (t * std::f32::consts::FRAC_PI_2).sin()
+            + tail[cf - 1] * (t * std::f32::consts::FRAC_PI_2).cos();
+        assert!((a[last] - expect).abs() < 1e-6, "post blend tail mismatch");
+    }
+
+    #[test]
+    fn extended_falls_back_to_plain_when_margins_are_short() {
+        let cf = 4usize;
+        let (gap_start, gap_end) = (10usize, 20usize);
+        let b_fill: Vec<f32> = (0..gap_end - gap_start)
+            .map(|k| (k + 1) as f32 / 100.0)
+            .collect();
+        let mut plain = vec![0.5f32; 30];
+        apply_seam_crossfade(&mut plain, &b_fill, 1, gap_start, gap_end, cf);
+
+        let mut ext = vec![0.5f32; 30];
+        apply_seam_crossfade_extended(
+            &mut ext,
+            SeamMarginFill {
+                head: &[],
+                fill: &b_fill,
+                tail: &[],
+            },
+            1,
+            gap_start,
+            gap_end,
+            cf,
+        );
+        assert_eq!(
+            plain, ext,
+            "no margin must degrade to the plain path exactly"
         );
     }
 }

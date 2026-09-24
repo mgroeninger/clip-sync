@@ -321,6 +321,16 @@ pub struct GapTags {
     /// and on every non-dual-fit path.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dual_fit_post_window_ms: Option<u32>,
+    /// Tail frames of the gap left unrepaired because donor B ran out; omitted when 0.
+    ///
+    /// Non-zero means **digital silence was written into the patch**, flush to the gap end — an
+    /// unfilled hole, not donor silence. The fill primitives pad a short fill to length
+    /// (`fit_fill_to_gap_frames`), and until this field existed the shortfall was recorded nowhere,
+    /// so a hole was invisible in every report and dump. A short fill arises when the greedy
+    /// extension runs out of contiguous B audio *or* when the seam/repeat gate refuses to grow
+    /// further, so it is a routine outcome, not an error path.
+    #[serde(default, skip_serializing_if = "is_zero_frames")]
+    pub zero_pad_frames: usize,
 }
 
 /// Inputs for tag derivation during a fill-region patch attempt.
@@ -338,6 +348,8 @@ pub struct GapTagsPatchContext {
     pub dual_fit_post_window_ms: Option<u32>,
     pub residual: Option<SeamResidualVerdict>,
     pub residual_headroom_margin_db: f64,
+    /// See [`GapTags::zero_pad_frames`].
+    pub zero_pad_frames: usize,
 }
 
 impl GapTagsPatchContext {
@@ -501,6 +513,7 @@ pub fn derive_gap_tags_from_patch_outcome(
         dual_fit_used: ctx.dual_fit_used,
         dual_fit_step_real: ctx.dual_fit_step_real,
         dual_fit_post_window_ms: ctx.dual_fit_post_window_ms,
+        zero_pad_frames: ctx.zero_pad_frames,
     }
 }
 
@@ -534,6 +547,7 @@ pub fn derive_gap_tags_from_status(
                 dual_fit_used: false,
                 dual_fit_step_real: None,
                 dual_fit_post_window_ms: None,
+                zero_pad_frames: 0,
             }
         }
         GapPatchStatus::Patched {
@@ -542,6 +556,7 @@ pub fn derive_gap_tags_from_status(
             confidence,
             anchor_seam_used,
             anchor_bracket_move_frames,
+            zero_pad_frames,
             dual_fit_used,
             dual_fit_step_real,
             dual_fit_post_window_ms,
@@ -563,6 +578,7 @@ pub fn derive_gap_tags_from_status(
                 dual_fit_used: *dual_fit_used,
                 dual_fit_step_real: *dual_fit_step_real,
                 dual_fit_post_window_ms: *dual_fit_post_window_ms,
+                zero_pad_frames: *zero_pad_frames,
                 residual: None,
                 residual_headroom_margin_db: DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
             },
@@ -580,6 +596,7 @@ pub fn derive_gap_tags_from_status(
                 dual_fit_used: false,
                 dual_fit_step_real: None,
                 dual_fit_post_window_ms: None,
+                zero_pad_frames: 0,
                 residual: None,
                 residual_headroom_margin_db: DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
             },
@@ -599,6 +616,7 @@ pub fn derive_gap_tags_from_status(
             anchor_seam_used: false,
             anchor_bracket_move_frames: 0,
             dual_fit_used: false,
+            zero_pad_frames: 0,
             dual_fit_step_real: None,
             dual_fit_post_window_ms: None,
         },
@@ -728,6 +746,7 @@ mod tests {
             anchor_bracket_move_frames: 0,
             anchor_trusted: false,
             dual_fit_used: false,
+            zero_pad_frames: 0,
             dual_fit_step_real: None,
             dual_fit_post_window_ms: None,
             residual: None,
@@ -921,6 +940,7 @@ mod tests {
             anchor_seam_used: true,
             anchor_bracket_move_frames: 900,
             dual_fit_used: false,
+            zero_pad_frames: 0,
             dual_fit_step_real: None,
             dual_fit_post_window_ms: None,
             normalize_gain: 1.0,
@@ -938,6 +958,7 @@ mod tests {
     #[test]
     fn derive_from_status_carries_dual_fit_marker() {
         let status = GapPatchStatus::Patched {
+            zero_pad_frames: 0,
             pre_correlation: 0.94,
             post_correlation: 0.96,
             align_adjustment_secs: 0.0,

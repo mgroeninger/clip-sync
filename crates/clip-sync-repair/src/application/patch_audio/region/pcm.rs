@@ -9,7 +9,7 @@ use crate::domain::{
     policies::{self},
 };
 
-use super::types::RegionPatch;
+use super::types::{RegionPatch, SeamMargin};
 
 /// The PCM this patch actually puts into A: gain applied, clamped, and cut to the destination span.
 ///
@@ -34,6 +34,53 @@ pub(in crate::application::patch_audio) fn gained_fill(
         .take(destination)
         .map(|&s| (s * patch.gain).clamp(-1.0, 1.0))
         .collect()
+}
+
+/// The same gain [`gained_fill`] applies, applied to the seam margins.
+///
+/// The margins are spliced next to the fill, so they must carry the identical gain — an ungained
+/// margin would put a level step exactly at the seam the margin exists to smooth.
+pub(in crate::application::patch_audio) fn gained_seam_margin(
+    patch: &RegionPatch,
+    _channels: usize,
+) -> Option<(Vec<f32>, Vec<f32>)> {
+    let margin = patch.seam_margin.as_ref()?;
+    let g = |v: &[f32]| -> Vec<f32> {
+        v.iter()
+            .map(|&s| (s * patch.gain).clamp(-1.0, 1.0))
+            .collect()
+    };
+    Some((g(&margin.head), g(&margin.tail)))
+}
+
+/// Cut `cf` frames of B either side of the written fill, for [`policies::apply_seam_crossfade_extended`].
+///
+/// `fill_start_frame` is the fill's start in **full-B** frames, already including the fit's
+/// `head_trim_frames` — margins cut at the unadjusted alignment start would not be contiguous with
+/// the audio actually spliced. Returns `None` at the edges of B, where the slice does not exist;
+/// the caller then splices exactly as it always did.
+pub(in crate::application::patch_audio::region) fn seam_margin_from_b(
+    b_full: &[f32],
+    channels: usize,
+    fill_start_frame: usize,
+    gap_frames: usize,
+    cf: usize,
+) -> Option<SeamMargin> {
+    if cf == 0 {
+        return None;
+    }
+    let ch = channels.max(1);
+    let total_frames = b_full.len() / ch;
+    let head_start = fill_start_frame.checked_sub(cf)?;
+    let tail_start = fill_start_frame.checked_add(gap_frames)?;
+    let tail_end = tail_start.checked_add(cf)?;
+    if tail_end > total_frames {
+        return None;
+    }
+    Some(SeamMargin {
+        head: b_full[head_start * ch..fill_start_frame * ch].to_vec(),
+        tail: b_full[tail_start * ch..tail_end * ch].to_vec(),
+    })
 }
 
 /// A-side gap-interior RMS floor (dB) — approximation of the fingerprint `levels.gap_floor_db`.
@@ -118,15 +165,27 @@ pub(in crate::application::patch_audio::region) fn b_extract_frames(
 /// `Err` means A was left byte-identical across the gap: the caller must report the gap as
 /// [`GapPatchStatus::NotApplied`](crate::domain::patch_result::GapPatchStatus::NotApplied) rather
 /// than `Patched`. Every error arm is a geometry defect upstream of here, not a routine outcome.
+pub(in crate::application::patch_audio) struct SpliceFill<'a> {
+    pub(in crate::application::patch_audio) b_samples: &'a [f32],
+    /// Gained B either side of the fill; `None` splices via the shipped seam path.
+    pub(in crate::application::patch_audio) seam_margin: Option<(&'a [f32], &'a [f32])>,
+    pub(in crate::application::patch_audio) crossfade_secs: f64,
+    pub(in crate::application::patch_audio) sample_rate: u32,
+}
+
 pub(in crate::application::patch_audio) fn splice_into_a(
     a_samples: &mut [f32],
-    b_samples: &[f32],
+    fill: SpliceFill<'_>,
     channels: usize,
     gap_start_frame: usize,
     gap_end_frame: usize,
-    crossfade_secs: f64,
-    sample_rate: u32,
 ) -> Result<(), GapPatchNotAppliedReason> {
+    let SpliceFill {
+        b_samples,
+        seam_margin,
+        crossfade_secs,
+        sample_rate,
+    } = fill;
     let channels = channels.max(1);
 
     if gap_start_frame * channels >= a_samples.len() || gap_end_frame * channels > a_samples.len() {
@@ -183,19 +242,43 @@ pub(in crate::application::patch_audio) fn splice_into_a(
 
     let crossfade_frames = (crossfade_secs * sample_rate as f64) as usize;
 
-    policies::apply_seam_crossfade(
-        a_samples,
-        b_samples,
-        channels,
-        gap_start_frame,
-        gap_end_frame,
-        crossfade_frames,
-    );
+    match seam_margin {
+        Some((head, tail)) => policies::apply_seam_crossfade_extended(
+            a_samples,
+            policies::SeamMarginFill {
+                head,
+                fill: b_samples,
+                tail,
+            },
+            channels,
+            gap_start_frame,
+            gap_end_frame,
+            crossfade_frames,
+        ),
+        None => policies::apply_seam_crossfade(
+            a_samples,
+            b_samples,
+            channels,
+            gap_start_frame,
+            gap_end_frame,
+            crossfade_frames,
+        ),
+    }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    /// The pre-margin argument shape, so these cases keep testing the geometry guards only.
+    fn plain_fill(b: &[f32]) -> super::SpliceFill<'_> {
+        super::SpliceFill {
+            b_samples: b,
+            seam_margin: None,
+            crossfade_secs: 0.0,
+            sample_rate: 48_000,
+        }
+    }
+
     use super::*;
 
     /// **S1 — the B-extract re-slice clamps, so the executor gets characterize's exact buffer.** The window
@@ -238,7 +321,7 @@ mod tests {
         let mut a = vec![0.25f32; 16];
         let before = a.clone();
         assert_eq!(
-            splice_into_a(&mut a, &fill, 2, 100, 200, 0.0, 48_000),
+            splice_into_a(&mut a, plain_fill(&fill), 2, 100, 200),
             Err(GapPatchNotAppliedReason::DestinationOutOfRange {
                 gap_start_frame: 100,
                 gap_end_frame: 200,
@@ -250,7 +333,7 @@ mod tests {
         let mut a = vec![0.25f32; 16];
         let before = a.clone();
         assert_eq!(
-            splice_into_a(&mut a, &fill, 2, 4, 4, 0.0, 48_000),
+            splice_into_a(&mut a, plain_fill(&fill), 2, 4, 4),
             Err(GapPatchNotAppliedReason::DestinationEmptyOrInverted {
                 gap_start_frame: 4,
                 gap_end_frame: 4,
@@ -260,7 +343,7 @@ mod tests {
 
         let mut a = vec![0.25f32; 16];
         assert_eq!(
-            splice_into_a(&mut a, &fill, 2, 0, 8, 0.0, 48_000),
+            splice_into_a(&mut a, plain_fill(&fill), 2, 0, 8),
             Ok(()),
             "a well-formed splice still succeeds"
         );
@@ -276,6 +359,6 @@ mod tests {
     #[should_panic(expected = "shorter than splice destination")]
     fn splice_shorter_fill_trips_the_debug_assert() {
         let mut a = vec![0.25f32; 16];
-        let _ = super::splice_into_a(&mut a, &[0.5f32; 4], 2, 0, 8, 0.0, 48_000);
+        let _ = super::splice_into_a(&mut a, plain_fill(&[0.5f32; 4]), 2, 0, 8);
     }
 }

@@ -31,10 +31,22 @@ use crate::domain::{
 
 use super::super::log::log_skip_gap_fill;
 
+/// B audio contiguous with the fill, one crossfade width past each gap edge, so both seam blends
+/// have their own content. `None` on every path that cannot supply it: the flag off, a dual-fit
+/// bridge (synthesized, not a contiguous B slice), or a fill sitting within `cf` of either end of B.
+/// A `None` splices exactly as it always did.
+#[derive(Debug, PartialEq)]
+pub(in crate::application::patch_audio) struct SeamMargin {
+    pub(in crate::application::patch_audio) head: Vec<f32>,
+    pub(in crate::application::patch_audio) tail: Vec<f32>,
+}
+
 // Collected B segment ready to splice into A.
 #[derive(Debug, PartialEq)]
 pub(in crate::application::patch_audio) struct RegionPatch {
     pub(in crate::application::patch_audio) b_samples: Vec<f32>,
+    /// See [`SeamMargin`]. `None` keeps the shipped seam path byte-for-byte.
+    pub(in crate::application::patch_audio) seam_margin: Option<SeamMargin>,
     pub(in crate::application::patch_audio) gain: f32,
     pub(in crate::application::patch_audio) a_start_frame: usize,
     pub(in crate::application::patch_audio) a_end_frame: usize,
@@ -56,6 +68,10 @@ pub(in crate::application::patch_audio) enum RegionPatchOutcome {
         residual: Option<policies::SeamResidualVerdict>,
         anchor_seam_used: bool,
         anchor_bracket_move_frames: usize,
+        /// Tail frames the fill fell short of the gap by, because contiguous B ran out. Not written:
+        /// the patch destination is shortened by this much, so A keeps its own material there. `0` on
+        /// a fill that reached gap length.
+        zero_pad_frames: usize,
         dual_fit_used: bool,
         /// `Some(step_real)` when `dual_fit_used`: `true` = real length edit (interior-trim bridge),
         /// `false` = rigid single-lag map (trim-0 extract, docs/dev/archive/TEMP-seam-lock-rigid-fill-plan.md
@@ -215,6 +231,7 @@ pub(in crate::application::patch_audio) fn outcomes_in_report_order(
                 residual,
                 anchor_seam_used,
                 anchor_bracket_move_frames,
+                zero_pad_frames,
                 dual_fit_used,
                 dual_fit_step_real,
                 dual_fit_post_window_ms,
@@ -246,6 +263,7 @@ pub(in crate::application::patch_audio) fn outcomes_in_report_order(
                     headroom_db,
                     anchor_seam_used: *anchor_seam_used,
                     anchor_bracket_move_frames: *anchor_bracket_move_frames,
+                    zero_pad_frames: *zero_pad_frames,
                     dual_fit_used: *dual_fit_used,
                     dual_fit_step_real: *dual_fit_step_real,
                     dual_fit_post_window_ms: *dual_fit_post_window_ms,
@@ -491,6 +509,9 @@ pub(in crate::application::patch_audio) fn outcome_from_spec(
                 residual: *residual,
                 anchor_seam_used: *anchor_seam_used,
                 anchor_bracket_move_frames: *anchor_bracket_move_frames,
+                // Decision-only: no fill is assembled on this path, so the padding is not knowable
+                // here. The executor's outcome carries the real count.
+                zero_pad_frames: 0,
                 dual_fit_used: false,
                 dual_fit_step_real: None,
                 dual_fit_post_window_ms: None,
@@ -515,6 +536,8 @@ pub(in crate::application::patch_audio) fn outcome_from_spec(
             pre_correlation: *pre_seam_r,
             post_correlation: *post_seam_r,
             align_adjustment_secs: 0.0,
+            // The dual-fit bridge is synthesized to the gap length, not cut and padded to it.
+            zero_pad_frames: 0,
             structure_trusted: false,
             confidence: *confidence,
             gap_start_adjust_frames: 0,
@@ -686,6 +709,7 @@ mod tests {
         };
 
         let patched = RegionPatchOutcome::Patched {
+            zero_pad_frames: 0,
             pre_correlation: 0.2,
             post_correlation: 0.9,
             align_adjustment_secs: 0.01,
@@ -811,6 +835,7 @@ mod tests {
             skipped: vec![],
         };
         let patched = RegionPatchOutcome::Patched {
+            zero_pad_frames: 0,
             pre_correlation: 0.2,
             post_correlation: 0.95,
             align_adjustment_secs: 0.0,

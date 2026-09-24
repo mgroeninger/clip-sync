@@ -9,9 +9,10 @@ use crate::domain::gap_repair_spec::{GapRepairSpec, GapRepairStrategy, GapRepair
 use super::super::{FillWindowFrames, PatchAudioRequest};
 
 use super::bracket::{
-    execute_bracket_fill, execute_bracket_output, ExecuteBracketFillCtx, ExecuteBracketOutputCtx,
+    execute_bracket_fill_detail, execute_bracket_output, ExecuteBracketFillCtx,
+    ExecuteBracketOutputCtx,
 };
-use super::pcm::slice_b_extract;
+use super::pcm::{seam_margin_from_b, slice_b_extract};
 use super::types::{RegionPatch, RegionPatchContext, RegionPatchMedia, RegionPatchOutcome};
 
 /// The executor entry: produce `(patch, outcome)` from a `GapRepairSpec` — the typed characterize→execute
@@ -68,7 +69,7 @@ pub(in crate::application::patch_audio) fn execute_region_spec(
             // this reconstruction can silently diverge, which is why they read from different fields here.
             let windows =
                 FillWindowFrames::for_gap(&request.settings, window_gap_frames, sample_rate);
-            let fill = execute_bracket_fill(ExecuteBracketFillCtx {
+            let bracket_fill = execute_bracket_fill_detail(ExecuteBracketFillCtx {
                 alignment,
                 b_samples: slice_b_extract(
                     media.b_samples_full,
@@ -94,8 +95,28 @@ pub(in crate::application::patch_audio) fn execute_region_spec(
                 sample_rate,
                 crossfade_secs,
             });
+            // The fill is a contiguous B span starting `head_trim_frames` past the alignment, so the
+            // seam margins are the frames immediately either side of it. `None` (flag off, or the
+            // fill sitting within a crossfade of either end of B) splices exactly as it always did.
+            let seam_margin = if request.seam_extend_fill {
+                seam_margin_from_b(
+                    media.b_samples_full,
+                    channels,
+                    b_extract.start_frame + alignment.start_frame + bracket_fill.head_trim_frames,
+                    refined.end_frame.saturating_sub(refined.start_frame),
+                    crate::domain::policies::effective_seam_crossfade_frames(
+                        (crossfade_secs * sample_rate as f64) as usize,
+                        refined.start_frame,
+                        refined.end_frame,
+                        media.a_pcm.frames(),
+                    ),
+                )
+            } else {
+                None
+            };
             let (patch, outcome) = execute_bracket_output(ExecuteBracketOutputCtx {
-                fill,
+                fill: bracket_fill.pcm,
+                seam_margin,
                 gain: normalize_gain,
                 local_gain,
                 refined,
@@ -111,6 +132,7 @@ pub(in crate::application::patch_audio) fn execute_region_spec(
                 residual,
                 anchor_seam_used,
                 anchor_bracket_move_frames,
+                zero_pad_frames: bracket_fill.zero_pad_frames,
                 fit_terms,
                 alignment_start_frame: alignment.start_frame,
                 offset_nominal_start: b_extract.b_mapped_start_frame,
@@ -136,6 +158,7 @@ pub(in crate::application::patch_audio) fn execute_region_spec(
             // there is no align/waveform slide and no structure trust.
             let patch = RegionPatch {
                 b_samples: fill,
+                seam_margin: None,
                 gain: normalize_gain,
                 a_start_frame: refined.start_frame,
                 a_end_frame: refined.end_frame,
@@ -151,6 +174,8 @@ pub(in crate::application::patch_audio) fn execute_region_spec(
                 gap_end_adjust_frames: 0,
                 fit_used_boundary_grid: false,
                 fit_boundary_grid_cells: None,
+                // The dual-fit bridge is synthesized to the gap length, not cut and padded to it.
+                zero_pad_frames: 0,
                 residual,
                 anchor_seam_used: false,
                 anchor_bracket_move_frames: 0,

@@ -139,6 +139,11 @@ pub struct PatchRequestSettings {
     /// while the residual instrument stays fixed; never read by placement or any gate. Bracket path
     /// only: a dual-fit residual derives from `try_dual_fit`'s own fit lags and ignores it.
     pub residual_border_standoff_secs: Option<f64>,
+    /// Extend the bracket fill one crossfade width past each gap edge so `apply_seam_crossfade_extended`
+    /// has real B content for both blends. Off (default) keeps the shipped `apply_seam_crossfade`,
+    /// whose post seam replays ~2x crossfade of fill. Bracket path only — a dual-fit bridge is
+    /// synthesized, not a contiguous B slice, so it has no margin to take.
+    pub seam_extend_fill: bool,
     /// Gaps at or below this length (seconds) pass when mean(pre, post) correlation meets the
     /// threshold instead of requiring both seams individually.
     pub short_gap_mean_correlation_secs: f64,

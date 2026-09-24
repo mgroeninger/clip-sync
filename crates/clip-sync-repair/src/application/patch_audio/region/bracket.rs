@@ -7,7 +7,7 @@
 use crate::domain::{
     fill_mode::FillMode,
     gap_fill_fit::{
-        fit_fill_length_for_gap, fit_fill_to_gap_frames, FillConfidence, FittedFill,
+        fit_fill_length_for_gap, fit_fill_to_gap_frames_padded, FillConfidence, FittedFill,
         UnifiedFitBreakdown,
     },
     policies::{self, GapBorderSpec, RefinedGapFrames},
@@ -29,7 +29,6 @@ pub(in crate::application::patch_audio::region) struct BracketFillAssembly<'a> {
     pub(in crate::application::patch_audio::region) a_post_ch: &'a [Vec<f64>],
     pub(in crate::application::patch_audio::region) pre_gate_frames: usize,
     pub(in crate::application::patch_audio::region) post_gate_frames: usize,
-    pub(in crate::application::patch_audio::region) repeat_window_frames: usize,
     pub(in crate::application::patch_audio::region) seam_ctx: policies::SpliceSeamContext<'a>,
 }
 
@@ -47,6 +46,12 @@ pub(in crate::application::patch_audio::region) struct BracketFill {
     /// ([`FittedFill::head_trim_frames`]). The written fill starts this much later in B than
     /// `FillAlignment::start_frame`, so a placement reader must add it to the slide. `0` in Gate mode.
     pub(in crate::application::patch_audio::region) head_trim_frames: usize,
+    /// Tail frames the fill fell short of `gap_frames` by, because contiguous B ran out. The primitive
+    /// still pads them so every fill is exactly gap-length; `execute_bracket_output` then shortens the
+    /// destination so they are not written. Non-zero therefore means that much of the gap is left
+    /// unrepaired. Returned rather than logged for the same reason as the siblings above: this
+    /// primitive runs twice.
+    pub(in crate::application::patch_audio::region) zero_pad_frames: usize,
 }
 
 /// Assemble the bracket fill PCM to exactly `gap_frames` from the sliced B: **Fit** length-fits against the A
@@ -73,7 +78,6 @@ pub(in crate::application::patch_audio::region) fn assemble_bracket_fill(
         a_post_ch,
         pre_gate_frames,
         post_gate_frames,
-        repeat_window_frames,
         seam_ctx,
     } = inp;
     // `source_frames` is derived here (not a field) so a caller can't pass one inconsistent with `b_fill_raw`.
@@ -90,19 +94,20 @@ pub(in crate::application::patch_audio::region) fn assemble_bracket_fill(
         let FittedFill {
             pcm,
             head_trim_frames,
+            zero_pad_frames,
         } = fit_fill_length_for_gap(
             &b_fill_raw,
             b_extension,
             channels,
             gap_frames,
             &borders,
-            repeat_window_frames,
             seam_ctx,
         );
         BracketFill {
             pcm,
             extended_frames: None,
             head_trim_frames,
+            zero_pad_frames,
         }
     } else {
         let mut gate_fill = b_fill_raw;
@@ -115,10 +120,13 @@ pub(in crate::application::patch_audio::region) fn assemble_bracket_fill(
                 extended_frames = Some(extend_to / channels);
             }
         }
+        let (pcm, zero_pad_frames) =
+            fit_fill_to_gap_frames_padded(&gate_fill, channels, gap_frames);
         BracketFill {
-            pcm: fit_fill_to_gap_frames(&gate_fill, channels, gap_frames),
+            pcm,
             extended_frames,
             head_trim_frames: 0,
+            zero_pad_frames,
         }
     }
 }
@@ -155,6 +163,16 @@ pub(in crate::application::patch_audio::region) struct ExecuteBracketFillCtx<'a>
 pub(in crate::application::patch_audio::region) fn execute_bracket_fill(
     ctx: ExecuteBracketFillCtx<'_>,
 ) -> Vec<f32> {
+    execute_bracket_fill_detail(ctx).pcm
+}
+
+/// As [`execute_bracket_fill`], but keeps the [`BracketFill`] siblings. `head_trim_frames` is what
+/// the seam-margin slice needs: the written fill starts that much later in B than
+/// `FillAlignment::start_frame`, so a margin cut at the unadjusted start would not be contiguous
+/// with the audio actually spliced.
+pub(in crate::application::patch_audio::region) fn execute_bracket_fill_detail(
+    ctx: ExecuteBracketFillCtx<'_>,
+) -> BracketFill {
     let ExecuteBracketFillCtx {
         alignment,
         b_samples,
@@ -201,7 +219,6 @@ pub(in crate::application::patch_audio::region) fn execute_bracket_fill(
     } else {
         seam_gate_frames.min(a_post_border.len()).max(1)
     };
-    let repeat_window_frames = border_frames.max(1);
     let seam_cf = policies::effective_seam_crossfade_frames(
         (crossfade_secs * sample_rate as f64) as usize,
         refined.start_frame,
@@ -228,10 +245,8 @@ pub(in crate::application::patch_audio::region) fn execute_bracket_fill(
         a_post_ch: &a_post_ch,
         pre_gate_frames,
         post_gate_frames,
-        repeat_window_frames,
         seam_ctx,
     })
-    .pcm
 }
 
 /// Resolved values the executor assembles a bracket `(RegionPatch, RegionPatchOutcome)` from. Everything
@@ -239,6 +254,8 @@ pub(in crate::application::patch_audio::region) fn execute_bracket_fill(
 /// via [`execute_bracket_fill`], slides recomputed from the geometry fields).
 pub(in crate::application::patch_audio::region) struct ExecuteBracketOutputCtx {
     pub(in crate::application::patch_audio::region) fill: Vec<f32>,
+    /// See [`super::types::SeamMargin`] — `None` unless `--seam-extend-fill` and the slice exists.
+    pub(in crate::application::patch_audio::region) seam_margin: Option<super::types::SeamMargin>,
     /// The product actually multiplied into the fill.
     pub(in crate::application::patch_audio::region) gain: f32,
     /// The hole-local half of [`Self::gain`], carried whole so the reason reaches the record.
@@ -256,6 +273,9 @@ pub(in crate::application::patch_audio::region) struct ExecuteBracketOutputCtx {
     pub(in crate::application::patch_audio::region) residual: Option<policies::SeamResidualVerdict>,
     pub(in crate::application::patch_audio::region) anchor_seam_used: bool,
     pub(in crate::application::patch_audio::region) anchor_bracket_move_frames: usize,
+    /// [`BracketFill::zero_pad_frames`] for the fill being written — the executor's copy, which is the
+    /// one that reaches the output.
+    pub(in crate::application::patch_audio::region) zero_pad_frames: usize,
     // Slide geometry — recomputed here from EXACT frame values (no float round-trip). `offset_nominal_start`
     // is the nominal gap start within the B extract window, stored on the spec as `b_extract.b_mapped_start_frame`
     // (deriving it back from `b_extract_start_secs` would be lossy by up to 1/sr — a byte-parity break).
@@ -282,11 +302,36 @@ pub(in crate::application::patch_audio::region) fn execute_bracket_output(
     let align_adjustment_secs = (ctx.alignment_start_frame as f64
         - ctx.offset_nominal_start as f64)
         / ctx.sample_rate as f64;
+    // Don't write the pad. A fill that B could not fill out to the gap used to be zero-padded to the
+    // destination length and spliced in full, which overwrote A's own gap tail with digital silence.
+    // That is not a no-op: the gap is "below the silence threshold", not literally zero, so the pad
+    // cuts A's noise floor to black for the padded span, flush against the post seam. Shortening the
+    // destination writes the same repair minus the black stripe and leaves A's tail byte-identical —
+    // an honestly unrepaired sliver rather than a hole. `gained_fill` cuts `b_samples` to the
+    // destination, so the padded tail never reaches the splice or the fill-level measurement, and
+    // `zero_pad_frames` still reports the shortfall on the record.
+    //
+    // `covered_frames == 0` (nothing was filled at all) is a geometry defect upstream, not a short
+    // fill: left alone so `splice_into_a`'s own bails report it rather than manufacturing an empty
+    // destination here.
+    let covered_frames = ctx
+        .refined
+        .end_frame
+        .saturating_sub(ctx.refined.start_frame)
+        .saturating_sub(ctx.zero_pad_frames);
+    let short_write = ctx.zero_pad_frames > 0 && covered_frames > 0;
     let patch = RegionPatch {
         b_samples: ctx.fill,
+        // The tail margin is cut `zero_pad_frames` past where the fill now ends, so it is no longer
+        // contiguous with the audio written. A short write splices via the shipped seam path.
+        seam_margin: if short_write { None } else { ctx.seam_margin },
         gain: ctx.gain,
         a_start_frame: ctx.refined.start_frame,
-        a_end_frame: ctx.refined.end_frame,
+        a_end_frame: if short_write {
+            ctx.refined.start_frame + covered_frames
+        } else {
+            ctx.refined.end_frame
+        },
         crossfade_secs: ctx.crossfade_secs,
     };
     let outcome = RegionPatchOutcome::Patched {
@@ -302,6 +347,7 @@ pub(in crate::application::patch_audio::region) fn execute_bracket_output(
         residual: ctx.residual,
         anchor_seam_used: ctx.anchor_seam_used,
         anchor_bracket_move_frames: ctx.anchor_bracket_move_frames,
+        zero_pad_frames: ctx.zero_pad_frames,
         dual_fit_used: false,
         dual_fit_step_real: None,
         dual_fit_post_window_ms: None,
@@ -315,7 +361,129 @@ pub(in crate::application::patch_audio::region) fn execute_bracket_output(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    // The padded variant is what this module calls in production; these tests exercise the thin
+    // unpadded wrapper, so it is imported directly rather than through `super::*`.
+    use crate::domain::gap_fill_fit::fit_fill_to_gap_frames;
+
+    fn short_write_ctx(zero_pad_frames: usize) -> super::ExecuteBracketOutputCtx {
+        use crate::domain::policies::RefinedGapFrames;
+        use crate::domain::{FillConfidence, LocalGainDecision, LocalGainReason};
+
+        super::ExecuteBracketOutputCtx {
+            // Padded to the full ten-frame gap, as every fill path still is.
+            fill: {
+                let mut v = vec![0.5f32; 10 - zero_pad_frames];
+                v.extend(std::iter::repeat_n(0.0f32, zero_pad_frames));
+                v
+            },
+            seam_margin: Some(super::super::types::SeamMargin {
+                head: vec![0.1f32],
+                tail: vec![0.1f32],
+            }),
+            gain: 1.0,
+            local_gain: LocalGainDecision::Refused {
+                reason: LocalGainReason::FlagOff,
+            },
+            refined: RefinedGapFrames {
+                start_frame: 100,
+                end_frame: 110,
+            },
+            crossfade_secs: 0.0,
+            final_pre: 0.9,
+            final_post: 0.9,
+            final_confidence: FillConfidence::High,
+            structure_trusted: true,
+            gap_start_adjust_frames: 0,
+            gap_end_adjust_frames: 0,
+            fit_used_boundary_grid: false,
+            fit_boundary_grid_cells: None,
+            residual: None,
+            anchor_seam_used: false,
+            anchor_bracket_move_frames: 0,
+            zero_pad_frames,
+            alignment_start_frame: 0,
+            offset_nominal_start: 0,
+            sample_rate: 44_100,
+            fit_terms: None,
+            registration_residual: None,
+        }
+    }
+
+    #[test]
+    fn a_short_fill_shortens_the_destination_instead_of_writing_the_pad() {
+        let (patch, _outcome) = super::execute_bracket_output(short_write_ctx(3));
+
+        assert_eq!(patch.a_start_frame, 100);
+        assert_eq!(
+            patch.a_end_frame, 107,
+            "the three padded frames are not written; A keeps its own gap tail"
+        );
+        assert!(
+            patch.seam_margin.is_none(),
+            "the tail margin was cut past where the fill now ends, so it is no longer contiguous"
+        );
+        assert_eq!(
+            super::super::pcm::gained_fill(&patch, 1).len(),
+            7,
+            "what reaches the splice is exactly the donor audio, no silence"
+        );
+    }
+
+    #[test]
+    fn a_full_length_fill_is_written_across_the_whole_gap() {
+        let (patch, _outcome) = super::execute_bracket_output(short_write_ctx(0));
+
+        assert_eq!(patch.a_end_frame, 110);
+        assert!(patch.seam_margin.is_some(), "unchanged on the normal path");
+    }
+
+    #[test]
+    fn gate_assembly_reports_the_silence_it_wrote_at_the_gap_tail() {
+        use super::{assemble_bracket_fill, BracketFillAssembly};
+        use crate::domain::fill_mode::FillMode;
+        use crate::domain::policies::SpliceSeamContext;
+
+        let channels = 1usize;
+        let gap_frames = 10usize;
+        // Six frames of bracket and two of contiguous B: eight of the ten frames can be filled, and
+        // the gate arm has nothing left to reach the last two with.
+        let b_fill_raw = vec![0.5f32; 6];
+        let b_extension = vec![0.25f32; 2];
+        let a_samples = vec![0.1f32; 40];
+
+        let fill = assemble_bracket_fill(BracketFillAssembly {
+            b_fill_raw,
+            b_extension: &b_extension,
+            channels,
+            gap_frames,
+            fill_mode: FillMode::Gate,
+            a_pre_border: &[],
+            a_post_border: &[],
+            a_pre_ch: &[],
+            a_post_ch: &[],
+            pre_gate_frames: 0,
+            post_gate_frames: 0,
+            seam_ctx: SpliceSeamContext {
+                seam_cf: 0,
+                gap_start_frame: 10,
+                gap_end_frame: 20,
+                a_samples: &a_samples,
+                channels,
+                single_lag_alignment: true,
+            },
+        });
+
+        assert_eq!(fill.pcm.len(), gap_frames * channels, "splice stays rigid");
+        assert_eq!(fill.extended_frames, Some(2), "both extension frames taken");
+        assert_eq!(
+            fill.zero_pad_frames, 2,
+            "the two frames the gate arm could not reach are the reported hole"
+        );
+        assert!(
+            fill.pcm[8..].iter().all(|s| *s == 0.0),
+            "the hole is exact zeros, flush to the gap end"
+        );
+    }
 
     #[test]
     fn fit_fill_trims_tail_without_resampling() {

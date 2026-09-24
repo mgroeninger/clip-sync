@@ -39,6 +39,7 @@ fn gap_status_gating_core(status: &GapPatchStatus) -> GapPatchStatus {
             anchor_bracket_move_frames,
             ..
         } => GapPatchStatus::Patched {
+            zero_pad_frames: 0,
             pre_correlation: *pre_correlation,
             post_correlation: *post_correlation,
             align_adjustment_secs: *align_adjustment_secs,

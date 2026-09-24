@@ -221,3 +221,80 @@ fn dir_entries(dir: &Path) -> Vec<String> {
     names.sort();
     names
 }
+
+/// `--seam-extend-fill` must reach the written audio, and change **only** the fill.
+///
+/// The shipped seam path has `gap_frames` of fill for a region spanning `gap_frames + 2*cf`, and
+/// covers the shortfall by replaying the fill tail — the blended block is written both inside the
+/// gap and after it. The flag supplies the missing frames from B instead. Two consequences are
+/// asserted here because they are what the ear pass is listening for: the gap interior changes
+/// (its content is no longer displaced by one crossfade), and audio well outside the gap does not.
+#[test]
+fn seam_extend_fill_changes_the_fill_and_nothing_outside_it() {
+    fn run(dir: &Path, extend: bool) -> Vec<i16> {
+        let (path_a, path_b) =
+            write_offset_chirp_wav_pair(dir, SAMPLE_RATE, TOTAL_SECS, OFFSET_SECS);
+        zero_wav_segment(&path_a, SAMPLE_RATE, SILENT_START_SECS, SILENT_END_SECS);
+        let out_wav = dir.join("patched.wav");
+        let config_path = dir.join("repair.toml");
+        std::fs::write(
+            &config_path,
+            "[clip]
+clip_length = 60
+
+[repair]
+min_fill_correlation = -1.0
+scan_both = false
+",
+        )
+        .expect("write config");
+
+        let bin = env!("CARGO_BIN_EXE_clip-sync-repair");
+        let mut cmd = Command::new(bin);
+        cmd.args([
+            path_a.to_str().expect("path_a utf8"),
+            path_b.to_str().expect("path_b utf8"),
+            "--config",
+            config_path.to_str().expect("config utf8"),
+            "--wav",
+            out_wav.to_str().expect("out utf8"),
+            "--min-gap-ms",
+            "25000",
+            "--no-scan-both",
+        ]);
+        if extend {
+            cmd.arg("--seam-extend-fill");
+        }
+        assert!(cmd.status().expect("run clip-sync-repair").success());
+        let mut reader = WavReader::open(&out_wav).expect("open patched wav");
+        reader
+            .samples::<i16>()
+            .map(|s| s.expect("read sample"))
+            .collect()
+    }
+
+    let plain_dir = tempfile::tempdir().expect("tempdir");
+    let ext_dir = tempfile::tempdir().expect("tempdir");
+    let plain = run(plain_dir.path(), false);
+    let extended = run(ext_dir.path(), true);
+
+    assert_eq!(plain.len(), extended.len(), "splice is length-preserving");
+    assert_ne!(
+        plain, extended,
+        "--seam-extend-fill must reach the written audio"
+    );
+
+    // One second clear of either gap edge: the flag changes the fill, not the programme around it.
+    let before = (SAMPLE_RATE * (SILENT_START_SECS - 1)) as usize;
+    let after = (SAMPLE_RATE * (SILENT_END_SECS + 1)) as usize;
+    assert_eq!(
+        plain[..before],
+        extended[..before],
+        "audio before the gap must be untouched"
+    );
+    assert_eq!(
+        plain[after..],
+        extended[after..],
+        "audio after the gap must be untouched"
+    );
+}

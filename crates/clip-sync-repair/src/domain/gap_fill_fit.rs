@@ -15,7 +15,6 @@ use crate::domain::gap_structure::{
     FillBracketPlacement, GapContextSignature, StructureMatchParams,
 };
 use crate::domain::patch_anchor::AnchorSearchPrior;
-use crate::domain::pcm::interleaved_to_mono;
 use crate::domain::policies::SeamResidualVerdict;
 use crate::domain::policies::{
     fill_repeat_correlations, fill_repeat_correlations_band, fill_seam_correlations,
@@ -1617,22 +1616,35 @@ fn fill_anchor_better(head: (f64, f64), tail: (f64, f64)) -> bool {
 
 /// Fit a B bracket to A gap length (trim tail / pad tail).
 pub fn fit_fill_to_gap_frames(samples: &[f32], channels: usize, target_frames: usize) -> Vec<f32> {
+    fit_fill_to_gap_frames_padded(samples, channels, target_frames).0
+}
+
+/// As [`fit_fill_to_gap_frames`], but also returns **how many tail frames were zero-padded** because the
+/// source was shorter than the gap. Those frames are digital silence written into the output — an unfilled
+/// hole flush to the gap end, not donor silence — so every path that can produce one reports the count
+/// rather than discarding it. Pure: the fact is returned, never logged, because the fill primitives are
+/// called twice (characterize and execute) and only the reporting call site may speak.
+pub fn fit_fill_to_gap_frames_padded(
+    samples: &[f32],
+    channels: usize,
+    target_frames: usize,
+) -> (Vec<f32>, usize) {
     let channels = channels.max(1);
     let source_frames = samples.len() / channels;
     if source_frames == target_frames {
-        return samples.to_vec();
+        return (samples.to_vec(), 0);
     }
     if source_frames == 0 {
-        return vec![0.0f32; target_frames * channels];
+        return (vec![0.0f32; target_frames * channels], target_frames);
     }
 
     if source_frames > target_frames {
-        return samples[..target_frames * channels].to_vec();
+        return (samples[..target_frames * channels].to_vec(), 0);
     }
 
     let mut out = vec![0.0f32; target_frames * channels];
     out[..samples.len()].copy_from_slice(samples);
-    out
+    (out, target_frames - source_frames)
 }
 
 /// Fallback frames guarding each end of a dual-fit bridge from the interior trim/pad point when no
@@ -1716,122 +1728,36 @@ pub fn trim_at_lowest_energy_interior(
     }
 }
 
-fn placement_repeat_post(
-    fill_interleaved: &[f32],
-    channels: usize,
-    a_post: &[f64],
-    a_post_ch: &[Vec<f64>],
-    repeat_window_frames: usize,
-    post_window: usize,
-) -> f64 {
-    let channels = channels.max(1);
-    let b_mono = interleaved_to_mono(fill_interleaved, channels);
-    let gap_frames = b_mono.len();
-    if gap_frames == 0 {
-        return 0.0;
-    }
-    let b_ch: Vec<Vec<f64>> = if channels > 1 && !a_post_ch.is_empty() {
-        (0..channels)
-            .map(|ch| {
-                fill_interleaved
-                    .iter()
-                    .skip(ch)
-                    .step_by(channels)
-                    .map(|&s| s as f64)
-                    .collect()
-            })
-            .collect()
-    } else {
-        vec![b_mono.clone()]
-    };
-    let (_, repeat_post) = fill_repeat_correlations(
-        &SeamTemplates {
-            a_pre: &[],
-            a_post,
-            a_pre_ch: &[],
-            a_post_ch,
-            b_mono: &b_mono,
-            b_ch: &b_ch,
-        },
-        SeamPlacement {
-            start: 0,
-            gap_frames,
-            pre_window: 0,
-            post_window,
-        },
-        repeat_window_frames,
-    );
-    repeat_post
-}
-
-/// Greedily extend a short B bracket into contiguous B audio while `min(pre, post)` does not
-/// fall and repeat-at-post stays bounded; zero-pad any remaining frames.
-pub fn score_extend_short_fill_to_gap_frames(
+/// Extend a short B bracket with the contiguous B audio that follows it, up to the A gap length,
+/// and zero-pad only what B could not supply.
+///
+/// Returns the fill and **how many tail frames were zero-padded**. Non-zero now means one thing
+/// only: B ran out (end of the extract, end of the file). It no longer means a score gate declined
+/// the next frame.
+///
+/// Until 2026-09-23 this grew one frame at a time behind a `min(pre, post)` seam gate and a
+/// repeat-at-post gate, stopping at the first frame that did not improve the score. That gate could
+/// not do what it looked like it was doing: `score_at_length` padded every trial out to `gap_frames`
+/// before scoring, so *every* candidate on the ballot contained the hole and the hole-free one was
+/// never scored. A refusal therefore wrote digital silence flush against the post seam in preference
+/// to donor audio it had in hand. Gate mode has always extended unconditionally (the else arm of
+/// `assemble_bracket_fill`); this makes Fit agree with it.
+pub fn extend_short_fill_to_gap_frames(
     fill_interleaved: &[f32],
     extension_interleaved: &[f32],
     channels: usize,
     gap_frames: usize,
-    borders: &BorderSeamTemplates<'_>,
-    repeat_window_frames: usize,
-    seam_ctx: SpliceSeamContext<'_>,
-) -> Vec<f32> {
+) -> (Vec<f32>, usize) {
     let channels = channels.max(1);
     let source_frames = fill_interleaved.len() / channels;
     debug_assert!(source_frames < gap_frames);
 
-    let ext_frames = extension_interleaved.len() / channels;
-    let mut out = fill_interleaved.to_vec();
-    let score_at_length = |samples: &[f32]| {
-        let padded = fit_fill_to_gap_frames(samples, channels, gap_frames);
-        let (pre, post) =
-            fill_splice_seam_correlations_interleaved(&padded, channels, borders, seam_ctx);
-        (pre.min(post), padded)
-    };
-    let (mut best_min, _) = score_at_length(&out);
-    let mut current_frames = source_frames;
-    let mut prev_repeat = placement_repeat_post(
-        &out,
-        channels,
-        borders.a_post,
-        borders.a_post_ch,
-        repeat_window_frames,
-        borders.post_window,
-    );
-
-    while current_frames < gap_frames {
-        let ext_frame = current_frames - source_frames;
-        if ext_frame >= ext_frames {
-            break;
-        }
-        let frame_start = ext_frame * channels;
-        let mut trial = out.clone();
-        trial.extend_from_slice(&extension_interleaved[frame_start..frame_start + channels]);
-
-        let (min_score, _) = score_at_length(&trial);
-        let next_repeat = placement_repeat_post(
-            &trial,
-            channels,
-            borders.a_post,
-            borders.a_post_ch,
-            repeat_window_frames,
-            borders.post_window,
-        );
-
-        let score_ok = min_score >= best_min - SCORE_TIE_EPSILON;
-        let repeat_ok =
-            next_repeat <= REPEAT_CORR_THRESHOLD && next_repeat <= prev_repeat + SCORE_TIE_EPSILON;
-
-        if score_ok && repeat_ok {
-            out = trial;
-            best_min = min_score;
-            prev_repeat = next_repeat;
-            current_frames += 1;
-        } else {
-            break;
-        }
-    }
-
-    fit_fill_to_gap_frames(&out, channels, gap_frames)
+    let take_frames = (gap_frames - source_frames).min(extension_interleaved.len() / channels);
+    let take_samples = take_frames * channels;
+    let mut out = Vec::with_capacity(fill_interleaved.len() + take_samples);
+    out.extend_from_slice(fill_interleaved);
+    out.extend_from_slice(&extension_interleaved[..take_samples]);
+    fit_fill_to_gap_frames_padded(&out, channels, gap_frames)
 }
 
 /// A length-fitted fill plus how far its first frame sits past the first frame of the B slice it was cut
@@ -1842,6 +1768,10 @@ pub fn score_extend_short_fill_to_gap_frames(
 pub struct FittedFill {
     pub pcm: Vec<f32>,
     pub head_trim_frames: usize,
+    /// Tail frames that were zero-padded to reach `gap_frames` because contiguous B ran out. The pad
+    /// keeps every fill exactly gap-length for the splice; the executor shortens the destination by this
+    /// much so the zeros are not written. `0` on every path that trimmed a long fill.
+    pub zero_pad_frames: usize,
 }
 
 /// Fit-mode length adjust: score-based extend when short, dual-anchor trim when long.
@@ -1851,7 +1781,6 @@ pub fn fit_fill_length_for_gap(
     channels: usize,
     gap_frames: usize,
     borders: &BorderSeamTemplates<'_>,
-    repeat_window_frames: usize,
     seam_ctx: SpliceSeamContext<'_>,
 ) -> FittedFill {
     let channels = channels.max(1);
@@ -1859,22 +1788,22 @@ pub fn fit_fill_length_for_gap(
     if source_frames > gap_frames {
         pick_fill_length_anchor(fill_interleaved, channels, gap_frames, borders, seam_ctx)
     } else if source_frames < gap_frames {
+        let (pcm, zero_pad_frames) = extend_short_fill_to_gap_frames(
+            fill_interleaved,
+            extension_interleaved,
+            channels,
+            gap_frames,
+        );
         FittedFill {
-            pcm: score_extend_short_fill_to_gap_frames(
-                fill_interleaved,
-                extension_interleaved,
-                channels,
-                gap_frames,
-                borders,
-                repeat_window_frames,
-                seam_ctx,
-            ),
+            pcm,
             head_trim_frames: 0,
+            zero_pad_frames,
         }
     } else {
         FittedFill {
             pcm: fill_interleaved.to_vec(),
             head_trim_frames: 0,
+            zero_pad_frames: 0,
         }
     }
 }
@@ -1890,9 +1819,12 @@ pub fn pick_fill_length_anchor(
     let channels = channels.max(1);
     let source_frames = fill_interleaved.len() / channels;
     if source_frames <= gap_frames {
+        let (pcm, zero_pad_frames) =
+            fit_fill_to_gap_frames_padded(fill_interleaved, channels, gap_frames);
         return FittedFill {
-            pcm: fit_fill_to_gap_frames(fill_interleaved, channels, gap_frames),
+            pcm,
             head_trim_frames: 0,
+            zero_pad_frames,
         };
     }
 
@@ -1910,11 +1842,13 @@ pub fn pick_fill_length_anchor(
         FittedFill {
             pcm: trim_head,
             head_trim_frames: skip_frames,
+            zero_pad_frames: 0,
         }
     } else {
         FittedFill {
             pcm: trim_tail,
             head_trim_frames: 0,
+            zero_pad_frames: 0,
         }
     }
 }
@@ -3179,55 +3113,76 @@ mod tests {
     }
 
     #[test]
-    fn score_extend_stops_before_extension_degrades_post_seam() {
+    fn extend_short_fill_takes_every_frame_b_can_supply() {
         let channels = 1usize;
         let gap_frames = 5usize;
-        let pre_w = 2usize;
-        let post_w = 2usize;
-        let a_pre = vec![0.9, -0.9];
-        let a_post = vec![0.8, 0.7];
         let fill = vec![0.9f32, -0.9f32];
+        // The old score gate stopped here: the third extension frame flips sign and drops the post
+        // seam. Preferring digital silence to it was the defect — padding is not the safer choice,
+        // it is the one candidate the gate could not score.
         let extension = vec![0.75f32, 0.8f32, -1.0f32, -1.0f32];
 
-        let blind = {
-            let mut raw = fill.clone();
-            raw.extend(&extension[..3]);
-            fit_fill_to_gap_frames(&raw, channels, gap_frames)
-        };
-        let scored = score_extend_short_fill_to_gap_frames(
-            &fill,
-            &extension,
-            channels,
-            gap_frames,
-            &test_borders(
-                &a_pre,
-                &a_post,
-                std::slice::from_ref(&a_pre),
-                std::slice::from_ref(&a_post),
-                pre_w,
-                post_w,
-            ),
-            pre_w,
-            no_seam_ctx(&[]),
-        );
+        let (out, pad) = extend_short_fill_to_gap_frames(&fill, &extension, channels, gap_frames);
 
-        let extension_frames_used = |samples: &[f32]| {
-            let mut end = samples.len();
-            while end > fill.len() && samples[end - 1] == 0.0 {
-                end -= 1;
-            }
-            (end - fill.len()) / channels
-        };
-
-        assert!(
-            extension_frames_used(&scored) < extension_frames_used(&blind),
-            "score extend should take less contiguous B audio than blind extend before padding"
-        );
-        assert_eq!(scored.len(), gap_frames * channels);
+        assert_eq!(pad, 0, "B had the frames, so nothing is padded");
+        assert_eq!(out, vec![0.9, -0.9, 0.75, 0.8, -1.0]);
     }
 
     #[test]
-    fn fit_fill_length_for_gap_delegates_short_bracket_to_score_extend() {
+    fn extend_short_fill_pads_only_what_b_could_not_supply() {
+        let channels = 2usize;
+        let gap_frames = 5usize;
+        let fill = vec![0.5f32; 2 * channels];
+        // One frame of contiguous B for a three-frame shortfall: B is exhausted, and only then is
+        // there a hole to report.
+        let extension = vec![0.25f32; channels];
+
+        let (out, pad) = extend_short_fill_to_gap_frames(&fill, &extension, channels, gap_frames);
+
+        assert_eq!(pad, 2, "B ran out two frames short of the gap");
+        assert_eq!(out.len(), gap_frames * channels);
+        assert!(out[3 * channels..].iter().all(|s| *s == 0.0));
+    }
+
+    #[test]
+    fn fit_fill_to_gap_frames_padded_counts_the_silent_tail() {
+        let channels = 2usize;
+        let gap_frames = 6usize;
+        // Four frames of donor for a six-frame gap: the last two frames are written as digital
+        // silence flush to the gap end, and that shortfall is what the count has to surface.
+        let samples: Vec<f32> = (0..4 * channels).map(|i| (i + 1) as f32).collect();
+
+        let (padded, pad_frames) = fit_fill_to_gap_frames_padded(&samples, channels, gap_frames);
+
+        assert_eq!(pad_frames, 2, "two frames short of the gap");
+        assert_eq!(padded.len(), gap_frames * channels);
+        assert_eq!(&padded[..samples.len()], samples.as_slice());
+        assert!(
+            padded[samples.len()..].iter().all(|s| *s == 0.0),
+            "the shortfall is written as exact zeros, not donor audio"
+        );
+
+        // A fill that reaches the gap, and one that overruns it, both report no padding — so a
+        // non-zero count can only ever mean a real hole.
+        let exact: Vec<f32> = vec![0.5; gap_frames * channels];
+        assert_eq!(
+            fit_fill_to_gap_frames_padded(&exact, channels, gap_frames).1,
+            0
+        );
+        let long: Vec<f32> = vec![0.5; (gap_frames + 3) * channels];
+        assert_eq!(
+            fit_fill_to_gap_frames_padded(&long, channels, gap_frames).1,
+            0
+        );
+        // An empty source is entirely hole.
+        assert_eq!(
+            fit_fill_to_gap_frames_padded(&[], channels, gap_frames).1,
+            gap_frames
+        );
+    }
+
+    #[test]
+    fn fit_fill_length_for_gap_delegates_short_bracket_to_the_extender() {
         let channels = 1usize;
         let gap_frames = 5usize;
         let window = 2usize;
@@ -3249,18 +3204,10 @@ mod tests {
             channels,
             gap_frames,
             &borders,
-            window,
             no_seam_ctx(&[]),
         );
-        let direct = score_extend_short_fill_to_gap_frames(
-            &fill,
-            &extension,
-            channels,
-            gap_frames,
-            &borders,
-            window,
-            no_seam_ctx(&[]),
-        );
+        let (direct, _direct_pad) =
+            extend_short_fill_to_gap_frames(&fill, &extension, channels, gap_frames);
         assert_eq!(via_api.pcm, direct);
         assert_eq!(
             via_api.head_trim_frames, 0,

@@ -331,6 +331,11 @@ pub struct Args {
     #[arg(long, value_name = "SECS")]
     pub residual_border_standoff_secs: Option<f64>,
 
+    /// Extend the fill one crossfade width past each gap edge so the seam blends use their own B
+    /// content, instead of the post seam replaying the fill tail [default: off].
+    #[arg(long)]
+    pub seam_extend_fill: bool,
+
     /// Per-gap B mapping [default: recommended]: `recommended`, `interpolated` (clip drift),
     /// or `anchored-retry` (two-pass patch anchors).
     #[arg(long, value_parser = clap::value_parser!(FillOffsetMode), value_name = "MODE")]

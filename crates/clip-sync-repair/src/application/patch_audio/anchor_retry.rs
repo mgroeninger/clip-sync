@@ -238,6 +238,7 @@ mod tests {
 
     fn dummy_region_tags() -> GapTags {
         GapTags {
+            zero_pad_frames: 0,
             plan_kind: PlanKind::Fillable,
             plan_skip_reason: None,
             patch_tier: PatchTier::NotApplicable,
@@ -260,6 +261,7 @@ mod tests {
             (
                 0,
                 RegionPatchOutcome::Patched {
+                    zero_pad_frames: 0,
                     pre_correlation: 0.5,
                     post_correlation: 0.5,
                     align_adjustment_secs: 0.0,
@@ -285,6 +287,7 @@ mod tests {
             (
                 1,
                 RegionPatchOutcome::Patched {
+                    zero_pad_frames: 0,
                     pre_correlation: 0.3,
                     post_correlation: 0.28,
                     align_adjustment_secs: 0.1,
@@ -328,6 +331,7 @@ mod tests {
     fn should_apply_anchored_retry_outcome_rules() {
         let skip = skipped_patch(GapPatchSkipReason::BoundaryAlignmentFailed);
         let marginal = RegionPatchOutcome::Patched {
+            zero_pad_frames: 0,
             pre_correlation: 0.3,
             post_correlation: 0.28,
             align_adjustment_secs: 0.0,
@@ -349,6 +353,7 @@ mod tests {
             registration_residual: None,
         };
         let high = RegionPatchOutcome::Patched {
+            zero_pad_frames: 0,
             pre_correlation: 0.5,
             post_correlation: 0.5,
             align_adjustment_secs: 0.0,

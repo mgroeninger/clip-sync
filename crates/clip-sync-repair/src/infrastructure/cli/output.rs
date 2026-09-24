@@ -1447,6 +1447,10 @@ mod tests {
                     headroom_db: None,
                     anchor_seam_used: false,
                     anchor_bracket_move_frames: 0,
+                    // Populated on the golden's one patched gap for the same reason as `fit_terms`:
+                    // the field is optional-absent, so a golden that only ever omits it would not
+                    // notice the key being renamed or dropped. 441 frames = 10 ms at 44.1 kHz.
+                    zero_pad_frames: 441,
                     dual_fit_used: false,
                     dual_fit_step_real: None,
                     dual_fit_post_window_ms: None,
@@ -1505,6 +1509,7 @@ mod tests {
                 160.0,
                 160.4,
                 GapPatchStatus::Patched {
+                    zero_pad_frames: 0,
                     pre_correlation: 0.94,
                     post_correlation: 0.93,
                     align_adjustment_secs: 0.0,
@@ -1828,6 +1833,7 @@ mod tests {
             0.0,
             60.0,
             GapPatchStatus::Patched {
+                zero_pad_frames: 0,
                 pre_correlation: 0.91,
                 post_correlation: 0.88,
                 align_adjustment_secs: 0.02,
@@ -1876,6 +1882,7 @@ mod tests {
                 1.0,
                 4.0,
                 GapPatchStatus::Patched {
+                    zero_pad_frames: 0,
                     pre_correlation: 0.92,
                     post_correlation: 0.90,
                     align_adjustment_secs: 0.01,
@@ -2255,6 +2262,7 @@ mod tests {
             0.0,
             60.0,
             GapPatchStatus::Patched {
+                zero_pad_frames: 0,
                 pre_correlation: 0.98,
                 post_correlation: 1.0,
                 align_adjustment_secs: 0.0,
@@ -2297,6 +2305,7 @@ mod tests {
         let report = minimal_report();
         let alignment_detail = minimal_alignment_detail();
         let status = GapPatchStatus::Patched {
+            zero_pad_frames: 0,
             pre_correlation: 0.31,
             post_correlation: 0.29,
             align_adjustment_secs: 0.0,
@@ -2326,6 +2335,7 @@ mod tests {
                 confidence: crate::domain::FillConfidence::Marginal,
             },
             GapTagsPatchContext {
+                zero_pad_frames: 0,
                 fill_mode: FillMode::Fit,
                 thresholds: FillTierThresholds::DEFAULT,
                 signature_mode_label: "energy",
@@ -2385,6 +2395,7 @@ mod tests {
         let report = minimal_report();
         let alignment_detail = minimal_alignment_detail();
         let status = GapPatchStatus::Patched {
+            zero_pad_frames: 0,
             pre_correlation: 0.31,
             post_correlation: 0.29,
             align_adjustment_secs: 0.0,
@@ -2414,6 +2425,7 @@ mod tests {
                 confidence: crate::domain::FillConfidence::Marginal,
             },
             GapTagsPatchContext {
+                zero_pad_frames: 0,
                 fill_mode: FillMode::Fit,
                 thresholds: FillTierThresholds::DEFAULT,
                 signature_mode_label: "energy",
@@ -2464,6 +2476,7 @@ mod tests {
             0.0,
             60.0,
             GapPatchStatus::Patched {
+                zero_pad_frames: 0,
                 pre_correlation: 0.92,
                 post_correlation: 0.90,
                 align_adjustment_secs: 0.01,
@@ -2741,6 +2754,7 @@ mod tests {
                 0.0,
                 2.0,
                 GapPatchStatus::Patched {
+                    zero_pad_frames: 0,
                     pre_correlation: 0.9,
                     post_correlation: 0.9,
                     align_adjustment_secs: 0.0,
@@ -2830,6 +2844,7 @@ mod tests {
                 192.0,
                 194.0,
                 GapPatchStatus::Patched {
+                    zero_pad_frames: 0,
                     pre_correlation: 0.9,
                     post_correlation: 0.9,
                     align_adjustment_secs: 0.0,

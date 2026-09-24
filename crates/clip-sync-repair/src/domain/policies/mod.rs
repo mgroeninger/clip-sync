@@ -29,7 +29,10 @@ pub(crate) use seam_scoring::{
     fill_repeat_correlations_band, fill_seam_correlations_band,
     fill_seam_correlations_with_channels, seam_score_channels, BandRange,
 };
-pub use seam_splice::{apply_seam_crossfade, effective_seam_crossfade_frames};
+pub use seam_splice::{
+    apply_seam_crossfade, apply_seam_crossfade_extended, effective_seam_crossfade_frames,
+    SeamMarginFill,
+};
 pub use silence::{
     absolute_silence_floor_db, compute_fill_gain, is_silent, is_silent_frame,
     is_silent_interleaved, rms_interleaved, BlockLevel, SilenceRunScanner, SilentRun,

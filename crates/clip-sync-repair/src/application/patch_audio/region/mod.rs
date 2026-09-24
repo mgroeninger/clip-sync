@@ -13,7 +13,7 @@ mod types;
 
 pub(super) use characterize::{characterize_region, prepare_region_patch};
 pub(super) use execute::execute_region_spec;
-pub(super) use pcm::{gained_fill, splice_into_a};
+pub(super) use pcm::{gained_fill, gained_seam_margin, splice_into_a, SpliceFill};
 /// Pre-split `pub(super)` surface whose only consumer is `anchor_retry.rs`'s unit tests.
 #[cfg(test)]
 pub(super) use types::skipped_patch;

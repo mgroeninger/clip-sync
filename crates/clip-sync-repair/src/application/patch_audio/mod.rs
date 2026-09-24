@@ -625,15 +625,19 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                 self.progress
                     .progress("patch-splice", index as u64 + 1, patch_count);
                 let b_gained = region::gained_fill(patch, channels);
+                let margin = region::gained_seam_margin(patch, channels);
 
                 if let Err(reason) = splice_into_a(
                     &mut a_pcm.samples,
-                    &b_gained,
+                    region::SpliceFill {
+                        b_samples: &b_gained,
+                        seam_margin: margin.as_ref().map(|(h, t)| (h.as_slice(), t.as_slice())),
+                        crossfade_secs: patch.crossfade_secs,
+                        sample_rate,
+                    },
                     channels,
                     patch.a_start_frame,
                     patch.a_end_frame,
-                    patch.crossfade_secs,
-                    sample_rate,
                 ) {
                     // A is unchanged across this gap. Downgrade the gate's `Patched` verdict so no
                     // consumer — gap table, JSON, `--gap-listen` WAVs — claims a repair happened.

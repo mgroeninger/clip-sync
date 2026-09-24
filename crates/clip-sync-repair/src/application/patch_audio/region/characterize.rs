@@ -260,6 +260,8 @@ pub(in crate::application::patch_audio) fn characterize_region(
         fit_used_boundary_grid: false,
         anchor_seam_used: false,
         anchor_bracket_move_frames: 0,
+        // Set below, once the fill has been assembled and the shortfall is known.
+        zero_pad_frames: 0,
         anchor_trusted: false,
         dual_fit_used: false,
         dual_fit_step_real: None,
@@ -734,7 +736,6 @@ pub(in crate::application::patch_audio) fn characterize_region(
     } else {
         seam_gate_frames.min(a_post_border.len()).max(1)
     };
-    let repeat_window_frames = border_frames.max(1);
     let seam_cf = policies::effective_seam_crossfade_frames(
         (region.crossfade_secs * sample_rate as f64) as usize,
         refined.start_frame,
@@ -757,6 +758,7 @@ pub(in crate::application::patch_audio) fn characterize_region(
         pcm: b_fill,
         extended_frames,
         head_trim_frames,
+        zero_pad_frames,
     } = {
         let _s = tracing::info_span!("char_fill_assembly").entered();
         assemble_bracket_fill(BracketFillAssembly {
@@ -771,7 +773,6 @@ pub(in crate::application::patch_audio) fn characterize_region(
             a_post_ch: &a_post_ch,
             pre_gate_frames,
             post_gate_frames,
-            repeat_window_frames,
             seam_ctx,
         })
     };
@@ -785,6 +786,19 @@ pub(in crate::application::patch_audio) fn characterize_region(
             "B bracket shorter than A gap; extended from contiguous B audio (gate)"
         );
     }
+    // B ran out before the fill reached the gap. Those tail frames are not written — the executor
+    // shortens the patch destination instead of padding them — so this many frames of the gap are
+    // left unrepaired, carrying A's own material. Warned (not debugged) because it is incomplete
+    // coverage of a gap reported as `Patched`, and reported here for the same L0 reason as the
+    // sibling above: the primitive runs twice and only this call site speaks.
+    if zero_pad_frames > 0 {
+        tracing::warn!(
+            a_start_secs,
+            zero_pad_frames,
+            "donor B exhausted before the A gap was filled; gap tail left unrepaired (not padded)"
+        );
+    }
+    tag_ctx.zero_pad_frames = zero_pad_frames;
 
     // S1 (docs/dev/TEMP-registration-residual-plan.md): independent shoulder-seam read of the placement
     // vs the fill actually written, record-only — no gate reads this. Same `seam_local_peak` primitive and

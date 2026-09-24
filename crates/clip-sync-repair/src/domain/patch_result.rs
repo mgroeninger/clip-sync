@@ -475,6 +475,13 @@ pub enum GapPatchStatus {
         /// `anchor_seam_used` (the displacement of the editorial seam from the silence throat).
         #[serde(default, skip_serializing_if = "is_zero_move_frames")]
         anchor_bracket_move_frames: usize,
+        /// Tail frames of the gap left unrepaired because donor B ran out before the fill reached gap
+        /// length; 0 on a fill that reached it. The patch destination is shortened by this much, so A
+        /// keeps its own material there rather than being overwritten with digital silence. A path
+        /// fact, like `anchor_seam_used`: the shortfall used to be discarded inside the fill primitives
+        /// and so appeared nowhere on the record.
+        #[serde(default, skip_serializing_if = "is_zero_move_frames")]
+        zero_pad_frames: usize,
         /// Run metadata: this fill was rescued by the A3 dual-fit path (G6) after the bracket
         /// search exhausted, not by ordinary bracket-search fitting. Mirrors `anchor_seam_used`
         /// as a path fact — not a `GapTags` characteristic.
