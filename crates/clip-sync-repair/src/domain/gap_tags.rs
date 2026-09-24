@@ -323,12 +323,17 @@ pub struct GapTags {
     pub dual_fit_post_window_ms: Option<u32>,
     /// Tail frames of the gap left unrepaired because donor B ran out; omitted when 0.
     ///
-    /// Non-zero means **digital silence was written into the patch**, flush to the gap end — an
-    /// unfilled hole, not donor silence. The fill primitives pad a short fill to length
-    /// (`fit_fill_to_gap_frames`), and until this field existed the shortfall was recorded nowhere,
-    /// so a hole was invisible in every report and dump. A short fill arises when the greedy
-    /// extension runs out of contiguous B audio *or* when the seam/repeat gate refuses to grow
-    /// further, so it is a routine outcome, not an error path.
+    /// Non-zero means **donor B was exhausted** — end of the extract, end of the file — and nothing
+    /// else. Since 2026-09-23 the shortfall is *not* written: `execute_bracket_output` shortens the
+    /// patch destination to what B actually supplied, so A keeps its own material across the tail
+    /// and these frames carry an honestly unrepaired sliver rather than digital black flush against
+    /// the post seam. Before that, `fit_fill_to_gap_frames` padded the fill to length and the splice
+    /// wrote those zeros over A's gap tail, with the shortfall recorded nowhere — so the hole was
+    /// invisible in every report and dump.
+    ///
+    /// A short fill is a routine outcome, not an error path. It no longer means a seam/repeat gate
+    /// declined to grow the fill: that gate is gone with `extend_short_fill_to_gap_frames`, which
+    /// takes every frame contiguous B can supply.
     #[serde(default, skip_serializing_if = "is_zero_frames")]
     pub zero_pad_frames: usize,
 }

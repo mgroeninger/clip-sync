@@ -1255,6 +1255,10 @@ rather than a content correlation.
 visible at all, then decide whether a short fill should be held, stretched, or refused rather than
 padded with silence.
 
+> **Done (2026-09-23, `b635e15`).** The field is `GapTags::zero_pad_frames`, and the decision was
+> *stretch, then don't write the remainder* — see "The pad is gone" below. This "Next step" is kept
+> for the record and is closed.
+
 ### Where the padded silence comes from: nothing is mismeasured (2026-09-23)
 
 The question was whether the hole means the gap is measured wrong, or frames are handled strangely
@@ -1355,6 +1359,50 @@ a registration change, entangled with the open question this plan is built aroun
 pairs cover each change, but the corpus is unreadable (below), so there is no re-run and no ear
 check. Both changes only ever replace silence with donor audio or with A's own material, which is why
 they were taken under that constraint; the over-build variant was not.
+
+### Reading the zero-pad census: the denominator is the bracket path only (2026-09-23)
+
+The corpus census of `zero_pad_frames` (`gap-files/2026-09-23-zeropad-census`, full 52-pair
+`--patch-only --format json`) is running. Three facts about what it can and cannot show, established
+before any results landed.
+
+**Only one execute arm can short-fill.** `execute.rs` has two: the bracket arm passes
+`bracket_fill.zero_pad_frames` through, and the SilenceSplice/dual-fit arm hardcodes `0` — correctly,
+because the dual-fit bridge is *synthesized to the gap length*, never cut and padded to it. A `0` on
+a dual-fit gap is therefore true, not missing instrumentation. **The census denominator is
+bracket-path patched gaps, not all gaps.**
+
+**The denominator, measured.** Full 52-pair sweep: 1087 gaps → 752 `not_planned`, 8 `skipped`,
+327 patched, of which **209 are bracket-eligible (19% of all gaps)**. The early projection in this
+section was wrong and is kept only to show the drift: pairs 1–3 read 22% and the first 12 pairs 30%,
+from which ~70–80 corpus-wide was extrapolated. The real eligible set is 209 — large enough to
+enumerate, and large enough that a rate comparison would have had power if both arms were present.
+
+**Result: 0 short fills in 209 eligible gaps** (`scripts/measure/census-zero-pad.ps1`,
+`gap-files/2026-09-23-zeropad-census`). All three gaps known to have been holed — 13/g28, 13/g30,
+23/g10 — come back `patched` with `zero_pad_frames` absent, each on the bracket arm with
+`dual_fit_used = false`, so each was genuinely exposed to the mechanism. That is what #1 predicts:
+the old shortfalls were *gate refusals*, not donor exhaustion, and `extend_short_fill_to_gap_frames`
+now takes every frame contiguous B supplies. Note the corollary — **#2 (destination shortening on
+genuine B exhaustion) is unexercised by this corpus**; nothing in 1087 gaps reached it.
+
+**`signature_mode` remains undetermined, not null.** The eligible set is 208 `energy` to **one**
+`bool`. An n=1 arm is not a comparison, and the census script says so rather than printing
+0.00% vs 0.00% as agreement. The Energy-heavy prediction is untested, not refuted.
+
+**Unexpected: `fit_path` is `baseline_only` for all 209.** Not a small-sample artefact — it holds
+corpus-wide. Every gap that *can* short-fill takes the baseline path; no unified-fit path appears in
+the eligible set at all. Unexplained, and worth its own look before this plan leans on `fit_path`.
+
+**There is no pre-fix baseline.** No prior run carries the field (`2026-09-16`, `2026-09-18`,
+`2026-09-22` corpus runs all predate it), so this census cannot be diffed against the padded
+behaviour on the same gaps. It reports which gaps are short-filled *now* — equivalently, which ones
+*would have been* holed before — and a true before/after differential would cost another ~6.5 h run
+of the pre-`b635e15` binary. Not taken.
+
+**Cost note.** A full 52-pair patch sweep is 6.0–6.7 h (median 400–450 s/pair), consistent across
+the 09-16 / 09-18 / 09-22 runs. It is the *cheap* path — `--gap-fingerprints` pays the per-bracket
+oracle — but it is not a one-hour job, and this plan has previously been costed as if it were.
 
 *(other phases — fill as they land)*
 
