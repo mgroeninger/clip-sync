@@ -337,6 +337,31 @@ pub fn seam_local_peak(
     })
 }
 
+/// [`seam_local_peak`] over ONE continuous window spanning two neighbourhoods, `nominal_anchor ± max_lag`
+/// and `nominal_anchor + offset ± max_lag`, with the peak lag and the searched bounds all reported
+/// relative to `nominal_anchor`. The window is centred halfway between the two, so lags they share are
+/// scored once. `None` exactly as [`seam_local_peak`], or when the centre falls before B's start.
+///
+/// Like [`seam_local_peak`], the radius clamps symmetrically at B's edges; `lag_lo` / `lag_hi` report
+/// what was actually scored, so [`SeamPeak::edge_pinned`] stays sound.
+pub fn seam_local_peak_spanning(
+    a_seam: &[f64],
+    b_mono: &[f64],
+    nominal_anchor: usize,
+    offset: i64,
+    max_lag: usize,
+) -> Option<SeamPeak> {
+    let half = offset / 2;
+    let centre = usize::try_from(nominal_anchor as i64 + half).ok()?;
+    let radius = max_lag + (offset - half).unsigned_abs() as usize;
+    seam_local_peak(a_seam, b_mono, centre, radius).map(|p| SeamPeak {
+        lag: p.lag + half,
+        lag_lo: p.lag_lo + half,
+        lag_hi: p.lag_hi + half,
+        ..p
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -377,6 +402,41 @@ mod tests {
 
         let lag0 = normalized_correlation(&a, &b[anchor_start..anchor_start + n]);
         assert!(lag0 < 0.5, "lag-0 score misses the offset seam: {lag0}");
+    }
+
+    /// The spanning window covers BOTH neighbourhoods and reports lags from nominal. 17/5687.5 in
+    /// miniature: the fill was written ~1500 frames early, the shoulder sits at nominal, and a
+    /// ±200 read centred on the fill cannot reach it — the spanning read finds it at lag 0, unpinned.
+    /// The mirror case (shoulder at the fill, pairs 13/18) is found at the offset.
+    #[test]
+    fn seam_local_peak_spanning_finds_a_shoulder_at_either_end() {
+        let n = 2000usize;
+        let a = noise(0xe55, n, 1.0);
+        let (nominal, offset, max_lag) = (3000usize, -1500i64, 200usize);
+        for (shoulder_lag, label) in [(0i64, "at nominal"), (offset, "at the fill")] {
+            let mut b = noise(0xf66, nominal + n + 3000, 0.001);
+            let start = (nominal as i64 + shoulder_lag) as usize;
+            b[start..start + n].copy_from_slice(&a);
+
+            let peak = seam_local_peak_spanning(&a, &b, nominal, offset, max_lag).expect("peak");
+            assert_eq!(peak.lag, shoulder_lag, "{label}: lag is from nominal");
+            assert!(peak.r > 0.99, "{label}: r={}", peak.r);
+            assert!(!peak.edge_pinned(48_000), "{label}: interior, {peak:?}");
+            assert!(
+                peak.lag_lo <= offset - max_lag as i64 && peak.lag_hi >= max_lag as i64,
+                "{label}: window spans both neighbourhoods, {peak:?}"
+            );
+        }
+
+        // Centred on the fill alone, the nominal shoulder is out of reach.
+        let mut b = noise(0xf66, nominal + n + 3000, 0.001);
+        b[nominal..nominal + n].copy_from_slice(&a);
+        let fill_only =
+            seam_local_peak(&a, &b, (nominal as i64 + offset) as usize, max_lag).expect("peak");
+        assert!(
+            fill_only.r < 0.5,
+            "fill-centred read misses it: {fill_only:?}"
+        );
     }
 
     /// A peak that lands on the searched boundary is edge-pinned: the sweep was exhausted, so a larger

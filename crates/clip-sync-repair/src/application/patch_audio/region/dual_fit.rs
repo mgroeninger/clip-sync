@@ -506,8 +506,8 @@ pub(in crate::application::patch_audio::region) fn skip_or_dual_fit(
                         )
                         .map(|rr| {
                             // This path's shoulders are the placement locks themselves (±600 ms fine
-                            // search, envelope recenter). The bracket path reads bare seam peaks
-                            // centred on its written fill at `residual_search_secs`, so `*_rescued`
+                            // search, envelope recenter). The bracket path reads bare seam peaks over
+                            // a nominal-to-fill span at `residual_search_secs`, so `*_rescued`
                             // exists only here, and the `applied` term differs between arms.
                             rr.with_shoulder_quality(
                                 crate::domain::patch_result::ShoulderQuality::from_locks(

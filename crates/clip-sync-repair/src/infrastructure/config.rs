@@ -130,9 +130,10 @@ pub struct RepairConfig {
     /// Lag-search radius (seconds) for the `registration_residual_ms` shoulder read. Seam-scale by
     /// design: this bounds an argmax over a ~`fill_seam_search_secs` window, so it must NOT be
     /// `fill_border_search_secs` (the B *haystack* slide radius, default 10 s), which argmaxed a
-    /// seam template over ~480k candidate lags against a 0.35 floor. The bracket read is centred on
-    /// the written fill, so this bounds the residual itself, not the nominal map's error (rigid
-    /// ~0.3 s on some pairs, ~1.15 s on an A-side injection). Record-only; placement never reads it.
+    /// seam template over ~480k candidate lags against a 0.35 floor. The bracket read searches one
+    /// window spanning nominal ± this and the written fill ± this, so neither the nominal map's
+    /// error (rigid ~0.3 s on some pairs, ~1.15 s on an A-side injection) nor a misplaced fill puts
+    /// a shoulder out of reach. Record-only; placement never reads it.
     /// Readings that exhaust it are flagged `*_edge_pinned`.
     #[serde(default = "default_residual_search_secs")]
     pub residual_search_secs: f64,

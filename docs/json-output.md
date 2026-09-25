@@ -700,17 +700,21 @@ exactly when its own `*_ms` sibling is.
 
 **The search window is part of the reading, and it changed on 2026-09-25.** The bracket shoulder read is an
 argmax over ±`residual_search_secs` (new knob `--residual-search-secs`, default **0.25 s** — seam-scale, since
-it bounds a search over a ~`fill_seam_search_secs` template), **centred on the written fill**, so the radius
-bounds the residual itself rather than the nominal map's error; the lag is re-based to nominal, so
-`applied − shoulder_lag` means what it always did. Before that date it searched ±`fill_border_search_secs` (the
+it bounds a search over a ~`fill_seam_search_secs` template), over **one continuous window spanning both the
+nominal map and the written fill** — from `min(0, applied) − r` to `max(0, applied) + r` — so a shoulder is
+found whichever of the two it sits near; the lag is reported from nominal, so `applied − shoulder_lag` means
+what it always did. Before that date it searched ±`fill_border_search_secs` (the
 B *haystack* slide radius, default **10 s**) centred on nominal, with nothing screening the winner. Dual-fit's
 residual reads its placement seam locks (`seam_locks::lock_seam`: nominal-centred, envelope recentre below the
 floor), unchanged. **Nominal-centred is not safe at a seam-scale radius:** the map carries rigid errors near
 or past it (pairs 13 / 18 ≈ +270 / +320 ms, pair 31's −1.15 s A-side injection), and a nominal-centred
 0.25 s read either went sub-floor and vanished or — near the radius — accepted a low-prominence bump on the
-true peak's slope (15 of 15 such reads on pairs 13 and 18 moved to the ±10 s lag when re-read at ±0.5 s;
-[settled.md](dev/settled.md)). A pre-2026-09-25 bracket residual is today's number whenever its peak lies
-within ±0.25 s of the fill; beyond that it is unscreened. A shoulder whose best in-window peak is below the
+true peak's slope (15 of 15 such reads on pairs 13 and 18 moved to the ±10 s lag when re-read at ±0.5 s).
+**Fill-centred alone is not safe either:** when the fill is the misplaced thing (an anchor-seam write
+hundreds of ms off shoulders that sit near nominal) the shoulders fall outside the fill's window and the
+read goes absent ([settled.md](dev/settled.md)). A pre-2026-09-25 bracket residual is today's number
+whenever its peak lies inside today's spanning window; beyond that it is unscreened. When both
+neighbourhoods hold a peak (periodic material), `*_prominence` is small — read it before the residual. A shoulder whose best in-window peak is below the
 floor is **absent**, not `edge_pinned` — count absences alongside pins when auditing coverage. **Do not pool
 pre-2026-09-25 residuals across paths.** The shape is unchanged, so the version marker is not bumped.
 

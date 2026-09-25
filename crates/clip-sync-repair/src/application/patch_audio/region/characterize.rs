@@ -836,32 +836,42 @@ pub(in crate::application::patch_audio) fn characterize_region(
             a_pre_border.len(),
             a_post_border.len(),
         );
-        let b_mono_for_residual = crate::domain::pcm::interleaved_to_mono(b_samples, channels);
+        // Same slice the dual-fit input already downmixed — reuse it rather than converting B twice.
+        let b_mono_for_residual: std::borrow::Cow<'_, [f64]> = match dual_fit_input.as_ref() {
+            Some(df) => std::borrow::Cow::Borrowed(&df.b_mono),
+            None => std::borrow::Cow::Owned(crate::domain::pcm::interleaved_to_mono(
+                b_samples, channels,
+            )),
+        };
         // Seam-scale, NOT `border_search_secs`: that is the B *haystack* slide radius (10 s by
         // default), and using it here argmaxed a ~0.25 s seam template over ~480k candidate lags
         // against a 0.35 floor with nothing to screen the winner.
         //
-        // Centred on the WRITTEN FILL, not the nominal map: the residual asks how far each shoulder
-        // sits from where the fill was put, so the radius bounds the residual itself rather than the
-        // map's error. The map can be off by more than a seam — a rigid ~+270 / ~+320 ms on pairs 13
-        // and 18, an A-side injection of −1.15 s on pair 31 — and the bracket slide absorbs it.
-        // Nominal-centred reads failed both ways there (2026-09-25): past the radius the read went
-        // sub-floor and vanished; near it, the seam locks' nominal-first gate accepted a
-        // low-prominence bump on the true peak's slope (15/15 such reads on pairs 13 and 18 moved to
-        // the ±10 s lag at ±0.5 s, pre/post agreeing to a few ms). The placement locks keep
-        // `lock_seam`; only this record-only read is fill-centred. The lag is re-based to nominal
-        // (`+ applied_frames`) so `applied − shoulder_lag` keeps its meaning.
+        // ONE continuous window spanning BOTH neighbourhoods — nominal ± r and the written fill ± r —
+        // argmaxed together. Neither centre alone is right (2026-09-25):
+        // - Nominal-centred fails when the map is off by more than a seam — a rigid ~+270 / ~+320 ms
+        //   on pairs 13 and 18, −1.15 s on pair 31 — which the bracket slide absorbs: past the radius
+        //   the read went sub-floor and vanished; near it, the seam locks' nominal-first gate accepted
+        //   a low-prominence bump on the true peak's slope (15/15 such reads moved to the ±10 s lag).
+        // - Fill-centred fails when the FILL is the misplaced thing: on 17/5687.5 (anchor seam,
+        //   applied −539 ms) both shoulders sit near nominal at prominence 0.52–0.83, outside the
+        //   fill's ±r, so the read went absent.
+        // The span from `min(0, applied) − r` to `max(0, applied) + r` is centred halfway between the
+        // two, so neither neighbourhood is searched twice. It adds only the lags between two places we
+        // have reason to look, and `prominence` still flags a curve with rival peaks in both. The
+        // placement locks keep `lock_seam`; only this record-only read spans. `seam_local_peak_spanning`
+        // reports the lag from nominal, so `applied − shoulder_lag` keeps its meaning.
         let max_lag_for_residual =
             (request.residual_search_secs * sample_rate as f64).round() as usize;
         let confident_floor = f64::from(min_fill_correlation.max(request.fill_absolute_floor));
         let applied_frames =
             (alignment.start_frame + head_trim_frames) as i64 - offset_nominal_start as i64;
         let seam_peak_at = |template: &[f64], nominal_anchor: Option<usize>| {
-            let anchor = usize::try_from(nominal_anchor? as i64 + applied_frames).ok()?;
-            crate::domain::seam_local::seam_local_peak(
+            crate::domain::seam_local::seam_local_peak_spanning(
                 template,
                 &b_mono_for_residual,
-                anchor,
+                nominal_anchor?,
+                applied_frames,
                 max_lag_for_residual,
             )
         };
@@ -878,7 +888,7 @@ pub(in crate::application::patch_audio) fn characterize_region(
             peak.and_then(|p| {
                 registration_shoulder_residual_ms(
                     p.r,
-                    p.lag + applied_frames,
+                    p.lag,
                     applied_ms,
                     sample_rate,
                     confident_floor,
@@ -1427,11 +1437,13 @@ mod tests {
         )
     }
 
-    /// 2026-09-25: the residual's search is centred on the written fill, not the nominal map. B runs
+    /// 2026-09-25: the residual's search reaches the written fill, not just the nominal map. B runs
     /// 30 ms late of the map; the bracket slide absorbs it, and a ±10 ms residual search must still
-    /// find both shoulders — at ~0 residual, unpinned. Centred on nominal, the same radius cannot
+    /// find both shoulders — at ~0 residual, unpinned. Centred on nominal alone, the same radius cannot
     /// reach the 30 ms shoulder and (the floors are zero here) reports an edge-pinned ~+20 ms: the
     /// corpus's rigid-map-error failure (pairs 13/18, ~+270/+320 ms at a 250 ms radius) in miniature.
+    /// The mirror case (fill far from shoulders that sit at nominal) is
+    /// `seam_local_peak_spanning_finds_a_shoulder_at_either_end`.
     #[test]
     fn bracket_registration_residual_is_centred_on_the_fill_not_the_map() {
         let (registration, applied_ms) =
@@ -1440,7 +1452,7 @@ mod tests {
             (applied_ms - 30.0).abs() < 1.0,
             "fixture must slide the fill onto B's 30 ms delay, got {applied_ms} ms"
         );
-        let r = registration.expect("both shoulders sit inside the fill-centred window");
+        let r = registration.expect("both shoulders sit inside the spanning window");
         for (side, v, pinned) in [
             (
                 "pre",
