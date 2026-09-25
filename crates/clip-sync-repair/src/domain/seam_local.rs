@@ -258,6 +258,11 @@ pub struct SeamPeak {
     pub lag: i64,
     /// The peak's whole-curve z-score (the periodicity/alias signal); `None` on a degenerate curve.
     pub z: Option<f64>,
+    /// `r` minus the tallest competing local maximum on the same curve — `LagSummary::prominence`'s
+    /// definition (`lag_decision::secondary_peak`). Unlike `z`, this is what separated a located seam
+    /// from a flat curve on the corpus (50/g10: z 5.61 at prominence 0.0049). `None` when the curve
+    /// has no rival local maximum.
+    pub prominence: Option<f64>,
     /// Lowest lag actually scored.
     pub lag_lo: i64,
     /// Highest lag actually scored.
@@ -309,9 +314,10 @@ pub fn seam_local_peak(
         .min(b_mono.len() - (anchor_start + n));
     let b_ctx = &b_mono[anchor_start - max_lag..anchor_start + n + max_lag];
     let curve = lag_correlation_curve_auto(a_seam, b_ctx, max_lag as i64);
-    let &(peak_lag, peak_r) = curve
+    let (peak_index, &(peak_lag, peak_r)) = curve
         .iter()
-        .max_by(|(_, x), (_, y)| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal))?;
+        .enumerate()
+        .max_by(|(_, (_, x)), (_, (_, y))| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal))?;
     let m = (curve.len() as f64).max(1.0);
     let mean = curve.iter().map(|(_, r)| *r).sum::<f64>() / m;
     let std = (curve.iter().map(|(_, r)| (r - mean).powi(2)).sum::<f64>() / m).sqrt();
@@ -324,6 +330,8 @@ pub fn seam_local_peak(
         r: finite(peak_r),
         lag: peak_lag,
         z: peak_z,
+        prominence: crate::domain::lag_decision::secondary_peak(&curve, peak_index)
+            .map(|(_, r)| finite(peak_r) - r),
         lag_lo,
         lag_hi,
     })

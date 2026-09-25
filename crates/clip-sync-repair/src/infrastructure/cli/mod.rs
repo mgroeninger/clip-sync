@@ -161,6 +161,9 @@ pub fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     if let Some(secs) = args.residual_border_standoff_secs {
         config.repair.residual_border_standoff_secs = Some(secs);
     }
+    if let Some(secs) = args.residual_search_secs {
+        config.repair.residual_search_secs = secs;
+    }
     if let Some(mode) = args.fill_offset {
         config.repair.fill_offset_mode = mode;
     }

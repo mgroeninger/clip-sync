@@ -195,7 +195,7 @@ pub(in crate::application::patch_audio) fn execute_region_spec(
                 // strategy, so this and the preview-only `outcome_from_spec` read the same values.
                 normalize_gain,
                 local_gain,
-                registration_residual: registration_residual.map(|r| *r),
+                registration_residual,
             };
             (Some(patch), outcome)
         }

@@ -257,6 +257,16 @@ pub(in crate::application::patch_audio::region) fn registration_residual_from_sh
         registration_residual_pre_ms: pre_ms,
         registration_residual_post_ms: post_ms,
         registration_applied_ms: applied_ms,
+        // Trust is attached by the caller, which holds the peaks; see
+        // `RegistrationResidual::with_shoulder_quality`.
+        registration_residual_pre_edge_pinned: None,
+        registration_residual_post_edge_pinned: None,
+        registration_residual_pre_z: None,
+        registration_residual_post_z: None,
+        registration_residual_pre_prominence: None,
+        registration_residual_post_prominence: None,
+        registration_residual_pre_rescued: None,
+        registration_residual_post_rescued: None,
     })
 }
 
@@ -493,7 +503,19 @@ pub(in crate::application::patch_audio::region) fn skip_or_dual_fit(
                                 confident_floor,
                             ),
                             0.0,
-                        );
+                        )
+                        .map(|rr| {
+                            // This path's shoulders are the placement locks themselves (±600 ms fine
+                            // search, envelope recenter). The bracket path reads bare seam peaks
+                            // centred on its written fill at `residual_search_secs`, so `*_rescued`
+                            // exists only here, and the `applied` term differs between arms.
+                            rr.with_shoulder_quality(
+                                crate::domain::patch_result::ShoulderQuality::from_locks(
+                                    Some(&locks.pre),
+                                    Some(&locks.post),
+                                ),
+                            )
+                        });
                         // `--seam-extend-fill` for this arm. Cut here rather than at the splice: the
                         // shoulder lags are anchored on nominal `b_mapped` in B-**extract** frames,
                         // and this is the one site holding both them and the extract. The post
@@ -1045,6 +1067,49 @@ mod tests {
     /// `registration_residual_from_shoulders` never falls back to an unconfident reading, among two
     /// confident readings selects the one closer to the applied placement, and keeps both per-seam
     /// reads either way (the far seam is what the routing trigger reads).
+    /// The trust siblings stay in lockstep with the `*_ms` keys they describe: a shoulder with no
+    /// confident residual carries no `edge_pinned`/`z`, so a census cannot filter on a reading the
+    /// report never made. (Contract: `docs/json-output.md` § Trust keys.)
+    #[test]
+    fn shoulder_quality_is_dropped_for_an_unlicensed_seam() {
+        use crate::domain::patch_result::ShoulderQuality;
+        let quality = ShoulderQuality {
+            pre_edge_pinned: Some(true),
+            post_edge_pinned: Some(false),
+            pre_z: Some(1.5),
+            post_z: Some(9.0),
+            pre_prominence: Some(0.02),
+            post_prominence: Some(0.4),
+            pre_rescued: Some(true),
+            post_rescued: Some(false),
+        };
+        // Only the post shoulder is confident, so only its trust keys survive.
+        let r = registration_residual_from_shoulders(None, Some(4.0), 1.0)
+            .expect("post confident")
+            .with_shoulder_quality(quality);
+        assert_eq!(r.registration_residual_pre_edge_pinned, None);
+        assert_eq!(r.registration_residual_pre_z, None);
+        assert_eq!(r.registration_residual_post_edge_pinned, Some(false));
+        assert_eq!(r.registration_residual_post_z, Some(9.0));
+        assert_eq!(r.registration_residual_pre_prominence, None);
+        assert_eq!(r.registration_residual_pre_rescued, None);
+        assert_eq!(r.registration_residual_post_prominence, Some(0.4));
+        assert_eq!(r.registration_residual_post_rescued, Some(false));
+
+        // Both confident: both sides carry their own trust, unswapped.
+        let both = registration_residual_from_shoulders(Some(-2.0), Some(4.0), 1.0)
+            .expect("both confident")
+            .with_shoulder_quality(quality);
+        assert_eq!(both.registration_residual_pre_edge_pinned, Some(true));
+        assert_eq!(both.registration_residual_pre_z, Some(1.5));
+        assert_eq!(both.registration_residual_post_edge_pinned, Some(false));
+        assert_eq!(both.registration_residual_post_z, Some(9.0));
+        assert_eq!(both.registration_residual_pre_prominence, Some(0.02));
+        assert_eq!(both.registration_residual_pre_rescued, Some(true));
+        assert_eq!(both.registration_residual_post_prominence, Some(0.4));
+        assert_eq!(both.registration_residual_post_rescued, Some(false));
+    }
+
     #[test]
     fn registration_residual_selects_smaller_magnitude_and_keeps_both_seams() {
         let sel = |pre, post| {

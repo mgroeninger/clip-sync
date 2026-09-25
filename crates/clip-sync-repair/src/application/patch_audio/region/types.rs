@@ -94,7 +94,7 @@ pub(in crate::application::patch_audio) enum RegionPatchOutcome {
         fit_terms: Option<UnifiedFitBreakdown>,
         /// S1: independent shoulder-seam read of the placement vs. the applied placement. Record-only —
         /// no gate reads this. Carried through to `GapPatchStatus::Patched::registration_residual_ms`.
-        registration_residual: Option<crate::domain::patch_result::RegistrationResidual>,
+        registration_residual: Option<Box<crate::domain::patch_result::RegistrationResidual>>,
     },
     Skipped {
         reason: GapPatchSkipReason,
@@ -268,7 +268,7 @@ pub(in crate::application::patch_audio) fn outcomes_in_report_order(
                     dual_fit_step_real: *dual_fit_step_real,
                     dual_fit_post_window_ms: *dual_fit_post_window_ms,
                     fit_terms: *fit_terms,
-                    registration_residual: *registration_residual,
+                    registration_residual: registration_residual.clone(),
                 }
             }
             RegionPatchOutcome::Skipped { reason, residual } => {
@@ -518,7 +518,7 @@ pub(in crate::application::patch_audio) fn outcome_from_spec(
                 fit_terms: *fit_terms,
                 normalize_gain: *normalize_gain,
                 local_gain: *local_gain,
-                registration_residual: registration_residual.as_deref().copied(),
+                registration_residual: registration_residual.clone(),
             }
         }
         GapRepairVerdict::Patch(GapRepairStrategy::SilenceSplice {
@@ -556,7 +556,7 @@ pub(in crate::application::patch_audio) fn outcome_from_spec(
             // preview read and `region/execute.rs`'s splice cannot diverge.
             normalize_gain: *normalize_gain,
             local_gain: *local_gain,
-            registration_residual: registration_residual.as_deref().copied(),
+            registration_residual: registration_residual.clone(),
         },
         GapRepairVerdict::Skip { reason, .. } => {
             skip_outcome_from_fields(reason, spec.tags_ctx.gate.residual)

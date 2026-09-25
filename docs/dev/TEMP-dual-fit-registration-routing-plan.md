@@ -1501,6 +1501,158 @@ and `--seam-extend-fill` now carries the mechanism, the per-path margin table
 and the config keys. Before this the flag existed only in `args.rs` help.
 
 ---
+### Phase 1b re-run on the fixed arm: the null holds, and the control arm is clean (2026-09-24)
+
+§ 4b's probe was void twice over — the crossfade duplication (`apply_seam_crossfade`
+replaying ~20 ms at every post seam) and the zero-pad hole at the gap tail were
+both live in the 2026-09-23 render. Both are fixed (`b635e15`, and
+`--seam-extend-fill` extended to the dual-fit bridge), so the probe was re-rendered
+on the fixed arm: same 15 gaps, same 8 pairs, same default 3 s `--gap-listen`
+context.
+
+**Provenance.** `source.build` = `27e8f9c43984`, `dirty: false`, version `1.0.3`
+on all 8 pairs; 15/15 gaps patched. Duplication check: **0/15** (was 15/15 —
+see the count correction below). Every plain gap's write extent is exactly
+`gap_ms + 20.0 ms`, i.e. `2 × crossfade_ms` of head+tail margin, which is the
+positive check that `--seam-extend-fill` engaged on all of them rather than
+falling back.
+
+| stratum | write shape | n | audible | gaps |
+|---|---|---|---|---|
+| modestly-off late (74–93 ms) | plain | 4 | **0** | 13/g28, 23/g4, 3/g2, 53/g8 |
+| modestly-off late (74–93 ms) | anchor-seam | 4 | **2** | **11/g10**, **3/g7**, 51/g4, 9/g7 |
+| grossly-off late (115–150 ms) | plain | 3 | **0** | 13/g30, 3/g10, 53/g2 |
+| early (the only one) | boundary-extended | 1 | 0 | 1/g14 |
+| controls (< 50 ms bulk) | plain | 3 | **1** | **23/g10**; 13/g27, 9/g4 clean |
+
+**§ 4b's pre-registered reading fires, and it fires further than pre-registered.**
+"All modestly-off late gaps clean ⇒ no motivation to route late common-mode fills
+under 100 ms" holds for every plain fill in the set — and the *grossly*-off 115–150 ms
+set is clean too, which the pre-registration did not ask for. Common-mode magnitude
+does not order audibility at any magnitude in this cohort. **Scope (b) is dead;
+this plan's scope is (a) or (c).** The 2026-09-23 entry reached the same verdict by
+a different route (flat rates across strata, and the wrong symmetry for a
+both-shoulders displacement); the fixed arm now reaches it with a control arm that
+is 1/3 rather than 2/3, so the conclusion no longer rests on a contaminated
+baseline.
+
+**The one axis that separates anything is the write shape, not registration.**
+Audible: 2 of 4 anchor-seam fills, 1 of 10 plain. The two audible anchor gaps
+write **1.72 s** and **2.12 s** of B over loud A — the anchor-seam rescue behaving
+as designed, not a registration error. Note that these fingerprint dumps do not
+carry `anchor_seam_used` (`outcome._contract`: "the production patch gate never
+runs"), so the shape column is classified from the write extent: ≥ 100 ms of
+excess over the gap. 1/g14's excess is **520.0 ms = 500 + 20**, exactly the
+`gap_end_extend_max_ms` cap plus the margins, so it is boundary extension and not
+the 0.6–2.1 s anchor band — it is its own third category, which is why the split
+is 10 plain / 4 anchor / 1 extended.
+
+**Scoring caveat.** This arm was **not** blind: the listener scored from the WAV
+filenames, which carry the gap label. The 1-of-3 control false-alarm rate therefore
+cannot be used to discount the two audible anchor gaps, and none of the three
+audible verdicts carries the weight a blind score would. What the arm does support
+is the **null** — a non-blind listener who knew which gaps were the
+high-registration-error cohort still labelled every plain fill in it clean.
+
+#### Four corrections to earlier § 7 entries
+
+1. **Duplication was 15/15 on the 2026-09-23 baseline, not 11/15.** The 11/15
+   figure came from a ±6-frame search for the replayed block. Calibrating the same
+   instrument against both known arms reproduced the fixed arm's 0/15 exactly, so
+   the instrument is sound; the 4 "missing" gaps are bit-identical duplicates
+   (`maxabsdiff = 0.0`, offset `+0`) sitting ~12 frames outside that window. The
+   earlier caveat "the duplication does not account for every verdict" rested on
+   this false negative and should be withdrawn — on the baseline arm the
+   duplication was universal.
+2. **Two more zero-padded gaps: 53/g2 and 9/g7.** Five of 15 WAVs differ from the
+   2026-09-23 fixed arm, each by one block ending exactly at the gap end: 13/g28
+   (9.4 ms), 13/g30 (7.9 ms), 23/g10 (9.6 ms), 53/g2 (0.8 ms), 9/g7 (9.9 ms).
+   13/g28's 9.4 ms matches this plan's recorded hole exactly. The zero-pad census
+   named three holed gaps; these two were not among them, so the fix's reach is
+   wider than recorded.
+3. **The plain/anchor split is 10/4/1, not 11/4** — see the 1/g14 note above.
+4. **The re-run was necessary, not a formality.** Those same five WAVs prove the
+   2026-09-23 fixed arm still carried the pad; only 10 of 15 clips were unchanged.
+
+#### 23/g10, the one audible control: every mechanism excluded
+
+The plain, < 50 ms-error control that read audible was chased down separately,
+since a plain fill with a small error is exactly the case the null above claims is
+safe.
+
+| candidate | verdict |
+|---|---|
+| crossfade duplication | excluded — 0/15 on this arm |
+| zero-pad hole | excluded — fixed; this gap's re-render differs from 09-23 by exactly the 9.6 ms fill |
+| `normalize_gain` / `local_gain` | excluded — see below |
+| fill misplacement or corruption | excluded — fill is a **bit-exact** B copy (`r = 1.0000`), level delta +0.0 dB |
+| registration magnitude | refuted as a *cohort* axis — its post-seam step is **1.65 ms**, the *smallest* in the cohort — but **confirmed as the cause for this gap** by blind single-variable test (10/10, p = 0.00098); see below |
+| continuity × lag at the seam | refuted, and more strongly than first measured — see the bound correction below: clean gaps sit **58–92 ms** out at the post seam, while this one sits **1.65 ms** out |
+
+A `--patch-only --format json` sweep of the three flagged pairs reads
+`normalize_gain` near unity on every gap — pair 3: 1.003693 (+0.032 dB), pair 11:
+1.015385 (+0.133 dB), pair 23: 1.002708 (+0.023 dB) — with `local_gain = 1.0`
+(`local_gain_reason: flag_off`) throughout. This also kills the natural reading of
+3/g7's report ("the gain increases compared to surrounding sound"): no gain worth
+hearing is applied anywhere in this cohort. For contrast, the corpus's one
+known audible-too-loud case ran +11.78 dB.
+
+What is measurably present at 23/g10's post seam: A resumes **1.65 ms** out of step
+with where B would have continued (`r = 0.9539`, levels matched to −0.3 dB), with a
++1.0 to +2.1 dB level step across the seam. Real, but smaller than the same quantity
+in six clean gaps, so **no measured axis in hand separates the three audible
+verdicts from the twelve clean ones.** A single-variable listen pair — the same
+contiguous-B fill at shift 0 and at −1.65 ms, identical outside the fill — is built
+under `gap-files/2026-09-24-abx23/`; it tests whether a 1.65 ms step is audible in
+this material, but it is not production's fill (production's fill is not one
+contiguous slice across the whole region; only the last 200 ms before the seam is),
+so it cannot confirm that the step is what was heard.
+
+**Bound correction, same day.** The post-seam lags first reported here (2–19 ms)
+were measured with a ±20 ms search and were **bound artifacts on 12 of 15 gaps**.
+Re-run at ±100 ms, 12 move to −58…−81 ms (one to +92 ms) at `r` ≥ 0.95, which is
+the 74–93 ms band the cohort was *selected* on — so the instrument is validated and
+the narrow readings were the search running to its edge. Three gaps do not move and
+are genuine interior peaks: **23/g10 at 1.65 ms**, 13/g27 at 10.85 ms, 9/g4 at
+−10.54 ms (the latter two are both < 50 ms controls, as expected). The refutation in
+the table above therefore holds *a fortiori*: the clean fills are 35–55× further out
+of registration than the audible one.
+
+**Blind single-variable test, and a two-regime reading (2026-09-24).** The shift-0 /
+shift-−1.65 ms pair was listened to: the shift-0 arm has an audible post-seam blip,
+the registered arm is clean. Both arms were verified as the **A track** (bit-identical
+to it outside the fill) carrying a **B-sourced** fill (tail found verbatim in B, the
+two arms' cuts exactly 79 frames apart), and A inside the region is the dropout at
+−69.8 dB against −49.2 dB just after, so the test is not circular. Caveat: that first
+listen was **not blind** — filenames and README named the arms and the predicted
+direction was stated beforehand. A 10-trial forced-choice blind version was
+run (`gap-files/2026-09-24-abx23/blind/`, key held outside the folder, pre-registered
+at 9–10 correct = real): **10/10, one-tailed p = 0.00098.** The listener placed the
+blip in the shift-0 arm on every trial against a 5/5-balanced key, with no letter run
+that a response bias could explain. **The 1.65 ms post-seam error is audible and
+correcting it alone removes the artifact** — the first causally established
+audibility mechanism in this work, as against the magnitude axes that have all come
+back flat (`peak_delta_db`, `fill_level`, common-mode registration, shoulder
+busyness, continuity × lag).
+
+This also resolves 23/g10, the residual anomaly of the Phase 1b null: the one plain,
+< 50 ms-error control that read audible with every listed mechanism excluded. It was
+excluded from all of them because the cause is not on that list.
+
+The reading is **two regimes, not one axis**: at ~79 samples
+a splice is a *waveform phase discontinuity* and clicks in quiet sustained material
+(−55 dB here), while at tens of milliseconds it is a *content displacement*, audible
+only when it breaks the material's own self-similarity. Magnitude orders neither
+across that boundary, which is why every cohort-wide magnitude axis tried here has
+come back flat. Note this is a **post-seam local** quantity and still not the
+common-mode the plan set out to route — scope (a)/(c) is unaffected either way.
+
+**Consequence for this plan.** § 6's paired ear pass stays the wrong next spend, for
+the reason the 2026-09-23 entry gave and one more: the residual audible set is
+anchor-seam writes plus one unexplained plain control, and neither is a
+common-mode routing target. The live question is § 6's remaining one — whether
+`--seam-extend-fill` goes default-on — not whether to route on registration.
+
 ## 8. Non-goals
 
 - **Pre-gate routing** from `seam_locks` alone, which would skip the gate

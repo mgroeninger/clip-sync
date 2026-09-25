@@ -1479,14 +1479,22 @@ mod tests {
                     // `registration_residual_ms` plus the 2026-09-22 per-seam keys) are part of the
                     // pinned contract. Applied 20.0 ms = `align_adjustment_secs` above with no head
                     // trim; the shoulders sit 37 ms apart (a map step), so the seams differ by it.
-                    registration_residual: Some(
+                    registration_residual: Some(Box::new(
                         crate::domain::patch_result::RegistrationResidual {
                             registration_residual_ms: 12.5,
                             registration_residual_pre_ms: Some(12.5),
                             registration_residual_post_ms: Some(-24.5),
+                            registration_residual_pre_edge_pinned: None,
+                            registration_residual_post_edge_pinned: None,
+                            registration_residual_pre_z: None,
+                            registration_residual_post_z: None,
+                            registration_residual_pre_prominence: None,
+                            registration_residual_post_prominence: None,
+                            registration_residual_pre_rescued: None,
+                            registration_residual_post_rescued: None,
                             registration_applied_ms: 20.0,
                         },
-                    ),
+                    )),
                 },
             ),
             gap_patch_outcome(
@@ -1534,14 +1542,22 @@ mod tests {
                     fit_terms: None,
                     // Pins the other per-seam state: an unlicensed post shoulder leaves its key
                     // absent, and dual-fit's applied placement is 0.0 (its `align_adjustment_secs`).
-                    registration_residual: Some(
+                    registration_residual: Some(Box::new(
                         crate::domain::patch_result::RegistrationResidual {
                             registration_residual_ms: -3.0,
                             registration_residual_pre_ms: Some(-3.0),
                             registration_residual_post_ms: None,
+                            registration_residual_pre_edge_pinned: None,
+                            registration_residual_post_edge_pinned: None,
+                            registration_residual_pre_z: None,
+                            registration_residual_post_z: None,
+                            registration_residual_pre_prominence: None,
+                            registration_residual_post_prominence: None,
+                            registration_residual_pre_rescued: None,
+                            registration_residual_post_rescued: None,
                             registration_applied_ms: 0.0,
                         },
-                    ),
+                    )),
                 },
             ),
             gap_patch_outcome(
@@ -1562,6 +1578,7 @@ mod tests {
             fill_seam_search_secs: 0.25,
             normalize_window_secs: 5.0,
             residual_border_standoff_secs: None,
+            residual_search_secs: 0.25,
         })
         // Likewise stamped by every real patch run (`patch_audio::program_gain_report`). Derived
         // from the golden's own scan rather than hand-written, so the applied number and the

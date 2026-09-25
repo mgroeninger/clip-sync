@@ -331,6 +331,12 @@ pub struct Args {
     #[arg(long, value_name = "SECS")]
     pub residual_border_standoff_secs: Option<f64>,
 
+    /// Diagnostic: lag-search radius (seconds) for the `registration_residual_ms` shoulder read.
+    /// Seam-scale by design — this is NOT `--fill-border-search-secs`, which is the B haystack slide
+    /// radius. Peaks that exhaust it are reported `*_edge_pinned` rather than trusted [default: 0.25].
+    #[arg(long, value_name = "SECS")]
+    pub residual_search_secs: Option<f64>,
+
     /// Extend the fill one crossfade width past each gap edge so the seam blends use their own B
     /// content, instead of the post seam replaying the fill tail [default: off].
     #[arg(long)]

@@ -354,7 +354,7 @@ pub(in crate::application::patch_audio::region) fn execute_bracket_output(
         fit_terms: ctx.fit_terms,
         normalize_gain: ctx.gain,
         local_gain: ctx.local_gain,
-        registration_residual: ctx.registration_residual,
+        registration_residual: ctx.registration_residual.map(Box::new),
     };
     (patch, outcome)
 }

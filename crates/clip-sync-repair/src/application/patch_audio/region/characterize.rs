@@ -837,42 +837,65 @@ pub(in crate::application::patch_audio) fn characterize_region(
             a_post_border.len(),
         );
         let b_mono_for_residual = crate::domain::pcm::interleaved_to_mono(b_samples, channels);
-        let max_lag_for_residual = (border_search_secs * sample_rate as f64).round() as usize;
+        // Seam-scale, NOT `border_search_secs`: that is the B *haystack* slide radius (10 s by
+        // default), and using it here argmaxed a ~0.25 s seam template over ~480k candidate lags
+        // against a 0.35 floor with nothing to screen the winner.
+        //
+        // Centred on the WRITTEN FILL, not the nominal map: the residual asks how far each shoulder
+        // sits from where the fill was put, so the radius bounds the residual itself rather than the
+        // map's error. The map can be off by more than a seam — a rigid ~+270 / ~+320 ms on pairs 13
+        // and 18, an A-side injection of −1.15 s on pair 31 — and the bracket slide absorbs it.
+        // Nominal-centred reads failed both ways there (2026-09-25): past the radius the read went
+        // sub-floor and vanished; near it, the seam locks' nominal-first gate accepted a
+        // low-prominence bump on the true peak's slope (15/15 such reads on pairs 13 and 18 moved to
+        // the ±10 s lag at ±0.5 s, pre/post agreeing to a few ms). The placement locks keep
+        // `lock_seam`; only this record-only read is fill-centred. The lag is re-based to nominal
+        // (`+ applied_frames`) so `applied − shoulder_lag` keeps its meaning.
+        let max_lag_for_residual =
+            (request.residual_search_secs * sample_rate as f64).round() as usize;
         let confident_floor = f64::from(min_fill_correlation.max(request.fill_absolute_floor));
-        let pre_peak = offset_nominal_start
-            .checked_sub(d_pre + a_pre_border.len())
-            .and_then(|anchor| {
-                crate::domain::seam_local::seam_local_peak(
-                    a_pre_border,
-                    &b_mono_for_residual,
-                    anchor,
-                    max_lag_for_residual,
-                )
-            });
-        let post_peak = crate::domain::seam_local::seam_local_peak(
-            a_post_border,
-            &b_mono_for_residual,
-            offset_nominal_start + gap_frames + d_post,
-            max_lag_for_residual,
+        let applied_frames =
+            (alignment.start_frame + head_trim_frames) as i64 - offset_nominal_start as i64;
+        let seam_peak_at = |template: &[f64], nominal_anchor: Option<usize>| {
+            let anchor = usize::try_from(nominal_anchor? as i64 + applied_frames).ok()?;
+            crate::domain::seam_local::seam_local_peak(
+                template,
+                &b_mono_for_residual,
+                anchor,
+                max_lag_for_residual,
+            )
+        };
+        let pre_peak = seam_peak_at(
+            a_pre_border,
+            offset_nominal_start.checked_sub(d_pre + a_pre_border.len()),
         );
-        let applied_ms =
-            slide_secs * 1000.0 + head_trim_frames as f64 * 1000.0 / sample_rate as f64;
-        let shoulder_ms = |peak: Option<crate::domain::seam_local::SeamPeak>| {
+        let post_peak = seam_peak_at(
+            a_post_border,
+            Some(offset_nominal_start + gap_frames + d_post),
+        );
+        let applied_ms = applied_frames as f64 * 1000.0 / sample_rate as f64;
+        let shoulder_ms = |peak: Option<&crate::domain::seam_local::SeamPeak>| {
             peak.and_then(|p| {
                 registration_shoulder_residual_ms(
                     p.r,
-                    p.lag,
+                    p.lag + applied_frames,
                     applied_ms,
                     sample_rate,
                     confident_floor,
                 )
             })
         };
+        let quality = crate::domain::patch_result::ShoulderQuality::from_peaks(
+            pre_peak.as_ref(),
+            post_peak.as_ref(),
+            sample_rate,
+        );
         registration_residual_from_shoulders(
-            shoulder_ms(pre_peak),
-            shoulder_ms(post_peak),
+            shoulder_ms(pre_peak.as_ref()),
+            shoulder_ms(post_peak.as_ref()),
             applied_ms,
         )
+        .map(|r| r.with_shoulder_quality(quality))
     };
 
     // 6b.3a shadow: prove the executor can re-derive this exact fill from the spec + the FULL decode buffers
@@ -1396,6 +1419,73 @@ mod tests {
         Option<crate::domain::patch_result::RegistrationResidual>,
         f64,
     ) {
+        matched_fixture_bracket_registration_with(
+            border_standoff_secs,
+            residual_border_standoff_secs,
+            0.0,
+            None,
+        )
+    }
+
+    /// 2026-09-25: the residual's search is centred on the written fill, not the nominal map. B runs
+    /// 30 ms late of the map; the bracket slide absorbs it, and a ±10 ms residual search must still
+    /// find both shoulders — at ~0 residual, unpinned. Centred on nominal, the same radius cannot
+    /// reach the 30 ms shoulder and (the floors are zero here) reports an edge-pinned ~+20 ms: the
+    /// corpus's rigid-map-error failure (pairs 13/18, ~+270/+320 ms at a 250 ms radius) in miniature.
+    #[test]
+    fn bracket_registration_residual_is_centred_on_the_fill_not_the_map() {
+        let (registration, applied_ms) =
+            matched_fixture_bracket_registration_with(0.0, None, 0.03, Some(0.01));
+        assert!(
+            (applied_ms - 30.0).abs() < 1.0,
+            "fixture must slide the fill onto B's 30 ms delay, got {applied_ms} ms"
+        );
+        let r = registration.expect("both shoulders sit inside the fill-centred window");
+        for (side, v, pinned) in [
+            (
+                "pre",
+                r.registration_residual_pre_ms,
+                r.registration_residual_pre_edge_pinned,
+            ),
+            (
+                "post",
+                r.registration_residual_post_ms,
+                r.registration_residual_post_edge_pinned,
+            ),
+        ] {
+            let v = v.unwrap_or_else(|| panic!("{side} shoulder is licensed"));
+            assert!(
+                v.abs() < 1.0,
+                "{side}: fill sits on the shoulder, residual should be ~0, got {v}"
+            );
+            assert_eq!(
+                pinned,
+                Some(false),
+                "{side}: peak must not exhaust the radius"
+            );
+            assert_eq!(
+                if side == "pre" {
+                    r.registration_residual_pre_rescued
+                } else {
+                    r.registration_residual_post_rescued
+                },
+                None,
+                "{side}: no envelope runs on the bracket read"
+            );
+        }
+    }
+
+    /// As [`matched_fixture_bracket_registration`], with B delayed `b_delay_secs` against the
+    /// nominal map (B holds A's frame `j` at `j + delay`) and an optional `residual_search_secs`.
+    fn matched_fixture_bracket_registration_with(
+        border_standoff_secs: f64,
+        residual_border_standoff_secs: Option<f64>,
+        b_delay_secs: f64,
+        residual_search_secs: Option<f64>,
+    ) -> (
+        Option<crate::domain::patch_result::RegistrationResidual>,
+        f64,
+    ) {
         use super::{characterize_all_regions, RegionPatchContext, RegionPatchMedia};
         use crate::domain::gap::Gap;
         use crate::domain::gap_fill::FillRegion;
@@ -1421,9 +1511,11 @@ mod tests {
                 .wrapping_add(1442695040888963407);
             (((seed >> 33) as f64 / (1u64 << 30) as f64) - 1.0) as f32 * 0.2
         };
-        let noise: Vec<f32> = (0..total).map(|_| rng()).collect();
+        let delay = secs(b_delay_secs);
+        let long: Vec<f32> = (0..total + delay).map(|_| rng()).collect();
+        let noise = &long[delay..];
         let mut a = vec![0f32; total];
-        let b = noise.clone();
+        let b = long[..total].to_vec();
         a[..g0].copy_from_slice(&noise[..g0]);
         a[g1..total].copy_from_slice(&noise[g1..total]);
 
@@ -1485,6 +1577,8 @@ mod tests {
             min_fill_correlation: 0.0,
             fill_absolute_floor: 0.0,
             normalize_window_secs: 0.05,
+            residual_search_secs: residual_search_secs
+                .unwrap_or(RepairConfig::default().residual_search_secs),
             ..RepairConfig::default()
         };
         let request: PatchAudioRequest = repair

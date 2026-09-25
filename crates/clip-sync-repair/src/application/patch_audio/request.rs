@@ -139,6 +139,10 @@ pub struct PatchRequestSettings {
     /// while the residual instrument stays fixed; never read by placement or any gate. Bracket path
     /// only: a dual-fit residual derives from `try_dual_fit`'s own fit lags and ignores it.
     pub residual_border_standoff_secs: Option<f64>,
+    /// Lag-search radius (seconds) for the `registration_residual_ms` shoulder read — seam-scale, NOT
+    /// `fill_border_search_secs`. See `RepairConfig::residual_search_secs`. Bracket path only; the
+    /// dual-fit residual reuses `try_dual_fit`'s own per-shoulder lags and their own radius.
+    pub residual_search_secs: f64,
     /// Extend the bracket fill one crossfade width past each gap edge so `apply_seam_crossfade_extended`
     /// has real B content for both blends. Off (default) keeps the shipped `apply_seam_crossfade`,
     /// whose post seam replays ~2x crossfade of fill. Bracket path only — a dual-fit bridge is

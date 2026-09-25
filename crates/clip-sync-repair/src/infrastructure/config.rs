@@ -127,6 +127,15 @@ pub struct RepairConfig {
     /// Unset = `border_standoff_secs`. Record-only; placement never reads it.
     #[serde(default)]
     pub residual_border_standoff_secs: Option<f64>,
+    /// Lag-search radius (seconds) for the `registration_residual_ms` shoulder read. Seam-scale by
+    /// design: this bounds an argmax over a ~`fill_seam_search_secs` window, so it must NOT be
+    /// `fill_border_search_secs` (the B *haystack* slide radius, default 10 s), which argmaxed a
+    /// seam template over ~480k candidate lags against a 0.35 floor. The bracket read is centred on
+    /// the written fill, so this bounds the residual itself, not the nominal map's error (rigid
+    /// ~0.3 s on some pairs, ~1.15 s on an A-side injection). Record-only; placement never reads it.
+    /// Readings that exhaust it are flagged `*_edge_pinned`.
+    #[serde(default = "default_residual_search_secs")]
+    pub residual_search_secs: f64,
     /// Extend the fill by one crossfade width past each gap edge so the seam crossfade has its
     /// own B content. Off = the shipped path, whose post seam duplicates ~2x crossfade of audio.
     #[serde(default)]
@@ -499,6 +508,9 @@ fn default_fill_align_margin_secs() -> f64 {
 fn default_fill_border_search_secs() -> f64 {
     10.0
 }
+fn default_residual_search_secs() -> f64 {
+    0.25
+}
 fn default_min_border_discovery_secs() -> f64 {
     2.0
 }
@@ -671,6 +683,7 @@ impl Default for RepairConfig {
             min_border_discovery_secs: default_min_border_discovery_secs(),
             border_standoff_secs: default_border_standoff_secs(),
             residual_border_standoff_secs: None,
+            residual_search_secs: default_residual_search_secs(),
             seam_extend_fill: false,
             short_gap_mean_correlation_secs: default_short_gap_mean_correlation_secs(),
             fill_length_slack_secs: default_fill_length_slack_secs(),
@@ -836,6 +849,7 @@ impl RepairConfig {
             min_border_discovery_secs: self.min_border_discovery_secs,
             border_standoff_secs: self.border_standoff_secs,
             residual_border_standoff_secs: self.residual_border_standoff_secs,
+            residual_search_secs: self.residual_search_secs,
             seam_extend_fill: self.seam_extend_fill,
             short_gap_mean_correlation_secs: self.short_gap_mean_correlation_secs,
             fill_length_slack_secs: self.fill_length_slack_secs,
@@ -1110,6 +1124,12 @@ impl RepairConfig {
                     reason: "must be finite and non-negative".into(),
                 });
             }
+        }
+        if !self.residual_search_secs.is_finite() || self.residual_search_secs < 0.0 {
+            return Err(ConfigError::InvalidValue {
+                field: "residual_search_secs".into(),
+                reason: "must be finite and non-negative".into(),
+            });
         }
         if self.short_gap_mean_correlation_secs < 0.0 {
             return Err(ConfigError::InvalidValue {

@@ -576,8 +576,11 @@ pub enum GapPatchStatus {
         /// Flattened, so the wire keeps `registration_residual_ms` where it always was and adds the
         /// per-seam keys beside it. `None` (no keys at all) when neither shoulder is confident.
         /// Record-only — no gate reads this field.
+        /// Boxed: the trust siblings (2026-09-25) pushed this variant past
+        /// `clippy::large_enum_variant`, and `GapRepairSpec` already carries it boxed. The wire shape
+        /// is unaffected — `flatten` serializes through the `Box`.
         #[serde(flatten)]
-        registration_residual: Option<RegistrationResidual>,
+        registration_residual: Option<Box<RegistrationResidual>>,
     },
     Skipped {
         reason: GapPatchSkipReason,
@@ -617,6 +620,115 @@ pub struct RegistrationResidual {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub registration_residual_post_ms: Option<f64>,
     pub registration_applied_ms: f64,
+    /// That shoulder's peak landed on the boundary of the lags actually scored
+    /// ([`crate::domain::seam_local::lag_is_edge_pinned`]) — the search was exhausted, so the residual
+    /// is a **floor, not a measurement**, and a census must discard it rather than average it in.
+    /// Present exactly when the sibling `*_ms` key is (same confidence gate).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub registration_residual_pre_edge_pinned: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub registration_residual_post_edge_pinned: Option<bool>,
+    /// That shoulder peak's whole-curve z-score. Recorded for completeness only: it does **not**
+    /// separate a located seam from a flat curve (50/g10: z 5.61 at prominence 0.0049), and it is not
+    /// comparable across search radii — read `*_prominence` for that. `None` on a degenerate curve.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub registration_residual_pre_z: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub registration_residual_post_z: Option<f64>,
+    /// That shoulder peak's `r` minus the tallest competing local maximum on the same curve
+    /// ([`crate::domain::seam_local::SeamPeak::prominence`]). Low ⇒ the seam matches at many lags
+    /// (periodic material), so a confident `r` may be one repeat off. `None` when the curve had no
+    /// rival local maximum.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub registration_residual_pre_prominence: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub registration_residual_post_prominence: Option<f64>,
+    /// The coarse envelope moved that shoulder's search off the nominal map
+    /// ([`crate::domain::seam_locks::SeamLock::rescued`]): the nominal read was below the confidence
+    /// floor, and the reading is from the recentered sweep. Stratify on it — a rescued shoulder is a
+    /// map-error case (an injection, an uncorrected step), not a seam-scale one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub registration_residual_pre_rescued: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub registration_residual_post_rescued: Option<bool>,
+}
+
+/// Per-shoulder trust for a [`RegistrationResidual`] — whether each seam's peak was pinned at the
+/// edge of the searched lags, how sharply it stood out, and whether the envelope recentered it.
+/// Bundled so the values cannot be
+/// passed in the wrong order, and applied through
+/// [`RegistrationResidual::with_shoulder_quality`], which drops the quality of any shoulder whose
+/// residual is absent so the sibling keys stay in lockstep with the `*_ms` keys.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct ShoulderQuality {
+    pub pre_edge_pinned: Option<bool>,
+    pub post_edge_pinned: Option<bool>,
+    pub pre_z: Option<f64>,
+    pub post_z: Option<f64>,
+    pub pre_prominence: Option<f64>,
+    pub post_prominence: Option<f64>,
+    pub pre_rescued: Option<bool>,
+    pub post_rescued: Option<bool>,
+}
+
+impl ShoulderQuality {
+    /// Both shoulders' trust, read off the locks that measured them.
+    pub fn from_locks(
+        pre: Option<&crate::domain::seam_locks::SeamLock>,
+        post: Option<&crate::domain::seam_locks::SeamLock>,
+    ) -> Self {
+        Self {
+            pre_edge_pinned: pre.map(|l| l.edge_pinned),
+            post_edge_pinned: post.map(|l| l.edge_pinned),
+            pre_z: pre.and_then(|l| l.z),
+            post_z: post.and_then(|l| l.z),
+            pre_prominence: pre.and_then(|l| l.prominence),
+            post_prominence: post.and_then(|l| l.prominence),
+            pre_rescued: pre.map(|l| l.rescued),
+            post_rescued: post.map(|l| l.rescued),
+        }
+    }
+
+    /// Both shoulders' trust from bare seam peaks (the bracket path's fill-centred read). No
+    /// envelope runs there, so `*_rescued` stays absent rather than reading `false`.
+    pub fn from_peaks(
+        pre: Option<&crate::domain::seam_local::SeamPeak>,
+        post: Option<&crate::domain::seam_local::SeamPeak>,
+        sample_rate: u32,
+    ) -> Self {
+        Self {
+            pre_edge_pinned: pre.map(|p| p.edge_pinned(sample_rate)),
+            post_edge_pinned: post.map(|p| p.edge_pinned(sample_rate)),
+            pre_z: pre.and_then(|p| p.z),
+            post_z: post.and_then(|p| p.z),
+            pre_prominence: pre.and_then(|p| p.prominence),
+            post_prominence: post.and_then(|p| p.prominence),
+            pre_rescued: None,
+            post_rescued: None,
+        }
+    }
+}
+
+impl RegistrationResidual {
+    /// Attach per-shoulder trust. A shoulder with no confident residual carries no quality keys:
+    /// the contract is "these siblings describe the reported reading", so a flag without a reading
+    /// would invite a census to filter on a shoulder it never used.
+    #[must_use]
+    pub fn with_shoulder_quality(mut self, quality: ShoulderQuality) -> Self {
+        if self.registration_residual_pre_ms.is_some() {
+            self.registration_residual_pre_edge_pinned = quality.pre_edge_pinned;
+            self.registration_residual_pre_z = quality.pre_z;
+            self.registration_residual_pre_prominence = quality.pre_prominence;
+            self.registration_residual_pre_rescued = quality.pre_rescued;
+        }
+        if self.registration_residual_post_ms.is_some() {
+            self.registration_residual_post_edge_pinned = quality.post_edge_pinned;
+            self.registration_residual_post_z = quality.post_z;
+            self.registration_residual_post_prominence = quality.post_prominence;
+            self.registration_residual_post_rescued = quality.post_rescued;
+        }
+        self
+    }
 }
 
 /// Skip serializing `anchor_bracket_move_frames` for non-anchor patches (the common case).
@@ -663,6 +775,12 @@ pub struct FillGeometryRecipe {
     /// standoff sweep's arms are told apart by the report, not by their directory names.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub residual_border_standoff_secs: Option<f64>,
+    /// `--residual-search-secs`: the lag-search radius `registration_residual_ms` was measured over.
+    /// Recorded because it decides what the number *means*: before 2026-09-25 this path used
+    /// `fill_border_search_secs` (10 s), argmaxing a seam peak over ~480k lags, and the dual-fit path
+    /// used its own ±600 ms — two instruments, neither recorded. Reports written before that date
+    /// omit this key and should be read as the 10 s instrument.
+    pub residual_search_secs: f64,
 }
 
 /// User-visible summary of a `PatchAudio` run (no PCM payload).

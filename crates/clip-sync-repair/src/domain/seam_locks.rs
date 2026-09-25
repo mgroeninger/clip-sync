@@ -127,6 +127,9 @@ pub struct SeamLock {
     pub r: f64,
     pub lag: i64,
     pub z: Option<f64>,
+    /// The accepted peak's prominence over its tallest rival on the same curve
+    /// ([`crate::domain::seam_local::SeamPeak::prominence`]). After a rescue, of the recentered sweep.
+    pub prominence: Option<f64>,
     /// `true` when the coarse envelope moved this shoulder off its nominal center.
     pub rescued: bool,
     /// The accepted peak sat on the boundary of the lags actually searched (`SeamPeak::edge_pinned`) —
@@ -284,6 +287,50 @@ fn lock_shoulder(
     } else {
         templates.b_post_nominal()
     };
+    lock_seam(
+        SeamLockSite {
+            a_seam,
+            b_mono,
+            nominal_center,
+            pre_shoulder,
+        },
+        max_lag_frames,
+        envelope,
+        sample_rate,
+        triage_r,
+    )
+}
+
+/// One seam template and where the map says it meets B.
+///
+/// `nominal_center` is the B frame at the template's **gap-facing** edge: the pre template ends
+/// there, the post template starts there. Separate from [`SeamLockTemplates`] because that type's
+/// equal-length raw-window invariant is what placement needs, and a record-only reader (the bracket
+/// path's registration residual) measures with trimmed, displaced borders that cannot satisfy it.
+#[derive(Clone, Copy)]
+struct SeamLockSite<'a> {
+    a_seam: &'a [f64],
+    b_mono: &'a [f64],
+    nominal_center: usize,
+    pre_shoulder: bool,
+}
+
+/// [`lock_shoulder`]'s nominal-first + envelope-recenter logic for one arbitrary seam template —
+/// the same code, not a copy, so a reader measuring with it inherits every guard the locks have.
+/// The returned lag is relative to `site.nominal_center` whether or not a rescue happened.
+fn lock_seam(
+    site: SeamLockSite<'_>,
+    max_lag_frames: usize,
+    envelope: EnvelopeSearch<'_>,
+    sample_rate: u32,
+    triage_r: f64,
+) -> Option<SeamLock> {
+    let SeamLockSite {
+        a_seam,
+        b_mono,
+        nominal_center,
+        pre_shoulder,
+    } = site;
     // The pre seam's search window starts a full template before its nominal center.
     let anchor_start = if pre_shoulder {
         nominal_center.checked_sub(a_seam.len())?
@@ -296,6 +343,7 @@ fn lock_shoulder(
         r,
         lag: peak.lag,
         z: peak.z,
+        prominence: peak.prominence,
         rescued: false,
         edge_pinned: peak.edge_pinned(sample_rate),
     };
@@ -341,6 +389,7 @@ fn lock_shoulder(
         // identical whether or not a rescue happened.
         lag: shift + retry.lag,
         z: retry.z,
+        prominence: retry.prominence,
         rescued: true,
         edge_pinned: retry.edge_pinned(sample_rate),
     })
@@ -482,6 +531,7 @@ pub fn grow_post_lock(
                 r: peak.r,
                 lag: peak.lag,
                 z: peak.z,
+                prominence: peak.prominence,
                 rescued: false,
                 edge_pinned: peak.edge_pinned(sample_rate),
             },
@@ -499,6 +549,7 @@ mod tests {
             r,
             lag,
             z: None,
+            prominence: None,
             rescued: false,
             edge_pinned,
         }

@@ -185,6 +185,7 @@ fn fill_geometry_for(
         fill_seam_search_secs: request.fill_seam_search_secs,
         normalize_window_secs: request.normalize_window_secs,
         residual_border_standoff_secs: request.residual_border_standoff_secs,
+        residual_search_secs: request.residual_search_secs,
     }
 }
 
