@@ -342,11 +342,6 @@ pub struct Args {
     #[arg(long)]
     pub seam_extend_fill: bool,
 
-    /// Reconcile a dual-fit bridge to the gap length with one crossfaded jump at its quietest span,
-    /// instead of a hard cut or a held sample [default: off].
-    #[arg(long)]
-    pub dual_fit_crossfade_edit: bool,
-
     /// Per-gap B mapping [default: recommended]: `recommended`, `interpolated` (clip drift),
     /// or `anchored-retry` (two-pass patch anchors).
     #[arg(long, value_parser = clap::value_parser!(FillOffsetMode), value_name = "MODE")]

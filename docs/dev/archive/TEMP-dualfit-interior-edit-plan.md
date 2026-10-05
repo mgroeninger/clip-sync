@@ -1,14 +1,16 @@
 # TEMP — Dual-fit interior length edit: crossfaded jump at a quiet span
 
-**Status:** draft 2026-10-02. One Change, behind a flag (default off).
-§ 2 items 1, 2 and 4 built 2026-10-02 (uncommitted); item 3 deferred. § 3 measurement gate PASS 9/9 (2026-10-02). § 4 listen 2026-10-02: NOT FIXED by rule (new worse on 2 of 9; better on 3 of 5 blip gaps). 2nd sitting 2026-10-05: neither loss replicated (0 worse); (b)/(c) distributed edits refuted vs jump. 50/g7 blip = late gap start in A (separate defect). Next: decide.
+**Status:** **CLOSED 2026-10-05 — adopted by decision; the jump edit is unconditional.**
+The flag, the legacy hard cut / single-sample hold and `trim_at_lowest_energy_interior` are
+deleted (§ 4 *Decision*). Hand-off: routing plan § 6c.
+History: § 2 items 1, 2 and 4 built 2026-10-02 (`f623e1c`); item 3 deferred. § 3 measurement gate PASS 9/9 (2026-10-02). § 4 listen 2026-10-02: NOT FIXED by rule (new worse on 2 of 9; better on 3 of 5 blip gaps). 2nd sitting 2026-10-05: neither loss replicated (0 worse); (b)/(c) distributed edits refuted vs jump. 50/g7 blip = late gap start in A (separate defect). Decided 2026-10-05: adopt.
 
-**Tracked as:** [BACKLOG.md](../../BACKLOG.md) § *Fill placement*, *Dual-fit
-interior edit* row.
+**Tracked as:** [settled.md](../settled.md) § A, *Distributed length edit* row (the BACKLOG
+*Dual-fit interior edit* row is deleted).
 
 **Companions:**
 - The defect was found and measured in
-  [TEMP-dual-fit-registration-routing-plan.md](TEMP-dual-fit-registration-routing-plan.md)
+  [TEMP-dual-fit-registration-routing-plan.md](../TEMP-dual-fit-registration-routing-plan.md)
   § 7, *The dual-fit blip is the interior length edit, not the seams*.
 - That plan's step-kind routing bound (§ 6b: Adopt at 75 ms) is a
   cost/benefit crossover against this artifact. Its § 6c re-listen waits on
@@ -132,7 +134,7 @@ under `gap-files/`, and if it is reused, a home under `scripts/measure/`.
    assembly. The diagnostic `splice_dualfit` goes through the same function,
    so it cannot drift. Then wire the flag through CLI → TOML → `RepairConfig`
    → `PatchAudioRequest` → the params builder, and add it to the flag table in
-   [gap-fill-modes.md](../gap-fill-modes.md).
+   [gap-fill-modes.md](../../gap-fill-modes.md).
 3. **Dump fields (additive).** In `dual_fit_placement`, add `edit_frame`
    (fill-relative `p`), `edit_kind` (`skip` / `repeat` / `none`), and
    `edit_span_db` (the chosen span's level), recorded on both arms. This gives
@@ -357,6 +359,31 @@ The blind sitting used 12 real trials against the jump plus 2 nulls.
 - Together with the § 5 non-goal: the distributed variants are now
   **measured and refuted** for this edit, not merely parked.
 
+**Decision (2026-10-05): adopt.** The user flipped the default and deleted
+the legacy path, overriding sitting 1's pre-registered **Not fixed**. That
+rule result stands as recorded above; the adoption is a decision on the
+whole body of evidence, not a § 4 pass. What carried it:
+
+- Neither sitting-1 loss replicated in sitting 2 (29/g20 → same, 50/g7 →
+  new), and over both sittings new is better 6, old better 2.
+- 50/g7's blip, the louder of the two losses, is in raw A ahead of the write
+  (a late gap start), so it cannot be either arm's edit.
+- Every blip note in sitting 2 lands on an old hold, and the spectral
+  detector flags every old hold and no new edit.
+- The two distributed alternatives lost to or tied the jump by ear.
+
+What changed in code: `jump_edit_to_gap` is the only length edit.
+`DualFitParams.edit_crossfade_frames` is a plain `usize` (`crossfade_ms ·
+sr` in production). `--dual-fit-crossfade-edit` / `dual_fit_crossfade_edit`
+are removed; the flag existed only to render § 4's two arms. `trim_at_lowest_energy_interior`
+is deleted outright, cut arm included, since `cf = 0` reproduces the cut.
+Its last use was `jump_edit_to_gap`'s fallback for a jump back of at least
+the bridge's length (`gap ≥ 2·bridge`). That case now repeats in stages,
+each at most `bridge − 1` frames, so no path holds a sample.
+
+Not done, and not tracked: § 2 item 3 (dump fields). Its deferral reason
+stands; the debug log carries the placement.
+
 ## 5. Non-goals
 
 - **Widening the write into the A shoulders** to find a quieter edit spot.
@@ -371,8 +398,9 @@ The blind sitting used 12 real trials against the jump plus 2 nulls.
 
 ## 6. Close
 
-On Fixed:
-1. Archive this plan.
-2. Add a settled.md § A/B row recording the mechanism and the listen.
-3. Delete the BACKLOG row.
-4. Update the routing plan § 7 "Next" and its § 6c status.
+Done 2026-10-05, on the § 4 *Decision* (not on a § 4 **Fixed**):
+1. Archived this plan.
+2. Added the settled.md § A row: distributed resample / WSOLA edits refuted
+   by ear against the jump.
+3. Deleted the BACKLOG row.
+4. Updated routing plan § 7 "Next" and § 6c status (unblocked).

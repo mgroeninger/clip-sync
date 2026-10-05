@@ -129,7 +129,6 @@ CLI flags are accepted in both modes unless noted. **Effect** differs by mode.
 | `--gap-end-extend-max-ms`, `--gap-end-extend-step-ms` | Grid span / step on A (fit) | Retry span / step (gate) |
 | `--crossfade-ms`, `--no-normalize` | **Active** | **Active** |
 | `--seam-extend-fill` / `seam_extend_fill` | **Active** — bracket **and** dual-fit fills; default off | **Active** — same |
-| `--dual-fit-crossfade-edit` / `dual_fit_crossfade_edit` | **Active** — real-step dual-fit fills only; default off | **Active** — same |
 | `fill_fit_structure_weight`, `fill_fit_waveform_weight` | Unified scorer weights (config; CLI optional) | Ignored |
 | `fill_marginal_margin`, `fill_absolute_floor` | Warn tier / hard skip (config-only) | Ignored |
 | `anchor_seam_mode`, `max_anchor_bracket_secs`, `max_anchors_per_side`, `anchor_seam_min_*` | **Active** — editorial anchor bracket search when triggered | **No effect** (fit only) |
@@ -252,10 +251,11 @@ rigid lag-0 (fit) / structure-winner (gate) placement failed (see [gap-repair-gu
 
 **Length edit.** A real-step bridge is `gap + step` frames, so `step` frames are removed or added
 inside it, kept `fill_seam_search_secs` clear of each end so the re-validated seam windows never
-see the edit. Default: a hard cut at the quietest `step`-frame window when the bridge is long, or
-the quietest single sample held for `|step|` frames when it is short. `--dual-fit-crossfade-edit`
-replaces both with one crossfaded jump at the quietest span: forward when long, back (repeating
-real audio) when short.
+see the edit. The edit is one `crossfade_ms` equal-power jump at the quietest span: forward
+(skipping `step` frames) when the bridge is long, back (repeating `|step|` frames of real audio)
+when it is short. It replaced a hard cut / single held sample whose 29–35 ms hold was audible
+([dev/archive/TEMP-dualfit-interior-edit-plan.md](dev/archive/TEMP-dualfit-interior-edit-plan.md)).
+There is no flag; time-stretch and WSOLA spreads of the same edit were refuted by ear.
 
 For calibration / regression against the pre-A3 bracket-only path, use `--no-dual-fit` (D6 byte-identical to
 legacy skips on those gaps).
@@ -688,7 +688,6 @@ Most keys below drive **fit** placement. `dual_fit` is shared: G6 rescue runs af
 | `dual_fit` | `true` | `--no-dual-fit` | G6 per-shoulder rescue after scored gate skip (**both** fit and gate) |
 | `crossfade_ms` | `10` | `--crossfade-ms` | Seam blend width; clamped by `effective_seam_crossfade_frames` |
 | `seam_extend_fill` | `false` | `--seam-extend-fill` | Take `cf` frames of B either side of the fill so the post seam stops replaying the fill tail (§ Seam crossfade); bracket **and** dual-fit |
-| `dual_fit_crossfade_edit` | `false` | `--dual-fit-crossfade-edit` | Real-step dual-fit only: reconcile the bridge to the gap with one `crossfade_ms` equal-power jump at its quietest span (a short bridge repeats real audio) instead of a hard cut / single-sample hold. Under evaluation ([dev/TEMP-dualfit-interior-edit-plan.md](dev/TEMP-dualfit-interior-edit-plan.md)) |
 
 **Fit-mode short B bracket:** when structure match returns fewer frames than the A gap, fit mode greedily extends into contiguous B audio frame-by-frame while padded `min(pre, post)` does not fall and `fill_repeat_correlations` post-repeat stays bounded; remaining frames are zero-padded. Gate mode still blind-extends then pads.
 

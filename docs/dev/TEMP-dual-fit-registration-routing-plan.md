@@ -37,6 +37,12 @@ listen*). **Attributed the same day:** the dual-fit seams are clean. The blip
 is the interior length edit, mainly the 29–35 ms single-sample hold that pads
 a short bridge (§ 7, *The dual-fit blip is the interior length edit*).
 
+**2026-10-05:** the interior-edit fix shipped unconditional: one crossfaded
+jump at the quietest span, the hold and the flag deleted
+([archive/TEMP-dualfit-interior-edit-plan.md](archive/TEMP-dualfit-interior-edit-plan.md),
+adopted by decision after a split § 4). § 6c is unblocked; every dual-fit
+render from here on carries the new edit.
+
 **Tracked as:** [BACKLOG.md](../../BACKLOG.md) § Fill placement, Hole 1 row
 ("**Next:** design the routing rule").
 
@@ -942,8 +948,10 @@ rendered fresh, one at a time.
 
 ### 6c. Below-bound re-listen on the fixed edit (stub, 2026-10-02)
 
-**Blocked on** [TEMP-dualfit-interior-edit-plan.md](TEMP-dualfit-interior-edit-plan.md)
-§ 4 returning **Fixed**. This is not yet pre-registered. The rule below is a
+**Unblocked 2026-10-05.** The fix shipped unconditional
+([archive/TEMP-dualfit-interior-edit-plan.md](archive/TEMP-dualfit-interior-edit-plan.md)
+§ 4 *Decision*): adopted by decision, not by a § 4 **Fixed** — sitting 1 was
+*Not fixed* by rule, sitting 2 replicated neither loss. This is not yet pre-registered. The rule below is a
 sketch and must be fixed in this section before any gap is rendered.
 
 **Why.** § 6b's 75 ms bound is where single-lag's seam displacement starts to
@@ -952,8 +960,10 @@ interior length edit*). With the blip removed, the crossover may sit lower.
 
 **Sketch.**
 - Re-render the dual-fit arm of every § 6b gap with max ≤ 75 ms (13 gaps,
-  including the 4 controls) with `--dual-fit-crossfade-edit`. Reuse § 6b's
-  production arms unchanged: same build flags, same renders.
+  including the 4 controls) on a build at or after the fix (the edit is no
+  longer flag-gated). Reuse § 6b's production arms unchanged: same build
+  flags, same renders. The interior-edit plan's 9 `dual-xf` renders under
+  `gap-files/2026-10-02-interior-edit/` already cover 9 of those gaps.
 - Run a blind a/b against production, scored by § 6b's R_B rule with B ∈
   {50, 0}.
 - Add fresh draws from the same population if § 6b's below-bound set has been
@@ -2079,7 +2089,8 @@ Production's single-lag arms show the expected displacement instead: tens of
 ms at one or both seams.
 
 **The blip is where `trim_at_lowest_energy_interior` reconciles the bridge
-to the gap length** (`gap_fill_fit.rs`). Its shape follows the sign of the
+to the gap length** (`gap_fill_fit.rs`; deleted 2026-10-05, replaced by
+`jump_edit_to_gap`). Its shape follows the sign of the
 step:
 
 | Edit | When | Gaps | Ear |
@@ -2121,12 +2132,13 @@ step:
 - The step sign (hold vs cut) is confounded with the gaps themselves.
 
 **Next.**
-1. Fix the interior edit. This is split out as
-   [TEMP-dualfit-interior-edit-plan.md](TEMP-dualfit-interior-edit-plan.md):
-   one crossfaded jump at the quietest span covering both sources. A short
-   bridge then repeats real audio instead of holding a sample. The fix has its
-   own measurement gate and its own old-vs-new blind listen.
-2. Then § 6c: new dual-fit vs production below 75 ms. Only after that should
+1. ~~Fix the interior edit.~~ **Done 2026-10-05**
+   ([archive/TEMP-dualfit-interior-edit-plan.md](archive/TEMP-dualfit-interior-edit-plan.md)):
+   one crossfaded jump at the quietest span, unconditional. Adopted by
+   decision after a split listen (sitting 1 *Not fixed* by rule, sitting 2
+   replicated neither loss); 50/g7's remaining blip is a late gap start in A,
+   tracked separately in BACKLOG.
+2. Now § 6c: new dual-fit vs production below 75 ms. Only after that should
    the bound move. § 5 can be built in parallel, because the bound is a
    parameter.
 

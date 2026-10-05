@@ -64,8 +64,6 @@ pub(in crate::application::patch_audio::region) struct DualFitInputSpec<'a> {
     pub(in crate::application::patch_audio::region) fill_absolute_floor: f32,
     pub(in crate::application::patch_audio::region) crossfade_secs: f64,
     pub(in crate::application::patch_audio::region) border_standoff_frames: usize,
-    /// `--dual-fit-crossfade-edit`: the bridge length edit crossfades over `crossfade_secs`.
-    pub(in crate::application::patch_audio::region) crossfade_edit: bool,
 }
 
 pub(in crate::application::patch_audio::region) fn build_dual_fit_input<'a>(
@@ -85,7 +83,6 @@ pub(in crate::application::patch_audio::region) fn build_dual_fit_input<'a>(
         fill_absolute_floor,
         crossfade_secs,
         border_standoff_frames,
-        crossfade_edit,
     } = spec;
     let ch = channels.max(1);
     let w = ((fill_seam_search_secs * sample_rate as f64).round() as usize).max(8);
@@ -115,8 +112,7 @@ pub(in crate::application::patch_audio::region) fn build_dual_fit_input<'a>(
             fill_absolute_floor: fill_absolute_floor as f64,
             step_real_margin: 0.15,
             a_gap_floor_db,
-            edit_crossfade_frames: crossfade_edit
-                .then(|| (crossfade_secs * sample_rate as f64).round() as usize),
+            edit_crossfade_frames: (crossfade_secs * sample_rate as f64).round() as usize,
         },
         templates,
         b_mono,
@@ -335,8 +331,8 @@ pub(in crate::application::patch_audio::region) fn skip_or_dual_fit(
                 // Re-validate the assembled seams. The seam scores are the ones `try_dual_fit`'s own
                 // seam-local search already measured (`r.pre_seam_r`/`r.post_seam_r`): A's near-gap
                 // border vs the B window ENDING at the pre shoulder / STARTING at the post shoulder —
-                // the content just OUTSIDE the bridge that each shoulder matched. The interior trim
-                // (`trim_at_lowest_energy_interior`) only edits the bridge interior, guarded clear of
+                // the content just OUTSIDE the bridge that each shoulder matched. The interior length
+                // edit (`jump_edit_to_gap`) only edits the bridge interior, guarded clear of
                 // `seam_window_frames` from each end, so the assembled seams equal the ones dual-fit
                 // fit — nothing to re-measure.
                 //
@@ -968,7 +964,7 @@ mod tests {
             fill_absolute_floor: 0.12,
             step_real_margin: 0.15,
             a_gap_floor_db: -60.0,
-            edit_crossfade_frames: None,
+            edit_crossfade_frames: 480,
         };
         let templates = crate::domain::seam_locks::SeamLockTemplates::from_mono(
             a_pre_mono.clone(),
@@ -1198,7 +1194,7 @@ mod tests {
             fill_absolute_floor: 0.12,
             step_real_margin: 0.15,
             a_gap_floor_db: -60.0,
-            edit_crossfade_frames: None,
+            edit_crossfade_frames: 480,
         };
         let templates = crate::domain::seam_locks::SeamLockTemplates::from_mono(
             a_pre_mono.clone(),

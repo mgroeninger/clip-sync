@@ -158,9 +158,6 @@ pub fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     if args.seam_extend_fill {
         config.repair.seam_extend_fill = true;
     }
-    if args.dual_fit_crossfade_edit {
-        config.repair.dual_fit_crossfade_edit = true;
-    }
     if let Some(secs) = args.residual_border_standoff_secs {
         config.repair.residual_border_standoff_secs = Some(secs);
     }
@@ -553,7 +550,6 @@ mod cli_override_tests {
             "--fill-repeat-penalty-weight",
             "0.25",
             "--seam-extend-fill",
-            "--dual-fit-crossfade-edit",
             "--no-gap-end-extend",
             "--no-gap-start-extend",
             "--no-short-gap-one-strong-seam",
@@ -580,10 +576,6 @@ mod cli_override_tests {
         assert!(
             config.repair.seam_extend_fill,
             "--seam-extend-fill must reach the config; default is off"
-        );
-        assert!(
-            config.repair.dual_fit_crossfade_edit,
-            "--dual-fit-crossfade-edit must reach the config; default is off"
         );
         assert_eq!(config.repair.fill_offset_mode, FillOffsetMode::Interpolated);
         assert!((config.repair.fill_fit_structure_weight - 0.4).abs() < f64::EPSILON);

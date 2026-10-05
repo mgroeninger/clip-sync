@@ -419,7 +419,6 @@ pub(in crate::application::patch_audio) fn characterize_region(
             fill_absolute_floor: request.fill_absolute_floor,
             crossfade_secs: region.crossfade_secs,
             border_standoff_frames: derived.border_standoff_frames,
-            crossfade_edit: request.dual_fit_crossfade_edit,
         })
     };
 

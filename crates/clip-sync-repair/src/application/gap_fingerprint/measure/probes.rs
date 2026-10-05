@@ -1206,7 +1206,7 @@ mod tests {
             fill_absolute_floor: f64::from(cfg.fill_absolute_floor),
             step_real_margin: DUALFIT_STEP_REAL_MARGIN,
             a_gap_floor_db: -60.0,
-            edit_crossfade_frames: None,
+            edit_crossfade_frames: 480,
         };
         let dual = dual_fit_at_nominal(&templates, &b_mono, &signal, &params)
             .expect("production dual-fit succeeds on identical A/B content");
@@ -1379,7 +1379,7 @@ mod tests {
             fill_absolute_floor: f64::from(cfg.fill_absolute_floor),
             step_real_margin: DUALFIT_STEP_REAL_MARGIN,
             a_gap_floor_db: -60.0,
-            edit_crossfade_frames: None,
+            edit_crossfade_frames: 480,
         };
         let dual = dual_fit_at_nominal(&templates, &b_mono, &signal, &params)
             .expect("production dual-fit succeeds on identical A/B content");

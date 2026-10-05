@@ -1655,79 +1655,6 @@ pub fn fit_fill_to_gap_frames_padded(
 /// inside that window corrupts the very edge the re-validation gate checks.
 pub const DUALFIT_INTERIOR_EDGE_GUARD_FRAMES: usize = 64;
 
-/// Start frame of the `window`-frame interior span with the lowest mean-square energy, kept ≥ `edge_guard`
-/// frames from each end. The least-audible place to cut or hold.
-fn lowest_energy_interior_start(
-    fill: &[f32],
-    channels: usize,
-    window: usize,
-    edge_guard: usize,
-) -> usize {
-    let ch = channels.max(1);
-    let n = fill.len() / ch;
-    let window = window.max(1);
-    if n <= window + 2 * edge_guard {
-        return edge_guard.min(n.saturating_sub(window));
-    }
-    let ms = |f: usize| -> f64 {
-        let s = &fill[f * ch..(f + window) * ch];
-        s.iter().map(|&x| (x as f64) * (x as f64)).sum::<f64>() / (s.len().max(1) as f64)
-    };
-    let (lo, hi) = (edge_guard, n - window - edge_guard);
-    let mut best = lo;
-    let mut best_ms = ms(lo);
-    for f in (lo + 1)..=hi {
-        let m = ms(f);
-        if m < best_ms {
-            best_ms = m;
-            best = f;
-        }
-    }
-    best
-}
-
-/// Reconcile a dual-fit **bridge** — B's content between the two seam-local-placed shoulders (length
-/// = `gap ± step`) — to exactly `gap_frames`, editing **only the interior** at its **lowest-energy point**
-/// (the least-audible splice). The shoulders keep their own lags (A3 §4); this is the interior length edit.
-/// `bridge − gap > 0` ⇒ trim those interior frames; `< 0` ⇒ pad by holding the quietest interior frame.
-/// *(A crossfade across the interior join is a D7 audibility refinement — the cut is already at min energy.)*
-///
-/// `edge_guard_frames` must be at least the border re-validation window length
-/// (`seam_window_frames`) so the cut can never land inside either border-scoring window of the
-/// resulting fill — otherwise the length edit corrupts the very edge the re-validation gate checks.
-pub fn trim_at_lowest_energy_interior(
-    bridge: &[f32],
-    channels: usize,
-    gap_frames: usize,
-    edge_guard_frames: usize,
-) -> Vec<f32> {
-    let ch = channels.max(1);
-    let b_frames = bridge.len() / ch;
-    if b_frames == gap_frames || gap_frames == 0 || b_frames == 0 {
-        return fit_fill_to_gap_frames(bridge, ch, gap_frames);
-    }
-    let guard = edge_guard_frames;
-    if b_frames > gap_frames {
-        let trim = b_frames - gap_frames;
-        let cut = lowest_energy_interior_start(bridge, ch, trim, guard);
-        let mut out = Vec::with_capacity(gap_frames * ch);
-        out.extend_from_slice(&bridge[..cut * ch]);
-        out.extend_from_slice(&bridge[(cut + trim) * ch..]);
-        out
-    } else {
-        let pad = gap_frames - b_frames;
-        let at = lowest_energy_interior_start(bridge, ch, 1, guard).min(b_frames - 1);
-        let mut out = Vec::with_capacity(gap_frames * ch);
-        out.extend_from_slice(&bridge[..(at + 1) * ch]);
-        let held = &bridge[at * ch..(at + 1) * ch];
-        for _ in 0..pad {
-            out.extend_from_slice(held);
-        }
-        out.extend_from_slice(&bridge[(at + 1) * ch..]);
-        out
-    }
-}
-
 /// Where [`jump_edit_to_gap`] placed its edit, for the fingerprint dump.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct JumpEdit {
@@ -1741,18 +1668,25 @@ pub struct JumpEdit {
     pub span_mean_square: f64,
 }
 
-/// Reconcile a dual-fit bridge to exactly `gap_frames` with **one crossfaded jump** of
-/// `t = bridge − gap` frames (`docs/dev/TEMP-dualfit-interior-edit-plan.md` § 0).
+/// Reconcile a dual-fit **bridge** — B's content between the two seam-local-placed shoulders (length
+/// `gap ± step`) — to exactly `gap_frames` with **one crossfaded jump** of `t = bridge − gap` frames,
+/// editing only the interior (`docs/dev/archive/TEMP-dualfit-interior-edit-plan.md`). The shoulders
+/// keep their own lags (A3 §4).
 ///
 /// The output plays the bridge up to `p`, equal-power crossfades over `cf` frames into the bridge
-/// at `p + t`, and continues from there. `t > 0` skips forward (today's cut, plus a crossfade);
-/// `t < 0` jumps back, so `bridge[p+t .. p]` plays twice — a repeat of real audio, not a held sample.
+/// at `p + t`, and continues from there. `t > 0` skips forward; `t < 0` jumps back, so
+/// `bridge[p+t .. p]` plays twice — a repeat of real audio. (This replaced a hard cut / a single
+/// sample held for `|t|` frames, whose 29–35 ms hold was the audible dual-fit blip.)
 ///
 /// `p` minimizes the mean-square energy of the span the edit touches, `[min(p, p+t), max(p, p+t) + cf)`,
 /// kept `edge_guard_frames` from each end; `cf` is capped so that span fits the guarded interior.
-/// When the bridge is too short for the guard, the edit lands at the guard-clamped position, as
-/// [`trim_at_lowest_energy_interior`] does — never a decline. A jump back longer than the bridge
-/// itself has no real audio to repeat and falls back to the legacy pad.
+/// `edge_guard_frames` must be at least the border re-validation window (`seam_window_frames`) so
+/// the edit never lands inside either border-scoring window of the resulting fill. When the bridge
+/// is too short for the guard, the edit lands at the guard-clamped position — never a decline.
+///
+/// A jump back of at least the bridge's own length (`gap ≥ 2·bridge`) has too little real audio to
+/// repeat in one jump, so it is done in stages, each repeating at most `bridge − 1` frames; the
+/// returned [`JumpEdit`] is the last stage's.
 pub fn jump_edit_to_gap(
     bridge: &[f32],
     channels: usize,
@@ -1768,15 +1702,25 @@ pub fn jump_edit_to_gap(
     let t = b_frames as i64 - gap_frames as i64;
     let jump = t.unsigned_abs() as usize;
     if jump >= b_frames {
-        let fill = trim_at_lowest_energy_interior(bridge, ch, gap_frames, edge_guard_frames);
-        return (fill, None);
+        if b_frames < 2 {
+            // One frame: nothing to repeat but the frame itself.
+            return (fit_fill_to_gap_frames(bridge, ch, gap_frames), None);
+        }
+        let (longer, _) = jump_edit_to_gap(
+            bridge,
+            ch,
+            2 * b_frames - 1,
+            edge_guard_frames,
+            crossfade_frames,
+        );
+        return jump_edit_to_gap(&longer, ch, gap_frames, edge_guard_frames, crossfade_frames);
     }
     let room = b_frames.saturating_sub(jump + 2 * edge_guard_frames);
     let cf = crossfade_frames.min(room);
     let span = jump + cf;
 
     // Lowest mean-square span start over the guarded interior (prefix sums: spans are tens of ms
-    // over bridges of seconds). The guard-clamped fallback matches `lowest_energy_interior_start`.
+    // over bridges of seconds).
     let mut prefix = Vec::with_capacity(b_frames + 1);
     prefix.push(0.0f64);
     let mut acc = 0.0f64;
@@ -2075,39 +2019,16 @@ mod tests {
     use crate::domain::policies::{ResidualUninformative, SeamFloorSource, SeamResidualVerdict};
 
     #[test]
-    fn interior_trim_cuts_in_the_quiet_valley() {
-        // 1000 frames, loud everywhere except a quiet valley [400,600). Trimming 100 frames to reach 900
+    fn jump_edit_without_crossfade_cuts_in_the_quiet_valley() {
+        // 1000 frames, loud everywhere except a quiet valley [400,600). Skipping 100 frames to reach 900
         // must remove only quiet frames — the loud energy is fully preserved, and the cut lands in the valley.
         let bridge: Vec<f32> = (0..1000)
             .map(|i| if (400..600).contains(&i) { 0.001 } else { 0.5 })
             .collect();
-        let out =
-            trim_at_lowest_energy_interior(&bridge, 1, 900, DUALFIT_INTERIOR_EDGE_GUARD_FRAMES);
+        let (out, _) = jump_edit_to_gap(&bridge, 1, 900, DUALFIT_INTERIOR_EDGE_GUARD_FRAMES, 0);
         assert_eq!(out.len(), 900, "trimmed to gap length");
         let loud = |v: &[f32]| v.iter().filter(|&&x| x > 0.4).count();
-        assert_eq!(loud(&bridge), loud(&out), "trim removed only quiet frames");
-    }
-
-    #[test]
-    fn interior_trim_pad_and_equal_lengths() {
-        let ch = 2;
-        let bridge = vec![0.1f32; 500 * ch]; // 500 frames
-        let guard = DUALFIT_INTERIOR_EDGE_GUARD_FRAMES;
-        assert_eq!(
-            trim_at_lowest_energy_interior(&bridge, ch, 500, guard).len(),
-            500 * ch,
-            "equal"
-        );
-        assert_eq!(
-            trim_at_lowest_energy_interior(&bridge, ch, 450, guard).len(),
-            450 * ch,
-            "trim"
-        );
-        assert_eq!(
-            trim_at_lowest_energy_interior(&bridge, ch, 600, guard).len(),
-            600 * ch,
-            "pad"
-        );
+        assert_eq!(loud(&bridge), loud(&out), "cut removed only quiet frames");
     }
 
     /// Deterministic uniform noise in [-amp, amp] (LCG), so jump tests have no repeated frames.
@@ -2157,9 +2078,6 @@ mod tests {
         let bridge = noise(4000, ch, 0.3, 2);
         let (out, _) = jump_edit_to_gap(&bridge, ch, 4300, 500, 100);
         assert!(longest_held_run(&out, ch) < 16, "no held run");
-        // Legacy pad holds one frame for the whole pad: the defect this replaces.
-        let legacy = trim_at_lowest_energy_interior(&bridge, ch, 4300, 500);
-        assert!(longest_held_run(&legacy, ch) >= 300);
     }
 
     #[test]
@@ -2226,27 +2144,11 @@ mod tests {
             assert_eq!(out.len(), gap * ch);
             assert_eq!(edit.expect("edit").crossfade_frames, 0);
         }
-        // A jump back longer than the bridge has nothing to repeat: legacy pad, still gap-length.
+        // A jump back longer than the bridge repeats in stages: still gap-length, still no held sample.
         let (out, edit) = jump_edit_to_gap(&bridge, ch, 1300, 500, 100);
         assert_eq!(out.len(), 1300 * ch);
-        assert!(edit.is_none());
-    }
-
-    #[test]
-    fn jump_edit_without_crossfade_matches_the_legacy_cut() {
-        // V-shaped valley: one unique quietest span, so prefix-sum rounding can't break a tie.
-        let bridge: Vec<f32> = (0..1000)
-            .map(|i: i32| {
-                if (400..600).contains(&i) {
-                    0.001 + (i - 500).abs() as f32 * 1e-3
-                } else {
-                    0.5
-                }
-            })
-            .collect();
-        let guard = DUALFIT_INTERIOR_EDGE_GUARD_FRAMES;
-        let (out, _) = jump_edit_to_gap(&bridge, 1, 900, guard, 0);
-        assert_eq!(out, trim_at_lowest_energy_interior(&bridge, 1, 900, guard));
+        assert!(edit.expect("last stage's edit").jump_frames < 0);
+        assert!(longest_held_run(&out, ch) < 16, "no held run");
     }
 
     fn verdict(informative: bool, headroom: f64) -> SeamResidualVerdict {
