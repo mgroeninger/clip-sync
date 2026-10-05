@@ -292,305 +292,20 @@ pub(in crate::application::patch_audio::region) fn skip_or_dual_fit(
     tag_ctx: GapTagsPatchContext,
     attempt: Option<DualFitAttempt<'_>>,
 ) -> (DualFitDecision, GapTagsPatchContext) {
-    let local_gain = request.local_gain(region.gap_index);
+    let mut failure = fail;
     let mut dual_fit_attempt: Option<crate::domain::patch_result::SeamScoreAttempt> = None;
     if dual_fit_eligible(request.dual_fit, fail) {
         if let Some(DualFitAttempt { input: df, locks }) = attempt {
-            // Grow the post seam window before the fit is attempted (§0 lock 3 — grow before the
-            // gate rejects, not on the result): a 250 ms post lock below the admit line is re-locked
-            // at the shortest window in `POST_GROW_LADDER_MS` that stops the ladder
-            // (`docs/dev/archive/TEMP-dual-fit-grow-post-plan.md` §3.2). The whole `GrownPostLock` is handed
-            // to `dual_fit_from_locks_with_grown_post`, which applies the post-lock swap
-            // (`b_post_seam`/`bridge_frames`/`gate_pass`) and threads its `a_post`/`window_frames`
-            // itself — this caller never builds a parallel `(locks, a_post)` pair by hand, so it
-            // cannot desync them. The pre lock and `SeamLockTemplates` (§0 lock 2) are untouched.
-            let grown = if locks.post.r < crate::domain::seam_locks::POST_GROW_ADMIT_R {
-                crate::domain::seam_locks::grow_post_lock(
-                    df.a_samples,
-                    df.params.channels,
-                    df.a_end_frame,
-                    &df.b_mono,
-                    df.templates.b_mapped_start(),
-                    df.params.gap_frames,
-                    locks.pre.lag,
-                    df.params.max_lag_frames,
-                    df.params.sample_rate,
-                    locks.post.lag,
-                )
-            } else {
-                None
-            };
-            if let Some(r) = crate::domain::dual_fit::dual_fit_from_locks_with_grown_post(
-                &df.templates,
-                locks,
-                &df.b_mono,
-                df.b_samples,
-                &df.params,
-                grown.as_ref(),
-            ) {
-                // Re-validate the assembled seams. The seam scores are the ones `try_dual_fit`'s own
-                // seam-local search already measured (`r.pre_seam_r`/`r.post_seam_r`): A's near-gap
-                // border vs the B window ENDING at the pre shoulder / STARTING at the post shoulder —
-                // the content just OUTSIDE the bridge that each shoulder matched. The interior length
-                // edit (`jump_edit_to_gap`) only edits the bridge interior, guarded clear of
-                // `seam_window_frames` from each end, so the assembled seams equal the ones dual-fit
-                // fit — nothing to re-measure.
-                //
-                // We deliberately do NOT route this through `fill_splice_seam_correlations_interleaved`:
-                // its border branch compares A's border against the fill's own head/tail
-                // (`fill[..w]`/`fill[len-w..]`), which for a dual-fit fill is the B window on the INSIDE
-                // of the shoulder — i.e. the chunk of B immediately ADJACENT to (not overlapping) the
-                // window each seam actually matched. For broadband audio those adjacent windows
-                // correlate at ~0, so a perfect dual-fit fill scored a false ~0 and was skipped. That
-                // scorer is built for the rigid single-lag splice (where the fill head overlaps A's
-                // pre-gap region); it has no access to the B content outside the bridge that dual-fit's
-                // per-shoulder seam-local match relies on.
-                let (splice_pre, splice_post) = (r.pre_seam_r, r.post_seam_r);
-                match classify_fill_waveform_confidence(
-                    splice_pre,
-                    splice_post,
-                    request.min_fill_correlation,
-                    request.fill_marginal_margin,
-                    request.fill_absolute_floor,
-                ) {
-                    Ok(confidence) => {
-                        let grown_post_window_frames = grown.as_ref().map(|g| g.window_frames);
-                        let residual = measure_dual_fit_residual_verdict(
-                            request,
-                            df,
-                            &r,
-                            grown_post_window_frames,
-                        );
-                        let gated_confidence = match &residual {
-                            Some(verdict) => match crate::domain::gap_fill_fit::apply_residual_to_confidence(
-                                Ok(confidence),
-                                verdict,
-                                request.residual_headroom_margin_db,
-                                request.residual_gate.rescue_enabled(),
-                            ) {
-                                Ok(tier) => Ok(tier),
-                                Err(crate::domain::gap_fill_fit::ResidualGateError::HeadroomExceeded {
-                                    headroom_db,
-                                    margin_db,
-                                }) => Err((headroom_db, margin_db, *verdict)),
-                                Err(crate::domain::gap_fill_fit::ResidualGateError::PearsonBelowFloor(_)) => {
-                                    Ok(confidence)
-                                }
-                            },
-                            None => Ok(confidence),
-                        };
-                        let confidence = match gated_confidence {
-                            Ok(tier) => tier,
-                            Err((headroom_db, margin_db, verdict)) => {
-                                tracing::debug!(
-                                    a_start = df.a_start_frame,
-                                    headroom_db,
-                                    margin_db,
-                                    "dual-fit candidate rejected by residual headroom gate; falling back to skip"
-                                );
-                                dual_fit_attempt =
-                                    Some(crate::domain::patch_result::SeamScoreAttempt {
-                                        pre_correlation: splice_pre,
-                                        post_correlation: splice_post,
-                                        source:
-                                            crate::domain::patch_result::SeamScoreSource::DualFit,
-                                    });
-                                let (_, outcome, tag_ctx) = seam_failure_outcome(
-                                    progress,
-                                    region,
-                                    SeamGateFailure::ResidualHeadroomExceeded {
-                                        pre: splice_pre,
-                                        post: splice_post,
-                                        residual: verdict,
-                                        margin_db,
-                                    },
-                                    min_structure_match_score,
-                                    tag_ctx,
-                                    dual_fit_attempt,
-                                );
-                                return (dual_fit_skipped(outcome), tag_ctx);
-                            }
-                        };
-                        tracing::debug!(
-                            a_start = df.a_start_frame,
-                            pre = splice_pre,
-                            post = splice_post,
-                            trim = r.trim_frames,
-                            ?confidence,
-                            "dual-fit rescued a bracket-exhausted skip"
-                        );
-                        // 6b.3d/e: build a `Patch(SilenceSplice)` spec and hand it back for the shim to
-                        // execute (characterize decides, execute runs — §2.5). The synthesized bridge PCM
-                        // lives on the spec; geometry comes from the dual-fit input (`refined` = the gap
-                        // frames). `b_extract` / `gap_offset` are still inert for this arm (the executor
-                        // reads only `refined` + `crossfade` + the SilenceSplice fields) — known-tracked (f),
-                        // fixed at Fingerprint-unification 8c.
-                        //
-                        // 8a: populate the dual-fit D/R payload (`seam_local` + `donor_aligned`) from the ONE
-                        // `DualFitResult` `r` — single-source (A7 / §2.5.2a): the tag seam scores ARE the
-                        // strategy's, copied not re-measured. `gate_pass` is trivially true here (we only reach
-                        // this build after `try_dual_fit` passed its own `smin ≥ floors` gate and the assembled
-                        // seam re-validated Ok). Uniqueness validators stay `None` (Tier-3, production path).
-                        let seam_local = SeamLocalTags {
-                            pre_seam_r: r.pre_seam_r,
-                            post_seam_r: r.post_seam_r,
-                            post_seam_global_r: r.post_seam_global_r,
-                            trim_frames: r.trim_frames,
-                            gate_pass: true,
-                            pre_lag: r.pre_lag,
-                            post_lag: r.post_lag,
-                            pre_seam_prom: None,
-                            post_seam_prom: None,
-                            pre_seam_z: None,
-                            post_seam_z: None,
-                            // GCC-PHAT experiment (`TEMP-phat-seam-scoring-plan.md`): diagnostic-only, never
-                            // computed on the production patch path.
-                            pre_seam_phat_r: None,
-                            post_seam_phat_r: None,
-                            pre_seam_phat_prom: None,
-                            post_seam_phat_prom: None,
-                            pre_seam_phat_z: None,
-                            post_seam_phat_z: None,
-                            pre_seam_lag_ms: None,
-                            post_seam_lag_ms: None,
-                            pre_seam_phat_lag_ms: None,
-                            post_seam_phat_lag_ms: None,
-                            // Provenance IS available on this path — the locks the fit was built from.
-                            // Recording it here is what lets a projected dump answer "was this shoulder
-                            // rescued / pinned at the search boundary?" without a decode.
-                            pre_seam_rescued: Some(locks.pre.rescued),
-                            post_seam_rescued: Some(locks.post.rescued),
-                            pre_seam_edge_pinned: Some(locks.pre.edge_pinned),
-                            post_seam_edge_pinned: Some(locks.post.edge_pinned),
-                            seams_clamped: Some(locks.clamped()),
-                        };
-                        // Single-source invariant (§2.5.7 #2): the tag seams equal the strategy seams because
-                        // both are `r.{pre,post}_seam_r` (splice_pre/splice_post are those same values, L1654).
-                        debug_assert_eq!(seam_local.pre_seam_r, splice_pre);
-                        debug_assert_eq!(seam_local.post_seam_r, splice_post);
-                        let tags_ctx = GapRepairTags {
-                            seam_local: Some(seam_local),
-                            donor_aligned: Some(r.aligned_donor),
-                            ..GapRepairTags::default()
-                        };
-                        // 8c: return the SilenceSplice *strategy* + base geometry (from the dual-fit input) +
-                        // tags. `characterize_region` (which holds the region geometry) wraps this into the full
-                        // `GapRepairSpec` with real `b_extract` / `gap_offset` — this call site lacks them, and
-                        // returning inert placeholders here was the note-(f) trap. `refined` / `crossfade` come
-                        // from `df` (the pre-gate base geometry dual-fit worked on).
-                        // S1: dual-fit has no single rigid "applied lag" (each shoulder is placed by its
-                        // own independent seam-local match) — `align_adjustment_secs` is recorded as 0.0
-                        // for this path (see the `outcome_from_spec`/`execute_region_spec` SilenceSplice
-                        // arms below), so `applied_ms = 0.0` keeps this field's convention consistent with
-                        // that recorded value rather than inventing a different baseline.
-                        let confident_floor = f64::from(
-                            request
-                                .min_fill_correlation
-                                .max(request.fill_absolute_floor),
-                        );
-                        let registration_residual = registration_residual_from_shoulders(
-                            registration_shoulder_residual_ms(
-                                r.pre_seam_r,
-                                r.pre_lag,
-                                0.0,
-                                df.params.sample_rate,
-                                confident_floor,
-                            ),
-                            registration_shoulder_residual_ms(
-                                r.post_seam_r,
-                                r.post_lag,
-                                0.0,
-                                df.params.sample_rate,
-                                confident_floor,
-                            ),
-                            0.0,
-                        )
-                        .map(|rr| {
-                            // This path's shoulders are the placement locks themselves (±600 ms fine
-                            // search, envelope recenter). The bracket path reads bare seam peaks over
-                            // a nominal-to-fill span at `residual_search_secs`, so `*_rescued`
-                            // exists only here, and the `applied` term differs between arms.
-                            rr.with_shoulder_quality(
-                                crate::domain::patch_result::ShoulderQuality::from_locks(
-                                    Some(&locks.pre),
-                                    Some(&locks.post),
-                                ),
-                            )
-                        });
-                        // `--seam-extend-fill` for this arm. Cut here rather than at the splice: the
-                        // shoulder lags are anchored on nominal `b_mapped` in B-**extract** frames,
-                        // and this is the one site holding both them and the extract. The post
-                        // shoulder supplies the tail — using the pre shoulder plus `gap_frames`
-                        // would bake in the shoulder skew (`trim_frames`) at the seam.
-                        let seam_margin = if request.seam_extend_fill {
-                            let b_mapped_start = df.templates.b_mapped_start() as i64;
-                            let gap_frames = df.a_end_frame.saturating_sub(df.a_start_frame) as i64;
-                            super::pcm::seam_margin_from_b_shoulders(
-                                df.b_samples,
-                                df.params.channels,
-                                b_mapped_start + r.pre_lag,
-                                b_mapped_start + gap_frames + r.post_lag,
-                                crate::domain::policies::effective_seam_crossfade_frames(
-                                    (df.crossfade_secs * df.params.sample_rate as f64) as usize,
-                                    df.a_start_frame,
-                                    df.a_end_frame,
-                                    df.a_samples.len() / df.params.channels.max(1),
-                                ),
-                            )
-                        } else {
-                            None
-                        };
-                        return (
-                            DualFitDecision::Rescued(Box::new(DualFitRescue {
-                                strategy: GapRepairStrategy::SilenceSplice {
-                                    fill: r.fill,
-                                    seam_margin,
-                                    pre_seam_r: splice_pre,
-                                    post_seam_r: splice_post,
-                                    pre_lag: r.pre_lag,
-                                    post_lag: r.post_lag,
-                                    trim_frames: r.trim_frames,
-                                    step_real: r.step_real,
-                                    residual,
-                                    confidence,
-                                    registration_residual: registration_residual.map(Box::new),
-                                    // Since 2026-08-31 dual-fit takes the hole-local half too:
-                                    // the paired collar reads A-versus-B blocks flanking the gap
-                                    // and never the fill, so nothing about a dual-fit interior is
-                                    // out of its reach. Both halves ride the strategy so this and
-                                    // `outcome_from_spec` cannot disagree about what was applied.
-                                    normalize_gain: crate::domain::stack_fill_gain(
-                                        request.program_gain.gain(),
-                                        local_gain,
-                                    )
-                                    .total,
-                                    local_gain,
-                                    dual_fit_post_window_ms: grown.as_ref().map(|g| g.window_ms),
-                                },
-                                tags_ctx,
-                                refined: RefinedGapFrames {
-                                    start_frame: df.a_start_frame,
-                                    end_frame: df.a_end_frame,
-                                },
-                                crossfade_secs: df.crossfade_secs,
-                            })),
-                            tag_ctx,
-                        );
-                    }
-                    Err(min_score) => {
-                        tracing::debug!(
-                            a_start = df.a_start_frame,
-                            pre = splice_pre,
-                            post = splice_post,
-                            min_score,
-                            "dual-fit candidate failed re-validation at the assembled seam; falling back to skip"
-                        );
-                        dual_fit_attempt = Some(crate::domain::patch_result::SeamScoreAttempt {
-                            pre_correlation: splice_pre,
-                            post_correlation: splice_post,
-                            source: crate::domain::patch_result::SeamScoreSource::DualFit,
-                        });
-                    }
+            match try_dual_fit_rescue(request, region, df, locks) {
+                Ok(rescue) => return (DualFitDecision::Rescued(rescue), tag_ctx),
+                Err(DualFitDecline::NoFit) => {}
+                Err(DualFitDecline::Revalidation(scores)) => dual_fit_attempt = Some(scores),
+                Err(DualFitDecline::HeadroomExceeded {
+                    attempt: scores,
+                    failure: headroom,
+                }) => {
+                    failure = headroom;
+                    dual_fit_attempt = Some(scores);
                 }
             }
         }
@@ -598,12 +313,321 @@ pub(in crate::application::patch_audio::region) fn skip_or_dual_fit(
     let (_, outcome, tag_ctx) = seam_failure_outcome(
         progress,
         region,
-        fail,
+        failure,
         min_structure_match_score,
         tag_ctx,
         dual_fit_attempt,
     );
     (dual_fit_skipped(outcome), tag_ctx)
+}
+
+/// Why [`try_dual_fit_rescue`] did not produce a fill. `skip_or_dual_fit` reads it to pick the failure
+/// it reports; a routed attempt (registration bound) ignores it and keeps the single-lag fill.
+pub(in crate::application::patch_audio::region) enum DualFitDecline {
+    /// The fit itself declined (no assembled bridge); no seam scores exist.
+    NoFit,
+    /// The assembled seams failed `classify_fill_waveform_confidence`.
+    Revalidation(crate::domain::patch_result::SeamScoreAttempt),
+    /// The residual headroom gate rejected the candidate; `failure` replaces the caller's.
+    HeadroomExceeded {
+        attempt: crate::domain::patch_result::SeamScoreAttempt,
+        failure: SeamGateFailure,
+    },
+}
+
+/// The dual-fit attempt proper: grow-post ladder, fit, seam re-validation, residual headroom gate and
+/// `SilenceSplice` assembly. It owns no skip decision — the caller does — so it can be entered without
+/// a `SeamGateFailure`.
+pub(in crate::application::patch_audio::region) fn try_dual_fit_rescue(
+    request: &PatchAudioRequest,
+    region: &FillRegion,
+    df: &DualFitRepairInput<'_>,
+    locks: &crate::domain::seam_locks::SeamLocks,
+) -> Result<Box<DualFitRescue>, DualFitDecline> {
+    let local_gain = request.local_gain(region.gap_index);
+    // Grow the post seam window before the fit is attempted (§0 lock 3 — grow before the
+    // gate rejects, not on the result): a 250 ms post lock below the admit line is re-locked
+    // at the shortest window in `POST_GROW_LADDER_MS` that stops the ladder
+    // (`docs/dev/archive/TEMP-dual-fit-grow-post-plan.md` §3.2). The whole `GrownPostLock` is handed
+    // to `dual_fit_from_locks_with_grown_post`, which applies the post-lock swap
+    // (`b_post_seam`/`bridge_frames`/`gate_pass`) and threads its `a_post`/`window_frames`
+    // itself — this caller never builds a parallel `(locks, a_post)` pair by hand, so it
+    // cannot desync them. The pre lock and `SeamLockTemplates` (§0 lock 2) are untouched.
+    let grown = if locks.post.r < crate::domain::seam_locks::POST_GROW_ADMIT_R {
+        crate::domain::seam_locks::grow_post_lock(
+            df.a_samples,
+            df.params.channels,
+            df.a_end_frame,
+            &df.b_mono,
+            df.templates.b_mapped_start(),
+            df.params.gap_frames,
+            locks.pre.lag,
+            df.params.max_lag_frames,
+            df.params.sample_rate,
+            locks.post.lag,
+        )
+    } else {
+        None
+    };
+    let Some(r) = crate::domain::dual_fit::dual_fit_from_locks_with_grown_post(
+        &df.templates,
+        locks,
+        &df.b_mono,
+        df.b_samples,
+        &df.params,
+        grown.as_ref(),
+    ) else {
+        return Err(DualFitDecline::NoFit);
+    };
+    // Re-validate the assembled seams. The seam scores are the ones `try_dual_fit`'s own
+    // seam-local search already measured (`r.pre_seam_r`/`r.post_seam_r`): A's near-gap
+    // border vs the B window ENDING at the pre shoulder / STARTING at the post shoulder —
+    // the content just OUTSIDE the bridge that each shoulder matched. The interior length
+    // edit (`jump_edit_to_gap`) only edits the bridge interior, guarded clear of
+    // `seam_window_frames` from each end, so the assembled seams equal the ones dual-fit
+    // fit — nothing to re-measure.
+    //
+    // We deliberately do NOT route this through `fill_splice_seam_correlations_interleaved`:
+    // its border branch compares A's border against the fill's own head/tail
+    // (`fill[..w]`/`fill[len-w..]`), which for a dual-fit fill is the B window on the INSIDE
+    // of the shoulder — i.e. the chunk of B immediately ADJACENT to (not overlapping) the
+    // window each seam actually matched. For broadband audio those adjacent windows
+    // correlate at ~0, so a perfect dual-fit fill scored a false ~0 and was skipped. That
+    // scorer is built for the rigid single-lag splice (where the fill head overlaps A's
+    // pre-gap region); it has no access to the B content outside the bridge that dual-fit's
+    // per-shoulder seam-local match relies on.
+    let (splice_pre, splice_post) = (r.pre_seam_r, r.post_seam_r);
+    match classify_fill_waveform_confidence(
+        splice_pre,
+        splice_post,
+        request.min_fill_correlation,
+        request.fill_marginal_margin,
+        request.fill_absolute_floor,
+    ) {
+        Ok(confidence) => {
+            let grown_post_window_frames = grown.as_ref().map(|g| g.window_frames);
+            let residual =
+                measure_dual_fit_residual_verdict(request, df, &r, grown_post_window_frames);
+            let gated_confidence = match &residual {
+                Some(verdict) => match crate::domain::gap_fill_fit::apply_residual_to_confidence(
+                    Ok(confidence),
+                    verdict,
+                    request.residual_headroom_margin_db,
+                    request.residual_gate.rescue_enabled(),
+                ) {
+                    Ok(tier) => Ok(tier),
+                    Err(crate::domain::gap_fill_fit::ResidualGateError::HeadroomExceeded {
+                        headroom_db,
+                        margin_db,
+                    }) => Err((headroom_db, margin_db, *verdict)),
+                    Err(crate::domain::gap_fill_fit::ResidualGateError::PearsonBelowFloor(_)) => {
+                        Ok(confidence)
+                    }
+                },
+                None => Ok(confidence),
+            };
+            let confidence = match gated_confidence {
+                Ok(tier) => tier,
+                Err((headroom_db, margin_db, verdict)) => {
+                    tracing::debug!(
+                                    a_start = df.a_start_frame,
+                                    headroom_db,
+                                    margin_db,
+                                    "dual-fit candidate rejected by residual headroom gate; falling back to skip"
+                                );
+                    return Err(DualFitDecline::HeadroomExceeded {
+                        attempt: crate::domain::patch_result::SeamScoreAttempt {
+                            pre_correlation: splice_pre,
+                            post_correlation: splice_post,
+                            source: crate::domain::patch_result::SeamScoreSource::DualFit,
+                        },
+                        failure: SeamGateFailure::ResidualHeadroomExceeded {
+                            pre: splice_pre,
+                            post: splice_post,
+                            residual: verdict,
+                            margin_db,
+                        },
+                    });
+                }
+            };
+            tracing::debug!(
+                a_start = df.a_start_frame,
+                pre = splice_pre,
+                post = splice_post,
+                trim = r.trim_frames,
+                ?confidence,
+                "dual-fit rescued a bracket-exhausted skip"
+            );
+            // 6b.3d/e: build a `Patch(SilenceSplice)` spec and hand it back for the shim to
+            // execute (characterize decides, execute runs — §2.5). The synthesized bridge PCM
+            // lives on the spec; geometry comes from the dual-fit input (`refined` = the gap
+            // frames). `b_extract` / `gap_offset` are still inert for this arm (the executor
+            // reads only `refined` + `crossfade` + the SilenceSplice fields) — known-tracked (f),
+            // fixed at Fingerprint-unification 8c.
+            //
+            // 8a: populate the dual-fit D/R payload (`seam_local` + `donor_aligned`) from the ONE
+            // `DualFitResult` `r` — single-source (A7 / §2.5.2a): the tag seam scores ARE the
+            // strategy's, copied not re-measured. `gate_pass` is trivially true here (we only reach
+            // this build after `try_dual_fit` passed its own `smin ≥ floors` gate and the assembled
+            // seam re-validated Ok). Uniqueness validators stay `None` (Tier-3, production path).
+            let seam_local = SeamLocalTags {
+                pre_seam_r: r.pre_seam_r,
+                post_seam_r: r.post_seam_r,
+                post_seam_global_r: r.post_seam_global_r,
+                trim_frames: r.trim_frames,
+                gate_pass: true,
+                pre_lag: r.pre_lag,
+                post_lag: r.post_lag,
+                pre_seam_prom: None,
+                post_seam_prom: None,
+                pre_seam_z: None,
+                post_seam_z: None,
+                // GCC-PHAT experiment (`TEMP-phat-seam-scoring-plan.md`): diagnostic-only, never
+                // computed on the production patch path.
+                pre_seam_phat_r: None,
+                post_seam_phat_r: None,
+                pre_seam_phat_prom: None,
+                post_seam_phat_prom: None,
+                pre_seam_phat_z: None,
+                post_seam_phat_z: None,
+                pre_seam_lag_ms: None,
+                post_seam_lag_ms: None,
+                pre_seam_phat_lag_ms: None,
+                post_seam_phat_lag_ms: None,
+                // Provenance IS available on this path — the locks the fit was built from.
+                // Recording it here is what lets a projected dump answer "was this shoulder
+                // rescued / pinned at the search boundary?" without a decode.
+                pre_seam_rescued: Some(locks.pre.rescued),
+                post_seam_rescued: Some(locks.post.rescued),
+                pre_seam_edge_pinned: Some(locks.pre.edge_pinned),
+                post_seam_edge_pinned: Some(locks.post.edge_pinned),
+                seams_clamped: Some(locks.clamped()),
+            };
+            // Single-source invariant (§2.5.7 #2): the tag seams equal the strategy seams because
+            // both are `r.{pre,post}_seam_r` (splice_pre/splice_post are those same values, L1654).
+            debug_assert_eq!(seam_local.pre_seam_r, splice_pre);
+            debug_assert_eq!(seam_local.post_seam_r, splice_post);
+            let tags_ctx = GapRepairTags {
+                seam_local: Some(seam_local),
+                donor_aligned: Some(r.aligned_donor),
+                ..GapRepairTags::default()
+            };
+            // 8c: return the SilenceSplice *strategy* + base geometry (from the dual-fit input) +
+            // tags. `characterize_region` (which holds the region geometry) wraps this into the full
+            // `GapRepairSpec` with real `b_extract` / `gap_offset` — this call site lacks them, and
+            // returning inert placeholders here was the note-(f) trap. `refined` / `crossfade` come
+            // from `df` (the pre-gate base geometry dual-fit worked on).
+            // S1: dual-fit has no single rigid "applied lag" (each shoulder is placed by its
+            // own independent seam-local match) — `align_adjustment_secs` is recorded as 0.0
+            // for this path (see the `outcome_from_spec`/`execute_region_spec` SilenceSplice
+            // arms below), so `applied_ms = 0.0` keeps this field's convention consistent with
+            // that recorded value rather than inventing a different baseline.
+            let confident_floor = f64::from(
+                request
+                    .min_fill_correlation
+                    .max(request.fill_absolute_floor),
+            );
+            let registration_residual = registration_residual_from_shoulders(
+                registration_shoulder_residual_ms(
+                    r.pre_seam_r,
+                    r.pre_lag,
+                    0.0,
+                    df.params.sample_rate,
+                    confident_floor,
+                ),
+                registration_shoulder_residual_ms(
+                    r.post_seam_r,
+                    r.post_lag,
+                    0.0,
+                    df.params.sample_rate,
+                    confident_floor,
+                ),
+                0.0,
+            )
+            .map(|rr| {
+                // This path's shoulders are the placement locks themselves (±600 ms fine
+                // search, envelope recenter). The bracket path reads bare seam peaks over
+                // a nominal-to-fill span at `residual_search_secs`, so `*_rescued`
+                // exists only here, and the `applied` term differs between arms.
+                rr.with_shoulder_quality(crate::domain::patch_result::ShoulderQuality::from_locks(
+                    Some(&locks.pre),
+                    Some(&locks.post),
+                ))
+            });
+            // `--seam-extend-fill` for this arm. Cut here rather than at the splice: the
+            // shoulder lags are anchored on nominal `b_mapped` in B-**extract** frames,
+            // and this is the one site holding both them and the extract. The post
+            // shoulder supplies the tail — using the pre shoulder plus `gap_frames`
+            // would bake in the shoulder skew (`trim_frames`) at the seam.
+            let seam_margin = if request.seam_extend_fill {
+                let b_mapped_start = df.templates.b_mapped_start() as i64;
+                let gap_frames = df.a_end_frame.saturating_sub(df.a_start_frame) as i64;
+                super::pcm::seam_margin_from_b_shoulders(
+                    df.b_samples,
+                    df.params.channels,
+                    b_mapped_start + r.pre_lag,
+                    b_mapped_start + gap_frames + r.post_lag,
+                    crate::domain::policies::effective_seam_crossfade_frames(
+                        (df.crossfade_secs * df.params.sample_rate as f64) as usize,
+                        df.a_start_frame,
+                        df.a_end_frame,
+                        df.a_samples.len() / df.params.channels.max(1),
+                    ),
+                )
+            } else {
+                None
+            };
+            Ok(Box::new(DualFitRescue {
+                strategy: GapRepairStrategy::SilenceSplice {
+                    fill: r.fill,
+                    seam_margin,
+                    pre_seam_r: splice_pre,
+                    post_seam_r: splice_post,
+                    pre_lag: r.pre_lag,
+                    post_lag: r.post_lag,
+                    trim_frames: r.trim_frames,
+                    step_real: r.step_real,
+                    residual,
+                    confidence,
+                    registration_residual: registration_residual.map(Box::new),
+                    // Since 2026-08-31 dual-fit takes the hole-local half too:
+                    // the paired collar reads A-versus-B blocks flanking the gap
+                    // and never the fill, so nothing about a dual-fit interior is
+                    // out of its reach. Both halves ride the strategy so this and
+                    // `outcome_from_spec` cannot disagree about what was applied.
+                    normalize_gain: crate::domain::stack_fill_gain(
+                        request.program_gain.gain(),
+                        local_gain,
+                    )
+                    .total,
+                    local_gain,
+                    dual_fit_post_window_ms: grown.as_ref().map(|g| g.window_ms),
+                },
+                tags_ctx,
+                refined: RefinedGapFrames {
+                    start_frame: df.a_start_frame,
+                    end_frame: df.a_end_frame,
+                },
+                crossfade_secs: df.crossfade_secs,
+            }))
+        }
+        Err(min_score) => {
+            tracing::debug!(
+                            a_start = df.a_start_frame,
+                            pre = splice_pre,
+                            post = splice_post,
+                            min_score,
+                            "dual-fit candidate failed re-validation at the assembled seam; falling back to skip"
+                        );
+            Err(DualFitDecline::Revalidation(
+                crate::domain::patch_result::SeamScoreAttempt {
+                    pre_correlation: splice_pre,
+                    post_correlation: splice_post,
+                    source: crate::domain::patch_result::SeamScoreSource::DualFit,
+                },
+            ))
+        }
+    }
 }
 
 /// What `skip_or_dual_fit` decided, **before** the region geometry is attached (8c). The dual-fit call site

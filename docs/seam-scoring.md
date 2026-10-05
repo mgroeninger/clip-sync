@@ -167,7 +167,7 @@ A companion `fill residual channel breakdown` line (same debug target) reports `
 | Per-channel debug diagnostics | `policies::seam_channel_diagnostics` (`seam_scoring.rs`) |
 | Fit waveform tiers | `domain/gap_fill_fit.rs::classify_fill_waveform_confidence`, `fit_mode_waveform_floor_passes` |
 | Structure gate / gate-mode waveform gate | `application/patch_region.rs::structure_passes_gate`, `seams_pass_correlation_gate` |
-| Dual-fit repair (§6) | `domain/dual_fit.rs`, `application/patch_audio.rs::skip_or_dual_fit`, `try_dual_fit` |
+| Dual-fit repair (§6) | `domain/dual_fit.rs::try_dual_fit`, `application/patch_audio/region/dual_fit.rs::{skip_or_dual_fit, try_dual_fit_rescue}` |
 
 ---
 

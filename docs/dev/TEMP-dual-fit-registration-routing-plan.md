@@ -43,6 +43,12 @@ jump at the quietest span, the hold and the flag deleted
 adopted by decision after a split § 4). § 6c is unblocked; every dual-fit
 render from here on carries the new edit.
 
+**2026-10-05 (later):** § 5's behaviour-neutral extraction
+(`try_dual_fit_rescue`) landed in `69184b2`; the predicate, knob, hook and
+tag are still open. § 6d (gross common-mode paired listen) is drafted, and its
+26/g6 pre-step is done: dual-fit places it at the shoulder locks, and the
+"ambiguous peak" worry was the adjacent sample, not a rival.
+
 **Tracked as:** [BACKLOG.md](../../BACKLOG.md) § Fill placement, Hole 1 row
 ("**Next:** design the routing rule").
 
@@ -710,18 +716,29 @@ Size the knob shape on the scope decision, not before. Precedence follows
 the standard defaults → TOML → CLI order. `None` means no routing. The flag is
 ignored with a warning when `--no-dual-fit` is set.
 
-**Refactor, `dual_fit.rs`.** Split `skip_or_dual_fit` (`:261`) so that the
-attempt does not need a `SeamGateFailure`:
+**Refactor, `dual_fit.rs`.** ✅ **Done 2026-10-05** (`69184b2`). `skip_or_dual_fit`
+is split so that the attempt does not need a `SeamGateFailure`:
 
 ```text
-try_dual_fit_rescue(progress, request, region, attempt: DualFitAttempt)
-    -> Option<(DualFitRescue, SeamScoreAttempt)>
+try_dual_fit_rescue(request, region, df, locks)
+    -> Result<Box<DualFitRescue>, DualFitDecline>
         // grow-post ladder + dual_fit_from_locks_with_grown_post
-        // + classify_fill_waveform_confidence — the body that is
-        // today inside `if dual_fit_eligible(..)`
+        // + classify_fill_waveform_confidence + residual headroom gate
+        // + SilenceSplice assembly — the body that was inside
+        // `if dual_fit_eligible(..)`
 skip_or_dual_fit(..fail..)  // unchanged behaviour: eligibility check,
                             // then try_dual_fit_rescue, else skip
 ```
+
+**As built, differing from the sketch.** The return is a `Result` over a
+three-case `DualFitDecline` (`NoFit`, `Revalidation(attempt)`,
+`HeadroomExceeded { attempt, failure }`), not `Option<(…, SeamScoreAttempt)>`:
+a headroom reject replaces the failure `skip_or_dual_fit` reports, and an
+`Option` cannot carry that. No `progress` argument: the attempt owns no skip
+decision. Verified by the unmodified dual-fit lib tests (25) and
+`patch_audio_dual_fit_rescues_*`, plus the PR tier. A routed attempt
+(§ 5 hook) ignores the decline and keeps the single-lag fill, which is
+invariant 1.
 
 This is a pure extraction. `dual_fit.rs`'s existing unit tests and
 `patch_audio_dual_fit_rescues_*` (`patch_audio_integration.rs:1737`, `:1823`)
@@ -969,6 +986,111 @@ interior length edit*). With the blip removed, the crossover may sit lower.
 - Add fresh draws from the same population if § 6b's below-bound set has been
   heard too often to count as naive. Decide this when the stub is filled in.
 - Outcome: the bound moves to the lowest B that passes, or stays at 75 ms.
+
+### 6d. Gross common-mode paired blind listen (draft, 2026-10-05)
+
+**Status: draft.** Fix everything below before any gap is rendered.
+
+**Why.** Scope (c) (§ 4) has one weak positive. No production path routes
+26/g6 (−904 / −901 ms) or 17/g34 (−530 / −524 ms), and § 6b's step-kind
+adoption does not cover them. Forced dual-fit rendered both clean by ear on
+2026-09-24, but non-blind and single-arm. No blind pairing against production
+exists, so the § 6 rule cannot be applied to them yet.
+
+**Question.** For a gross common-mode fill (|residual| ≥ 300 ms, both shoulders
+licensed), is forced dual-fit ear-better than production, and never ear-worse?
+
+**Population.** Exactly the two corpus gaps with max seam error ≥ 300 ms:
+26/g6 and 17/g34. The next largest is about 150 ms, so a ≥ 300 ms bound routes
+these two and nothing else. Join on `a_start_secs` (26/g6 = 2151.7,
+17/g34 = 5687.5), never on the gap index (§ 7, *Gap labels*).
+
+**Not independent evidence.** The two gaps differ in strength:
+- **17/g34:** a clear registration read (prominence 0.83 / 0.52), an
+  anchor-seam gap. Primary.
+- **26/g6:** a plain gap. Its low prominence (0.026 / 0.028) is the adjacent
+  sample on the same peak, not a rival; the pre-step below shows its shoulders
+  and dual-fit agree. Primary. Its earlier render did not record the
+  crossfade state, so only the new blind pairing counts.
+
+**Pre-step (done 2026-10-05).** A fresh single-gap fingerprint of 26/g6
+(`--fingerprint-gap 7`, build `37a3cf4`, 446 s) carries `dual_fit_placement`:
+
+| | pre | post |
+|---|---|---|
+| dual-fit lock (`dual_fit_placement`), ms vs nominal | −41.75 | −45.44 |
+| `lag_decision` shoulder, `frac_lag_ms` | −41.754 | −45.428 |
+| shoulder `peak_r` / `peak_z` | 0.997 / 6.13 | 0.993 / 6.45 |
+| dual-fit seam r (`splice_dualfit`) | 0.993 | 0.931 |
+
+- Dual-fit's placement **agrees with the shoulder locks to 0.02 ms** and with
+  neither the −904 ms residual nor the −1450 ms `waveform_min` start. Those
+  two are the *production fill's* offset from the shoulders, not a competing
+  registration. `trim_frames` is −177 (3.7 ms step), so the gap is
+  common-mode.
+- **The "ambiguous peak" weakness (§ 7, *The largest residual…*) is mostly an
+  artefact.** Prominence 0.025 / 0.027 is the gap between the peak and its
+  tallest rival, but `top2_spacing_ms` is 0.104 ms: the rival is the
+  adjacent sample on the same peak. The contract says so ("prominence is not
+  uniqueness"). The shoulder reads are strong (r ≥ 0.99, z > 6) and the two
+  agree. Prominence there is not evidence of a second candidate.
+- Consequence: 26/g6 is no longer demoted to supportive. Both gaps are primary.
+  The decision rule below is updated to match.
+- Caveat: the `registration_residual_ms` read comes from the separate
+  spanning search (`seam_local_peak_spanning`), not from `lag_decision`. This
+  pre-step did not re-run it. The agreement above is between dual-fit and
+  `lag_decision`, and the residual's −904 is taken from § 7.
+
+**Render.**
+- Build at or after the interior-edit fix (2026-10-05), with
+  `--seam-extend-fill` on both arms and the default 3 s `--gap-listen`
+  context.
+- The dual-fit arm uses the § 7 floor search: the keep path's weaker seam
+  plus 0.10, stepped by 0.05 up to 0.95. The 2026-09-24 floors (26/g6 0.62,
+  17/g34 0.80) are a starting hint only. Record the found floors.
+- Confirm `dual_fit_used: true` on the dual arm and that the two arms differ.
+- **Record the exact flags, the build commit and the dirty state in the
+  manifest.** The 2026-08-27 renders lack this.
+- Labelled renders go to the session scratchpad. Only the blind
+  `tNN_{a,b}.wav` files go into `gap-files/`, with the key held outside.
+
+**Trials: 6, one sitting.**
+
+| Trial set | n | Selection |
+|---|---|---|
+| 17/g34 | 2 | independent a/b assignment per trial |
+| 26/g6 | 2 | independent a/b assignment per trial |
+| Control | 2 | fresh common-mode gaps with max < 50 ms, not named anywhere in this plan, settled.md or BACKLOG.md, drawn with `random.Random(20261005)` from the sorted eligible list; both arms must differ (§ 6b walk rule) |
+
+Dual-fit goes on *a* in exactly 3 of 6 trials. Check only the count, as
+§ 6b's redraw did, and never per-trial assignments. Order is random.
+Score each trial as in § 6: a better / b better / same, with optional
+location and description.
+
+**Pre-registered decision rule.**
+- **Scoring conventions:**
+  - A gap's two trials count only when they agree. Otherwise it counts as
+    *same*, and opposite verdicts add 1 to the noise count.
+  - Noise `k` = non-*same* verdicts among the 2 controls, plus that increment.
+    k ≥ 2 is **inconclusive**, with no decision.
+- **Adopt a gross-bound route** (dual-fit-first for common-mode,
+  |residual| ≥ 300 ms) if **at least one gap is dual-fit-better and neither
+  is dual-fit-worse**.
+- **Tighten** if either gap is dual-fit-worse: keep opt-in, and name the
+  defect from the listener's note before any further render.
+- **Keep opt-in** (settled § C, latched on a second audible gross
+  common-mode fill) if both are *same*.
+- **Refute** (settled § A) is not available on n = 2. Two dual-fit-worse
+  verdicts count as **Tighten** with the note recorded.
+
+**What this does and does not decide.** A pass supports a second gross bound
+(≥ 300 ms) alongside § 5's 75 ms step-kind bound. Common-mode below 300 ms
+stays out of scope, as § 4b's re-run left it. A pass is at most two
+positives from two gaps in one corpus, so the default flip stays behind the flag
+until a further gross gap appears.
+
+**Sequencing.** Render in the same session as § 6c to share the build and the
+manifest. Do not add a second knob in § 5 until this lands.
 
 ## 7. Results
 
