@@ -15,6 +15,28 @@ gaps. The flag is still default off and the § 6 default decision is open, now a
 one decision covering both paths. Flag documented for users in
 [gap-fill-modes.md](../gap-fill-modes.md) § Seam crossfade.
 
+**2026-09-25:** the bracket residual's search window was bounded (±10 s around
+nominal → one window spanning nominal and the written fill at ±0.25 s). Re-read
+across the corpus, it reproduces the 2026-09-22 bracket residuals this plan's
+§ 1 / § 4 / § 7 numbers rest on (§ 7, *The bracket residual instrument is
+bounded*).
+
+**2026-09-29:** § 6 step-kind paired listen scored, first labelled and then
+blind. 29/g20 came out dual-fit better (prod's post-seam echo) and 44/g11
+weakly dual-fit worse. The other three, including the 32/g13 control, were the
+same. Under the § 6 rule the step kind is **Tighten**, pending a 10-trial
+repeat of 44/g11. The settled § B step row's reopen trigger fired on 29/g20
+(§ 7, *§ 6 step-kind paired listen*).
+
+**2026-10-02:** the § 6b widened blind listen (18 trials) was scored. The step
+kind is **Adopt at B = 75 ms**: R_75 has 2 better and 0 worse, with noise
+k = 1. Below 75 ms dual-fit lost 4 and tied 7, and every annotated loss is a
+blip on the dual-fit arm. 44/g11 was *same* twice. Next: § 5 routing bound,
+and attributing the dual-fit seam blip (§ 7, *§ 6b step-kind widened blind
+listen*). **Attributed the same day:** the dual-fit seams are clean. The blip
+is the interior length edit, mainly the 29–35 ms single-sample hold that pads
+a short bridge (§ 7, *The dual-fit blip is the interior length edit*).
+
 **Tracked as:** [BACKLOG.md](../../BACKLOG.md) § Fill placement, Hole 1 row
 ("**Next:** design the routing rule").
 
@@ -273,7 +295,7 @@ selection throws that information away.
 
   | | shoulder lag fed in | `applied_ms` | so the residual is |
   |---|---|---|---|
-  | bracket (`characterize.rs:828–861`) | `seam_local_peak`, an **independent** registration search | real placement | **the seam error** |
+  | bracket (`characterize.rs:818–909`) | `seam_local_peak_spanning`, an **independent** registration search (window since 2026-09-25: § 7) | real placement | **the seam error** |
   | dual-fit (`dual_fit.rs:480–495`) | `r.pre_lag` / `r.post_lag`, dual-fit's **own** placement | hardcoded `0.0` | **minus the displacement from nominal** |
 
   `applied_ms = 0.0` is deliberate — dual-fit has no single rigid applied lag,
@@ -436,7 +458,7 @@ Phase 2 exists.
   - 31/g8 (late about 82 ms, clean);
   - α's 5 clips (late up to +125, clean);
   - 26/g6 (−894, audible);
-  - 17/g34 (−520, ear *cannot tell*).
+  - 17/g34 (−520, heard misaligned 2026-08-27; the ear could not tell *which* class).
 - **Render.** Default 3 s `--gap-listen` context (widening it moves the
   patch). Mix in 2–3 clean-by-ear controls from the < 50 ms bulk, blind to
   the listener, so "clean" is calibrated against the listener's own
@@ -796,6 +818,147 @@ opt-in; the knob shape from § 5 allows that.
 
 Any late-of-both single-lag fill heard as audible here, or in § 4b, fires the
 § B step row's reopen trigger. Update that row in the same close.
+
+### 6b. Step-kind widened blind listen (pre-registered 2026-09-29)
+
+**Why.** The first step-kind pass (§ 7, 2026-09-29) came out as Tighten, on
+one positive (29/g20) and one weak negative (44/g11). It covered only the top
+of the distribution: 5 of the 48 step-kind gaps, all with max seam error
+> 75 ms. This pass widens the test downward, re-hears 13/g16 on a clean arm,
+and measures how often the listener hears a difference where none should be.
+Everything below is fixed **before** any gap is drawn or rendered.
+
+**Population.** Use the `2026-09-25-spanning-patch` `--patch-only` reports
+(build `248403a`, placement identical to 2026-09-22, § 7).
+- Take single-lag patched gaps (`dual_fit_used == false`) with both per-seam
+  residuals present.
+- Errors are in the written frame: report value + 10 ms (§ 3).
+- A gap is **step-kind** when |post − pre| > 20 ms (§ 0), and **common-mode**
+  otherwise.
+- `max` = max(|pre|, |post|).
+- **Exclude every gap named anywhere in this plan, settled.md or BACKLOG.md**
+  as of this change. This is a conservative proxy for "already heard", because
+  plan labels are the only ear record. It also drops a few named but unheard
+  gaps, which does not bias the draw toward any outcome.
+
+**Strata: 18 trials.**
+
+| Stratum | n | Selection |
+|---|---|---|
+| Step, max > 75 ms | 3 | 13/g16 ×1, and 44/g11 ×2 (a/b assignment drawn independently per trial) |
+| Step, 50 < max ≤ 75 ms | 8 | random draw |
+| Step, max ≤ 50 ms | 3 | random draw |
+| Control | 4 | 32/g13, plus 3 random common-mode gaps with max < 50 ms |
+
+**Draw.** Use Python's `random.Random(20260929)`.
+- Shuffle each drawn stratum's eligible list, sorted by (pair, gap) first.
+  Walk the shuffled list in order.
+- A gap is **taken** if forced dual-fit accepts it: the § 7 floor search
+  (keep path's weaker seam + 0.10, stepped by 0.05 up to 0.95) reaches
+  `dual_fit_used: true`. Otherwise it is **skipped**. It is recorded with its
+  reason, and the walk continues.
+- A skipped gap would render as two identical arms, which wastes a trial.
+
+**Render.** Match § 7's 2026-09-26 renders.
+- Build `248403a` (or a descendant with no placement change), with
+  `--seam-extend-fill` on both arms and the default 3 s context.
+- The dual-fit arm uses the found floor.
+- **Labelled renders go to the session scratchpad, never to `gap-files`.** Only
+  the blind `tNN_{a,b}.wav` files go into `gap-files/`, and the key stays
+  outside them.
+
+**Presentation.** Two sittings of 9 trials. Order is random within the
+constraint that each sitting holds one 44/g11 trial and two controls. Score
+each trial exactly as § 6: a better / b better / same, with optional
+location and description.
+
+**Pre-registered decision rule.**
+- **Scoring conventions:**
+  - 44/g11 counts as one gap. Its two trials count only when they agree;
+    otherwise it counts as *same*. Opposite verdicts (one better, one worse)
+    also add 1 to the noise count below.
+  - This pass pools with the 2026-09-29 blind pass (29/g20 better, 5/g5 and
+    19/g2 same). Its own 44/g11 verdict replaces the earlier one.
+- **Noise:** `k` = non-*same* verdicts among the 4 controls, plus the 44/g11
+  opposite-verdict increment.
+  - **k ≥ 2: inconclusive.** The listener's false-difference rate is too high
+    to read the cohort, so no default decision is made.
+  - Otherwise the worse-tolerance is `w = k`.
+- **Adopt** dual-fit-first for step-kind gaps at the **lowest**
+  B ∈ {75, 50, 0} ms where the routed set R_B (step-kind, max > B, both passes)
+  has **better ≥ 2 and worse ≤ w**. R_B is cumulative, so lowering B can only
+  add verdicts.
+- **Refute** (settled § A) if worse > better in R_0 and in R_75.
+- **Keep opt-in** (settled § C, latched on a second step-kind positive in an
+  unheard band) otherwise.
+- The common-mode kind is not decided here. Its controls are noise probes,
+  not a cohort.
+
+**Selection (drawn 2026-10-01).** The draw left 22 eligible gaps in the
+50–75 ms stratum, 12 in the ≤ 50 ms stratum and 98 controls. **Every gap the
+walk reached was taken, so nothing was skipped**, and the acceptance step added
+no selection beyond the draw itself. Errors are in the written frame, in ms.
+The floor is the dual-fit arm's `--min-fill-correlation`.
+
+| Stratum | Gap | pre | post | max | Floor |
+|---|---|---|---|---|---|
+| > 75 | 13/g16 | −73 | −110 | 110 | 0.72 |
+| > 75 | 44/g11 ×2 | +94 | +57 | 94 | 0.68 (0.53–0.63 kept the keep path) |
+| 50–75 | 28/g18 | +63 | +22 | 63 | 0.67 |
+| 50–75 | 49/g24 | +66 | +30 | 66 | 0.55 |
+| 50–75 | 5/g8 | +32 | +61 | 61 | 0.67 |
+| 50–75 | 54/g9 | +55 | +19 | 55 | 0.70 |
+| 50–75 | 27/g2 | +74 | +35 | 74 | 0.70 |
+| 50–75 | 54/g10 | +21 | +52 | 52 | 0.39 |
+| 50–75 | 7/g1 | +50 | +15 | 50 | 0.62 |
+| 50–75 | 18/g39 | +66 | +31 | 66 | 0.52 |
+| ≤ 50 | 28/g13 | +6 | +41 | 41 | 0.46 |
+| ≤ 50 | 50/g7 | −26 | +6 | 26 | 0.61 |
+| ≤ 50 | 33/g14 | +9 | +43 | 43 | 0.82 |
+| Control | 32/g13 | −26 | −34 | 34 | 0.54 |
+| Control | 12/g2 | +30 | +34 | 34 | 0.38 |
+| Control | 47/g13 | +2 | 0 | 2 | 0.65 |
+| Control | 34/g10 | +31 | +27 | 31 | 0.71 |
+
+Gaps that the walk passed over in draw order are not listed: 45/g2 and 39/g7 were probed
+past the control quota by an early parallel version of the walk and were taken,
+but they come after 34/g10 in draw order, so they are unused. 44/g11 and 32/g13
+reuse the 2026-09-26 renders (same build and flags). The other 15 gaps were
+rendered fresh, one at a time.
+
+**Build checks (2026-10-01, before any listening).**
+- Every gap's two arms differ, and only the dual arm records
+  `dual_fit_rescue: true`.
+- Over the span where the arms differ, RMS levels match within 0.3 dB, except
+  13/g16 at +1.5 dB for dual. That span is 1.04 s, and the prod arm carries the
+  73 ms content repeat, so the difference is likely content rather than gain.
+  This was not verified, and the trial is left as is.
+- **Deviation from the a/b rule:** the first secrets draw put dual-fit on *b*
+  in 15 of 18 trials (two-sided p ≈ 0.008). The 2026-09-29 blind pass's only
+  two non-*same* verdicts were both "b better", so a letter preference would
+  read as a dual-fit preference. The set was redrawn before anyone listened,
+  with a balanced 9 *a* / 9 *b* assignment, and new order and sitting
+  placement. Only the counts were inspected, never per-trial assignments.
+
+### 6c. Below-bound re-listen on the fixed edit (stub, 2026-10-02)
+
+**Blocked on** [TEMP-dualfit-interior-edit-plan.md](TEMP-dualfit-interior-edit-plan.md)
+§ 4 returning **Fixed**. This is not yet pre-registered. The rule below is a
+sketch and must be fixed in this section before any gap is rendered.
+
+**Why.** § 6b's 75 ms bound is where single-lag's seam displacement starts to
+cost more than dual-fit's interior-edit blip (§ 7, *The dual-fit blip is the
+interior length edit*). With the blip removed, the crossover may sit lower.
+
+**Sketch.**
+- Re-render the dual-fit arm of every § 6b gap with max ≤ 75 ms (13 gaps,
+  including the 4 controls) with `--dual-fit-crossfade-edit`. Reuse § 6b's
+  production arms unchanged: same build flags, same renders.
+- Run a blind a/b against production, scored by § 6b's R_B rule with B ∈
+  {50, 0}.
+- Add fresh draws from the same population if § 6b's below-bound set has been
+  heard too often to count as naive. Decide this when the stub is filled in.
+- Outcome: the bound moves to the lowest B that passes, or stays at 75 ms.
 
 ## 7. Results
 
@@ -1432,11 +1595,11 @@ was `false` throughout, so nothing under test ran. Two causes, both now in
 at 0.37; and the seam scores were read from the dump's dual-fit diagnostic
 section rather than the keep-path gate, which reports a different placement.
 Re-computing each gap's floor from its surviving bracket's **weaker keep-path
-seam plus the margin** (26/g7 0.62, 23/g10 0.52, 17/g35 0.80) reached dual-fit
+seam plus the margin** (26/g6 0.62, 23/g9 0.52, 17/g34 0.80) reached dual-fit
 on all three, `confidence: high`.
 
-**Ear verdicts: dual-fit fixed two of three.** 17/g35 (a both-seams failure) and
-23/g10 were clean. 26/g7 kept a post-seam echo, reported as "5.490 to 5.5
+**Ear verdicts: dual-fit fixed two of three.** 17/g34 (a both-seams failure) and
+23/g9 were clean. 26/g6 kept a post-seam echo, reported as "5.490 to 5.5
 repeats 5.5 to 5.510" — 10 ms, the shipped `crossfade_ms`, at a seam the user
 noted looked correctly placed at its start.
 
@@ -1468,7 +1631,7 @@ one place holding both the lags and the extract. The PCM rides the strategy on
 a new `SilenceSplice::seam_margin` field. Gain needs no new code — margins are
 gained generically off `RegionPatch.seam_margin`.
 
-**Result on 26/g7**, same scan, same window:
+**Result on 26/g6**, same scan, same window:
 
 | Arm | Replay excess at t ≈ 5.489 |
 |-----|---------------------------|
@@ -1652,6 +1815,320 @@ the reason the 2026-09-23 entry gave and one more: the residual audible set is
 anchor-seam writes plus one unexplained plain control, and neither is a
 common-mode routing target. The live question is § 6's remaining one — whether
 `--seam-extend-fill` goes default-on — not whether to route on registration.
+
+### The bracket residual instrument is bounded (2026-09-25)
+
+**What changed.** The bracket `registration_residual_ms` read used to search
+±10 s around the nominal map. It now searches one continuous window, from
+`min(0, applied) − r` to `max(0, applied) + r` (r = 0.25 s), so it covers both
+the nominal map and the written fill (`seam_local_peak_spanning`, `248403a`).
+Neither end alone is enough:
+
+- **Nominal-only** misses fills that the rigid map error has carried far from
+  nominal (pairs 3, 13, 18).
+- **Fill-only** (`f51435e`) is refuted in [settled.md](settled.md) § A:
+  17/g34's read went absent, and 26/g6 got a false +57 / +60 ms.
+
+**Re-read over the full corpus** (52 pairs, 327 patched gaps, compared against
+the 2026-09-22 run this plan's numbers rest on):
+
+- **Placement is unchanged.** Alignment, adjust frames, fill kind, zero-pad and
+  `registration_applied_ms` match on every gap (applied to 1e-13 ms).
+- **Bracket reads reproduce.** 418 / 418 reads are within 0.01 ms of the ±10 s
+  values. None are absent and none are pinned to the window edge. The 236
+  dual-fit reads are unaffected.
+- **Distribution.** Median |residual| is 28.1 ms, p90 is 63.0 ms and the max is
+  904.5 ms (26/g6).
+
+So § 1, § 4 and the earlier § 7 entries do not need re-reading because of the
+window.
+
+**The largest residual is the least-distinguished peak.** 26/g6 reads
+−904.5 / −900.8 ms with a prominence (peak r minus the tallest rival peak) of
+only **0.026 / 0.028**. 17/g34 is clear at 0.83 / 0.52. Invariant 4 licenses a
+shoulder on correlation, which 26/g6 passes; nothing licenses it on prominence.
+The corpus's only common-mode positive therefore rests on an ambiguous
+registration read.
+
+**Seam-correlation drift (flagged, not chased).** 18 gaps report different
+pre/post seam correlations from 2026-09-22 even though their placement is
+identical: 11 anchor-seam, 7 plain, 0 dual-fit. The drift predates the window
+change, because the fill-centred run matches the spanning run on pairs 1–38. An
+earlier count of 5 came from a truncated listing.
+
+#### Gap labels: three off-by-one ids, corrected
+
+Plan labels follow one rule: `gN` = dump index N = 0-based report `arr[N]`.
+Always join on `a_start_secs`. The 2026-09-24 memos and the dual-fit
+probe above used the next index up. Those entries are relabelled in place:
+
+| Was written | Is | `a_start_secs` | Residual (pre / post) | Kind |
+|---|---|---|---|---|
+| 26/g7 | **26/g6** | 2151.7 | −904.5 / −900.8 | plain; the write is the gap |
+| 17/g35 | **17/g34** | 5687.5 | −530.4 / −524.0 | anchor-seam |
+| 23/g10 (dual-fit probe, content-relative memo) | **23/g9** | 2973.7 | +47.8 / +47.3 | anchor-seam |
+
+The Phase 1b control, the blind seam-phase test and the zero-pad entries are
+correctly labelled. Their 23/g10 (`a_start_secs` 3537.8, −1.6 ms) is a
+different gap from 23/g9.
+
+17/g34 has no verdict conflict. The 2026-08-27 pass heard it as misaligned and
+could not tell which *class* of error it was. § 4b's "ear *cannot tell*" was a
+misreading of that, and is corrected.
+
+#### How far the earlier ear verdicts can be trusted
+
+The fixes since the early passes only *removed* artefacts:
+
+- post-seam crossfade duplication, found on 15 / 15 baseline post seams;
+- zero-pad holes, fixed in `b635e15`.
+
+That orders how much a verdict heard on a contaminated arm can be trusted:
+
+- **Clean verdicts survive.** Removing an artefact cannot make a clean seam
+  audible.
+- **Audible verdicts are suspect** unless a single-variable test or a specific
+  description ties them to a cause.
+  - **Tied to a cause:**
+    - 23/g10: blind 10 / 10, and correcting the 1.65 ms error alone removed it.
+    - 26/g6's dual-fit echo: `--crossfade-ms 0` removed it.
+    - 23/g9: measured 57.75 ms doubling across the write.
+  - **Not tied to a cause:** 26/g6's and 17/g34's residual-attributed verdicts.
+    Both were rendered at `7f9b975`, after the zero-pad fix. No manifest records
+    whether `--seam-extend-fill` was on for those renders.
+- **Nulls are weakest.** Phase 1b stays void.
+
+**Consequence for § 0.** Bounding the instrument does not answer § 0:
+
+- **Scope (b)**, common-mode, is dead as a routing target (entries above).
+- **Scope (a)**, step-kind, is untested. § 6's step cohort (19/g2, 29/g20,
+  44/g11, 5/g5, plus the 32/g13 control) has not been heard with forced
+  dual-fit on a clean arm.
+- **Scope (c)** has one positive, 26/g6, and it has two weaknesses: its
+  residual peak is ambiguous, and its render's crossfade state is unrecorded.
+
+Closing the plan on "registration has no audible target" would close (b) only.
+
+### § 6 step-kind paired listen (rendered 2026-09-26, scored 2026-09-29)
+
+**Renders.** Both arms are build `248403a` with `--seam-extend-fill` ON, at the
+default 3 s `--gap-listen` context. They are identical outside the written
+region, and the fill-region level is matched to within 0.7 dB. The dual-fit arm
+is forced; the prod arm is production's single-lag fill.
+- Labelled pairs: `gap-files/2026-09-26-step-listen/<pair>_g<N>/{prod,dual}`.
+- Blind trials: `gap-files/2026-09-26-step-abx/blind/tNN_{a,b}.wav`. Trial
+  order and a/b assignment are random (`secrets`). The key was held in that
+  session's scratchpad, not beside the WAVs. It is reproduced below.
+
+**Two passes, scored in this order.**
+1. **Labelled (not blind).** The listener scored the `step-listen` folders
+   first, by mistake.
+2. **Blind.** The listener then scored the `step-abx` trials. This pass is
+   blind to trial order and a/b, but **not naive**: the listener had already
+   heard the labelled pairs and knew one gap had a prod post-seam echo.
+
+| Trial | Gap | Dual-fit arm | Blind verdict | → | Labelled verdict |
+|---|---|---|---|---|---|
+| t01 | 5/g5 | b | same | same | same, both clean |
+| t02 | 44/g11 | a | b better; both have a slight "blip" at pre, less noticeable in b | **dual-fit worse** (weak) | same; both have a slight, hardly noticeable pre-seam blip |
+| t03 | 32/g13 (control) | b | same | same | same, both clean |
+| t04 | 29/g20 | b | b better; a has an echo | **dual-fit better** | dual-fit better; prod has a post-seam echo, dual-fit a slight post-seam "blip" |
+| t05 | 19/g2 | a | same | same | same, both clean |
+
+**The passes agree on 4 of 5.** 44/g11 is the only one that moved, from same to
+prod-better. Both passes describe it as the same pre-seam blip, present in both
+arms and differing only in how noticeable it is.
+
+**Reading.**
+- **29/g20 is a real positive.** Production's fill is late of both shoulders
+  (+62 / +97 ms, § 1). Its post-seam echo was heard in both passes, and dual-fit
+  removed it. It is the first step-kind positive besides 13/g16, and the first
+  *late* one: 13/g16 was early of both.
+- **The control held.** 32/g13 was the same in both passes.
+- **19/g2 and 5/g5 are same.** The 19/g2 B-side voice mask (§ 6) did not
+  produce a preference either way.
+
+**§ 6 rule, applied to the step kind: Tighten**, not Adopt. There is one
+dual-fit-better gap (29/g20) and one dual-fit-worse gap (44/g11). Refute needs
+worse to outnumber better, which 1 : 1 does not. Two cautions on that verdict:
+- **The worse verdict is weak.** It is one blind trial, the labelled pass
+  scored it as the same, and the defect is present in both arms.
+- **Magnitude cannot separate the two gaps.** 44/g11 reads +94 / +57 and 29/g20
+  reads +62 / +97. A bound on the larger seam error would have to sit in
+  94–97 ms, and one on the smaller in 57–62 ms. Either is a knife-edge sized on
+  n = 2, not a bound.
+
+**Next.** Before tightening the bound around 44/g11, repeat its blind trial as a
+10-trial forced choice, like the 23/g10 test (§ 7, 2026-09-24). This checks
+whether the prod preference is real.
+- **If it is chance,** 44/g11 counts as same, and the step kind meets Adopt.
+- **If it holds,** tighten per the rule, and find the separating axis somewhere
+  other than seam-error magnitude.
+
+The dual-fit post-seam "blip" on 29/g20 is unattributed. The 1.65 ms
+phase-click regime (§ 7, 2026-09-24) is the first thing to measure.
+
+**settled.md § B step row: the reopen trigger has fired.** A late-of-both
+single-lag step fill (29/g20, +62 / +97, inside α's "clean up to +125" range)
+was heard as audible, in both passes. The row's note is updated in the same
+change.
+
+**Superseded:** the 10-trial 44/g11 repeat above was folded into § 6b as two
+independent blind trials. See the next entry.
+
+### § 6b step-kind widened blind listen (rendered 2026-10-01, scored 2026-10-02)
+
+**Setup.** The 18 trials are as pre-registered in § 6b, with the selection and
+build checks recorded there. The blind set is in
+`gap-files/2026-10-01-step-abx-wide/sitting{1,2}/tNN_{a,b}.wav`, with
+balanced a/b. The key was held in the session scratchpad and is reproduced
+below. The listener had heard none of the 15 fresh gaps before. 13/g16 and
+44/g11 had been heard before.
+
+| Trial | Gap | Stratum | max (ms) | Dual-fit arm | Heard | → dual-fit | Listener note |
+|---|---|---|---|---|---|---|---|
+| t01 | 5/g8 | 50–75 | 61 | b | a | **worse** | possible blip at post on b |
+| t02 | 32/g13 | control | 34 | b | a | **worse** | possible blip at pre on b |
+| t03 | 33/g14 | ≤ 50 | 43 | b | a | **worse** | possible blip on b |
+| t04 | 54/g10 | 50–75 | 52 | a | same | same | |
+| t05 | 44/g11 | > 75 | 94 | a | same | same | possible blip at pre on both |
+| t06 | 7/g1 | 50–75 | 50 | a | same | same | |
+| t07 | 34/g10 | control | 31 | b | same | same | |
+| t08 | 28/g13 | ≤ 50 | 41 | a | b | **worse** | possible blip at ~5 s on a (pre or post unclear) |
+| t09 | 49/g24 | 50–75 | 66 | a | same | same | |
+| t10 | 28/g18 | 50–75 | 63 | a | same | same | |
+| t11 | 50/g7 | ≤ 50 | 26 | a | same | same | both have a blip |
+| t12 | 13/g16 | > 75 | 110 | b | b | **better** | a has an echo at pre |
+| t13 | 27/g2 | 50–75 | 74 | b | same | same | |
+| t14 | 47/g13 | control | 2 | b | same | same | both have a blip around 3 s |
+| t15 | 12/g2 | control | 34 | a | same | same | |
+| t16 | 54/g9 | 50–75 | 55 | a | b | **worse** | |
+| t17 | 18/g39 | 50–75 | 66 | b | same | same | |
+| t18 | 44/g11 | > 75 | 94 | b | same | same | |
+
+**§ 6b rule, applied.**
+- **44/g11:** both trials are *same*, so it counts as *same*. There is no
+  opposite-verdict increment. This replaces the 2026-09-29 weak "worse".
+- **Noise:** k = 1, from 32/g13 heard as dual-fit worse. That is below the
+  inconclusive line of 2, so w = 1.
+- **Routed sets.** They are pooled with the 2026-09-29 blind pass: 29/g20
+  better, 5/g5 same, 19/g2 same.
+
+  | Set | Gaps | Better | Worse | Meets better ≥ 2 and worse ≤ 1? |
+  |---|---|---|---|---|
+  | R_75 | 13/g16, 29/g20, 44/g11, 5/g5, 19/g2 | 2 | 0 | **yes** |
+  | R_50 | R_75 + 8 mid | 2 | 2 (5/g8, 54/g9) | no |
+  | R_0 | R_50 + 3 low | 2 | 4 (+ 33/g14, 28/g13) | no |
+
+- Refute needs worse > better in both R_0 and R_75. R_75 is 0 vs 2, so this
+  is not a refute.
+
+**Verdict: Adopt dual-fit-first for step-kind gaps at B = 75 ms**, where max
+seam error > 75 ms. Below 75 ms, dual-fit never won: it lost 4 and tied 7.
+
+**Reading.**
+- **The losses have one description: a blip on the dual-fit arm.** Every
+  dual-fit-worse verdict that carries a note places a blip on the dual-fit
+  arm: t01, t02, t03 and t08. That includes the control's only non-*same*
+  verdict. 29/g20's dual-fit arm had the same "slight blip at post" in § 6.
+  Where single-lag error is large, dual-fit's blip costs less than the echo or
+  repeat it removes. Where single-lag error is small, there is nothing to
+  remove, and the blip is the only difference.
+- **This makes the bound a cost/benefit crossover, not a property of
+  single-lag fills.** If the dual-fit blip were removed, a lower bound might
+  pass. The blip is still unattributed. The first thing to measure is the
+  1.65 ms phase-click regime (§ 7, 2026-09-24) at the dual-fit seams of t01,
+  t02, t03 and t08.
+- **The 32/g13 control is k = 1, but it is not simply noise.** The arms differ
+  over 2.8 s. It was heard as *same* in both 2026-09-29 passes, and this time
+  as a blip on the dual-fit arm. It reads as the same dual-fit blip, heard
+  once, rather than a false difference.
+
+**Cautions.**
+- R_75 has n = 5, with two positives.
+- Both positives were heard before: 13/g16 in earlier work, and 29/g20 in the
+  non-naive 2026-09-29 blind pass.
+- 13/g16's arms differ by +1.5 dB over the differing span. See the § 6b build
+  checks.
+- The 75 ms bound sits between 74 (27/g2, *same*) and 91 (5/g5, *same*). Every
+  gap in that range was *same*, so the exact cut within 75–91 ms is not
+  resolved by ear.
+
+**Next.**
+1. **§ 5 implementation:** a step-kind routing bound of 75 ms behind the flag,
+   default off, then the default flip that Adopt calls for. The common-mode
+   kind is not decided by this pass.
+2. **Attribute the dual-fit seam blip** (see Reading). This is what would
+   lower the bound. *Done: see the next entry.*
+
+### The dual-fit blip is the interior length edit, not the seams (measured 2026-10-02)
+
+**Method.** The 18 § 6b gaps, plus 29/g20, were measured both ways from the
+rendered `--gap-listen` WAVs, using a mono downmix.
+- The write region is where `a_patched` departs from `a_surround`.
+- The fill's lag against `b_surround` was tracked in 40 ms windows, with
+  FFT cross-correlation and parabolic sub-sample refinement.
+- At each boundary, a residual profile in 2.5 ms bins compares `a_patched`
+  with B. B is placed at the A shoulder's own lag and gain over ±60 ms.
+- Held-sample runs are exactly identical consecutive frames on every channel.
+
+**The seams are clean on every dual-fit arm.** In all 19 gaps the fill
+continues at A's own lag on both sides, to within 0.01 ms. There is no
+phase step at the seams, so the 1.65 ms click regime is not the blip.
+Production's single-lag arms show the expected displacement instead: tens of
+ms at one or both seams.
+
+**The blip is where `trim_at_lowest_energy_interior` reconciles the bridge
+to the gap length** (`gap_fill_fit.rs`). Its shape follows the sign of the
+step:
+
+| Edit | When | Gaps | Ear |
+|---|---|---|---|
+| **Hold**: one sample repeated for \|trim\| frames | bridge < gap | 5/g8 (28.9 ms), 33/g14 (34.0), 28/g13 (34.6), 29/g20 (34.7), 54/g10 (30.6), 50/g7 (32.1), 12/g2 (3.9) | 3 losses, all with a blip note (t01, t03, t08). 29/g20 had a blip note in § 6. 50/g7 was *same*, with both arms blipped. 54/g10 and 12/g2 were *same* |
+| **Cut**: \|trim\| frames dropped, no crossfade | bridge > gap | 32/g13, 49/g24, 7/g1, 34/g10, 28/g18, 27/g2, 47/g13, 54/g9, 18/g39, 13/g16, 44/g11 | 2 losses: t02 (32/g13, blip note) and t16 (54/g9, no note). The rest were *same*, or dual-fit won (13/g16) |
+
+- **The hold is a micro-dropout.** It drops the level by 15–35 dB for
+  29–35 ms, with hard edges at both ends.
+  - 5/g8: −27/+28 dB, in material at −42 dBFS.
+  - 28/g13: −28/+33 dB at −34 dBFS.
+  - 54/g10: −35/+39 dB at −50 dBFS.
+- **The hold position is picked from a one-frame window.**
+  `lowest_energy_interior_start(bridge, ch, 1, guard)` finds the single
+  quietest *sample*, which is in practice a zero crossing anywhere in the
+  bridge. It does not look for a quiet stretch of the length it will hold.
+  The trim branch, by contrast, searches a trim-length window.
+- **Where the holds sit agrees with the notes.**
+  - t08 heard "~5 s": the hold is at 4.79 s.
+  - t02 heard "at pre": the cut is 0.28 s after the pre seam, at 3.27 s.
+  - t01 heard "at post": the hold is 0.64 s after the pre seam. This one
+    does not match.
+- **The cuts are hard.** The largest second difference in the write region
+  sits on the cut in 28/g18 (×7.1 over the context p99.9), 18/g39 (×3.2) and
+  32/g13. Level steps across the cuts are small, within ±5 dB.
+
+**Reading.**
+- 6 of the 7 holds are ≥ 29 ms. Of those 6, 5 carry a blip note on the
+  dual-fit arm. 54/g10 had no note.
+- Cuts lost 2 of 11, with one blip note.
+- So the hold is the main blip. The hard cut is a plausible second one.
+- Neither is a registration property. The bound measured in § 6b is a
+  crossover against this artifact.
+
+**Cautions.**
+- These are notes, not a scored listen of the edit. Nothing here re-renders
+  the gaps with the edit fixed.
+- t01's location does not match.
+- The step sign (hold vs cut) is confounded with the gaps themselves.
+
+**Next.**
+1. Fix the interior edit. This is split out as
+   [TEMP-dualfit-interior-edit-plan.md](TEMP-dualfit-interior-edit-plan.md):
+   one crossfaded jump at the quietest span covering both sources. A short
+   bridge then repeats real audio instead of holding a sample. The fix has its
+   own measurement gate and its own old-vs-new blind listen.
+2. Then § 6c: new dual-fit vs production below 75 ms. Only after that should
+   the bound move. § 5 can be built in parallel, because the bound is a
+   parameter.
 
 ## 8. Non-goals
 

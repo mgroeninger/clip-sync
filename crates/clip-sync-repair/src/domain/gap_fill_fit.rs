@@ -1728,6 +1728,102 @@ pub fn trim_at_lowest_energy_interior(
     }
 }
 
+/// Where [`jump_edit_to_gap`] placed its edit, for the fingerprint dump.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct JumpEdit {
+    /// Fill-relative frame where the crossfade into the jumped-to source begins (`p`).
+    pub frame: usize,
+    /// Signed jump `bridge − gap`: `> 0` skips forward, `< 0` jumps back (repeats real audio).
+    pub jump_frames: i64,
+    /// Crossfade length actually used, after capping to the interior room.
+    pub crossfade_frames: usize,
+    /// Mean-square energy (all channels) of the bridge span the edit touches.
+    pub span_mean_square: f64,
+}
+
+/// Reconcile a dual-fit bridge to exactly `gap_frames` with **one crossfaded jump** of
+/// `t = bridge − gap` frames (`docs/dev/TEMP-dualfit-interior-edit-plan.md` § 0).
+///
+/// The output plays the bridge up to `p`, equal-power crossfades over `cf` frames into the bridge
+/// at `p + t`, and continues from there. `t > 0` skips forward (today's cut, plus a crossfade);
+/// `t < 0` jumps back, so `bridge[p+t .. p]` plays twice — a repeat of real audio, not a held sample.
+///
+/// `p` minimizes the mean-square energy of the span the edit touches, `[min(p, p+t), max(p, p+t) + cf)`,
+/// kept `edge_guard_frames` from each end; `cf` is capped so that span fits the guarded interior.
+/// When the bridge is too short for the guard, the edit lands at the guard-clamped position, as
+/// [`trim_at_lowest_energy_interior`] does — never a decline. A jump back longer than the bridge
+/// itself has no real audio to repeat and falls back to the legacy pad.
+pub fn jump_edit_to_gap(
+    bridge: &[f32],
+    channels: usize,
+    gap_frames: usize,
+    edge_guard_frames: usize,
+    crossfade_frames: usize,
+) -> (Vec<f32>, Option<JumpEdit>) {
+    let ch = channels.max(1);
+    let b_frames = bridge.len() / ch;
+    if b_frames == gap_frames || gap_frames == 0 || b_frames == 0 {
+        return (fit_fill_to_gap_frames(bridge, ch, gap_frames), None);
+    }
+    let t = b_frames as i64 - gap_frames as i64;
+    let jump = t.unsigned_abs() as usize;
+    if jump >= b_frames {
+        let fill = trim_at_lowest_energy_interior(bridge, ch, gap_frames, edge_guard_frames);
+        return (fill, None);
+    }
+    let room = b_frames.saturating_sub(jump + 2 * edge_guard_frames);
+    let cf = crossfade_frames.min(room);
+    let span = jump + cf;
+
+    // Lowest mean-square span start over the guarded interior (prefix sums: spans are tens of ms
+    // over bridges of seconds). The guard-clamped fallback matches `lowest_energy_interior_start`.
+    let mut prefix = Vec::with_capacity(b_frames + 1);
+    prefix.push(0.0f64);
+    let mut acc = 0.0f64;
+    for frame in bridge.chunks_exact(ch) {
+        acc += frame.iter().map(|&x| (x as f64) * (x as f64)).sum::<f64>();
+        prefix.push(acc);
+    }
+    let span_ms = |s: usize| (prefix[s + span] - prefix[s]) / ((span * ch) as f64);
+    let start = if b_frames <= span + 2 * edge_guard_frames {
+        edge_guard_frames.min(b_frames - span)
+    } else {
+        let (lo, hi) = (edge_guard_frames, b_frames - span - edge_guard_frames);
+        let mut best = lo;
+        let mut best_ms = span_ms(lo);
+        for s in (lo + 1)..=hi {
+            let m = span_ms(s);
+            if m < best_ms {
+                best_ms = m;
+                best = s;
+            }
+        }
+        best
+    };
+    // span = [min(p, p+t), max(p, p+t) + cf): a forward skip starts the span at p, a jump back at p+t.
+    let p = if t > 0 { start } else { start + jump };
+    let src = (p as i64 + t) as usize;
+
+    let mut out = Vec::with_capacity(gap_frames * ch);
+    out.extend_from_slice(&bridge[..p * ch]);
+    for i in 0..cf {
+        let theta = (i as f64 + 0.5) / cf as f64 * std::f64::consts::FRAC_PI_2;
+        let (fade_in, fade_out) = (theta.sin() as f32, theta.cos() as f32);
+        for c in 0..ch {
+            out.push(fade_out * bridge[(p + i) * ch + c] + fade_in * bridge[(src + i) * ch + c]);
+        }
+    }
+    out.extend_from_slice(&bridge[(src + cf) * ch..]);
+    debug_assert_eq!(out.len(), gap_frames * ch);
+    let edit = JumpEdit {
+        frame: p,
+        jump_frames: t,
+        crossfade_frames: cf,
+        span_mean_square: span_ms(start),
+    };
+    (out, Some(edit))
+}
+
 /// Extend a short B bracket with the contiguous B audio that follows it, up to the A gap length,
 /// and zero-pad only what B could not supply.
 ///
@@ -2012,6 +2108,145 @@ mod tests {
             600 * ch,
             "pad"
         );
+    }
+
+    /// Deterministic uniform noise in [-amp, amp] (LCG), so jump tests have no repeated frames.
+    fn noise(frames: usize, ch: usize, amp: f32, seed: u64) -> Vec<f32> {
+        let mut s = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (0..frames * ch)
+            .map(|_| {
+                s = s
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                ((s >> 40) as f32 / (1u64 << 24) as f32 * 2.0 - 1.0) * amp
+            })
+            .collect()
+    }
+
+    /// Longest run of identical consecutive frames.
+    fn longest_held_run(v: &[f32], ch: usize) -> usize {
+        let frames: Vec<&[f32]> = v.chunks_exact(ch).collect();
+        let (mut best, mut run) = (1, 1);
+        for w in frames.windows(2) {
+            run = if w[0] == w[1] { run + 1 } else { 1 };
+            best = best.max(run);
+        }
+        best
+    }
+
+    fn rms(v: &[f32]) -> f64 {
+        (v.iter().map(|&x| (x as f64) * (x as f64)).sum::<f64>() / v.len().max(1) as f64).sqrt()
+    }
+
+    #[test]
+    fn jump_edit_returns_gap_length_for_every_sign() {
+        let ch = 2;
+        let bridge = noise(4000, ch, 0.3, 1);
+        for gap in [3700, 4000, 4300] {
+            let (out, edit) = jump_edit_to_gap(&bridge, ch, gap, 500, 100);
+            assert_eq!(out.len(), gap * ch, "gap {gap}");
+            assert_eq!(edit.is_none(), gap == 4000, "t = 0 makes no edit");
+        }
+    }
+
+    #[test]
+    fn jump_back_repeats_real_audio_instead_of_holding_a_sample() {
+        let ch = 2;
+        let bridge = noise(4000, ch, 0.3, 2);
+        let (out, _) = jump_edit_to_gap(&bridge, ch, 4300, 500, 100);
+        assert!(longest_held_run(&out, ch) < 16, "no held run");
+        // Legacy pad holds one frame for the whole pad: the defect this replaces.
+        let legacy = trim_at_lowest_energy_interior(&bridge, ch, 4300, 500);
+        assert!(longest_held_run(&legacy, ch) >= 300);
+    }
+
+    #[test]
+    fn jump_edit_lands_on_a_planted_quiet_span_for_both_signs() {
+        let ch = 2;
+        let mut bridge = noise(6000, ch, 0.5, 3);
+        let quiet = 3000..3600;
+        for f in quiet.clone() {
+            for c in 0..ch {
+                bridge[f * ch + c] *= 0.001;
+            }
+        }
+        for (gap, t) in [(5700usize, 300i64), (6300, -300)] {
+            let (_, edit) = jump_edit_to_gap(&bridge, ch, gap, 500, 100);
+            let e = edit.expect("edit");
+            assert_eq!(e.jump_frames, t);
+            let lo = e.frame.min((e.frame as i64 + t) as usize);
+            let hi = e.frame.max((e.frame as i64 + t) as usize) + e.crossfade_frames;
+            assert!(
+                quiet.contains(&lo) && hi <= quiet.end,
+                "t {t}: span {lo}..{hi} inside the quiet valley"
+            );
+        }
+    }
+
+    #[test]
+    fn jump_edit_prefix_and_suffix_are_the_bridge() {
+        let ch = 2;
+        let bridge = noise(5000, ch, 0.3, 4);
+        for gap in [4700usize, 5300] {
+            let (out, edit) = jump_edit_to_gap(&bridge, ch, gap, 500, 120);
+            let e = edit.expect("edit");
+            let (p, cf) = (e.frame, e.crossfade_frames);
+            let src = (p as i64 + e.jump_frames) as usize;
+            assert_eq!(cf, 120);
+            assert_eq!(&out[..p * ch], &bridge[..p * ch], "prefix");
+            assert_eq!(
+                &out[(p + cf) * ch..],
+                &bridge[(src + cf) * ch..],
+                "suffix after the jump"
+            );
+        }
+    }
+
+    #[test]
+    fn jump_edit_crossfade_is_equal_power_on_uncorrelated_audio() {
+        let ch = 1;
+        let bridge = noise(40_000, ch, 0.3, 5);
+        let (out, edit) = jump_edit_to_gap(&bridge, ch, 37_000, 2000, 4000);
+        let e = edit.expect("edit");
+        let join = rms(&out[e.frame * ch..(e.frame + e.crossfade_frames) * ch]);
+        let level = rms(&bridge);
+        let dip_db = 20.0 * (join / level).log10();
+        assert!(dip_db.abs() < 1.0, "join level {dip_db:.2} dB vs bridge");
+    }
+
+    #[test]
+    fn jump_edit_guard_clamped_short_bridge_still_fills_the_gap() {
+        let ch = 2;
+        let bridge = noise(600, ch, 0.3, 6);
+        // Guard 500 on each end leaves no interior: clamped position, crossfade capped to 0.
+        for gap in [550usize, 650] {
+            let (out, edit) = jump_edit_to_gap(&bridge, ch, gap, 500, 100);
+            assert_eq!(out.len(), gap * ch);
+            assert_eq!(edit.expect("edit").crossfade_frames, 0);
+        }
+        // A jump back longer than the bridge has nothing to repeat: legacy pad, still gap-length.
+        let (out, edit) = jump_edit_to_gap(&bridge, ch, 1300, 500, 100);
+        assert_eq!(out.len(), 1300 * ch);
+        assert!(edit.is_none());
+    }
+
+    #[test]
+    fn jump_edit_without_crossfade_matches_the_legacy_cut() {
+        // V-shaped valley: one unique quietest span, so prefix-sum rounding can't break a tie.
+        let bridge: Vec<f32> = (0..1000)
+            .map(|i: i32| {
+                if (400..600).contains(&i) {
+                    0.001 + (i - 500).abs() as f32 * 1e-3
+                } else {
+                    0.5
+                }
+            })
+            .collect();
+        let guard = DUALFIT_INTERIOR_EDGE_GUARD_FRAMES;
+        let (out, _) = jump_edit_to_gap(&bridge, 1, 900, guard, 0);
+        assert_eq!(out, trim_at_lowest_energy_interior(&bridge, 1, 900, guard));
     }
 
     fn verdict(informative: bool, headroom: f64) -> SeamResidualVerdict {

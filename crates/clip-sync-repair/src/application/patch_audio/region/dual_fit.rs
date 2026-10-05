@@ -64,6 +64,8 @@ pub(in crate::application::patch_audio::region) struct DualFitInputSpec<'a> {
     pub(in crate::application::patch_audio::region) fill_absolute_floor: f32,
     pub(in crate::application::patch_audio::region) crossfade_secs: f64,
     pub(in crate::application::patch_audio::region) border_standoff_frames: usize,
+    /// `--dual-fit-crossfade-edit`: the bridge length edit crossfades over `crossfade_secs`.
+    pub(in crate::application::patch_audio::region) crossfade_edit: bool,
 }
 
 pub(in crate::application::patch_audio::region) fn build_dual_fit_input<'a>(
@@ -83,6 +85,7 @@ pub(in crate::application::patch_audio::region) fn build_dual_fit_input<'a>(
         fill_absolute_floor,
         crossfade_secs,
         border_standoff_frames,
+        crossfade_edit,
     } = spec;
     let ch = channels.max(1);
     let w = ((fill_seam_search_secs * sample_rate as f64).round() as usize).max(8);
@@ -112,6 +115,8 @@ pub(in crate::application::patch_audio::region) fn build_dual_fit_input<'a>(
             fill_absolute_floor: fill_absolute_floor as f64,
             step_real_margin: 0.15,
             a_gap_floor_db,
+            edit_crossfade_frames: crossfade_edit
+                .then(|| (crossfade_secs * sample_rate as f64).round() as usize),
         },
         templates,
         b_mono,
@@ -963,6 +968,7 @@ mod tests {
             fill_absolute_floor: 0.12,
             step_real_margin: 0.15,
             a_gap_floor_db: -60.0,
+            edit_crossfade_frames: None,
         };
         let templates = crate::domain::seam_locks::SeamLockTemplates::from_mono(
             a_pre_mono.clone(),
@@ -1192,6 +1198,7 @@ mod tests {
             fill_absolute_floor: 0.12,
             step_real_margin: 0.15,
             a_gap_floor_db: -60.0,
+            edit_crossfade_frames: None,
         };
         let templates = crate::domain::seam_locks::SeamLockTemplates::from_mono(
             a_pre_mono.clone(),

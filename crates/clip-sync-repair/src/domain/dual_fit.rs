@@ -9,7 +9,7 @@
 use clip_sync::normalized_correlation;
 
 use crate::domain::donor::{donor_interior_at, program_quiet_at_nominal, DonorInterior};
-use crate::domain::gap_fill_fit::trim_at_lowest_energy_interior;
+use crate::domain::gap_fill_fit::{jump_edit_to_gap, trim_at_lowest_energy_interior, JumpEdit};
 use crate::domain::seam_locks::{
     nominal_first_seam_locks, EnvelopeSearch, GrownPostLock, SeamGateFloors, SeamLockTemplates,
     SeamLocks,
@@ -43,6 +43,10 @@ pub struct DualFitParams {
     pub fill_absolute_floor: f64,
     pub step_real_margin: f64,
     pub a_gap_floor_db: f64,
+    /// `Some(cf)`: reconcile the bridge with one crossfaded jump at the quietest span
+    /// ([`jump_edit_to_gap`], `--dual-fit-crossfade-edit`). `None`: the legacy
+    /// [`trim_at_lowest_energy_interior`] cut/hold, byte-identical to before the flag.
+    pub edit_crossfade_frames: Option<usize>,
 }
 
 /// A successful dual-fit fill (interleaved, exactly `gap_frames`) + the seam scores at the seam-local
@@ -72,6 +76,9 @@ pub struct DualFitResult {
     /// The aligned donor bridge (`b_pre_seam .. b_post_seam`) measured during the continuity gate. Surfaced
     /// for the characterize spec's `donor_aligned` tag (single-source; §2.5.2a, 8a).
     pub aligned_donor: DonorInterior,
+    /// Where the crossfaded jump edit landed; `None` on the legacy edit, a `!step_real` extract, or a
+    /// bridge already gap-length.
+    pub edit: Option<JumpEdit>,
 }
 
 /// Measure this gap's two seam locks with the same params the fit will use.
@@ -356,13 +363,29 @@ pub fn try_dual_fit_with_grown_post(
         );
         return None;
     }
-    let fill = if step_real {
+    let (fill, edit) = if step_real {
         let bridge = &b_samples[b_pre_seam * ch..extract_end * ch];
-        trim_at_lowest_energy_interior(bridge, ch, p.gap_frames, p.seam_window_frames)
+        match p.edit_crossfade_frames {
+            Some(cf) => jump_edit_to_gap(bridge, ch, p.gap_frames, p.seam_window_frames, cf),
+            None => (
+                trim_at_lowest_energy_interior(bridge, ch, p.gap_frames, p.seam_window_frames),
+                None,
+            ),
+        }
     } else {
-        b_samples[b_pre_seam * ch..extract_end * ch].to_vec()
+        (b_samples[b_pre_seam * ch..extract_end * ch].to_vec(), None)
     };
     let trim_frames = (b_post_seam - b_pre_seam) as i64 - p.gap_frames as i64;
+    if let Some(e) = edit {
+        tracing::debug!(
+            edit_frame = e.frame,
+            edit_kind = if e.jump_frames > 0 { "skip" } else { "repeat" },
+            jump_frames = e.jump_frames,
+            crossfade_frames = e.crossfade_frames,
+            edit_span_db = 10.0 * e.span_mean_square.max(1e-20).log10(),
+            "dual_fit: crossfaded interior edit"
+        );
+    }
 
     Some(DualFitResult {
         fill,
@@ -374,6 +397,7 @@ pub fn try_dual_fit_with_grown_post(
         pre_lag,
         post_lag,
         aligned_donor: aligned,
+        edit,
     })
 }
 
@@ -403,6 +427,61 @@ mod tests {
         m.iter()
             .flat_map(|&x| std::iter::repeat_n(x as f32, ch))
             .collect()
+    }
+
+    /// `--dual-fit-crossfade-edit` (TEMP-dualfit-interior-edit-plan § 0): for either sign of the step,
+    /// the crossfaded edit changes only the bridge interior — both seam windows are byte-identical to
+    /// the legacy fill, so the re-validation gate scores exactly what it scored before.
+    #[test]
+    fn crossfade_edit_changes_only_the_interior_for_both_signs() {
+        let (sr, ch, w, gap) = (48_000u32, 2usize, 1200usize, 6000usize);
+        let mut seed = 0x5EED_0FED_1700_0000u64;
+        let mut rng = move || {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((seed >> 33) as f64 / (1u64 << 30) as f64) - 1.0
+        };
+        let b_mono: Vec<f64> = (0..40_000).map(|_| rng()).collect();
+        let b_samples = mono_to_interleaved(&b_mono, ch);
+        let b_mapped_start = 10_000usize;
+        for step in [300i64, -300] {
+            let a_pre_mono = b_mono[b_mapped_start - w..b_mapped_start].to_vec();
+            let post_src = (b_mapped_start + gap) as i64 + step;
+            let a_post_mono = b_mono[post_src as usize..post_src as usize + w].to_vec();
+            let legacy = DualFitParams {
+                channels: ch,
+                sample_rate: sr,
+                gap_frames: gap,
+                seam_window_frames: w,
+                max_lag_frames: (0.6 * sr as f64) as usize,
+                min_fill_correlation: 0.35,
+                fill_absolute_floor: 0.12,
+                step_real_margin: 0.15,
+                a_gap_floor_db: -60.0,
+                edit_crossfade_frames: None,
+            };
+            let jump = DualFitParams {
+                edit_crossfade_frames: Some(480),
+                ..legacy
+            };
+            let t = templates(&a_pre_mono, &a_post_mono, b_mapped_start, &legacy);
+            let old = dual_fit_at_nominal(&t, &b_mono, &b_samples, &legacy).expect("legacy");
+            let new = dual_fit_at_nominal(&t, &b_mono, &b_samples, &jump).expect("jump");
+            assert_eq!(new.trim_frames, step);
+            assert_eq!(new.fill.len(), gap * ch, "step {step}: gap length");
+            assert!(old.edit.is_none(), "legacy reports no jump edit");
+            let e = new.edit.expect("jump edit");
+            assert_eq!(e.jump_frames, step);
+            assert_eq!(e.crossfade_frames, 480);
+            assert_eq!(new.fill[..w * ch], old.fill[..w * ch], "pre seam window");
+            assert_eq!(
+                new.fill[(gap - w) * ch..],
+                old.fill[(gap - w) * ch..],
+                "post seam window"
+            );
+            assert_ne!(new.fill, old.fill, "step {step}: the interior edit differs");
+        }
     }
 
     #[test]
@@ -445,6 +524,7 @@ mod tests {
             fill_absolute_floor: 0.12,
             step_real_margin: 0.15,
             a_gap_floor_db: -60.0,
+            edit_crossfade_frames: None,
         };
 
         let r = dual_fit_at_nominal(
@@ -517,6 +597,7 @@ mod tests {
             fill_absolute_floor: 0.12,
             step_real_margin: 0.15,
             a_gap_floor_db: -60.0,
+            edit_crossfade_frames: None,
         };
 
         let r = dual_fit_at_nominal(
@@ -604,6 +685,7 @@ mod tests {
             fill_absolute_floor: 0.12,
             step_real_margin: 0.15,
             a_gap_floor_db: -60.0,
+            edit_crossfade_frames: None,
         };
         let r = dual_fit_at_nominal(
             &templates(&a_pre_mono, &a_post_mono, b_mapped_start, &p),
@@ -701,6 +783,7 @@ mod tests {
             fill_absolute_floor: 0.12,
             step_real_margin: 0.15,
             a_gap_floor_db: -60.0,
+            edit_crossfade_frames: None,
         };
 
         assert!(
@@ -743,6 +826,7 @@ mod tests {
             fill_absolute_floor: 0.12,
             step_real_margin: 0.15,
             a_gap_floor_db: -60.0,
+            edit_crossfade_frames: None,
         };
         assert!(
             dual_fit_at_nominal(

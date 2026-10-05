@@ -141,6 +141,12 @@ pub struct RepairConfig {
     /// own B content. Off = the shipped path, whose post seam duplicates ~2x crossfade of audio.
     #[serde(default)]
     pub seam_extend_fill: bool,
+    /// Reconcile a step-real dual-fit bridge to the gap length with one equal-power crossfaded jump
+    /// (`crossfade_ms` long) at its quietest span, so a short bridge repeats real audio rather than
+    /// holding one sample. Off = the shipped hard cut / single-sample hold
+    /// (`docs/dev/TEMP-dualfit-interior-edit-plan.md`).
+    #[serde(default)]
+    pub dual_fit_crossfade_edit: bool,
     /// Gaps at or below this length use mean(pre, post) correlation for the fill gate.
     #[serde(default = "default_short_gap_mean_correlation_secs")]
     pub short_gap_mean_correlation_secs: f64,
@@ -686,6 +692,7 @@ impl Default for RepairConfig {
             residual_border_standoff_secs: None,
             residual_search_secs: default_residual_search_secs(),
             seam_extend_fill: false,
+            dual_fit_crossfade_edit: false,
             short_gap_mean_correlation_secs: default_short_gap_mean_correlation_secs(),
             fill_length_slack_secs: default_fill_length_slack_secs(),
             fill_extract_tail_slack_secs: default_fill_extract_tail_slack_secs(),
@@ -852,6 +859,7 @@ impl RepairConfig {
             residual_border_standoff_secs: self.residual_border_standoff_secs,
             residual_search_secs: self.residual_search_secs,
             seam_extend_fill: self.seam_extend_fill,
+            dual_fit_crossfade_edit: self.dual_fit_crossfade_edit,
             short_gap_mean_correlation_secs: self.short_gap_mean_correlation_secs,
             fill_length_slack_secs: self.fill_length_slack_secs,
             fill_extract_tail_slack_secs: self.fill_extract_tail_slack_secs,

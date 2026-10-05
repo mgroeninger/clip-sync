@@ -148,6 +148,10 @@ pub struct PatchRequestSettings {
     /// whose post seam replays ~2x crossfade of fill. Bracket path only — a dual-fit bridge is
     /// synthesized, not a contiguous B slice, so it has no margin to take.
     pub seam_extend_fill: bool,
+    /// Dual-fit only: reconcile a step-real bridge with one crossfaded jump at its quietest span
+    /// ([`crate::domain::gap_fill_fit::jump_edit_to_gap`]) instead of the legacy cut / single-sample
+    /// hold. See `RepairConfig::dual_fit_crossfade_edit`.
+    pub dual_fit_crossfade_edit: bool,
     /// Gaps at or below this length (seconds) pass when mean(pre, post) correlation meets the
     /// threshold instead of requiring both seams individually.
     pub short_gap_mean_correlation_secs: f64,
