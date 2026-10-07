@@ -329,7 +329,8 @@
           "signature_mode": "bool",
           "anchor_seam_used": false,
           "dual_fit_used": true,
-          "dual_fit_step_real": false
+          "dual_fit_step_real": false,
+          "dual_fit_route": "registration_step"
         }
       },
       {

@@ -1513,53 +1513,59 @@ mod tests {
             // `dual_fit_step_real: Some(false)` populates the field in the golden — the length-edit
             // gap above pins `dual_fit_used: false` / `dual_fit_step_real: None`; this pins the third
             // state (docs/dev/archive/TEMP-seam-lock-rigid-fill-plan.md § 3.4).
-            gap_patch_outcome(
-                160.0,
-                160.4,
-                GapPatchStatus::Patched {
-                    zero_pad_frames: 0,
-                    pre_correlation: 0.94,
-                    post_correlation: 0.93,
-                    align_adjustment_secs: 0.0,
-                    structure_trusted: false,
-                    confidence: crate::domain::FillConfidence::High,
-                    gap_start_adjust_frames: 0,
-                    gap_end_adjust_frames: 0,
-                    residual_db: None,
-                    floor_db: None,
-                    headroom_db: None,
-                    anchor_seam_used: false,
-                    anchor_bracket_move_frames: 0,
-                    dual_fit_used: true,
-                    dual_fit_step_real: Some(false),
-                    dual_fit_post_window_ms: None,
-                    normalize_gain: 0.766_478_54,
-                    program_gain: 0.766_478_54,
-                    local_gain: 1.0,
-                    local_gain_reason: crate::domain::LocalGainReason::FlagOff,
-                    // Dual-fit placement does not come from the unified objective — omitted, per
-                    // json-output.md's `fit_terms` note.
-                    fit_terms: None,
-                    // Pins the other per-seam state: an unlicensed post shoulder leaves its key
-                    // absent, and dual-fit's applied placement is 0.0 (its `align_adjustment_secs`).
-                    registration_residual: Some(Box::new(
-                        crate::domain::patch_result::RegistrationResidual {
-                            registration_residual_ms: -3.0,
-                            registration_residual_pre_ms: Some(-3.0),
-                            registration_residual_post_ms: None,
-                            registration_residual_pre_edge_pinned: None,
-                            registration_residual_post_edge_pinned: None,
-                            registration_residual_pre_z: None,
-                            registration_residual_post_z: None,
-                            registration_residual_pre_prominence: None,
-                            registration_residual_post_prominence: None,
-                            registration_residual_pre_rescued: None,
-                            registration_residual_post_rescued: None,
-                            registration_applied_ms: 0.0,
-                        },
-                    )),
-                },
-            ),
+            {
+                // Routed by registration (step-kind), so the golden pins `dual_fit_route` populated.
+                let mut outcome = gap_patch_outcome(
+                    160.0,
+                    160.4,
+                    GapPatchStatus::Patched {
+                        zero_pad_frames: 0,
+                        pre_correlation: 0.94,
+                        post_correlation: 0.93,
+                        align_adjustment_secs: 0.0,
+                        structure_trusted: false,
+                        confidence: crate::domain::FillConfidence::High,
+                        gap_start_adjust_frames: 0,
+                        gap_end_adjust_frames: 0,
+                        residual_db: None,
+                        floor_db: None,
+                        headroom_db: None,
+                        anchor_seam_used: false,
+                        anchor_bracket_move_frames: 0,
+                        dual_fit_used: true,
+                        dual_fit_step_real: Some(false),
+                        dual_fit_post_window_ms: None,
+                        normalize_gain: 0.766_478_54,
+                        program_gain: 0.766_478_54,
+                        local_gain: 1.0,
+                        local_gain_reason: crate::domain::LocalGainReason::FlagOff,
+                        // Dual-fit placement does not come from the unified objective — omitted, per
+                        // json-output.md's `fit_terms` note.
+                        fit_terms: None,
+                        // Pins the other per-seam state: an unlicensed post shoulder leaves its key
+                        // absent, and dual-fit's applied placement is 0.0 (its `align_adjustment_secs`).
+                        registration_residual: Some(Box::new(
+                            crate::domain::patch_result::RegistrationResidual {
+                                registration_residual_ms: -3.0,
+                                registration_residual_pre_ms: Some(-3.0),
+                                registration_residual_post_ms: None,
+                                registration_residual_pre_edge_pinned: None,
+                                registration_residual_post_edge_pinned: None,
+                                registration_residual_pre_z: None,
+                                registration_residual_post_z: None,
+                                registration_residual_pre_prominence: None,
+                                registration_residual_post_prominence: None,
+                                registration_residual_pre_rescued: None,
+                                registration_residual_post_rescued: None,
+                                registration_applied_ms: 0.0,
+                            },
+                        )),
+                    },
+                );
+                outcome.tags.dual_fit_route =
+                    Some(crate::domain::gap_tags::DualFitRoute::RegistrationStep);
+                outcome
+            },
             gap_patch_outcome(
                 200.0,
                 205.0,
@@ -2363,6 +2369,7 @@ mod tests {
                 dual_fit_used: false,
                 dual_fit_step_real: None,
                 dual_fit_post_window_ms: None,
+                dual_fit_route: None,
                 residual: None,
                 residual_headroom_margin_db: DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
             },
@@ -2453,6 +2460,7 @@ mod tests {
                 dual_fit_used: true,
                 dual_fit_step_real: Some(true),
                 dual_fit_post_window_ms: None,
+                dual_fit_route: None,
                 residual: None,
                 residual_headroom_margin_db: DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
             },

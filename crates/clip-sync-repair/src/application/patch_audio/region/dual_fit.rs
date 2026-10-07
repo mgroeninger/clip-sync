@@ -148,6 +148,74 @@ fn dual_fit_eligible(request_dual_fit: bool, fail: SeamGateFailure) -> bool {
     request_dual_fit && !matches!(fail, SeamGateFailure::StructureAlignmentFailed)
 }
 
+/// The routing decision `characterize_region` acts on: [`registration_routes_to_dual_fit`] narrowed to
+/// what is adopted so far.
+/// - **Dual-fit must be on.** The config layer already drops the bound under `--no-dual-fit`, but a
+///   request built directly must not route either.
+/// - **Step-kind only** (plan § 6b). Common-mode is unadopted — § 4b left it out of scope below
+///   300 ms and § 6d's gross bound is not yet decided — so a common-mode miss never routes, whatever the
+///   bound. When § 6d lands it gets its own bound rather than reusing this one.
+pub(in crate::application::patch_audio::region) fn registration_route_taken(
+    dual_fit: bool,
+    bound_ms: Option<f64>,
+    crossfade_ms: f64,
+    pre_ms: Option<f64>,
+    post_ms: Option<f64>,
+) -> Option<RouteKind> {
+    if !dual_fit {
+        return None;
+    }
+    match registration_routes_to_dual_fit(bound_ms, crossfade_ms, pre_ms, post_ms)? {
+        RouteKind::Step => Some(RouteKind::Step),
+        RouteKind::Common => None,
+    }
+}
+
+/// A gap is step-kind when its shoulders disagree by more than this (routing plan § 0): no single lag
+/// can satisfy both. At or below it the shoulders agree and the miss is common-mode.
+const STEP_KIND_THRESHOLD_MS: f64 = 20.0;
+
+/// Which kind of registration miss routed a gap to dual-fit (routing plan § 0).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::application::patch_audio::region) enum RouteKind {
+    /// The shoulders disagree (a map step), so the two seam errors differ by the step.
+    Step,
+    /// The shoulders agree and the fill sits off both by about the same amount.
+    Common,
+}
+
+/// Registration routing (routing plan § 5): should a gate-passing single-lag fill be tried as dual-fit
+/// first? `Some(kind)` when both shoulders are licensed and the fill's far-seam error exceeds the bound.
+///
+/// `pre_ms` / `post_ms` are the per-shoulder `registration_residual_*_ms` values as the patch report
+/// carries them — the **planned** frame, `None` for an unlicensed shoulder. The bound is quoted in the
+/// **written** frame, which runs one crossfade width ahead of the plan (plan § 3), so this adds
+/// `crossfade_ms` itself and a caller cannot forget it. The shift cancels in the step test.
+///
+/// Strict `>` against the bound. `None` bound, an unlicensed shoulder (invariant 4: one-sided
+/// registration never routes) or a non-finite value never routes.
+pub(in crate::application::patch_audio::region) fn registration_routes_to_dual_fit(
+    bound_ms: Option<f64>,
+    crossfade_ms: f64,
+    pre_ms: Option<f64>,
+    post_ms: Option<f64>,
+) -> Option<RouteKind> {
+    let bound = bound_ms?;
+    let pre = pre_ms? + crossfade_ms;
+    let post = post_ms? + crossfade_ms;
+    if !(bound.is_finite() && pre.is_finite() && post.is_finite()) {
+        return None;
+    }
+    if pre.abs().max(post.abs()) <= bound {
+        return None;
+    }
+    Some(if (post - pre).abs() > STEP_KIND_THRESHOLD_MS {
+        RouteKind::Step
+    } else {
+        RouteKind::Common
+    })
+}
+
 /// Residual-gate parity for dual-fit (§ residual-gate bypass fix): the ordinary path measures one
 /// `SeamResidualVerdict` per gap using a single `chosen_delta`, valid because it assumes one rigid
 /// A/B placement across the whole splice. Dual-fit matches its two shoulders independently
@@ -717,6 +785,102 @@ mod tests {
     use super::*;
     use crate::domain::gap::GapReport;
     use crate::domain::gap_fill_fit::FillConfidence;
+
+    /// The production crossfade width; the predicate shifts planned residuals into the written frame.
+    const CF: f64 = 10.0;
+
+    fn routes(bound: Option<f64>, pre: Option<f64>, post: Option<f64>) -> Option<RouteKind> {
+        registration_routes_to_dual_fit(bound, CF, pre, post)
+    }
+
+    #[test]
+    fn registration_routes_step_and_common_mode_above_the_bound() {
+        // 13/g16 as the report carries it (planned frame): written −72.8 / −109.8, a 37 ms step.
+        assert_eq!(
+            routes(Some(75.0), Some(-82.79), Some(-119.79)),
+            Some(RouteKind::Step)
+        );
+        // 26/g6-like: written about −904 / −901, shoulders agree to 3 ms.
+        assert_eq!(
+            routes(Some(75.0), Some(-914.5), Some(-910.8)),
+            Some(RouteKind::Common)
+        );
+    }
+
+    #[test]
+    fn registration_routing_needs_both_shoulders_licensed() {
+        // Invariant 4: one-sided registration never routes, however large the licensed side is.
+        assert_eq!(routes(Some(75.0), None, Some(-500.0)), None);
+        assert_eq!(routes(Some(75.0), Some(-500.0), None), None);
+        assert_eq!(routes(Some(75.0), None, None), None);
+    }
+
+    #[test]
+    fn registration_routing_is_off_without_a_bound_or_on_non_finite_input() {
+        assert_eq!(routes(None, Some(-500.0), Some(-500.0)), None);
+        assert_eq!(routes(Some(f64::NAN), Some(-500.0), Some(-500.0)), None);
+        assert_eq!(routes(Some(75.0), Some(f64::NAN), Some(-500.0)), None);
+        assert_eq!(routes(Some(75.0), Some(-500.0), Some(f64::INFINITY)), None);
+    }
+
+    #[test]
+    fn registration_routing_bound_is_strict() {
+        // Planned 65 / 60 is written 75 / 70: exactly at a 75 ms bound, so it stays single-lag.
+        assert_eq!(routes(Some(75.0), Some(65.0), Some(60.0)), None);
+        // One tick under the bound routes; the far seam is the one that counts, whichever it is.
+        assert!(routes(Some(74.99), Some(65.0), Some(60.0)).is_some());
+        assert!(routes(Some(74.99), Some(60.0), Some(65.0)).is_some());
+    }
+
+    #[test]
+    fn registration_routing_bound_is_in_the_written_frame() {
+        // Late fill: planned 66 is written 76, so it clears a 75 ms bound it would not on the report
+        // value alone.
+        assert!(routes(Some(75.0), Some(66.0), Some(66.0)).is_some());
+        // Early fill: planned −84 is written −74, so the same shift pulls it back under the bound.
+        assert_eq!(routes(Some(75.0), Some(-84.0), Some(-84.0)), None);
+    }
+
+    #[test]
+    fn registration_route_taken_is_step_kind_only() {
+        let taken = |dual_fit, pre, post| {
+            registration_route_taken(dual_fit, Some(75.0), CF, Some(pre), Some(post))
+        };
+        // 13/g16-like step: acted on.
+        assert_eq!(taken(true, -82.79, -119.79), Some(RouteKind::Step));
+        // 26/g6-like common-mode, well past the bound: the predicate sees it, the decision does not.
+        assert_eq!(
+            registration_routes_to_dual_fit(Some(75.0), CF, Some(-914.5), Some(-910.8)),
+            Some(RouteKind::Common)
+        );
+        assert_eq!(taken(true, -914.5, -910.8), None);
+    }
+
+    #[test]
+    fn registration_route_taken_needs_dual_fit_on() {
+        assert_eq!(
+            registration_route_taken(false, Some(75.0), CF, Some(-82.79), Some(-119.79)),
+            None
+        );
+    }
+
+    #[test]
+    fn registration_kind_boundary_is_strict_at_twenty_ms() {
+        // Written 60 / 80: a step of exactly 20 ms is still common-mode.
+        assert_eq!(
+            routes(Some(50.0), Some(50.0), Some(70.0)),
+            Some(RouteKind::Common)
+        );
+        // Past 20 ms it is a step, in either direction.
+        assert_eq!(
+            routes(Some(50.0), Some(50.0), Some(70.5)),
+            Some(RouteKind::Step)
+        );
+        assert_eq!(
+            routes(Some(50.0), Some(70.5), Some(50.0)),
+            Some(RouteKind::Step)
+        );
+    }
 
     #[test]
     fn dual_fit_eligible_excludes_structure_alignment_failed() {

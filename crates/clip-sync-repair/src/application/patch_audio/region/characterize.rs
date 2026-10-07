@@ -21,7 +21,7 @@ use crate::domain::{
     },
     gap_signature::build_gap_signature,
     gap_structure::StructureMatchParams,
-    gap_tags::{FillTierThresholds, GapTagsPatchContext},
+    gap_tags::{DualFitRoute, FillTierThresholds, GapTagsPatchContext},
     patch_anchor::{
         format_anchored_offset_verbose_line, interpolate_anchored_offset_secs, AnchorSearchPrior,
         PatchAnchorTable,
@@ -43,7 +43,8 @@ use super::bracket::{
 };
 use super::dual_fit::{
     build_dual_fit_input, finalize_dual_fit, registration_residual_from_shoulders,
-    registration_shoulder_residual_ms, skip_or_dual_fit, DualFitAttempt, DualFitInputSpec,
+    registration_route_taken, registration_shoulder_residual_ms, skip_or_dual_fit,
+    try_dual_fit_rescue, DualFitAttempt, DualFitDecision, DualFitInputSpec,
 };
 use super::execute::execute_region_spec;
 use super::pcm::{b_extract_frames, b_mapped_start_frame, slice_b_extract};
@@ -266,6 +267,7 @@ pub(in crate::application::patch_audio) fn characterize_region(
         dual_fit_used: false,
         dual_fit_step_real: None,
         dual_fit_post_window_ms: None,
+        dual_fit_route: None,
         residual: None,
         residual_headroom_margin_db: request.residual_headroom_margin_db,
     };
@@ -637,6 +639,9 @@ pub(in crate::application::patch_audio) fn characterize_region(
         fit_terms,
         ..
     } = gate_outcome;
+    // What the gate-fail path hands `skip_or_dual_fit`: a routed dual-fit patch must carry these, not the
+    // single-lag fill's boundary-grid / anchor / zero-pad tags written just below.
+    let tag_ctx_pre_gate = tag_ctx;
     tag_ctx.fit_used_boundary_grid = fit_used_boundary_grid;
     tag_ctx.anchor_seam_used = anchor_seam_used;
     tag_ctx.anchor_bracket_move_frames = anchor_bracket_move_frames;
@@ -907,6 +912,54 @@ pub(in crate::application::patch_audio) fn characterize_region(
         )
         .map(|r| r.with_shoulder_quality(quality))
     };
+
+    // Registration routing (docs/dev/TEMP-dual-fit-registration-routing-plan.md § 5): the gate passed, but
+    // the single-lag fill sits further off a licensed shoulder than the bound allows, so try dual-fit
+    // first. A decline keeps the single-lag fill — routing never turns a patch into a skip (§ 2 inv. 1)
+    // — and the rescue is validated by `try_dual_fit_rescue`'s own gate on its own seam scores (inv. 3).
+    // Off (`None` bound) never reaches the measurement below, so the default path is untouched (inv. 2).
+    if let (Some(df), Some(locks), Some(r)) = (
+        dual_fit_input.as_ref(),
+        seam_locks.as_ref(),
+        registration_residual.as_ref(),
+    ) {
+        let crossfade_ms = seam_cf as f64 * 1000.0 / sample_rate as f64;
+        if let Some(kind) = registration_route_taken(
+            request.dual_fit,
+            request.dual_fit_registration_bound_ms,
+            crossfade_ms,
+            r.registration_residual_pre_ms,
+            r.registration_residual_post_ms,
+        ) {
+            match try_dual_fit_rescue(request, region, df, locks) {
+                Ok(rescue) => {
+                    tracing::debug!(
+                        gap = region.gap_index,
+                        ?kind,
+                        "registration routing: dual-fit replaced the single-lag fill"
+                    );
+                    return (
+                        finalize_dual_fit(
+                            DualFitDecision::Rescued(rescue),
+                            region,
+                            gap_offset_secs,
+                            silence_splice_b_extract,
+                            refined,
+                        ),
+                        GapTagsPatchContext {
+                            dual_fit_route: Some(DualFitRoute::RegistrationStep),
+                            ..tag_ctx_pre_gate
+                        },
+                    );
+                }
+                Err(_) => tracing::debug!(
+                    gap = region.gap_index,
+                    ?kind,
+                    "registration routing: dual-fit declined; keeping the single-lag fill"
+                ),
+            }
+        }
+    }
 
     // 6b.3a shadow: prove the executor can re-derive this exact fill from the spec + the FULL decode buffers
     // alone (re-slicing the B extract, rebuilding borders independently). Guards the characterize→execute

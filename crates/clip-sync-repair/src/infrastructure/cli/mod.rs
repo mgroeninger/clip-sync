@@ -158,6 +158,10 @@ pub fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     if args.seam_extend_fill {
         config.repair.seam_extend_fill = true;
     }
+    if let Some(ms) = args.dual_fit_registration_bound_ms {
+        config.repair.dual_fit_registration_bound_ms = Some(ms);
+    }
+    warn_on_registration_bound_misuse(&config.repair);
     if let Some(secs) = args.residual_border_standoff_secs {
         config.repair.residual_border_standoff_secs = Some(secs);
     }
@@ -298,6 +302,22 @@ pub fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     }
     if args.no_limit_fill_region {
         config.repair.limit_fill_to_mapped_region = false;
+    }
+}
+
+/// Once per run, after every layer (defaults → TOML → CLI) has merged — `patch_settings()` runs several
+/// times, so warning there repeats.
+fn warn_on_registration_bound_misuse(repair: &crate::infrastructure::config::RepairConfig) {
+    let Some(bound) = repair.dual_fit_registration_bound_ms else {
+        return;
+    };
+    if !repair.dual_fit {
+        tracing::warn!("dual_fit_registration_bound_ms is ignored because dual-fit is disabled");
+    } else if bound <= repair.crossfade_ms as f64 {
+        tracing::warn!(
+            "dual_fit_registration_bound_ms ({bound} ms) is at or below crossfade_ms ({} ms): the bound is              in the written frame, so every gap with both shoulders licensed will route",
+            repair.crossfade_ms
+        );
     }
 }
 
@@ -550,6 +570,8 @@ mod cli_override_tests {
             "--fill-repeat-penalty-weight",
             "0.25",
             "--seam-extend-fill",
+            "--dual-fit-registration-bound-ms",
+            "75",
             "--no-gap-end-extend",
             "--no-gap-start-extend",
             "--no-short-gap-one-strong-seam",
@@ -576,6 +598,11 @@ mod cli_override_tests {
         assert!(
             config.repair.seam_extend_fill,
             "--seam-extend-fill must reach the config; default is off"
+        );
+        assert_eq!(
+            config.repair.dual_fit_registration_bound_ms,
+            Some(75.0),
+            "--dual-fit-registration-bound-ms must reach the config; default is off"
         );
         assert_eq!(config.repair.fill_offset_mode, FillOffsetMode::Interpolated);
         assert!((config.repair.fill_fit_structure_weight - 0.4).abs() < f64::EPSILON);

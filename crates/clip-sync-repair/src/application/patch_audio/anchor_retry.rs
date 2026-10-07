@@ -252,6 +252,7 @@ mod tests {
             dual_fit_used: false,
             dual_fit_step_real: None,
             dual_fit_post_window_ms: None,
+            dual_fit_route: None,
         }
     }
 

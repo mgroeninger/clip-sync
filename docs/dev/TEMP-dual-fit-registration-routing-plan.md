@@ -799,8 +799,63 @@ dual-fit line; keep the layout otherwise unchanged.
 - Integration: a decline case. The step is present but dual-fit's seams fail
   the floor; assert that the single-lag fill is emitted unchanged
   (invariant 1).
+- Tag snapshot (fix landed, **no discriminating test yet**): the hook returns the
+  pre-gate `tag_ctx`. The step fixture routes in Fit mode, but the single-lag fill
+  there leaves `fit_used_boundary_grid`, `anchor_trusted` and `zero_pad_frames` at
+  their defaults, so leaked and snapshot tags are identical (checked 2026-10-05
+  by running both). A test needs a fixture whose gate-Ok fill sets one of them
+  (baseline not High so the boundary grid runs, or a trusted anchor seam).
 - Gate: `.\scripts\check-repair-test-manifest.ps1`,
   `.\scripts\test-tier.ps1 -Tier pr`, fmt and clippy.
+
+**Status (2026-10-05).** Landed, default off: predicate
+(`registration_routes_to_dual_fit`), the acted-on wrapper
+`registration_route_taken` (requires `dual_fit`; **step-kind only**, common-mode
+is log-only until § 6d gives it its own bound), the `dual_fit_registration_bound_ms`
+request field / config / CLI flag, and the `characterize.rs` hook (returns the
+pre-gate `tag_ctx`). The only integration test so far asserts a common-mode fill
+is *not* routed; the positive step, decline and tag-snapshot tests wait on the
+step fixture.
+
+**Also landed (2026-10-05).** `dual_fit_route` report tag (`gate_fail` |
+`registration_step`; `GapTags`, serialized only when `dual_fit_used`, contract stays v1;
+golden regenerated, `json-output.md` row added); the `--no-dual-fit` + bound warning
+moved to once-per-run in the CLI merge (also warns on a bound at or below
+`crossfade_ms`); written-frame wording in the CLI help / TOML doc; `gap-fill-modes.md`
+config row; synthetic step fixture (`clip-sync-repair-fixtures::registration_step`).
+
+**Known gaps (review 2026-10-05; fix before "done").**
+- Decline test **landed** (`registration_routing_decline_keeps_the_single_lag_fill`,
+  invariant 1): an 800 ms B dropout in the donor bridge makes dual-fit decline
+  `NoFit` ("aligned donor bridge not continuous") while the single-lag seams still
+  pass; asserts Patched, not dual-fit, no route tag, PCM bit-identical to routing off.
+  Verified by a temporary probe that the route fires and the decline is `NoFit`. It
+  does NOT cover the seam-floor (`Revalidation`) or headroom declines.
+- The tag-snapshot discriminating test (above) is still missing, and was scoped
+  2026-10-06: only `fit_used_boundary_grid`, `anchor_seam_used`,
+  `anchor_bracket_move_frames` and `anchor_trusted` can leak (they are written
+  just before the hook; `zero_pad_frames` is set after it). `fit_used_boundary_grid`
+  is set only when the extension grid runs and the baseline is not accepted on its
+  own — a gate-passing step fixture with extension flags off never reaches it, and a
+  fixture that does needs a Marginal baseline plus a High grid candidate AND a
+  routable step. A unit test on `region_outcome_gap_tags` cannot pin it: the leak
+  lives in which snapshot `characterize` hands back, not in the outcome overwrite.
+  Accepted gap; build the fixture only if the tags are touched again.
+- `registration_common` is not a value yet (common-mode is log-only until § 6d), and
+  there is no "routed, declined" value: a declined route keeps its single-lag fill and
+  is visible only in the debug log. The human report has no one-word route suffix.
+- Single-lag warn / Marginal logs fire *before* the hook, so they can describe a
+  fill that is then replaced.
+- **Fingerprint recipe deliberately has no knob.** The `--gap-fingerprints` path never
+  calls `characterize_region`, so it does not route; recording the bound in
+  `CorpusGateRecipe` would claim a setting the dump did not use. Revisit only if the
+  fingerprint grows a routing counterfactual.
+- Invariant 2 real-media check **passed (2026-10-06)**: pairs 13, 32, 44 (2/4/4
+  dual-fit gaps), `--patch-only --format json`, routing off, via
+  `measure-patch-outcomes.ps1` / `diff-patch-outcomes.ps1`. Baseline = same tree with
+  `registration_route_taken` forced to `None`. 64 joined gaps, 0 changed; the three
+  reports are byte-identical (SHA256). This covers routing OFF only — it says nothing
+  about routing on (that is the § 6c listen).
 
 **Done when:**
 - the flag lands default off;

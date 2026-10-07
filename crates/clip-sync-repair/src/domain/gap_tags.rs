@@ -321,6 +321,11 @@ pub struct GapTags {
     /// and on every non-dual-fit path.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dual_fit_post_window_ms: Option<u32>,
+    /// When `dual_fit_used`: what sent the gap to dual-fit — the single-lag fill failing the gate, or the
+    /// registration routing (`dual_fit_registration_bound_ms`) replacing a gate-passing one. `None` on
+    /// every non-dual-fit path. Additive: contract stays v1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dual_fit_route: Option<DualFitRoute>,
     /// Tail frames of the gap left unrepaired because donor B ran out; omitted when 0.
     ///
     /// Non-zero means **donor B was exhausted** — end of the extract, end of the file — and nothing
@@ -338,6 +343,16 @@ pub struct GapTags {
     pub zero_pad_frames: usize,
 }
 
+/// Why a gap went to dual-fit ([`GapTags::dual_fit_route`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DualFitRoute {
+    /// The single-lag fill failed the seam gate and dual-fit rescued it.
+    GateFail,
+    /// A gate-passing single-lag fill missed a shoulder by more than the bound on a step-kind gap.
+    RegistrationStep,
+}
+
 /// Inputs for tag derivation during a fill-region patch attempt.
 #[derive(Debug, Clone, Copy)]
 pub struct GapTagsPatchContext {
@@ -351,6 +366,8 @@ pub struct GapTagsPatchContext {
     pub dual_fit_used: bool,
     pub dual_fit_step_real: Option<bool>,
     pub dual_fit_post_window_ms: Option<u32>,
+    /// Set only by registration routing; a dual-fit patch with this `None` is a gate-fail rescue.
+    pub dual_fit_route: Option<DualFitRoute>,
     pub residual: Option<SeamResidualVerdict>,
     pub residual_headroom_margin_db: f64,
     /// See [`GapTags::zero_pad_frames`].
@@ -518,6 +535,9 @@ pub fn derive_gap_tags_from_patch_outcome(
         dual_fit_used: ctx.dual_fit_used,
         dual_fit_step_real: ctx.dual_fit_step_real,
         dual_fit_post_window_ms: ctx.dual_fit_post_window_ms,
+        dual_fit_route: ctx
+            .dual_fit_used
+            .then(|| ctx.dual_fit_route.unwrap_or(DualFitRoute::GateFail)),
         zero_pad_frames: ctx.zero_pad_frames,
     }
 }
@@ -552,6 +572,7 @@ pub fn derive_gap_tags_from_status(
                 dual_fit_used: false,
                 dual_fit_step_real: None,
                 dual_fit_post_window_ms: None,
+                dual_fit_route: None,
                 zero_pad_frames: 0,
             }
         }
@@ -583,6 +604,7 @@ pub fn derive_gap_tags_from_status(
                 dual_fit_used: *dual_fit_used,
                 dual_fit_step_real: *dual_fit_step_real,
                 dual_fit_post_window_ms: *dual_fit_post_window_ms,
+                dual_fit_route: None,
                 zero_pad_frames: *zero_pad_frames,
                 residual: None,
                 residual_headroom_margin_db: DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
@@ -601,6 +623,7 @@ pub fn derive_gap_tags_from_status(
                 dual_fit_used: false,
                 dual_fit_step_real: None,
                 dual_fit_post_window_ms: None,
+                dual_fit_route: None,
                 zero_pad_frames: 0,
                 residual: None,
                 residual_headroom_margin_db: DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
@@ -624,6 +647,7 @@ pub fn derive_gap_tags_from_status(
             zero_pad_frames: 0,
             dual_fit_step_real: None,
             dual_fit_post_window_ms: None,
+            dual_fit_route: None,
         },
     }
 }
@@ -732,6 +756,10 @@ pub fn format_gap_tags_verbose_line(tags: &GapTags) -> String {
     }
     if tags.dual_fit_used {
         parts.push("dual_fit=true".to_string());
+        // Named only for the non-default route, so existing gate-fail lines keep their text.
+        if tags.dual_fit_route == Some(DualFitRoute::RegistrationStep) {
+            parts.push("dual_fit_route=registration_step".to_string());
+        }
     }
     format!("           gap tags: {}", parts.join(" "))
 }
@@ -754,6 +782,7 @@ mod tests {
             zero_pad_frames: 0,
             dual_fit_step_real: None,
             dual_fit_post_window_ms: None,
+            dual_fit_route: None,
             residual: None,
             residual_headroom_margin_db: DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
         }

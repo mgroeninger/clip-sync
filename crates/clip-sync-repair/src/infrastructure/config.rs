@@ -207,6 +207,14 @@ pub struct RepairConfig {
     /// interior trim, validated by the unchanged gate). On by default; `--no-dual-fit` to disable.
     #[serde(default = "default_true")]
     pub dual_fit: bool,
+    /// **Registration routing** (`docs/dev/TEMP-dual-fit-registration-routing-plan.md` § 5): when set, a
+    /// gate-passing single-lag fill whose far-seam registration error exceeds this many ms (written
+    /// frame) is tried as dual-fit first, keeping the single-lag fill if dual-fit declines. Needs both
+    /// shoulders licensed. Unset (default) = off, bit-identical to no routing; ignored under
+    /// `dual_fit = false`. Quoted in the **written** frame: the report's planned-frame shoulder error plus
+    /// the seam crossfade width (`crossfade_ms`), so a bound at or below `crossfade_ms` routes everything.
+    #[serde(default)]
+    pub dual_fit_registration_bound_ms: Option<f64>,
     /// Tier-3 gap-fingerprint fields (`seam_probe`, `wide_envelope`, `lag_editorial`, `b_levels`).
     /// Off by default — `--gap-fingerprints` emits decision/repair (D/R) axes only unless enabled.
     #[serde(default)]
@@ -702,6 +710,7 @@ impl Default for RepairConfig {
             program_gain_max_spread_db: default_program_gain_max_spread_db(),
             max_program_gain_db: default_max_program_gain_db(),
             dual_fit: true,
+            dual_fit_registration_bound_ms: None,
             fingerprint_diagnostics: false,
             fingerprint_post_window_ladder: false,
             fingerprint_pre_window_ladder: false,
@@ -830,6 +839,7 @@ impl RepairConfig {
     }
 
     pub fn patch_settings(&self) -> PatchRequestSettings {
+        // Routing is a dual-fit attempt; with dual-fit off there is nothing to route to (the CLI warns).
         PatchRequestSettings {
             skip_equivalent_gaps: self.skip_equivalent_gaps,
             measure_fill_level: self.measure_fill_level,
@@ -841,6 +851,9 @@ impl RepairConfig {
                 max_program_gain_db: self.max_program_gain_db,
             },
             dual_fit: self.dual_fit,
+            dual_fit_registration_bound_ms: self
+                .dual_fit_registration_bound_ms
+                .filter(|_| self.dual_fit),
             lag_envelope_max_lag_ms: self.lag_envelope_max_lag_ms,
             lag_envelope_window_secs: self.lag_envelope_window_secs,
             normalize_window_secs: self.normalize_window_secs,
@@ -1123,6 +1136,14 @@ impl RepairConfig {
                 return Err(ConfigError::InvalidValue {
                     field: "residual_border_standoff_secs".into(),
                     reason: "must be finite and non-negative".into(),
+                });
+            }
+        }
+        if let Some(ms) = self.dual_fit_registration_bound_ms {
+            if !ms.is_finite() || ms <= 0.0 {
+                return Err(ConfigError::InvalidValue {
+                    field: "dual_fit_registration_bound_ms".into(),
+                    reason: "must be finite and positive".into(),
                 });
             }
         }
@@ -1683,6 +1704,50 @@ dry_run = true
         }
         .validate()
         .expect("zero is a valid instrument standoff");
+    }
+
+    #[test]
+    fn rejects_non_positive_or_non_finite_dual_fit_registration_bound() {
+        for bad in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            let config = RepairConfig {
+                dual_fit_registration_bound_ms: Some(bad),
+                ..RepairConfig::default()
+            };
+            let err = config.validate().expect_err("invalid routing bound");
+            assert!(
+                format!("{err:?}").contains("dual_fit_registration_bound_ms"),
+                "unexpected error for {bad}: {err:?}"
+            );
+        }
+        RepairConfig {
+            dual_fit_registration_bound_ms: Some(75.0),
+            ..RepairConfig::default()
+        }
+        .validate()
+        .expect("75 ms is a valid routing bound");
+    }
+
+    #[test]
+    fn routing_bound_is_off_by_default_and_dropped_under_no_dual_fit() {
+        assert_eq!(
+            RepairConfig::default()
+                .patch_settings()
+                .dual_fit_registration_bound_ms,
+            None
+        );
+        let on = RepairConfig {
+            dual_fit_registration_bound_ms: Some(75.0),
+            ..RepairConfig::default()
+        };
+        assert_eq!(
+            on.patch_settings().dual_fit_registration_bound_ms,
+            Some(75.0)
+        );
+        let off = RepairConfig {
+            dual_fit: false,
+            ..on
+        };
+        assert_eq!(off.patch_settings().dual_fit_registration_bound_ms, None);
     }
 
     #[test]

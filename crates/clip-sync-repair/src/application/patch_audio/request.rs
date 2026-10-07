@@ -237,6 +237,10 @@ pub struct PatchRequestSettings {
     /// fallback attempt: independent per-shoulder fit + interior-trim fill, validated by the unchanged gate
     /// (§5.2). Off by default ⇒ existing bracket-search path byte-identical (D6).
     pub dual_fit: bool,
+    /// Registration routing (routing plan § 5): try dual-fit first on a gate-passing single-lag fill whose
+    /// far-seam registration error exceeds this many ms (written frame; both shoulders licensed). `None`
+    /// = off, bit-identical. Always `None` when `dual_fit` is off.
+    pub dual_fit_registration_bound_ms: Option<f64>,
     pub residual_gate: crate::domain::ResidualGateMode,
     pub residual_floor_ok_db: f64,
     pub residual_headroom_margin_db: f64,

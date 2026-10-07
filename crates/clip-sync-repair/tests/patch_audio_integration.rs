@@ -20,6 +20,7 @@ use clip_sync_repair::application::align_bridge::scan_alignment_from_result;
 use clip_sync_repair::application::ports::PatchedAudioWriter;
 use clip_sync_repair::application::{PatchAudio, PatchAudioRequest};
 use clip_sync_repair::domain::gap::{Gap, GapReport};
+use clip_sync_repair::domain::gap_tags::DualFitRoute;
 use clip_sync_repair::domain::policies;
 use clip_sync_repair::domain::FillConfidence;
 use clip_sync_repair::domain::{CompatibilityVerdict, TrackCompatibility};
@@ -1898,6 +1899,198 @@ fn patch_audio_dual_fit_rescues_constant_shift_as_rigid_seam_lock() {
     assert!(
         gap_rms > 100.0 / 32767.0,
         "rigid-rescued gap should contain audio, rms={gap_rms}"
+    );
+}
+
+/// Registration routing (docs/dev/TEMP-dual-fit-registration-routing-plan.md § 5) is step-kind only:
+/// a common-mode miss (equal shoulders) never routes, whatever the bound. A noise fixture whose B is an
+/// unshifted copy of A, so the single-lag fill passes the gate at lag 0 and both shoulders read the same
+/// 10 ms crossfade-width error in the written frame — common-mode, even under a 1 ms bound.
+/// The positive step case needs a B with different pre/post lags (synthetic step fixture, still to build).
+#[test]
+fn registration_routing_leaves_a_common_mode_fill_alone_at_any_bound() {
+    const SHIFT_SECS: f64 = 0.0;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let path_a = temp.path().join("a.wav");
+    let path_b = temp.path().join("b.wav");
+    write_stereo_with_shifted_noise_band(
+        &path_a,
+        SAMPLE_RATE,
+        TOTAL_SECS,
+        0.0,
+        TOTAL_SECS as f64,
+        0.0,
+        7,
+        16_000.0,
+        Some((GAP_START, GAP_END)),
+        440.0,
+        8_000.0,
+    );
+    write_stereo_with_shifted_noise_band(
+        &path_b,
+        SAMPLE_RATE,
+        TOTAL_SECS,
+        0.0,
+        TOTAL_SECS as f64,
+        SHIFT_SECS,
+        7,
+        16_000.0,
+        None,
+        440.0,
+        8_000.0,
+    );
+
+    let run = |bound: Option<f64>| {
+        let opts = PatchTestOptions {
+            short_gap_one_strong_seam_fallback: false,
+            gap_end_extend_on_post_seam_fail: false,
+            gap_start_extend_on_pre_seam_fail: false,
+            disable_structure_trust: true,
+            partial_structure_waveform_soften: 1.0,
+            dual_fit_registration_bound_ms: bound,
+            ..Default::default()
+        };
+        let report = make_report(
+            path_a.clone(),
+            path_b.clone(),
+            stereo_identical_compat(SAMPLE_RATE),
+        );
+        run_patch(
+            patch_request_with_options(report, false, 2.0, 0.12, opts),
+            10,
+        )
+    };
+    let dual_fit_used =
+        |r: &clip_sync_repair::application::PatchAudioResult| match &r.summary.gaps[0].status {
+            GapPatchStatus::Patched { dual_fit_used, .. } => *dual_fit_used,
+            other => panic!("routing must never turn a patch into a skip, got {other:?}"),
+        };
+
+    let off = run(None);
+    assert!(
+        !dual_fit_used(&off),
+        "premise: the wide bracket search should pass the gate on its own"
+    );
+    assert!(
+        !dual_fit_used(&run(Some(50.0))),
+        "a bound above the written-frame error must leave the single-lag fill alone"
+    );
+    assert!(
+        !dual_fit_used(&run(Some(1.0))),
+        "a common-mode miss must not route, even far past the bound"
+    );
+}
+
+/// Step-kind routing: B's lag steps 40 ms at the gap midpoint, so no single lag registers both shoulders.
+fn step_fixture(dir: &Path) -> (PathBuf, PathBuf) {
+    step_fixture_with_dropout(dir, None)
+}
+
+fn step_fixture_with_dropout(dir: &Path, b_dropout_secs: Option<(f64, f64)>) -> (PathBuf, PathBuf) {
+    let (a, b) = (dir.join("a.wav"), dir.join("b.wav"));
+    clip_sync_repair_fixtures::registration_step::write_registration_step_pair(
+        &clip_sync_repair_fixtures::registration_step::RegistrationStepSpec {
+            sample_rate: SAMPLE_RATE,
+            total_secs: f64::from(TOTAL_SECS),
+            gap_start_secs: GAP_START,
+            gap_end_secs: GAP_END,
+            pre_shift_secs: 0.0,
+            post_shift_secs: 0.040,
+            seed: 7,
+            amplitude: 0.5,
+            periodic_hz: Some(100.0),
+            b_dropout_secs,
+        },
+        &a,
+        &b,
+    );
+    (a, b)
+}
+
+fn run_step_fixture(
+    a: &Path,
+    b: &Path,
+    bound: Option<f64>,
+) -> clip_sync_repair::application::PatchAudioResult {
+    let opts = PatchTestOptions {
+        short_gap_one_strong_seam_fallback: false,
+        gap_end_extend_on_post_seam_fail: false,
+        gap_start_extend_on_pre_seam_fail: false,
+        disable_structure_trust: true,
+        partial_structure_waveform_soften: 1.0,
+        dual_fit_registration_bound_ms: bound,
+        fill_mode: FillMode::Fit,
+        ..Default::default()
+    };
+    let report = make_report(
+        a.to_path_buf(),
+        b.to_path_buf(),
+        stereo_identical_compat(SAMPLE_RATE),
+    );
+    run_patch(
+        patch_request_with_options(report, false, 2.0, 0.12, opts),
+        10,
+    )
+}
+
+/// Step-kind registration routing replaces a gate-passing single-lag fill with dual-fit only when the bound
+/// is set below the step's far-seam error (written frame: 40 ms step + 10 ms crossfade = 50 ms), and never
+/// turns the patch into a skip. The 40 ms step is four periods of the 100 Hz tone, so the waveform seams
+/// still pass at the wrong lag and the gate accepts the single-lag fill on its own.
+#[test]
+fn registration_routing_replaces_a_gate_passing_step_fill_only_past_the_bound() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let (a, b) = step_fixture(temp.path());
+    let dual_fit_used =
+        |bound: Option<f64>| match &run_step_fixture(&a, &b, bound).summary.gaps[0].status {
+            GapPatchStatus::Patched { dual_fit_used, .. } => *dual_fit_used,
+            other => panic!("routing must never turn a patch into a skip, got {other:?}"),
+        };
+    assert!(
+        !dual_fit_used(None),
+        "premise: the gate passes the single-lag fill on its own"
+    );
+    assert!(
+        !dual_fit_used(Some(75.0)),
+        "a bound above the 50 ms written-frame error must not route"
+    );
+    assert!(
+        dual_fit_used(Some(30.0)),
+        "a bound below the 50 ms written-frame error must route"
+    );
+    let route = |bound| {
+        run_step_fixture(&a, &b, bound).summary.gaps[0]
+            .tags
+            .dual_fit_route
+    };
+    assert_eq!(route(None), None, "no dual-fit, no route");
+    assert_eq!(route(Some(30.0)), Some(DualFitRoute::RegistrationStep));
+}
+
+/// Plan § 2 invariant 1: when routing fires but dual-fit declines (here the donor bridge has an 800 ms
+/// dropout, so the aligned span is not continuous), the single-lag fill is kept — the patch is neither
+/// skipped nor tagged as dual-fit, and is byte-identical to the routing-off result.
+#[test]
+fn registration_routing_decline_keeps_the_single_lag_fill() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let (a, b) = step_fixture_with_dropout(temp.path(), Some((4.1, 4.9)));
+    let off = run_step_fixture(&a, &b, None);
+    let on = run_step_fixture(&a, &b, Some(30.0));
+    for (label, result) in [("off", &off), ("on", &on)] {
+        match &result.summary.gaps[0].status {
+            GapPatchStatus::Patched { dual_fit_used, .. } => assert!(
+                !dual_fit_used,
+                "{label}: a declined route must keep the single-lag fill"
+            ),
+            other => panic!("{label}: routing must never turn a patch into a skip, got {other:?}"),
+        }
+    }
+    assert_eq!(on.summary.gaps[0].tags.dual_fit_route, None);
+    assert_eq!(
+        on.pcm.as_ref().map(|p| &p.samples),
+        off.pcm.as_ref().map(|p| &p.samples),
+        "a declined route must leave the output bit-identical to routing off"
     );
 }
 

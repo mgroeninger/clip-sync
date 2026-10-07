@@ -337,6 +337,14 @@ pub struct Args {
     #[arg(long, value_name = "SECS")]
     pub residual_search_secs: Option<f64>,
 
+    /// Registration routing: try dual-fit first when a gate-passing single-lag fill misses a shoulder by
+    /// more than this many ms (needs both shoulders licensed; keeps the single-lag fill if dual-fit
+    /// declines). Measured in the written frame — the reported shoulder error plus the seam crossfade
+    /// width (--crossfade-ms) — so a bound at or below the crossfade routes everything. Ignored under
+    /// --no-dual-fit [default: off].
+    #[arg(long, value_name = "MS")]
+    pub dual_fit_registration_bound_ms: Option<f64>,
+
     /// Extend the fill one crossfade width past each gap edge so the seam blends use their own B
     /// content, instead of the post seam replaying the fill tail [default: off].
     #[arg(long)]

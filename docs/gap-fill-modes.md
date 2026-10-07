@@ -686,6 +686,7 @@ Most keys below drive **fit** placement. `dual_fit` is shared: G6 rescue runs af
 | `anchor_seam_min_xcorr_peak` | `0.5` | — | Tier-2 xcorr rescue floor |
 | `anchor_seam_xcorr_ambiguous_band` | `0.15` | — | Pearson band that may trigger xcorr |
 | `dual_fit` | `true` | `--no-dual-fit` | G6 per-shoulder rescue after scored gate skip (**both** fit and gate) |
+| `dual_fit_registration_bound_ms` | unset (off) | `--dual-fit-registration-bound-ms` | Registration routing: replace a **gate-passing** single-lag fill with dual-fit when a step-kind gap's far-seam error exceeds this many ms (**written frame** = reported error + `crossfade_ms`; both shoulders licensed; common-mode never routes yet). Keeps the single-lag fill if dual-fit declines; ignored under `--no-dual-fit`. Tagged `dual_fit_route: registration_step` (docs/dev/TEMP-dual-fit-registration-routing-plan.md § 5) |
 | `crossfade_ms` | `10` | `--crossfade-ms` | Seam blend width; clamped by `effective_seam_crossfade_frames` |
 | `seam_extend_fill` | `false` | `--seam-extend-fill` | Take `cf` frames of B either side of the fill so the post seam stops replaying the fill tail (§ Seam crossfade); bracket **and** dual-fit |
 

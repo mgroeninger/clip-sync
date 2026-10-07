@@ -64,6 +64,8 @@ pub struct PatchTestOptions {
     pub fit_boundary_search: FitBoundarySearch,
     /// Match production default (`RepairConfig.dual_fit`).
     pub dual_fit: bool,
+    /// Registration routing bound (ms, written frame); `None` = off, as in production.
+    pub dual_fit_registration_bound_ms: Option<f64>,
     /// Gap subset filter; resolved in [`PatchRequestSettings::into_request`].
     pub gap_selection: GapSelectionMode,
 }
@@ -106,6 +108,7 @@ impl Default for PatchTestOptions {
             profile: RepairProfile::Default,
             fit_boundary_search: FitBoundarySearch::BaselineOnly,
             dual_fit: clip_sync_repair::infrastructure::config::RepairConfig::default().dual_fit,
+            dual_fit_registration_bound_ms: None,
             gap_selection: GapSelectionMode::All,
         }
     }
@@ -325,6 +328,7 @@ pub fn patch_request_with_options(
         profile: options.profile,
         fit_boundary_search: options.fit_boundary_search,
         dual_fit: options.dual_fit,
+        dual_fit_registration_bound_ms: options.dual_fit_registration_bound_ms,
 
         // ---- deliberate deviations from production ----
         // Test-local settings for synthetic fixtures; production is covered elsewhere via
