@@ -79,6 +79,16 @@ try {
             '--test', 'w5_timing_offset'
         )
 
+        # The registration-routing rows of `patch_audio_integration` (routes past the bound, leaves
+        # common-mode alone, declines to the single-lag fill) are the only coverage of the routing
+        # hook in `characterize_region`; the rest of that binary is extended-tier only. Name filter,
+        # not a second binary: ~25 s in debug.
+        Invoke-CargoTest @(
+            '-p', 'clip-sync-repair',
+            '--test', 'patch_audio_integration',
+            'registration_routing'
+        )
+
         if (Test-FfmpegOnPath) {
             Invoke-CargoTest @(
                 '-p', 'clip-sync-repair',

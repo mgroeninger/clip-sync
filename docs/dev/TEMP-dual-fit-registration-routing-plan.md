@@ -840,7 +840,9 @@ config row; synthetic step fixture (`clip-sync-repair-fixtures::registration_ste
   fixture that does needs a Marginal baseline plus a High grid candidate AND a
   routable step. A unit test on `region_outcome_gap_tags` cannot pin it: the leak
   lives in which snapshot `characterize` hands back, not in the outcome overwrite.
-  Accepted gap; build the fixture only if the tags are touched again.
+  Accepted gap; superseded by a structural fix filed in BACKLOG.md (Repair R6, "Derive
+  patched gap tags from the outcome"), which removes the snapshot and makes the test a
+  pure unit test — no fixture.
 - `registration_common` is not a value yet (common-mode is log-only until § 6d), and
   there is no "routed, declined" value: a declined route keeps its single-lag fill and
   is visible only in the debug log. The human report has no one-word route suffix.

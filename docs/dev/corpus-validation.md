@@ -188,7 +188,7 @@ Shipped 2026-06-20 (fill-fitting, phases A–D). Exercises **patch** after align
 
 | Layer | Tier | Generator / fixture | Asserts |
 |-------|------|---------------------|---------|
-| `patch_audio_integration` | **integration** (PR extended) | Stereo sine + gap WAVs (`write_stereo_sine_with_gap`) | Patch count, skip reasons, fit marginal tier, gate regression, extension (~15 min) |
+| `patch_audio_integration` | **integration** (PR extended) | Stereo sine + gap WAVs (`write_stereo_sine_with_gap`) | Patch count, skip reasons, fit marginal tier, gate regression, extension (~1 min) |
 | `validate_patch_audio` | **validation** | Same sine fixtures, production-like fit config | `patch_audio_fit_production_defaults_smoke` (SP05) — run before release |
 | `query_reference_integration` | **integration** (PR) | Short chirp pairs | Gap inside/outside mapped region under `fill_mode = gate` |
 | `gap_corpus` | external / manual | `CLIP_SYNC_GAP_CORPUS` real media | Listen + skip/marginal counts (see gap corpus README) |

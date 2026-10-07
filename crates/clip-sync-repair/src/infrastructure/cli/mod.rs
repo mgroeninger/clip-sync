@@ -315,7 +315,7 @@ fn warn_on_registration_bound_misuse(repair: &crate::infrastructure::config::Rep
         tracing::warn!("dual_fit_registration_bound_ms is ignored because dual-fit is disabled");
     } else if bound <= repair.crossfade_ms as f64 {
         tracing::warn!(
-            "dual_fit_registration_bound_ms ({bound} ms) is at or below crossfade_ms ({} ms): the bound is              in the written frame, so every gap with both shoulders licensed will route",
+            "dual_fit_registration_bound_ms ({bound} ms) is at or below crossfade_ms ({} ms): the bound is in the written frame, so every gap with both shoulders licensed will route",
             repair.crossfade_ms
         );
     }

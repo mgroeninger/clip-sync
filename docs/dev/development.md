@@ -142,7 +142,7 @@ filters), not by relabeling it. Only external-dependency or exhaustive-contract 
 *validation*. Full machinery: [development.md](development.md) § Tier decision rule.
 
 **PR gate:** `.\scripts\test-tier.ps1 -Tier pr` (alignment committed corpus + repair smoke +
-CLI adapter tests). Does **not** run full `patch_audio_integration` (~15 min) or ignored
+CLI adapter tests). Does **not** run full `patch_audio_integration` (~1 min; only its `registration_routing` rows run in PR) or ignored
 validation/diagnostic rows. **Validation tier is not CI** — no scheduled runner with ffmpeg /
 corpus fetch; run `.\scripts\test-tier.ps1 -Tier validation` locally before releases or large
 validation changes.
@@ -226,7 +226,7 @@ means included in `.\scripts\test-tier.ps1 -Tier pr-repair` (and therefore `-Tie
 | `decode_path_projection` | integration | — | yes | C5 from-decode dump projection self-guard (synthetic A/B) |
 | `equivalence_divergence` | integration | — | yes | Scan-vs-diagnostic equivalence contract (media-free fixtures) |
 | `w5_timing_offset` | integration | — | yes | W5 timing-offset fixture reproduces g003 signature |
-| `patch_audio_integration` | integration | — | **extended only** | Sine seam grid (~15 min); SP04 (`i4_f3`); `pr-repair-extended` |
+| `patch_audio_integration` | integration | — | **extended only** (+ `registration_routing` rows in PR) | Sine seam grid (~1 min); SP04 (`i4_f3`); `pr-repair-extended`. PR runs only `registration_routing*` by name filter |
 | `abut_skip_integration` | integration | — | **extended only** | Introduced-silence `shoulders_abut` skip on the production `PatchAudio` path; `pr-repair-extended` / `integration` |
 | `cli_mux_integration` | integration | `ffmpeg-mux` | compile on PR† | Mux CLI; e2e mux `#[ignore]` — **validation** tier when ffmpeg on PATH |
 | `corpus_program_levels` | validation | — | no | Known-gain program levels on SHA-pinned public-domain masters (`#[ignore]`; ffmpeg + `fetch_corpus_sources`) |

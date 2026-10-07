@@ -58,7 +58,7 @@ here and [BACKLOG.md](../../BACKLOG.md) Active plans.
 | Item | Question |
 |------|----------|
 | **`integration_energy_patch` on PR** | Add SP01–SP03 to `pr-repair`? Today PR uses `corpus_scan_patch_smoke` + SD domain rows only. |
-| **`pr-repair-extended` in CI** | Path filter on `clip-sync-repair/**` for ~15 min sine seam grid on every PR? |
+| **`pr-repair-extended` in CI** | Path filter on `clip-sync-repair/**` for ~1 min sine seam grid on every PR? |
 
 ---
 
