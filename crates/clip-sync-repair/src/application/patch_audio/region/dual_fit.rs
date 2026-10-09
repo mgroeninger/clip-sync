@@ -148,16 +148,18 @@ fn dual_fit_eligible(request_dual_fit: bool, fail: SeamGateFailure) -> bool {
     request_dual_fit && !matches!(fail, SeamGateFailure::StructureAlignmentFailed)
 }
 
-/// The routing decision `characterize_region` acts on: [`registration_routes_to_dual_fit`] narrowed to
-/// what is adopted so far.
-/// - **Dual-fit must be on.** The config layer already drops the bound under `--no-dual-fit`, but a
+/// The routing decision `characterize_region` acts on: [`registration_routes_to_dual_fit`] with one bound
+/// per kind.
+/// - **Dual-fit must be on.** The config layer already drops the bounds under `--no-dual-fit`, but a
 ///   request built directly must not route either.
-/// - **Step-kind only** (plan § 6b). Common-mode is unadopted — § 4b left it out of scope below
-///   300 ms and § 6d's gross bound is not yet decided — so a common-mode miss never routes, whatever the
-///   bound. When § 6d lands it gets its own bound rather than reusing this one.
+/// - **Each kind has its own bound** (plan § 6b, § 6d). `step_bound_ms` acts on step-kind gaps only and
+///   `common_bound_ms` on common-mode gaps only, so neither knob widens the other's population: a
+///   common-mode miss never routes on the step bound, and a step miss never routes on the common bound.
+///   § 6d adopted 300 ms for the common-mode bound; neither is a default.
 pub(in crate::application::patch_audio::region) fn registration_route_taken(
     dual_fit: bool,
-    bound_ms: Option<f64>,
+    step_bound_ms: Option<f64>,
+    common_bound_ms: Option<f64>,
     crossfade_ms: f64,
     pre_ms: Option<f64>,
     post_ms: Option<f64>,
@@ -165,10 +167,11 @@ pub(in crate::application::patch_audio::region) fn registration_route_taken(
     if !dual_fit {
         return None;
     }
-    match registration_routes_to_dual_fit(bound_ms, crossfade_ms, pre_ms, post_ms)? {
-        RouteKind::Step => Some(RouteKind::Step),
-        RouteKind::Common => None,
-    }
+    let taken = |bound_ms: Option<f64>, kind: RouteKind| {
+        registration_routes_to_dual_fit(bound_ms, crossfade_ms, pre_ms, post_ms)
+            .filter(|routed| *routed == kind)
+    };
+    taken(step_bound_ms, RouteKind::Step).or_else(|| taken(common_bound_ms, RouteKind::Common))
 }
 
 /// A gap is step-kind when its shoulders disagree by more than this (routing plan § 0): no single lag
@@ -842,9 +845,9 @@ mod tests {
     }
 
     #[test]
-    fn registration_route_taken_is_step_kind_only() {
+    fn registration_route_taken_step_bound_acts_on_step_kind_only() {
         let taken = |dual_fit, pre, post| {
-            registration_route_taken(dual_fit, Some(75.0), CF, Some(pre), Some(post))
+            registration_route_taken(dual_fit, Some(75.0), None, CF, Some(pre), Some(post))
         };
         // 13/g16-like step: acted on.
         assert_eq!(taken(true, -82.79, -119.79), Some(RouteKind::Step));
@@ -857,9 +860,73 @@ mod tests {
     }
 
     #[test]
+    fn registration_route_taken_common_bound_acts_on_common_mode_only() {
+        let taken = |pre, post| {
+            registration_route_taken(true, None, Some(300.0), CF, Some(pre), Some(post))
+        };
+        // 26/g6 and 17/g34 as the report carries them (planned frame): gross and common-mode.
+        assert_eq!(taken(-914.5, -910.8), Some(RouteKind::Common));
+        assert_eq!(taken(-540.0, -534.0), Some(RouteKind::Common));
+        // A step-kind gap that is also gross is not this knob's population.
+        assert_eq!(taken(-914.5, -954.5), None);
+        // Common-mode below the bound stays single-lag, strictly (planned −300 is written −290).
+        assert_eq!(taken(-300.0, -300.0), None);
+        assert_eq!(taken(-310.01, -310.01), Some(RouteKind::Common));
+    }
+
+    #[test]
+    fn registration_route_taken_bounds_are_independent() {
+        let taken = |pre, post| {
+            registration_route_taken(true, Some(75.0), Some(300.0), CF, Some(pre), Some(post))
+        };
+        // Each kind goes to its own bound: a common-mode miss between the two bounds does not route
+        // on the lower, step-kind bound, and a gross step routes on the step bound.
+        assert_eq!(taken(-100.0, -100.0), None);
+        assert_eq!(taken(-914.5, -910.8), Some(RouteKind::Common));
+        assert_eq!(taken(-82.79, -119.79), Some(RouteKind::Step));
+        assert_eq!(taken(-914.5, -954.5), Some(RouteKind::Step));
+        // Both off is off.
+        assert_eq!(
+            registration_route_taken(true, None, None, CF, Some(-914.5), Some(-910.8)),
+            None
+        );
+    }
+
+    #[test]
     fn registration_route_taken_needs_dual_fit_on() {
         assert_eq!(
-            registration_route_taken(false, Some(75.0), CF, Some(-82.79), Some(-119.79)),
+            registration_route_taken(
+                false,
+                Some(75.0),
+                Some(300.0),
+                CF,
+                Some(-82.79),
+                Some(-119.79)
+            ),
+            None
+        );
+        assert_eq!(
+            registration_route_taken(
+                false,
+                Some(75.0),
+                Some(300.0),
+                CF,
+                Some(-914.5),
+                Some(-910.8)
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn registration_route_taken_needs_both_shoulders_licensed() {
+        // Invariant 4 holds for the common bound too: one-sided registration never routes.
+        assert_eq!(
+            registration_route_taken(true, None, Some(300.0), CF, None, Some(-910.8)),
+            None
+        );
+        assert_eq!(
+            registration_route_taken(true, None, Some(300.0), CF, Some(-914.5), None),
             None
         );
     }

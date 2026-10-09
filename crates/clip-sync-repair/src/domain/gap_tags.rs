@@ -351,6 +351,9 @@ pub enum DualFitRoute {
     GateFail,
     /// A gate-passing single-lag fill missed a shoulder by more than the bound on a step-kind gap.
     RegistrationStep,
+    /// A gate-passing single-lag fill missed both shoulders by more than the common-mode bound, with the
+    /// shoulders agreeing within 20 ms (`dual_fit_registration_common_bound_ms`).
+    RegistrationCommon,
 }
 
 /// Inputs for tag derivation during a fill-region patch attempt.
@@ -757,8 +760,14 @@ pub fn format_gap_tags_verbose_line(tags: &GapTags) -> String {
     if tags.dual_fit_used {
         parts.push("dual_fit=true".to_string());
         // Named only for the non-default route, so existing gate-fail lines keep their text.
-        if tags.dual_fit_route == Some(DualFitRoute::RegistrationStep) {
-            parts.push("dual_fit_route=registration_step".to_string());
+        match tags.dual_fit_route {
+            Some(DualFitRoute::RegistrationStep) => {
+                parts.push("dual_fit_route=registration_step".to_string());
+            }
+            Some(DualFitRoute::RegistrationCommon) => {
+                parts.push("dual_fit_route=registration_common".to_string());
+            }
+            Some(DualFitRoute::GateFail) | None => {}
         }
     }
     format!("           gap tags: {}", parts.join(" "))

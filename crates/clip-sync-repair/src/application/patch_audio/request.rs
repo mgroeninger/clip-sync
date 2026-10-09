@@ -241,6 +241,11 @@ pub struct PatchRequestSettings {
     /// far-seam registration error exceeds this many ms (written frame; both shoulders licensed). `None`
     /// = off, bit-identical. Always `None` when `dual_fit` is off.
     pub dual_fit_registration_bound_ms: Option<f64>,
+    /// Registration routing for **common-mode** gaps (routing plan § 6d): the same routing, with its own
+    /// bound, for gaps whose shoulders agree (|post − pre| ≤ 20 ms) and whose fill sits off both. The
+    /// step-kind bound above never routes these. `None` = off, bit-identical. Always `None` when
+    /// `dual_fit` is off.
+    pub dual_fit_registration_common_bound_ms: Option<f64>,
     pub residual_gate: crate::domain::ResidualGateMode,
     pub residual_floor_ok_db: f64,
     pub residual_headroom_margin_db: f64,

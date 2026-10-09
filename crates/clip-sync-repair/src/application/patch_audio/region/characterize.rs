@@ -44,7 +44,7 @@ use super::bracket::{
 use super::dual_fit::{
     build_dual_fit_input, finalize_dual_fit, registration_residual_from_shoulders,
     registration_route_taken, registration_shoulder_residual_ms, skip_or_dual_fit,
-    try_dual_fit_rescue, DualFitAttempt, DualFitDecision, DualFitInputSpec,
+    try_dual_fit_rescue, DualFitAttempt, DualFitDecision, DualFitInputSpec, RouteKind,
 };
 use super::execute::execute_region_spec;
 use super::pcm::{b_extract_frames, b_mapped_start_frame, slice_b_extract};
@@ -927,6 +927,7 @@ pub(in crate::application::patch_audio) fn characterize_region(
         if let Some(kind) = registration_route_taken(
             request.dual_fit,
             request.dual_fit_registration_bound_ms,
+            request.dual_fit_registration_common_bound_ms,
             crossfade_ms,
             r.registration_residual_pre_ms,
             r.registration_residual_post_ms,
@@ -947,7 +948,10 @@ pub(in crate::application::patch_audio) fn characterize_region(
                             refined,
                         ),
                         GapTagsPatchContext {
-                            dual_fit_route: Some(DualFitRoute::RegistrationStep),
+                            dual_fit_route: Some(match kind {
+                                RouteKind::Step => DualFitRoute::RegistrationStep,
+                                RouteKind::Common => DualFitRoute::RegistrationCommon,
+                            }),
                             ..tag_ctx_pre_gate
                         },
                     );

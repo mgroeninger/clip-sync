@@ -215,6 +215,13 @@ pub struct RepairConfig {
     /// the seam crossfade width (`crossfade_ms`), so a bound at or below `crossfade_ms` routes everything.
     #[serde(default)]
     pub dual_fit_registration_bound_ms: Option<f64>,
+    /// **Common-mode registration routing** (routing plan § 6d): the same routing as
+    /// `dual_fit_registration_bound_ms`, for gaps whose shoulders agree within 20 ms but whose single-lag
+    /// fill sits off both by more than this many ms (written frame). The step-kind bound never routes
+    /// these. § 6d's blind listen adopted 300 ms for gross displacement; it is not a default. Unset
+    /// (default) = off, bit-identical; ignored under `dual_fit = false`.
+    #[serde(default)]
+    pub dual_fit_registration_common_bound_ms: Option<f64>,
     /// Tier-3 gap-fingerprint fields (`seam_probe`, `wide_envelope`, `lag_editorial`, `b_levels`).
     /// Off by default — `--gap-fingerprints` emits decision/repair (D/R) axes only unless enabled.
     #[serde(default)]
@@ -711,6 +718,7 @@ impl Default for RepairConfig {
             max_program_gain_db: default_max_program_gain_db(),
             dual_fit: true,
             dual_fit_registration_bound_ms: None,
+            dual_fit_registration_common_bound_ms: None,
             fingerprint_diagnostics: false,
             fingerprint_post_window_ladder: false,
             fingerprint_pre_window_ladder: false,
@@ -853,6 +861,9 @@ impl RepairConfig {
             dual_fit: self.dual_fit,
             dual_fit_registration_bound_ms: self
                 .dual_fit_registration_bound_ms
+                .filter(|_| self.dual_fit),
+            dual_fit_registration_common_bound_ms: self
+                .dual_fit_registration_common_bound_ms
                 .filter(|_| self.dual_fit),
             lag_envelope_max_lag_ms: self.lag_envelope_max_lag_ms,
             lag_envelope_window_secs: self.lag_envelope_window_secs,
@@ -1143,6 +1154,14 @@ impl RepairConfig {
             if !ms.is_finite() || ms <= 0.0 {
                 return Err(ConfigError::InvalidValue {
                     field: "dual_fit_registration_bound_ms".into(),
+                    reason: "must be finite and positive".into(),
+                });
+            }
+        }
+        if let Some(ms) = self.dual_fit_registration_common_bound_ms {
+            if !ms.is_finite() || ms <= 0.0 {
+                return Err(ConfigError::InvalidValue {
+                    field: "dual_fit_registration_common_bound_ms".into(),
                     reason: "must be finite and positive".into(),
                 });
             }
@@ -1748,6 +1767,51 @@ dry_run = true
             ..on
         };
         assert_eq!(off.patch_settings().dual_fit_registration_bound_ms, None);
+    }
+
+    #[test]
+    fn rejects_non_positive_or_non_finite_dual_fit_registration_common_bound() {
+        for bad in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            let config = RepairConfig {
+                dual_fit_registration_common_bound_ms: Some(bad),
+                ..RepairConfig::default()
+            };
+            let err = config.validate().expect_err("invalid common routing bound");
+            assert!(
+                format!("{err:?}").contains("dual_fit_registration_common_bound_ms"),
+                "unexpected error for {bad}: {err:?}"
+            );
+        }
+        RepairConfig {
+            dual_fit_registration_common_bound_ms: Some(300.0),
+            ..RepairConfig::default()
+        }
+        .validate()
+        .expect("300 ms is a valid common routing bound");
+    }
+
+    #[test]
+    fn common_routing_bound_is_off_by_default_independent_and_dropped_under_no_dual_fit() {
+        let default = RepairConfig::default().patch_settings();
+        assert_eq!(default.dual_fit_registration_common_bound_ms, None);
+        let common_only = RepairConfig {
+            dual_fit_registration_common_bound_ms: Some(300.0),
+            ..RepairConfig::default()
+        };
+        let settings = common_only.patch_settings();
+        assert_eq!(settings.dual_fit_registration_common_bound_ms, Some(300.0));
+        assert_eq!(
+            settings.dual_fit_registration_bound_ms, None,
+            "the common bound must not enable step-kind routing"
+        );
+        let off = RepairConfig {
+            dual_fit: false,
+            ..common_only
+        };
+        assert_eq!(
+            off.patch_settings().dual_fit_registration_common_bound_ms,
+            None
+        );
     }
 
     #[test]

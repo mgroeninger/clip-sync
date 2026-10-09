@@ -1,12 +1,22 @@
 # TEMP — Dual-fit registration routing
 
-**Status:** drafted 2026-09-22. Phase 0 code landed 2026-09-22 (per-seam
-fields, PR gate green); the corpus `--patch-only` rerun is running, with its
-processing validated on the first 33 pairs (§ 7). The coverage census is done
-(§ 1b, § 7). Production arm (`patch_audio`
-characterize → dual-fit), plus one measurement-arm Change in Phase 1c
-(fingerprint dump fields). Record-only through Phase 1; flag-gated, default
-off, through Phase 3.
+**Status (2026-10-08):** § 6c scored: bound stays at 75 ms (1 better, 0 worse in 10
+below-bound step gaps; k = 0). § 6d scored: **adopt a gross-bound route** (26/g6 and
+17/g34 both dual-fit-better, 0 worse, k = 0). The common-mode bound knob landed the same day (§ 5), default off.
+
+**Status (2026-10-07):** § 5 routing is **implemented, default off** (step-kind
+only; common-mode is log-only). Invariant 2 passed on real media with routing off,
+the positive, common-mode and decline integration tests are green, and the
+`registration_routing` rows run in the PR tier. **Open:** § 6c (below-bound
+re-listen, stub: not yet pre-registered), § 6d (gross common-mode listen, draft),
+the default-flip decision, and the close. Known gaps are listed at the end of § 5.
+History below is dated, newest last.
+
+**2026-09-22:** drafted. Phase 0 code (per-seam fields), the coverage census
+(§ 1b) and the corpus `--patch-only` rerun landed (§ 7). Production arm
+(`patch_audio` characterize → dual-fit), plus one measurement-arm Change in
+Phase 1c (fingerprint dump fields). Record-only through Phase 1; flag-gated,
+default off, through Phase 3.
 
 **2026-09-24:** Phase 1b stays **void** (§ 7) — the post-seam crossfade
 duplication that voided it is now fixed on **both** fill paths behind
@@ -48,6 +58,10 @@ render from here on carries the new edit.
 tag are still open. § 6d (gross common-mode paired listen) is drafted, and its
 26/g6 pre-step is done: dual-fit places it at the shoulder locks, and the
 "ambiguous peak" worry was the adjacent sample, not a rival.
+
+**2026-10-06:** invariant-2 real-media check passed (pairs 13/32/44, 64 gaps,
+0 changed); decline test landed; the tag-snapshot leak is an accepted gap,
+superseded by BACKLOG Repair R6. Routing tests added to the PR gate.
 
 **Tracked as:** [BACKLOG.md](../../BACKLOG.md) § Fill placement, Hole 1 row
 ("**Next:** design the routing rule").
@@ -824,6 +838,29 @@ moved to once-per-run in the CLI merge (also warns on a bound at or below
 `crossfade_ms`); written-frame wording in the CLI help / TOML doc; `gap-fill-modes.md`
 config row; synthetic step fixture (`clip-sync-repair-fixtures::registration_step`).
 
+**Common-mode knob landed (2026-10-08), default off.** § 6d adopted a gross-bound route,
+so common-mode now has its own bound: `dual_fit_registration_common_bound_ms` (request /
+`RepairConfig` / `--dual-fit-registration-common-bound-ms`, finite and positive, dropped
+under `--no-dual-fit`).
+- `registration_route_taken` takes one bound per kind: the step bound acts on step-kind
+  gaps only and the common bound on common-mode gaps only, so neither widens the other's
+  population. Each is its own predicate call with the kind filtered after classification.
+- Route tag `registration_common` (additive value, contract stays v1; `json-output.md`
+  and `gap-fill-modes.md` rows updated).
+- **No default value.** § 6d's evidence is 300 ms on two gaps; shipping a number as a
+  default is the default-flip decision, which stays open. Pass `300` to reproduce § 6d.
+- Tests: unit tests for the per-kind decision (independence, strict bound, licensing,
+  `dual_fit` off), config validation and drop-under-no-dual-fit, CLI merge, and the
+  integration test `registration_routing_common_bound_routes_a_common_mode_fill`.
+  That one routes the unshifted-copy noise fixture on a 1 ms common bound, and pins that a
+  step bound alone and a common bound above the 10 ms written-frame error do not.
+- Not exercised on real media with routing **on** for common-mode: § 6d's dual arm was
+  the forced `--dual-fit --min-fill-correlation F` floor search, not this path.
+  The path is covered by the synthetic fixture only. Before the default flip, a real-media
+  `--patch-only` run of 26/g6 and 17/g34 with `--dual-fit-registration-common-bound-ms 300`
+  should show `dual_fit_route: registration_common` on exactly those two gaps in the
+  corpus (the next largest error is about 150 ms).
+
 **Known gaps (review 2026-10-05; fix before "done").**
 - Decline test **landed** (`registration_routing_decline_keeps_the_single_lag_fill`,
   invariant 1): an 800 ms B dropout in the donor bridge makes dual-fit decline
@@ -843,8 +880,8 @@ config row; synthetic step fixture (`clip-sync-repair-fixtures::registration_ste
   Accepted gap; superseded by a structural fix filed in BACKLOG.md (Repair R6, "Derive
   patched gap tags from the outcome"), which removes the snapshot and makes the test a
   pure unit test — no fixture.
-- `registration_common` is not a value yet (common-mode is log-only until § 6d), and
-  there is no "routed, declined" value: a declined route keeps its single-lag fill and
+- `registration_common` **landed 2026-10-08** with the common-mode knob (below). There is
+  still no "routed, declined" value: a declined route keeps its single-lag fill and
   is visible only in the debug log. The human report has no one-word route suffix.
 - Single-lag warn / Marginal logs fire *before* the hook, so they can describe a
   fill that is then replaced.
@@ -1020,33 +1057,123 @@ rendered fresh, one at a time.
   with a balanced 9 *a* / 9 *b* assignment, and new order and sitting
   placement. Only the counts were inspected, never per-trial assignments.
 
-### 6c. Below-bound re-listen on the fixed edit (stub, 2026-10-02)
+### 6c. Below-bound re-listen on the fixed edit (pre-registered 2026-10-07, scored 2026-10-08)
 
-**Unblocked 2026-10-05.** The fix shipped unconditional
+**Status: scored; the bound stays at 75 ms** (§ 7, *§ 6c below-bound re-listen*).
+The rule below was fixed before any gap was drawn or rendered.
+
+**Unblocked 2026-10-05.** The interior-edit fix shipped unconditional
 ([archive/TEMP-dualfit-interior-edit-plan.md](archive/TEMP-dualfit-interior-edit-plan.md)
-§ 4 *Decision*): adopted by decision, not by a § 4 **Fixed** — sitting 1 was
-*Not fixed* by rule, sitting 2 replicated neither loss. This is not yet pre-registered. The rule below is a
-sketch and must be fixed in this section before any gap is rendered.
+§ 4 *Decision*): adopted by decision, not by a § 4 **Fixed**.
 
 **Why.** § 6b's 75 ms bound is where single-lag's seam displacement starts to
 cost more than dual-fit's interior-edit blip (§ 7, *The dual-fit blip is the
 interior length edit*). With the blip removed, the crossover may sit lower.
 
-**Sketch.**
-- Re-render the dual-fit arm of every § 6b gap with max ≤ 75 ms (13 gaps,
-  including the 4 controls) on a build at or after the fix (the edit is no
-  longer flag-gated). Reuse § 6b's production arms unchanged: same build
-  flags, same renders. The interior-edit plan's 9 `dual-xf` renders under
-  `gap-files/2026-10-02-interior-edit/` already cover 9 of those gaps.
-- Run a blind a/b against production, scored by § 6b's R_B rule with B ∈
-  {50, 0}.
-- Add fresh draws from the same population if § 6b's below-bound set has been
-  heard too often to count as naive. Decide this when the stub is filled in.
-- Outcome: the bound moves to the lowest B that passes, or stays at 75 ms.
+**Question.** For step-kind gaps with max <= 75 ms (written frame), is routing
+to dual-fit ear-better than production on the fixed edit, and never ear-worse?
+
+**Fresh draws only.** Every § 6b below-bound gap was also heard in the
+interior-edit plan's two sittings (up to four hearings each), so none is
+naive. Re-rendering them would measure memory of the earlier trials. Reusing
+them is the fallback only if the fresh pool is too small (see *Pool check*).
+
+**Population.** Same source as § 6b: the `2026-09-25-spanning-patch`
+`--patch-only` reports.
+- Single-lag patched gaps (`dual_fit_used == false`) with both per-seam
+  residuals present; errors in the written frame (report value + 10 ms).
+- **Step-kind:** |post - pre| > 20 ms; **common-mode** otherwise.
+  `max` = max(|pre|, |post|).
+- **Exclude every gap named anywhere in this plan, settled.md, BACKLOG.md or
+  the interior-edit plan.** This now includes all of § 6b's 17 gaps.
+- Join on `a_start_secs`, never on the gap index (§ 7, *Gap labels*).
+
+**Pool check (before drawing).** Count the eligible gaps per stratum. Expected
+about 14 in 50 < max <= 75 and about 9 in max <= 50 (§ 6b's leftover). If a
+stratum has fewer than its quota, shrink the quota and record it. Do not
+borrow from § 6b's gaps.
+
+**Strata: 12 trials, one sitting.**
+
+| Stratum | n | Selection |
+|---|---|---|
+| Step, 50 < max <= 75 ms | 6 | random draw |
+| Step, max <= 50 ms | 4 | random draw |
+| Control | 2 | fresh common-mode gaps with max < 50 ms |
+
+**Draw.** `random.Random(20261007)`; shuffle each stratum's eligible list
+(sorted by (pair, gap) first) and walk it in order. Eligible lists come from the
+`2026-10-07-spanning-patch` `--patch-only` reports (build `37a3cf4`+, all 85
+pairs; placement reproduces § 6b's table to 1 ms).
+- **Step strata:** a gap is **taken** if the production route fires on it, that
+  is `--dual-fit --dual-fit-registration-bound-ms 0.001` records
+  `dual_fit_route: registration_step` with `dual_fit_used: true`. Otherwise it is
+  **skipped** (declined, or no route), recorded with its reason, and the walk
+  continues. This replaces § 6b's floor search for these strata, so the dual arm
+  is the shipped routing path, not a hand-forced one.
+- **Controls** are common-mode, which routing does not act on, so they use § 6b's
+  floor search and must also have two differing arms.
+
+**Render.** As § 6d (same session, same build, same manifest).
+- Build at or after the interior-edit fix, `--seam-extend-fill` on both arms,
+  default 3 s context, `--features calibration,he-aac`. Production arm =
+  routing off. Dual arm = routing at bound 0.001 ms (the config rejects 0) for step strata; forced dual-fit
+  at the found floor for controls.
+- Record flags, build commit, dirty state and found floors in the manifest.
+- Labelled renders to the session scratchpad. Only blind `tNN_{a,b}.wav` go to
+  `gap-files/`, key held outside.
+- Dual-fit goes on *a* in exactly 6 of 12 trials. Check only the count, never
+  per-trial assignments. Order is random.
+
+**Presentation.** Score each trial as in § 6: a better / b better / same, with
+optional location and description. Sit this separately from § 6d's 6 trials.
+
+**Pre-registered decision rule** (mirrors § 6b; no pooling with § 6b, whose
+dual arm carried the old blip).
+- **Noise:** `k` = non-*same* verdicts among the 2 controls. **k >= 2:
+  inconclusive**, no decision. Otherwise the worse-tolerance is `w = k`.
+- R_B = routed fresh step-kind gaps with max > B. Cumulative: R_50 is the 50-75
+  stratum, R_0 adds the <= 50 stratum.
+- **Move the bound to the lowest B in {50, 0}** where R_B has **better >= 2
+  and worse <= w**.
+- **Refute lowering** (settled § A) if worse > better in R_0.
+- Otherwise the bound **stays at 75 ms** (keep opt-in below it).
+- **Limit of the test.** With n = 6 / 10 and k allowed up to 1, this detects a
+  strong effect only. A "stays at 75" outcome means no evidence of a benefit
+  below the bound, not evidence of none.
+
+**Selection and render (2026-10-08).** Build `bf1de52` (working tree dirty:
+this plan only), release, `--features calibration,he-aac`, `--seam-extend-fill`
+on both arms, default 3 s context. Production arm = default flags. Dual arm =
+`--dual-fit --dual-fit-registration-bound-ms 0.001` (step) or
+`--dual-fit --min-fill-correlation F` (controls, § 6d). The walk took every
+candidate in draw order with **0 skips**; the 12 gaps below were not
+re-drawn. Errors are the pre-route single-lag reads, written frame, ms.
+
+| Stratum | Gap | pre | post |
+|---|---|---|---|
+| 50-75 | 24/g90 | +53 | +25 |
+| 50-75 | 63/g4 | +52 | +14 |
+| 50-75 | 70/g8 | +67 | +26 |
+| 50-75 | 26/g5 | +36 | +66 |
+| 50-75 | 49/g9 | +33 | +64 |
+| 50-75 | 83/g1 | +64 | +14 |
+| <= 50 | 41/g18 | +15 | +47 |
+| <= 50 | 66/g10 | -13 | -41 |
+| <= 50 | 81/g8 | +50 | +26 |
+| <= 50 | 47/g8 | -4 | +33 |
+| Control (floor 0.41) | 67/g9 | -4 | -6 |
+| Control (floor 0.64) | 86/g20 | +24 | +32 |
+
+**Build checks (before any listening).** Every gap's arms differ. Over the span
+where they differ the dual arm's RMS is within 0.4 dB of production, except
+the 67/g9 control at -0.97 dB (left as is, as § 6b left 13/g16). The a/b
+assignment has dual-fit on *a* in exactly 6 of 12; only the count was checked.
 
 ### 6d. Gross common-mode paired blind listen (draft, 2026-10-05)
 
-**Status: draft.** Fix everything below before any gap is rendered.
+**Status: scored 2026-10-08. Adopt a gross-bound route** (§ 7, *§ 6d gross
+common-mode paired listen*). The text below is the pre-registration, unchanged.
 
 **Why.** Scope (c) (§ 4) has one weak positive. No production path routes
 26/g6 (−904 / −901 ms) or 17/g34 (−530 / −524 ms), and § 6b's step-kind
@@ -1145,6 +1272,16 @@ location and description.
 stays out of scope, as § 4b's re-run left it. A pass is at most two
 positives from two gaps in one corpus, so the default flip stays behind the flag
 until a further gross gap appears.
+
+**Selection and render (2026-10-08, same session and build as § 6c).** 17/g34
+(5687.5) and 26/g6 (2151.7) were found by `a_start_secs`. Dual arm =
+`--dual-fit --min-fill-correlation F` with found floors 17/g34 0.76, 26/g6 0.62.
+Controls (seed 20261005, disjoint from § 6c's) are 65/g7 (floor 0.43) and
+76/g15 (floor 0.84). All arms differ; levels within 0.4 dB. Dual-fit on *a* in
+exactly 3 of 6 (count only).
+
+**Result (2026-10-08).** Both gaps dual-fit-better (two agreeing trials each), both
+controls *same*, k = 0: adopt. Verdict table in § 7.
 
 **Sequencing.** Render in the same session as § 6c to share the build and the
 manifest. Do not add a second knob in § 5 until this lands.
@@ -2249,6 +2386,59 @@ seam error > 75 ms. Below 75 ms, dual-fit never won: it lost 4 and tied 7.
    kind is not decided by this pass.
 2. **Attribute the dual-fit seam blip** (see Reading). This is what would
    lower the bound. *Done: see the next entry.*
+
+### § 6c below-bound re-listen (rendered 2026-10-08, scored 2026-10-08)
+
+12 blind trials, one sitting, fresh draws, dual arm = the shipped routing path
+(bound 0.001 ms) for the step strata, forced dual-fit for the controls
+(selection in § 6c). Verdicts, unblinded after scoring:
+
+| Stratum | Gap | Verdict |
+|---|---|---|
+| 50-75 | 24/g90, 63/g4, 70/g8, 26/g5, 83/g1 | same |
+| 50-75 | 49/g9 | **dual-fit better**: production has an echo, "likely at post" |
+| <= 50 | 41/g18, 66/g10, 81/g8, 47/g8 | same |
+| Control | 67/g9, 86/g20 | same |
+
+- **Noise:** k = 0 (both controls *same*), so the worse-tolerance is w = 0.
+- **R_50** (50-75 stratum): better 1, worse 0. **R_0** (adds <= 50): better 1,
+  worse 0. Neither reaches better >= 2.
+- **Outcome under the pre-registered rule: the bound stays at 75 ms.** Not
+  refuted (worse 0). 11 of 12 trials were not distinguishable, including 24/g90,
+  where production's anchor-seam write spans 4.1+ s against dual-fit's 1.24 s.
+- **Reading.** Below 75 ms dual-fit is never worse on the fixed edit (0 of 10
+  routed step gaps), but it is rarely better either: one post-seam production
+  echo in 10. This is the power limit the draft named, not evidence of none.
+  49/g9 is a candidate for a later re-hear, not a bound change.
+- **Pooling with the step-kind adoption (75 ms).** No change: R_75 stands as
+  scored in § 6b.
+
+### § 6d gross common-mode paired listen (rendered 2026-10-08, scored 2026-10-08)
+
+6 blind trials, one sitting, dual arm = forced dual-fit at the found floors
+(selection in § 6d). Verdicts, unblinded after scoring:
+
+| Gap | Trials | Dual-fit on | Verdict | Listener's note |
+|---|---|---|---|---|
+| 26/g6 (gross) | t01, t02 | *b*, *b* | **dual-fit better** twice (picked *b*) | production: "repeated sounds and obvious changes in tempo in song" |
+| 17/g34 (gross) | t05, t06 | *a*, *a* | **dual-fit better** twice (picked *a*) | production: "repeated sounds and obvious changes in tempo in song" |
+| Control 65/g7 | t03 | *b* | same | |
+| Control 76/g15 | t04 | *a* | same | |
+
+- **Noise:** k = 0 (both controls *same*). Each gap's two trials agree.
+- **Outcome under the pre-registered rule: adopt a gross-bound route**
+  (dual-fit-first for common-mode, |residual| >= 300 ms). Both gaps are
+  dual-fit-better and neither is dual-fit-worse.
+- **Reading.** The audible defect is a gross content displacement: hundreds of
+  ms of registration error read as repeated material and a tempo break (the
+  content-displacement regime, as opposed to the tens-of-ms echo of § 6c's
+  49/g9). Dual-fit places both fills at the shoulder locks, so there is no
+  displacement to hear.
+- **Limit.** Two gaps in one corpus and one listener. The default flip stays
+  behind the flag until a further gross gap appears (§ 6d, *What this does and
+  does not decide*). Common-mode below 300 ms stays out of scope.
+- **Unblocks:** the second knob in § 5 (the common-mode bound, which is
+  log-only today). The step-kind 75 ms bound is untouched.
 
 ### The dual-fit blip is the interior length edit, not the seams (measured 2026-10-02)
 

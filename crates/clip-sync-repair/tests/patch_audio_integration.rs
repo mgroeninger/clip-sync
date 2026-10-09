@@ -1982,6 +1982,99 @@ fn registration_routing_leaves_a_common_mode_fill_alone_at_any_bound() {
     );
 }
 
+/// Common-mode routing (routing plan § 6d) has its own bound. On the same unshifted-copy noise fixture as
+/// the test above (both shoulders read the 10 ms written-frame crossfade error, equal), the common bound
+/// routes it to dual-fit and tags the route `registration_common`, while a step bound alone still does not.
+/// A bound above the 10 ms error leaves the single-lag fill alone, and the patch is never a skip.
+#[test]
+fn registration_routing_common_bound_routes_a_common_mode_fill() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let path_a = temp.path().join("a.wav");
+    let path_b = temp.path().join("b.wav");
+    write_stereo_with_shifted_noise_band(
+        &path_a,
+        SAMPLE_RATE,
+        TOTAL_SECS,
+        0.0,
+        TOTAL_SECS as f64,
+        0.0,
+        7,
+        16_000.0,
+        Some((GAP_START, GAP_END)),
+        440.0,
+        8_000.0,
+    );
+    write_stereo_with_shifted_noise_band(
+        &path_b,
+        SAMPLE_RATE,
+        TOTAL_SECS,
+        0.0,
+        TOTAL_SECS as f64,
+        0.0,
+        7,
+        16_000.0,
+        None,
+        440.0,
+        8_000.0,
+    );
+
+    let run = |step: Option<f64>, common: Option<f64>| {
+        let opts = PatchTestOptions {
+            short_gap_one_strong_seam_fallback: false,
+            gap_end_extend_on_post_seam_fail: false,
+            gap_start_extend_on_pre_seam_fail: false,
+            disable_structure_trust: true,
+            partial_structure_waveform_soften: 1.0,
+            dual_fit_registration_bound_ms: step,
+            dual_fit_registration_common_bound_ms: common,
+            ..Default::default()
+        };
+        let report = make_report(
+            path_a.clone(),
+            path_b.clone(),
+            stereo_identical_compat(SAMPLE_RATE),
+        );
+        run_patch(
+            patch_request_with_options(report, false, 2.0, 0.12, opts),
+            10,
+        )
+    };
+    let route = |step, common| {
+        let result = run(step, common);
+        match &result.summary.gaps[0].status {
+            GapPatchStatus::Patched { dual_fit_used, .. } => {
+                assert_eq!(
+                    *dual_fit_used,
+                    result.summary.gaps[0].tags.dual_fit_route.is_some(),
+                    "a route tag must appear exactly when dual-fit was used here"
+                );
+            }
+            other => panic!("routing must never turn a patch into a skip, got {other:?}"),
+        }
+        result.summary.gaps[0].tags.dual_fit_route
+    };
+    assert_eq!(
+        route(None, None),
+        None,
+        "premise: the gate passes on its own"
+    );
+    assert_eq!(
+        route(Some(1.0), None),
+        None,
+        "a step bound alone must not route a common-mode fill"
+    );
+    assert_eq!(
+        route(None, Some(50.0)),
+        None,
+        "a common bound above the 10 ms written-frame error must not route"
+    );
+    assert_eq!(
+        route(None, Some(1.0)),
+        Some(DualFitRoute::RegistrationCommon),
+        "a common bound below the written-frame error must route"
+    );
+}
+
 /// Step-kind routing: B's lag steps 40 ms at the gap midpoint, so no single lag registers both shoulders.
 fn step_fixture(dir: &Path) -> (PathBuf, PathBuf) {
     step_fixture_with_dropout(dir, None)

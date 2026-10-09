@@ -345,6 +345,13 @@ pub struct Args {
     #[arg(long, value_name = "MS")]
     pub dual_fit_registration_bound_ms: Option<f64>,
 
+    /// Registration routing for common-mode gaps: like --dual-fit-registration-bound-ms, for gaps whose
+    /// shoulders agree within 20 ms but whose single-lag fill sits off both by more than this many ms
+    /// (written frame). The step-kind bound never routes these. A blind listen adopted 300 ms for gross
+    /// displacement. Ignored under --no-dual-fit [default: off].
+    #[arg(long, value_name = "MS")]
+    pub dual_fit_registration_common_bound_ms: Option<f64>,
+
     /// Extend the fill one crossfade width past each gap edge so the seam blends use their own B
     /// content, instead of the post seam replaying the fill tail [default: off].
     #[arg(long)]
