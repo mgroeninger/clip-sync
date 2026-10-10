@@ -1,5 +1,12 @@
 # TEMP — Dual-fit registration routing
 
+**Status (2026-10-09):** **Routing is now on by default, both bounds** (step-kind 75 ms,
+common-mode 300 ms), with `--no-dual-fit-registration-routing` /
+`dual_fit_registration_routing = false` as the off switch. § 6e scored a third gross
+gap (85/g86, dual-fit-better, none worse); the flip was a decision, not a
+met-criteria result (see § 6e *Decision*). Open: the close (§ 9), and listens on the
+150–300 ms common-mode gaps, which the 300 ms bound deliberately leaves out.
+
 **Status (2026-10-08):** § 6c scored: bound stays at 75 ms (1 better, 0 worse in 10
 below-bound step gaps; k = 0). § 6d scored: **adopt a gross-bound route** (26/g6 and
 17/g34 both dual-fit-better, 0 worse, k = 0). The common-mode bound knob landed the same day (§ 5), default off.
@@ -2439,6 +2446,70 @@ seam error > 75 ms. Below 75 ms, dual-fit never won: it lost 4 and tied 7.
   does not decide*). Common-mode below 300 ms stays out of scope.
 - **Unblocks:** the second knob in § 5 (the common-mode bound, which is
   log-only today). The step-kind 75 ms bound is untouched.
+
+### § 6e third gross gap, 85/g86 (rendered 2026-10-09, scored 2026-10-09)
+
+85/g86 (written-frame seams −999 / −1003 ms) came from the pairs 55–87
+`--patch-only` census. A real-media run with `--dual-fit
+--dual-fit-registration-common-bound-ms 300` routed exactly 26/g6, 17/g34 and
+85/g86 as `registration_common` (58/g7 at −267 / −300 did not: its pre seam is
+below the bound). Dual arm = that routing path itself, not a forced floor search.
+4 blind trials; arms differ only inside the written region.
+
+| Trial | Kind | Dual-fit on | Verdict |
+|---|---|---|---|
+| t01 | 85/g86 | *b* | **dual-fit better** (picked *b*) |
+| t02 | 85/g86 | *b* | **dual-fit better** (picked *b*) |
+| t03 | null, dual vs dual | n/a | same |
+| t04 | null, prod vs prod | n/a | same |
+
+- **Noise:** k = 0. The two real trials agree.
+- **Weak ear signal.** The listener reported no identifiable cue ("basically
+  gut-feel") and could not tell the donor, production and correct slices apart
+  by listening. Both real trials happened to put dual-fit on *b* (a 1-in-4
+  draw), so a *b*-preference bias would give the same pattern; the two *same*
+  nulls (both called *same*, no false positive) are the only check against that.
+- **What the material is.** The B donor here is a quiet alarm (repeating
+  beeps, about −45 dB in the center channel) with two loud broadband
+  "shhh"es **after** the gap. The gap itself holds only the alarm tone. The
+  alarm is steady and periodic (envelope repeat about 500 ms), so a 1 s
+  displacement lands on near-identical alarm audio, which is why a
+  displacement is hard to hear and why the seam gate cannot tell it from a
+  correct placement. Production's wrong placement **passed the gate**: a
+  silent failure, not a skip.
+- **Independent anchor for the lag.** The first "shhh" is at A 3.8 s and
+  B about 3.5 s, a lag of about −0.3 s. That agrees with the shoulder locks
+  (−333 / −328 ms) and not with production's −1342 ms, so the shoulders are
+  not the only evidence for where the gap's content belongs.
+- **The only content difference inside the gap** is a faint broadband blip
+  (about −38 dB above 3 kHz, against −10 dB for the "shhh"es and −50 to −57 dB
+  for the background) at about A 3.4–3.5 s. The dual-fit patch carries it
+  (about −43 dB there); production's patch is flat. The waveforms of the two
+  center-channel slices look alike because both are the same alarm tone,
+  out of phase (difference −43.8 dB, as loud as either slice).
+  An earlier note in this entry called the blip a "shhh" inside the slice;
+  retracted, the "shhh"es are after the patch.
+- **Outcome under the § 6d rule:** dual-fit-better, none worse. A third gross
+  gap. The ear signal is weaker than 26/g6 and 17/g34 and was not tied to a
+  cause; the placement is measured and dual-fit removes the displacement
+  entirely. Still one listener. 85/g86 is therefore a **measured** positive,
+  not an ear-confirmed one; the ear-confirmed gross positives remain 26/g6
+  and 17/g34.
+- **Decision (2026-10-09, user): enable both bounds by default.** § 6d's
+  stated trigger for the flip was "until a further gross gap appears"; 85/g86
+  is that gap. The stricter ear bar was not met, so the flip is recorded as a
+  decision on measurement plus two ear-confirmed gaps, with these limits:
+  - the common bound stays at **300 ms**; the 150–300 ms gaps (81/g7, 79/g9,
+    79/g18 with a step) have no listen, and 58/g7 (−267 / −300) does not
+    route, so none of them change;
+  - across the corpus the 300 ms bound routes exactly 17/g34, 26/g6 and
+    85/g86, so the blast radius is three gaps; routing never turns a patch
+    into a skip (a declined dual-fit keeps the single-lag fill);
+  - "off is bit-identical" is now a property of the explicit off switch
+    (`--no-dual-fit-registration-routing`, or `dual_fit = false`), not of the
+    default; the tests that pin it set the knobs explicitly;
+  - reversal is one line (the defaults in `RepairConfig`), and a config can
+    set `dual_fit_registration_routing = false`.
 
 ### The dual-fit blip is the interior length edit, not the seams (measured 2026-10-02)
 

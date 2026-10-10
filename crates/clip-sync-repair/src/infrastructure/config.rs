@@ -207,21 +207,26 @@ pub struct RepairConfig {
     /// interior trim, validated by the unchanged gate). On by default; `--no-dual-fit` to disable.
     #[serde(default = "default_true")]
     pub dual_fit: bool,
-    /// **Registration routing** (`docs/dev/TEMP-dual-fit-registration-routing-plan.md` § 5): when set, a
+    /// **Registration routing** (`docs/dev/TEMP-dual-fit-registration-routing-plan.md` § 5): a
     /// gate-passing single-lag fill whose far-seam registration error exceeds this many ms (written
     /// frame) is tried as dual-fit first, keeping the single-lag fill if dual-fit declines. Needs both
-    /// shoulders licensed. Unset (default) = off, bit-identical to no routing; ignored under
-    /// `dual_fit = false`. Quoted in the **written** frame: the report's planned-frame shoulder error plus
-    /// the seam crossfade width (`crossfade_ms`), so a bound at or below `crossfade_ms` routes everything.
-    #[serde(default)]
+    /// shoulders licensed. On by default at 75 ms (§ 6b); `dual_fit_registration_routing = false`
+    /// (`--no-dual-fit-registration-routing`) turns both routes off. Ignored under `dual_fit = false`.
+    /// Quoted in the **written** frame: the report's planned-frame shoulder error plus the seam
+    /// crossfade width (`crossfade_ms`), so a bound at or below `crossfade_ms` routes everything.
+    #[serde(default = "default_dual_fit_registration_bound_ms")]
     pub dual_fit_registration_bound_ms: Option<f64>,
-    /// **Common-mode registration routing** (routing plan § 6d): the same routing as
+    /// **Common-mode registration routing** (routing plan § 6d/§ 6e): the same routing as
     /// `dual_fit_registration_bound_ms`, for gaps whose shoulders agree within 20 ms but whose single-lag
     /// fill sits off both by more than this many ms (written frame). The step-kind bound never routes
-    /// these. § 6d's blind listen adopted 300 ms for gross displacement; it is not a default. Unset
-    /// (default) = off, bit-identical; ignored under `dual_fit = false`.
-    #[serde(default)]
+    /// these. On by default at 300 ms, which routes only gross displacement (17/g34, 26/g6 and 85/g86
+    /// are the corpus's three); `dual_fit_registration_routing` turns it off with the step-kind bound.
+    #[serde(default = "default_dual_fit_registration_common_bound_ms")]
     pub dual_fit_registration_common_bound_ms: Option<f64>,
+    /// Master switch for registration routing (both bounds). On by default; `false`
+    /// (`--no-dual-fit-registration-routing`) restores the pre-routing path bit-identically.
+    #[serde(default = "default_true")]
+    pub dual_fit_registration_routing: bool,
     /// Tier-3 gap-fingerprint fields (`seam_probe`, `wide_envelope`, `lag_editorial`, `b_levels`).
     /// Off by default — `--gap-fingerprints` emits decision/repair (D/R) axes only unless enabled.
     #[serde(default)]
@@ -560,6 +565,14 @@ fn default_strong_structure_trust() -> f64 {
 fn default_partial_structure_waveform_soften() -> f64 {
     0.85
 }
+fn default_dual_fit_registration_bound_ms() -> Option<f64> {
+    Some(75.0)
+}
+
+fn default_dual_fit_registration_common_bound_ms() -> Option<f64> {
+    Some(300.0)
+}
+
 fn default_crossfade_ms() -> u64 {
     10
 }
@@ -717,8 +730,9 @@ impl Default for RepairConfig {
             program_gain_max_spread_db: default_program_gain_max_spread_db(),
             max_program_gain_db: default_max_program_gain_db(),
             dual_fit: true,
-            dual_fit_registration_bound_ms: None,
-            dual_fit_registration_common_bound_ms: None,
+            dual_fit_registration_bound_ms: default_dual_fit_registration_bound_ms(),
+            dual_fit_registration_common_bound_ms: default_dual_fit_registration_common_bound_ms(),
+            dual_fit_registration_routing: true,
             fingerprint_diagnostics: false,
             fingerprint_post_window_ladder: false,
             fingerprint_pre_window_ladder: false,
@@ -861,10 +875,10 @@ impl RepairConfig {
             dual_fit: self.dual_fit,
             dual_fit_registration_bound_ms: self
                 .dual_fit_registration_bound_ms
-                .filter(|_| self.dual_fit),
+                .filter(|_| self.dual_fit && self.dual_fit_registration_routing),
             dual_fit_registration_common_bound_ms: self
                 .dual_fit_registration_common_bound_ms
-                .filter(|_| self.dual_fit),
+                .filter(|_| self.dual_fit && self.dual_fit_registration_routing),
             lag_envelope_max_lag_ms: self.lag_envelope_max_lag_ms,
             lag_envelope_window_secs: self.lag_envelope_window_secs,
             normalize_window_secs: self.normalize_window_secs,
@@ -1747,26 +1761,33 @@ dry_run = true
     }
 
     #[test]
-    fn routing_bound_is_off_by_default_and_dropped_under_no_dual_fit() {
-        assert_eq!(
-            RepairConfig::default()
-                .patch_settings()
-                .dual_fit_registration_bound_ms,
-            None
-        );
-        let on = RepairConfig {
-            dual_fit_registration_bound_ms: Some(75.0),
+    fn routing_bound_is_on_by_default_and_dropped_under_no_dual_fit_or_no_routing() {
+        let default = RepairConfig::default().patch_settings();
+        assert_eq!(default.dual_fit_registration_bound_ms, Some(75.0));
+        let no_dual_fit = RepairConfig {
+            dual_fit: false,
             ..RepairConfig::default()
         };
         assert_eq!(
-            on.patch_settings().dual_fit_registration_bound_ms,
-            Some(75.0)
+            no_dual_fit.patch_settings().dual_fit_registration_bound_ms,
+            None
         );
-        let off = RepairConfig {
-            dual_fit: false,
-            ..on
+        let no_routing = RepairConfig {
+            dual_fit_registration_routing: false,
+            ..RepairConfig::default()
         };
-        assert_eq!(off.patch_settings().dual_fit_registration_bound_ms, None);
+        assert_eq!(
+            no_routing.patch_settings().dual_fit_registration_bound_ms,
+            None
+        );
+        let custom = RepairConfig {
+            dual_fit_registration_bound_ms: Some(100.0),
+            ..RepairConfig::default()
+        };
+        assert_eq!(
+            custom.patch_settings().dual_fit_registration_bound_ms,
+            Some(100.0)
+        );
     }
 
     #[test]
@@ -1791,27 +1812,34 @@ dry_run = true
     }
 
     #[test]
-    fn common_routing_bound_is_off_by_default_independent_and_dropped_under_no_dual_fit() {
+    fn common_routing_bound_is_on_by_default_independent_and_dropped_under_no_dual_fit_or_no_routing(
+    ) {
         let default = RepairConfig::default().patch_settings();
-        assert_eq!(default.dual_fit_registration_common_bound_ms, None);
-        let common_only = RepairConfig {
-            dual_fit_registration_common_bound_ms: Some(300.0),
+        assert_eq!(default.dual_fit_registration_common_bound_ms, Some(300.0));
+        let step_off = RepairConfig {
+            dual_fit_registration_bound_ms: None,
             ..RepairConfig::default()
         };
-        let settings = common_only.patch_settings();
+        let settings = step_off.patch_settings();
         assert_eq!(settings.dual_fit_registration_common_bound_ms, Some(300.0));
         assert_eq!(
             settings.dual_fit_registration_bound_ms, None,
             "the common bound must not enable step-kind routing"
         );
-        let off = RepairConfig {
-            dual_fit: false,
-            ..common_only
-        };
-        assert_eq!(
-            off.patch_settings().dual_fit_registration_common_bound_ms,
-            None
-        );
+        for off in [
+            RepairConfig {
+                dual_fit: false,
+                ..RepairConfig::default()
+            },
+            RepairConfig {
+                dual_fit_registration_routing: false,
+                ..RepairConfig::default()
+            },
+        ] {
+            let settings = off.patch_settings();
+            assert_eq!(settings.dual_fit_registration_common_bound_ms, None);
+            assert_eq!(settings.dual_fit_registration_bound_ms, None);
+        }
     }
 
     #[test]

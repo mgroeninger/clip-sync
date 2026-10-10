@@ -164,6 +164,11 @@ pub fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     if let Some(ms) = args.dual_fit_registration_common_bound_ms {
         config.repair.dual_fit_registration_common_bound_ms = Some(ms);
     }
+    if args.dual_fit_registration_routing {
+        config.repair.dual_fit_registration_routing = true;
+    } else if args.no_dual_fit_registration_routing {
+        config.repair.dual_fit_registration_routing = false;
+    }
     warn_on_registration_bound_misuse(&config.repair);
     if let Some(secs) = args.residual_border_standoff_secs {
         config.repair.residual_border_standoff_secs = Some(secs);
@@ -326,6 +331,8 @@ fn warn_on_registration_bound_misuse(repair: &crate::infrastructure::config::Rep
         };
         if !repair.dual_fit {
             tracing::warn!("{name} is ignored because dual-fit is disabled");
+        } else if !repair.dual_fit_registration_routing {
+            tracing::warn!("{name} is ignored because registration routing is disabled");
         } else if bound <= repair.crossfade_ms as f64 {
             tracing::warn!(
                 "{name} ({bound} ms) is at or below crossfade_ms ({} ms): the bound is in the written frame, so every gap of its kind with both shoulders licensed will route",
@@ -540,6 +547,37 @@ mod cli_override_tests {
     }
 
     #[test]
+    fn no_dual_fit_registration_routing_cli_turns_both_bounds_off() {
+        use clap::Parser;
+
+        let mut config = RepairAppConfig::default();
+        assert!(config.repair.dual_fit_registration_routing);
+        let args = Args::parse_from([
+            "clip-sync-repair",
+            "a.wav",
+            "b.wav",
+            "--no-dual-fit-registration-routing",
+        ]);
+        apply_cli_overrides(&mut config, &args);
+        let settings = config.repair.patch_settings();
+        assert_eq!(settings.dual_fit_registration_bound_ms, None);
+        assert_eq!(settings.dual_fit_registration_common_bound_ms, None);
+
+        // Last flag wins between the peers, as with --dual-fit / --no-dual-fit.
+        let args = Args::parse_from([
+            "clip-sync-repair",
+            "a.wav",
+            "b.wav",
+            "--no-dual-fit-registration-routing",
+            "--dual-fit-registration-routing",
+        ]);
+        apply_cli_overrides(&mut config, &args);
+        let settings = config.repair.patch_settings();
+        assert_eq!(settings.dual_fit_registration_bound_ms, Some(75.0));
+        assert_eq!(settings.dual_fit_registration_common_bound_ms, Some(300.0));
+    }
+
+    #[test]
     fn no_structure_trust_cli_overrides_config() {
         use clap::Parser;
 
@@ -618,12 +656,12 @@ mod cli_override_tests {
         assert_eq!(
             config.repair.dual_fit_registration_bound_ms,
             Some(75.0),
-            "--dual-fit-registration-bound-ms must reach the config; default is off"
+            "--dual-fit-registration-bound-ms must reach the config"
         );
         assert_eq!(
             config.repair.dual_fit_registration_common_bound_ms,
             Some(300.0),
-            "--dual-fit-registration-common-bound-ms must reach the config; default is off"
+            "--dual-fit-registration-common-bound-ms must reach the config"
         );
         assert_eq!(config.repair.fill_offset_mode, FillOffsetMode::Interpolated);
         assert!((config.repair.fill_fit_structure_weight - 0.4).abs() < f64::EPSILON);
