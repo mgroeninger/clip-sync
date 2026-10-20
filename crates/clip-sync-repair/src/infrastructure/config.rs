@@ -207,7 +207,7 @@ pub struct RepairConfig {
     /// interior trim, validated by the unchanged gate). On by default; `--no-dual-fit` to disable.
     #[serde(default = "default_true")]
     pub dual_fit: bool,
-    /// **Registration routing** (`docs/dev/TEMP-dual-fit-registration-routing-plan.md` § 5): a
+    /// **Registration routing** (`docs/dev/archive/TEMP-dual-fit-registration-routing-plan.md` § 5): a
     /// gate-passing single-lag fill whose far-seam registration error exceeds this many ms (written
     /// frame) is tried as dual-fit first, keeping the single-lag fill if dual-fit declines. Needs both
     /// shoulders licensed. On by default at 75 ms (§ 6b); `dual_fit_registration_routing = false`
@@ -219,8 +219,8 @@ pub struct RepairConfig {
     /// **Common-mode registration routing** (routing plan § 6d/§ 6e): the same routing as
     /// `dual_fit_registration_bound_ms`, for gaps whose shoulders agree within 20 ms but whose single-lag
     /// fill sits off both by more than this many ms (written frame). The step-kind bound never routes
-    /// these. On by default at 300 ms, which routes only gross displacement (17/g34, 26/g6 and 85/g86
-    /// are the corpus's three); `dual_fit_registration_routing` turns it off with the step-kind bound.
+    /// these. On by default at 150 ms (§ 6f), which routes gross displacement (17/g34, 26/g6, 85/g86) and the
+    /// 205–229 ms speech echoes (81/g7, 79/g9), five corpus gaps; `dual_fit_registration_routing` turns it off with the step-kind bound.
     #[serde(default = "default_dual_fit_registration_common_bound_ms")]
     pub dual_fit_registration_common_bound_ms: Option<f64>,
     /// Master switch for registration routing (both bounds). On by default; `false`
@@ -570,7 +570,7 @@ fn default_dual_fit_registration_bound_ms() -> Option<f64> {
 }
 
 fn default_dual_fit_registration_common_bound_ms() -> Option<f64> {
-    Some(300.0)
+    Some(150.0)
 }
 
 fn default_crossfade_ms() -> u64 {
@@ -1815,13 +1815,13 @@ dry_run = true
     fn common_routing_bound_is_on_by_default_independent_and_dropped_under_no_dual_fit_or_no_routing(
     ) {
         let default = RepairConfig::default().patch_settings();
-        assert_eq!(default.dual_fit_registration_common_bound_ms, Some(300.0));
+        assert_eq!(default.dual_fit_registration_common_bound_ms, Some(150.0));
         let step_off = RepairConfig {
             dual_fit_registration_bound_ms: None,
             ..RepairConfig::default()
         };
         let settings = step_off.patch_settings();
-        assert_eq!(settings.dual_fit_registration_common_bound_ms, Some(300.0));
+        assert_eq!(settings.dual_fit_registration_common_bound_ms, Some(150.0));
         assert_eq!(
             settings.dual_fit_registration_bound_ms, None,
             "the common bound must not enable step-kind routing"

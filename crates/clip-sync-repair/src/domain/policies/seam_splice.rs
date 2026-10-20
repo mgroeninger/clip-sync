@@ -423,7 +423,7 @@ mod tests {
     /// crossfade term, so the report and the written WAV differ by `cf` — one crossfade width, a
     /// fixed config value rather than a per-gap derivation. At the `crossfade_ms` default of 10 and
     /// 48 kHz that is 480 frames, i.e. the constant 10 ms offset between the patch report's
-    /// residual and the audio measurement (`docs/dev/TEMP-dual-fit-registration-routing-plan.md`
+    /// residual and the audio measurement (`docs/dev/archive/TEMP-dual-fit-registration-routing-plan.md`
     /// § 3). `fill_level`'s module note records the same displacement from the other side.
     ///
     /// The existing tests here fill with a constant, which is blind to displacement; the ramp is

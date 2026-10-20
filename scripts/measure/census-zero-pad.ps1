@@ -43,7 +43,7 @@
 #
 # MEDIA HYGIENE: emit pair label + gap index only — never media paths or titles. The reports DO carry
 # `scan.video_a` / `scan.video_b`; this script must never read them into output.
-# Docs: docs/dev/TEMP-dual-fit-registration-routing-plan.md ("Reading the zero-pad census").
+# Docs: docs/dev/archive/TEMP-dual-fit-registration-routing-plan.md ("Reading the zero-pad census").
 
 [CmdletBinding()]
 param(

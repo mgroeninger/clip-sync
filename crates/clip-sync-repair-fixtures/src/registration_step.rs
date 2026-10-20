@@ -1,5 +1,5 @@
 //! Step-kind registration fixture for the dual-fit routing tests
-//! (`docs/dev/TEMP-dual-fit-registration-routing-plan.md` § 5).
+//! (`docs/dev/archive/TEMP-dual-fit-registration-routing-plan.md` § 5).
 //!
 //! A is white noise with a silent hole; B is the same noise whose lag *steps* at the hole's midpoint
 //! (`pre_shift_secs` before it, `post_shift_secs` after), so no single lag registers both shoulders.

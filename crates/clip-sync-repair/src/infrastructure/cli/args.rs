@@ -347,8 +347,9 @@ pub struct Args {
 
     /// Registration routing for common-mode gaps: like --dual-fit-registration-bound-ms, for gaps whose
     /// shoulders agree within 20 ms but whose single-lag fill sits off both by more than this many ms
-    /// (written frame). The step-kind bound never routes these. A blind listen adopted 300 ms for gross
-    /// displacement. Ignored under --no-dual-fit or --no-dual-fit-registration-routing [default: 300].
+    /// (written frame). The step-kind bound never routes these. Blind listens adopted 150 ms (gross
+    /// displacement, then 205–229 ms speech echoes). Ignored under --no-dual-fit or
+    /// --no-dual-fit-registration-routing [default: 150].
     #[arg(long, value_name = "MS")]
     pub dual_fit_registration_common_bound_ms: Option<f64>,
 

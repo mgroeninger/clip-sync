@@ -913,7 +913,7 @@ pub(in crate::application::patch_audio) fn characterize_region(
         .map(|r| r.with_shoulder_quality(quality))
     };
 
-    // Registration routing (docs/dev/TEMP-dual-fit-registration-routing-plan.md § 5): the gate passed, but
+    // Registration routing (docs/dev/archive/TEMP-dual-fit-registration-routing-plan.md § 5): the gate passed, but
     // the single-lag fill sits further off a licensed shoulder than the bound allows, so try dual-fit
     // first. A decline keeps the single-lag fill — routing never turns a patch into a skip (§ 2 inv. 1)
     // — and the rescue is validated by `try_dual_fit_rescue`'s own gate on its own seam scores (inv. 3).

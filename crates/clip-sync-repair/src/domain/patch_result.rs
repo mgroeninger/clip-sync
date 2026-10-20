@@ -604,7 +604,7 @@ pub enum GapPatchStatus {
 ///
 /// `registration_residual_ms` is the historical key: the licensed shoulder that agrees more closely
 /// with the placement (smaller `|·|`, pre on a tie). The per-seam keys (added
-/// 2026-09-22, `docs/dev/TEMP-dual-fit-registration-routing-plan.md` § 3) keep the other shoulder,
+/// 2026-09-22, `docs/dev/archive/TEMP-dual-fit-registration-routing-plan.md` § 3) keep the other shoulder,
 /// which the selection used to discard — across a map step the two differ by the step, and the
 /// farther seam is the one a misplaced fill fails on. A per-seam key is absent when that shoulder's
 /// peak is below the confidence floor.

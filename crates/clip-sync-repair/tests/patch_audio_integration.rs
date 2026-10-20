@@ -1902,7 +1902,7 @@ fn patch_audio_dual_fit_rescues_constant_shift_as_rigid_seam_lock() {
     );
 }
 
-/// Registration routing (docs/dev/TEMP-dual-fit-registration-routing-plan.md § 5) is step-kind only:
+/// Registration routing (docs/dev/archive/TEMP-dual-fit-registration-routing-plan.md § 5) is step-kind only:
 /// a common-mode miss (equal shoulders) never routes, whatever the bound. A noise fixture whose B is an
 /// unshifted copy of A, so the single-lag fill passes the gate at lag 0 and both shoulders read the same
 /// 10 ms crossfade-width error in the written frame — common-mode, even under a 1 ms bound.

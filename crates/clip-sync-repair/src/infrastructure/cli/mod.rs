@@ -574,7 +574,7 @@ mod cli_override_tests {
         apply_cli_overrides(&mut config, &args);
         let settings = config.repair.patch_settings();
         assert_eq!(settings.dual_fit_registration_bound_ms, Some(75.0));
-        assert_eq!(settings.dual_fit_registration_common_bound_ms, Some(300.0));
+        assert_eq!(settings.dual_fit_registration_common_bound_ms, Some(150.0));
     }
 
     #[test]

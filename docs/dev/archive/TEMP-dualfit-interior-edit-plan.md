@@ -10,7 +10,7 @@ History: § 2 items 1, 2 and 4 built 2026-10-02 (`f623e1c`); item 3 deferred. §
 
 **Companions:**
 - The defect was found and measured in
-  [TEMP-dual-fit-registration-routing-plan.md](../TEMP-dual-fit-registration-routing-plan.md)
+  [TEMP-dual-fit-registration-routing-plan.md](TEMP-dual-fit-registration-routing-plan.md)
   § 7, *The dual-fit blip is the interior length edit, not the seams*.
 - That plan's step-kind routing bound (§ 6b: Adopt at 75 ms) is a
   cost/benefit crossover against this artifact. Its § 6c re-listen waits on

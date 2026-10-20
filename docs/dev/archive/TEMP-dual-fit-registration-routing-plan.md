@@ -1,5 +1,9 @@
 # TEMP — Dual-fit registration routing
 
+**Closed 2026-10-20.** Shipped on by default: step-kind 75 ms, common-mode **150 ms** (§ 6f lowered it
+from 300), `--no-dual-fit-registration-routing` as the off switch. Archived; verdict in
+`settled.md` § C; BACKLOG Hole 1 text deleted. The status blocks below are history.
+
 **Status (2026-10-09):** **Routing is now on by default, both bounds** (step-kind 75 ms,
 common-mode 300 ms), with `--no-dual-fit-registration-routing` /
 `dual_fit_registration_routing = false` as the off switch. § 6e scored a third gross
@@ -30,7 +34,7 @@ duplication that voided it is now fixed on **both** fill paths behind
 `--seam-extend-fill`, the dual-fit half ear-confirmed on three forced-dual-fit
 gaps. The flag is still default off and the § 6 default decision is open, now as
 one decision covering both paths. Flag documented for users in
-[gap-fill-modes.md](../gap-fill-modes.md) § Seam crossfade.
+[gap-fill-modes.md](../../gap-fill-modes.md) § Seam crossfade.
 
 **2026-09-25:** the bracket residual's search window was bounded (±10 s around
 nominal → one window spanning nominal and the written fill at ±0.25 s). Re-read
@@ -70,7 +74,7 @@ tag are still open. § 6d (gross common-mode paired listen) is drafted, and its
 0 changed); decline test landed; the tag-snapshot leak is an accepted gap,
 superseded by BACKLOG Repair R6. Routing tests added to the PR gate.
 
-**Tracked as:** [BACKLOG.md](../../BACKLOG.md) § Fill placement, Hole 1 row
+**Tracked as:** [BACKLOG.md](../../../BACKLOG.md) § Fill placement, Hole 1 row
 ("**Next:** design the routing rule").
 
 **Companions:**
@@ -314,7 +318,7 @@ selection throws that information away.
   `registration_residual_pre_ms` and `registration_residual_post_ms`
   (`None` when that shoulder is unlicensed). They are additive and optional,
   so the JSON contract stays v1 per
-  [../json-output.md](../json-output.md). Follow the revision procedure:
+  [../json-output.md](../../json-output.md). Follow the revision procedure:
   change application-layer DTOs only, regenerate goldens, and update the
   doc's field table.
 - Also add `registration_applied_ms`, the written fill's start that the
@@ -798,7 +802,7 @@ difference equals the shoulder step. Unit-test it:
 `"gate_fail" | "registration_step" | "registration_common"`, and fill it for every `dual_fit_used:
 true` patch. It is additive, so the contract stays v1. Regenerate goldens and
 document the field in `json-output.md`. The human report
-([../cli-output.md](../cli-output.md)) gets a one-word suffix on the existing
+([../cli-output.md](../../cli-output.md)) gets a one-word suffix on the existing
 dual-fit line; keep the layout otherwise unchanged.
 
 **Tests.**
@@ -1992,7 +1996,7 @@ decision is still open (13/g28 and 23/g04 pre-seam reports). Nothing about the
 dual-fit half is blocked on it — default-off is byte-for-byte the shipped
 splice.
 
-**User-facing docs:** [gap-fill-modes.md](../gap-fill-modes.md) § Seam crossfade
+**User-facing docs:** [gap-fill-modes.md](../../gap-fill-modes.md) § Seam crossfade
 and `--seam-extend-fill` now carries the mechanism, the per-path margin table
 and the config keys. Before this the flag existed only in `args.rs` help.
 
@@ -2511,6 +2515,85 @@ below the bound). Dual arm = that routing path itself, not a forced floor search
   - reversal is one line (the defaults in `RepairConfig`), and a config can
     set `dual_fit_registration_routing = false`.
 
+### § 6f mid-range common-mode listen (pre-registered 2026-10-09, scored 2026-10-20)
+
+**Question.** Is a 200–240 ms common-mode displacement audible, and does
+dual-fit remove it? This decides only whether the common bound (300 ms,
+adopted by decision in § 6e) should go lower. It does not gate anything shipped.
+
+**Population (census, 84 pairs, 835 patched gaps).** Single-lag
+(`dual_fit_used: false`) common-mode gaps (|post − pre| ≤ 20 ms) with
+150 ≤ max < 300 ms: exactly **two**, 81/g7 (+229 / +221) and 79/g9 (+205 / +208).
+Everything else in the band is either already dual-fit (gate-fail rescue) or step-kind. The next
+single-lag common-mode gaps below the band are 3/g10 (+125 / +140) and 13/g31 (+133 / +131), so a
+150 ms bound would route these two and nothing else.
+
+**Correction to an earlier remark.** 58/g7 (−277 / −310), 79/g18 (+197 / +155) and 19/g2
+(−120 / −184) have steps of 32, 42 and 64 ms, so they are step-kind, not common-mode. The 75 ms
+step bound already covers them under the new defaults; 58/g7 "does not route at 300" referred
+only to a run with the step bound off. Predicted, not yet observed on real media.
+
+**Arms.** Production arm: `--gap-listen --seam-extend-fill
+--no-dual-fit-registration-routing`. Dual arm: `--gap-listen --seam-extend-fill --dual-fit
+--dual-fit-registration-common-bound-ms 150` (the routing path itself, as in § 6e, no forced
+floor). Confirm `dual_fit_route: registration_common` on the dual arm and that the arms differ.
+
+**Trials: 6, one sitting.** 81/g7 ×2 and 79/g9 ×2 (independent a/b per trial), plus 2 nulls
+(one dual/dual, one prod/prod) on those gaps. Dual-fit on *a* in exactly 3 of the 4 real/null
+slots that have an arm difference is not enforced; check only that both letters occur.
+Key held outside `gap-files/` blind dir.
+
+**Pre-registered rule.** Scoring conventions as § 6d (a gap's two trials count only if they agree;
+noise k = non-*same* nulls plus disagreements; k ≥ 2 inconclusive).
+- **Lower the common bound to 150 ms** if at least one gap is dual-fit-better and neither is worse.
+- **Keep 300 ms** if both are *same* (the displacement is not audible at this size) or either is
+  dual-fit-worse (then name the defect from the note before any further render).
+- n = 2 gaps, one listener: this can lower the bound but cannot refute it.
+
+**Render (2026-10-09, build `b5c1264`, clean tree except this plan).** Fill lag against
+B, 200 ms windows:
+
+| Gap | Shoulder locks | Production fill | Dual-fit fill |
+|---|---|---|---|
+| 79/g9 | −3 / −6 ms | +202 (≈205 off) | −3 (on the lock) |
+| 81/g7 | +95 / +103 ms | ≈ +290…+300 (≈200 off) | ≈ +66…+86 (within ≈ 20–30 ms of the locks) |
+
+The route tag is not in `listen.json`, so routing is inferred from the placement and the
+differing WAVs. Dual-fit landed on side *a* in only 1 of the 4 real trials.
+
+**Result (scored 2026-10-20).**
+
+| Trial | Gap / kind | Dual-fit on | Verdict | Reading |
+|---|---|---|---|---|
+| t01 | 79/g9 real | *a* | same | same |
+| t02 | 81/g7 **null dual/dual** | identical files | *a* ("b has a slight blip around 4 s") | **false positive** |
+| t03 | 81/g7 real | *b* | *b* ("a has a repeated speech section") | dual-fit better |
+| t04 | 79/g9 real | *b* | same | same |
+| t05 | 81/g7 real | *b* | *b* ("a has the repeated speech") | dual-fit better |
+| t06 | 79/g9 null prod/prod | n/a | same | same |
+
+- **Noise k = 1** (t02, a verdict between byte-identical files). Below the k ≥ 2
+  inconclusive line, but it is a real false positive, and the "blip" in t02 shows the
+  listener can hear a difference that is not there. t03's own note ("b does seem to have the
+  blip") should be read with that in mind.
+- **81/g7: dual-fit-better, two agreeing trials, with a stated cause.** The production arm
+  has a repeated speech section, which is what a ≈ 200 ms displacement of speech sounds like
+  (registration audibility is content-relative: speech reads as an echo). This is a
+  stronger ear result than 85/g86's.
+- **79/g9: *same* in both real trials.** A 205 ms displacement was not audible there
+  (content not recorded as speech).
+- **b-preference check:** the null picked *a*, and the *same* trials had dual-fit on both
+  letters, so a plain "b" bias does not explain the two 81/g7 verdicts.
+- **Outcome under the pre-registered rule:** one gap dual-fit-better, none worse, k = 1:
+  **lower the common bound**. The rule names 150 ms. The listened range is 205–229 ms, and
+  150 and 200 route the **same two** corpus gaps (the next single-lag common-mode gaps,
+  3/g10 and 13/g31, are +125…+140 and +133 / +131 before the 10 ms crossfade, so they stay
+  out of either), so 200 ms would match the evidence equally well.
+- **Decision (2026-10-20):** the user chose to apply dual-fit more widely, absent any common-mode
+  case where it misbehaved, so the common bound default is **150 ms** (the rule's value).
+  `config.rs`, the `--help` text and `gap-fill-modes.md` updated; 3/g10 (written 150 ms, strict
+  `>`) stays out. Caveats stand: two gaps, one listener, k = 1.
+
 ### The dual-fit blip is the interior length edit, not the seams (measured 2026-10-02)
 
 **Method.** The 18 § 6b gaps, plus 29/g20, were measured both ways from the
@@ -2606,8 +2689,5 @@ step:
 
 ## 9. Close
 
-On close:
-1. Archive this file to `archive/`.
-2. Write the verdict row in `settled.md` with an `arm: production` tag.
-3. Delete the Hole 1 "Next" text from BACKLOG. This is the step that gets
-   skipped.
+Done 2026-10-20: archived to `archive/`; verdict row in `settled.md` § C (`arm:prod`); the BACKLOG
+Hole 1 "Next" row deleted.
