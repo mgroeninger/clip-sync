@@ -1018,4 +1018,76 @@ mod tests {
         assert_eq!(tags.dual_fit_post_window_ms, None);
         assert_eq!(tags.dual_fit_route, None);
     }
+
+    /// The preview path reports the fill shortfall characterize measured, not a hard-coded 0 —
+    /// the count the executor's re-assembly is checked against.
+    #[test]
+    fn preview_of_a_bracket_spec_reports_its_zero_pad_and_anchor_trust() {
+        let region = FillRegion {
+            gap_index: 3,
+            a_start_secs: 1.0,
+            a_end_secs: 2.0,
+            b_start_secs: 1.0,
+            b_end_secs: 2.0,
+            gain: 1.0,
+            crossfade_secs: 0.01,
+        };
+        let mut spec = skip_region_spec(
+            GapPatchSkipReason::ZeroLengthGap,
+            None,
+            &region,
+            0.0,
+            RefinedGapFrames {
+                start_frame: 48_000,
+                end_frame: 96_000,
+            },
+            BExtractWindow {
+                start_frame: 0,
+                end_frame: 144_000,
+                b_mapped_start_frame: 48_000,
+            },
+        );
+        spec.verdict = GapRepairVerdict::Patch(GapRepairStrategy::Bracket {
+            alignment: policies::FillAlignment {
+                start_frame: 48_000,
+                fill_frames: 47_993,
+                pre_correlation: 0.99,
+                post_correlation: 0.99,
+            },
+            window_gap_frames: 48_000,
+            structure_start_frame: 48_000,
+            structure_trusted: true,
+            anchor_seam_used: true,
+            anchor_bracket_move_frames: 480,
+            anchor_trusted: true,
+            seam_pre: 0.99,
+            seam_post: 0.99,
+            used_splice: false,
+            confidence: FillConfidence::High,
+            gap_start_adjust_frames: 0,
+            gap_end_adjust_frames: 0,
+            fit_used_boundary_grid: false,
+            fit_boundary_grid_cells: None,
+            residual: None,
+            normalize_gain: 1.0,
+            local_gain: crate::domain::LocalGainDecision::OFF,
+            fit_terms: None,
+            registration_residual: None,
+            zero_pad_frames: 7,
+        });
+
+        match outcome_from_spec(&spec, 48_000) {
+            RegionPatchOutcome::Patched {
+                zero_pad_frames,
+                anchor_trusted,
+                dual_fit_used,
+                ..
+            } => {
+                assert_eq!(zero_pad_frames, 7);
+                assert!(anchor_trusted);
+                assert!(!dual_fit_used);
+            }
+            other => panic!("expected a Patched preview, got {other:?}"),
+        }
+    }
 }
