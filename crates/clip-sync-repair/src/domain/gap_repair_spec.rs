@@ -241,6 +241,10 @@ pub enum GapRepairStrategy {
         /// S1: independent shoulder-seam read of the placement vs. the applied placement, `applied_ms −
         /// shoulder_lag_ms` for whichever shoulder is more confident. Record-only — no gate reads this.
         registration_residual: Option<Box<crate::domain::patch_result::RegistrationResidual>>,
+        /// Tail frames the fill falls short of the gap by, from characterize's own assembly. The
+        /// executor re-assembles the identical fill, so its count must agree; carried here so the
+        /// decision-only preview outcome reports the shortfall too.
+        zero_pad_frames: usize,
     },
     SilenceSplice {
         /// Filled, length-reconciled interleaved PCM (`gap_frames × channels`).
@@ -625,6 +629,7 @@ mod tests {
             local_gain: crate::domain::LocalGainDecision::OFF,
             fit_terms: None,
             registration_residual: None,
+            zero_pad_frames: 0,
         }
     }
 

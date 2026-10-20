@@ -295,6 +295,7 @@ mod tests {
             local_gain: clip_sync_repair::domain::LocalGainDecision::OFF,
             fit_terms: None,
             registration_residual: None,
+            zero_pad_frames: 0,
         }
     }
 

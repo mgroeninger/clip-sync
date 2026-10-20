@@ -68,6 +68,9 @@ pub(in crate::application::patch_audio) enum RegionPatchOutcome {
         residual: Option<policies::SeamResidualVerdict>,
         anchor_seam_used: bool,
         anchor_bracket_move_frames: usize,
+        /// The gate trusted the anchor seam's placement (`GapRepairStrategy::Bracket::anchor_trusted`).
+        /// Read by tag derivation only — it promotes the patch tier to `anchor_trusted` in fit mode.
+        anchor_trusted: bool,
         /// Tail frames the fill fell short of the gap by, because contiguous B ran out. Not written:
         /// the patch destination is shortened by this much, so A keeps its own material there. `0` on
         /// a fill that reached gap length.
@@ -321,22 +324,35 @@ pub(in crate::application::patch_audio) struct RegionPatchContext {
     pub(in crate::application::patch_audio) silence_peak_fraction: f32,
 }
 
+/// Tags for one region. The placement facts — boundary grid, anchor seam, anchor trust, zero pad,
+/// dual-fit and its post window — come from the outcome alone; `tag_ctx` supplies only run-level
+/// settings and the dual-fit route. Characterize never writes placement facts into `tag_ctx`, so a
+/// skip derives them at their defaults and a routed dual-fit patch cannot carry a single-lag fill's
+/// tags.
 pub(in crate::application::patch_audio) fn region_outcome_gap_tags(
     outcome: &RegionPatchOutcome,
     mut tag_ctx: GapTagsPatchContext,
 ) -> GapTags {
     if let RegionPatchOutcome::Patched {
+        fit_used_boundary_grid,
         anchor_seam_used,
         anchor_bracket_move_frames,
+        anchor_trusted,
+        zero_pad_frames,
         dual_fit_used,
         dual_fit_step_real,
+        dual_fit_post_window_ms,
         ..
     } = outcome
     {
+        tag_ctx.fit_used_boundary_grid = *fit_used_boundary_grid;
         tag_ctx.anchor_seam_used = *anchor_seam_used;
         tag_ctx.anchor_bracket_move_frames = *anchor_bracket_move_frames;
+        tag_ctx.anchor_trusted = *anchor_trusted;
+        tag_ctx.zero_pad_frames = *zero_pad_frames;
         tag_ctx.dual_fit_used = *dual_fit_used;
         tag_ctx.dual_fit_step_real = *dual_fit_step_real;
+        tag_ctx.dual_fit_post_window_ms = *dual_fit_post_window_ms;
     }
     tag_ctx.residual = match outcome {
         RegionPatchOutcome::Patched { residual, .. }
@@ -480,6 +496,7 @@ pub(in crate::application::patch_audio) fn outcome_from_spec(
             structure_trusted,
             anchor_seam_used,
             anchor_bracket_move_frames,
+            anchor_trusted,
             seam_pre,
             seam_post,
             confidence,
@@ -492,6 +509,7 @@ pub(in crate::application::patch_audio) fn outcome_from_spec(
             local_gain,
             fit_terms,
             registration_residual,
+            zero_pad_frames,
             ..
         }) => {
             let offset_nominal_start = spec.b_extract.b_mapped_start_frame;
@@ -509,9 +527,10 @@ pub(in crate::application::patch_audio) fn outcome_from_spec(
                 residual: *residual,
                 anchor_seam_used: *anchor_seam_used,
                 anchor_bracket_move_frames: *anchor_bracket_move_frames,
-                // Decision-only: no fill is assembled on this path, so the padding is not knowable
-                // here. The executor's outcome carries the real count.
-                zero_pad_frames: 0,
+                anchor_trusted: *anchor_trusted,
+                // Decision-only: no fill is assembled on this path, so the count is characterize's —
+                // the same assembly the executor repeats.
+                zero_pad_frames: *zero_pad_frames,
                 dual_fit_used: false,
                 dual_fit_step_real: None,
                 dual_fit_post_window_ms: None,
@@ -547,6 +566,7 @@ pub(in crate::application::patch_audio) fn outcome_from_spec(
             residual: *residual,
             anchor_seam_used: false,
             anchor_bracket_move_frames: 0,
+            anchor_trusted: false,
             dual_fit_used: true,
             dual_fit_step_real: Some(*step_real),
             dual_fit_post_window_ms: *dual_fit_post_window_ms,
@@ -723,6 +743,7 @@ mod tests {
             residual: None,
             anchor_seam_used: false,
             anchor_bracket_move_frames: 0,
+            anchor_trusted: false,
             dual_fit_used: false,
             dual_fit_step_real: None,
             dual_fit_post_window_ms: None,
@@ -849,6 +870,7 @@ mod tests {
             residual: None,
             anchor_seam_used: false,
             anchor_bracket_move_frames: 0,
+            anchor_trusted: false,
             dual_fit_used: false,
             dual_fit_step_real: None,
             dual_fit_post_window_ms: None,
@@ -900,5 +922,100 @@ mod tests {
             !summary.has_patches(),
             "has_patches gates the WAV/mux write — a no-op splice must not qualify"
         );
+    }
+
+    /// A Patched outcome whose placement facts are all set (`facts`) or all at their defaults.
+    fn patched_outcome(facts: bool, dual_fit_used: bool) -> RegionPatchOutcome {
+        RegionPatchOutcome::Patched {
+            pre_correlation: 0.9,
+            post_correlation: 0.9,
+            align_adjustment_secs: 0.0,
+            structure_trusted: false,
+            confidence: FillConfidence::High,
+            gap_start_adjust_frames: 0,
+            gap_end_adjust_frames: 0,
+            fit_used_boundary_grid: facts,
+            fit_boundary_grid_cells: None,
+            residual: None,
+            anchor_seam_used: facts,
+            anchor_bracket_move_frames: if facts { 480 } else { 0 },
+            anchor_trusted: facts,
+            zero_pad_frames: if facts { 7 } else { 0 },
+            dual_fit_used,
+            dual_fit_step_real: dual_fit_used.then_some(true),
+            dual_fit_post_window_ms: dual_fit_used.then_some(500),
+            normalize_gain: 1.0,
+            local_gain: crate::domain::LocalGainDecision::OFF,
+            fit_terms: None,
+            registration_residual: None,
+        }
+    }
+
+    /// A context with every placement fact set (`dirty`), as the gate used to leave it for the
+    /// single-lag fill, or at the defaults characterize now always hands over.
+    fn tag_ctx(dirty: bool) -> GapTagsPatchContext {
+        GapTagsPatchContext {
+            fill_mode: FillMode::Fit,
+            thresholds: FillTierThresholds::DEFAULT,
+            signature_mode_label: "bool",
+            fit_used_boundary_grid: dirty,
+            anchor_seam_used: dirty,
+            anchor_bracket_move_frames: if dirty { 960 } else { 0 },
+            anchor_trusted: dirty,
+            dual_fit_used: false,
+            dual_fit_step_real: None,
+            dual_fit_post_window_ms: None,
+            dual_fit_route: Some(crate::domain::gap_tags::DualFitRoute::RegistrationStep),
+            residual: None,
+            residual_headroom_margin_db: 0.0,
+            zero_pad_frames: if dirty { 11 } else { 0 },
+        }
+    }
+
+    /// The registration-routing leak, pinned without a fixture: a routed dual-fit patch handed a
+    /// context still carrying the single-lag fill's placement facts must tag as dual-fit only — no
+    /// boundary grid, no anchor seam or trust, no zero pad. The route itself still comes from the
+    /// context, which is the one per-gap value the outcome does not carry.
+    #[test]
+    fn dual_fit_patch_tags_ignore_single_lag_placement_facts_in_the_context() {
+        use crate::domain::gap_tags::{DualFitRoute, FitPathTag, PatchTier};
+
+        let tags = region_outcome_gap_tags(&patched_outcome(false, true), tag_ctx(true));
+
+        assert_eq!(tags.fit_path, Some(FitPathTag::BaselineOnly));
+        assert!(!tags.anchor_seam_used);
+        assert_eq!(tags.anchor_bracket_move_frames, 0);
+        assert_eq!(
+            tags.patch_tier,
+            PatchTier::High,
+            "anchor trust must not leak"
+        );
+        assert_eq!(tags.zero_pad_frames, 0);
+        assert!(tags.dual_fit_used);
+        assert_eq!(tags.dual_fit_step_real, Some(true));
+        assert_eq!(
+            tags.dual_fit_post_window_ms,
+            Some(500),
+            "the widened post window is a dual-fit fact the context never carries"
+        );
+        assert_eq!(tags.dual_fit_route, Some(DualFitRoute::RegistrationStep));
+    }
+
+    /// The other direction: a bracket patch's placement facts reach the tags from the outcome, with
+    /// a context that carries none of them.
+    #[test]
+    fn bracket_patch_tags_read_placement_facts_from_the_outcome() {
+        use crate::domain::gap_tags::{FitPathTag, PatchTier};
+
+        let tags = region_outcome_gap_tags(&patched_outcome(true, false), tag_ctx(false));
+
+        assert_eq!(tags.fit_path, Some(FitPathTag::BoundaryGrid));
+        assert!(tags.anchor_seam_used);
+        assert_eq!(tags.anchor_bracket_move_frames, 480);
+        assert_eq!(tags.patch_tier, PatchTier::AnchorTrusted);
+        assert_eq!(tags.zero_pad_frames, 7);
+        assert!(!tags.dual_fit_used);
+        assert_eq!(tags.dual_fit_post_window_ms, None);
+        assert_eq!(tags.dual_fit_route, None);
     }
 }

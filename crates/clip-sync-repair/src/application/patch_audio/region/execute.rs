@@ -49,6 +49,7 @@ pub(in crate::application::patch_audio) fn execute_region_spec(
             structure_trusted,
             anchor_seam_used,
             anchor_bracket_move_frames,
+            anchor_trusted,
             seam_pre,
             seam_post,
             confidence,
@@ -61,6 +62,7 @@ pub(in crate::application::patch_audio) fn execute_region_spec(
             local_gain,
             fit_terms,
             registration_residual,
+            zero_pad_frames,
             ..
         }) => {
             // F1: re-derive the fill from the spec alone. The window trio comes from the *pre*-gate
@@ -95,6 +97,12 @@ pub(in crate::application::patch_audio) fn execute_region_spec(
                 sample_rate,
                 crossfade_secs,
             });
+            // Characterize assembled the same fill; the preview outcome reports its count, so the two
+            // must agree or preview and write would disagree on the shortfall.
+            debug_assert_eq!(
+                bracket_fill.zero_pad_frames, zero_pad_frames,
+                "executor re-assembly diverged from characterize's fill length"
+            );
             // The fill is a contiguous B span starting `head_trim_frames` past the alignment, so the
             // seam margins are the frames immediately either side of it. `None` (flag off, or the
             // fill sitting within a crossfade of either end of B) splices exactly as it always did.
@@ -132,6 +140,7 @@ pub(in crate::application::patch_audio) fn execute_region_spec(
                 residual,
                 anchor_seam_used,
                 anchor_bracket_move_frames,
+                anchor_trusted,
                 zero_pad_frames: bracket_fill.zero_pad_frames,
                 fit_terms,
                 alignment_start_frame: alignment.start_frame,
@@ -186,6 +195,7 @@ pub(in crate::application::patch_audio) fn execute_region_spec(
                 residual,
                 anchor_seam_used: false,
                 anchor_bracket_move_frames: 0,
+                anchor_trusted: false,
                 dual_fit_used: true,
                 dual_fit_step_real: Some(step_real),
                 dual_fit_post_window_ms,

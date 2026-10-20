@@ -250,7 +250,7 @@ pub(in crate::application::patch_audio) fn characterize_region(
         "bool"
     };
 
-    let mut tag_ctx = GapTagsPatchContext {
+    let tag_ctx = GapTagsPatchContext {
         fill_mode: request.fill_mode,
         thresholds: FillTierThresholds {
             min_fill_correlation: request.min_fill_correlation,
@@ -258,10 +258,11 @@ pub(in crate::application::patch_audio) fn characterize_region(
             fill_absolute_floor: request.fill_absolute_floor,
         },
         signature_mode_label,
+        // Placement facts, never written here: `region_outcome_gap_tags` reads them off a Patched
+        // outcome, and a skip keeps these defaults.
         fit_used_boundary_grid: false,
         anchor_seam_used: false,
         anchor_bracket_move_frames: 0,
-        // Set below, once the fill has been assembled and the shortfall is known.
         zero_pad_frames: 0,
         anchor_trusted: false,
         dual_fit_used: false,
@@ -639,13 +640,10 @@ pub(in crate::application::patch_audio) fn characterize_region(
         fit_terms,
         ..
     } = gate_outcome;
-    // What the gate-fail path hands `skip_or_dual_fit`: a routed dual-fit patch must carry these, not the
-    // single-lag fill's boundary-grid / anchor / zero-pad tags written just below.
-    let tag_ctx_pre_gate = tag_ctx;
-    tag_ctx.fit_used_boundary_grid = fit_used_boundary_grid;
-    tag_ctx.anchor_seam_used = anchor_seam_used;
-    tag_ctx.anchor_bracket_move_frames = anchor_bracket_move_frames;
-    tag_ctx.anchor_trusted = anchor_trusted;
+    // The gate's placement facts (boundary grid, anchor seam and trust, zero pad) ride the spec to
+    // the outcome, and `region_outcome_gap_tags` reads them from there — `tag_ctx` is never written
+    // with them, so a routed dual-fit patch or a post-gate skip cannot inherit the single-lag
+    // fill's tags.
 
     if confidence == FillConfidence::Marginal {
         log_marginal_gap_fill(
@@ -803,7 +801,6 @@ pub(in crate::application::patch_audio) fn characterize_region(
             "donor B exhausted before the A gap was filled; gap tail left unrepaired (not padded)"
         );
     }
-    tag_ctx.zero_pad_frames = zero_pad_frames;
 
     // S1 (docs/dev/TEMP-registration-residual-plan.md): independent shoulder-seam read of the placement
     // vs the fill actually written, record-only — no gate reads this. Same `seam_local_peak` primitive and
@@ -952,7 +949,7 @@ pub(in crate::application::patch_audio) fn characterize_region(
                                 RouteKind::Step => DualFitRoute::RegistrationStep,
                                 RouteKind::Common => DualFitRoute::RegistrationCommon,
                             }),
-                            ..tag_ctx_pre_gate
+                            ..tag_ctx
                         },
                     );
                 }
@@ -1110,6 +1107,7 @@ pub(in crate::application::patch_audio) fn characterize_region(
             local_gain,
             fit_terms,
             registration_residual: registration_residual.map(Box::new),
+            zero_pad_frames,
         }),
         tags_ctx: GapRepairTags::default(),
     };

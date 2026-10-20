@@ -888,9 +888,10 @@ under `--no-dual-fit`).
   fixture that does needs a Marginal baseline plus a High grid candidate AND a
   routable step. A unit test on `region_outcome_gap_tags` cannot pin it: the leak
   lives in which snapshot `characterize` hands back, not in the outcome overwrite.
-  Accepted gap; superseded by a structural fix filed in BACKLOG.md (Repair R6, "Derive
-  patched gap tags from the outcome"), which removes the snapshot and makes the test a
-  pure unit test — no fixture.
+  Accepted gap; superseded by a structural fix, **landed 2026-10-20**: characterize no
+  longer writes placement facts into `tag_ctx`, `region_outcome_gap_tags` reads all five
+  off the outcome, and the snapshot is gone. Pinned by pure unit tests in
+  `region/types.rs` (`dual_fit_patch_tags_ignore_single_lag_placement_facts_in_the_context`) — no fixture.
 - `registration_common` **landed 2026-10-08** with the common-mode knob (below). There is
   still no "routed, declined" value: a declined route keeps its single-lag fill and
   is visible only in the debug log. The human report has no one-word route suffix.

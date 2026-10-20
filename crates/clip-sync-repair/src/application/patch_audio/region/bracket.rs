@@ -273,6 +273,7 @@ pub(in crate::application::patch_audio::region) struct ExecuteBracketOutputCtx {
     pub(in crate::application::patch_audio::region) residual: Option<policies::SeamResidualVerdict>,
     pub(in crate::application::patch_audio::region) anchor_seam_used: bool,
     pub(in crate::application::patch_audio::region) anchor_bracket_move_frames: usize,
+    pub(in crate::application::patch_audio::region) anchor_trusted: bool,
     /// [`BracketFill::zero_pad_frames`] for the fill being written — the executor's copy, which is the
     /// one that reaches the output.
     pub(in crate::application::patch_audio::region) zero_pad_frames: usize,
@@ -347,6 +348,7 @@ pub(in crate::application::patch_audio::region) fn execute_bracket_output(
         residual: ctx.residual,
         anchor_seam_used: ctx.anchor_seam_used,
         anchor_bracket_move_frames: ctx.anchor_bracket_move_frames,
+        anchor_trusted: ctx.anchor_trusted,
         zero_pad_frames: ctx.zero_pad_frames,
         dual_fit_used: false,
         dual_fit_step_real: None,
@@ -400,6 +402,7 @@ mod tests {
             residual: None,
             anchor_seam_used: false,
             anchor_bracket_move_frames: 0,
+            anchor_trusted: false,
             zero_pad_frames,
             alignment_start_frame: 0,
             offset_nominal_start: 0,
