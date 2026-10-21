@@ -66,21 +66,30 @@ pub(in crate::application::patch_audio::region) fn seam_margin_from_b(
     gap_frames: usize,
     cf: usize,
 ) -> Option<SeamMargin> {
-    if cf == 0 {
-        return None;
-    }
-    let ch = channels.max(1);
-    let total_frames = b_full.len() / ch;
-    let head_start = fill_start_frame.checked_sub(cf)?;
-    let tail_start = fill_start_frame.checked_add(gap_frames)?;
-    let tail_end = tail_start.checked_add(cf)?;
-    if tail_end > total_frames {
-        return None;
-    }
-    Some(SeamMargin {
-        head: b_full[head_start * ch..fill_start_frame * ch].to_vec(),
-        tail: b_full[tail_start * ch..tail_end * ch].to_vec(),
-    })
+    policies::seam_margin_slices(b_full, channels, fill_start_frame, gap_frames, cf).map(
+        |(head, tail)| SeamMargin {
+            head: head.to_vec(),
+            tail: tail.to_vec(),
+        },
+    )
+}
+
+/// Full-B frame where a bracket fill's written audio starts, for cutting (and scoring) its seam
+/// margins: the B extract's start, plus the alignment within it, plus the fit's
+/// `head_trim_frames`. The executor's margin cut, characterize's assembly and its reconciliation
+/// all read it here, so the scorer reads the frames the splice writes.
+///
+/// `None` when the fill was zero-padded: its tail is digital silence, and the B that follows the
+/// padding in full B is not contiguous with it, so the splice gets no margin and falls back to
+/// the plain crossfade — and the scorer scores that fallback.
+pub(in crate::application::patch_audio::region) fn bracket_fill_margin_start(
+    b_extract_start_frame: usize,
+    alignment_start_frame: usize,
+    head_trim_frames: usize,
+    zero_pad_frames: usize,
+) -> Option<usize> {
+    (zero_pad_frames == 0)
+        .then_some(b_extract_start_frame + alignment_start_frame + head_trim_frames)
 }
 
 /// As [`seam_margin_from_b`], but for a dual-fit bridge, whose two shoulders sit at their own lags.
@@ -461,5 +470,22 @@ mod tests {
     fn splice_shorter_fill_trips_the_debug_assert() {
         let mut a = vec![0.25f32; 16];
         let _ = super::splice_into_a(&mut a, plain_fill(&[0.5f32; 4]), 2, 0, 8);
+    }
+    /// The splice's margin cutter is the domain's, which the seam scorer also reads — so the two
+    /// fall back together. And a zero-padded fill gets no margin: B past the padding is not
+    /// contiguous with it.
+    #[test]
+    fn margin_cut_is_the_scorers_cut_and_skips_padded_fills() {
+        let b = ramp(1000);
+        let (start, gap, cf) = (500_usize, 100_usize, 4);
+        let owned = super::seam_margin_from_b(&b, 1, start, gap, cf).expect("in range");
+        let (head, tail) =
+            crate::domain::policies::seam_margin_slices(&b, 1, start, gap, cf).expect("in range");
+        assert_eq!(owned.head, head);
+        assert_eq!(owned.tail, tail);
+        assert!(super::seam_margin_from_b(&b, 1, 1000 - gap - cf + 1, gap, cf).is_none());
+
+        assert_eq!(super::bracket_fill_margin_start(100, 20, 3, 0), Some(123));
+        assert_eq!(super::bracket_fill_margin_start(100, 20, 3, 1), None);
     }
 }

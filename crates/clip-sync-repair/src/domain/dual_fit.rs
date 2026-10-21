@@ -719,7 +719,7 @@ mod tests {
             gap_end_frame: a_end_frame,
             a_samples: &a_samples,
             channels: ch,
-            single_lag_alignment: false,
+            geometry: crate::domain::policies::SpliceSeamGeometry::BorderTemplate,
         };
         let (pre_bug, post_bug) =
             fill_splice_seam_correlations_interleaved(&r.fill, ch, &borders, border_ctx);

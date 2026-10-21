@@ -1875,8 +1875,12 @@ pub fn pick_fill_length_anchor(
 
     let seams_tail =
         fill_splice_seam_correlations_interleaved(&trim_tail, channels, borders, seam_ctx);
-    let seams_head =
-        fill_splice_seam_correlations_interleaved(&trim_head, channels, borders, seam_ctx);
+    let seams_head = fill_splice_seam_correlations_interleaved(
+        &trim_head,
+        channels,
+        borders,
+        seam_ctx.fill_advanced_by(skip_frames),
+    );
 
     if fill_anchor_better(seams_head, seams_tail) {
         FittedFill {
@@ -2016,7 +2020,9 @@ fn placement_in_bounds(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::policies::{ResidualUninformative, SeamFloorSource, SeamResidualVerdict};
+    use crate::domain::policies::{
+        ResidualUninformative, SeamFloorSource, SeamResidualVerdict, SpliceSeamGeometry,
+    };
 
     #[test]
     fn jump_edit_without_crossfade_cuts_in_the_quiet_valley() {
@@ -2220,7 +2226,7 @@ mod tests {
             gap_end_frame: 0,
             a_samples,
             channels: 1,
-            single_lag_alignment: true,
+            geometry: SpliceSeamGeometry::PlainCrossfade,
         }
     }
 
@@ -3517,6 +3523,60 @@ mod tests {
         assert!(
             music_score > speech_score,
             "music-only fill should outrank speech-in-tail (music={music_score}, speech={speech_score})"
+        );
+    }
+    /// Under `--seam-extend-fill` the trim pick scores the margins the splice writes, so it finds
+    /// the true trim from either end. Throughout the 2026-10-21 sweep (skips 10–1500, both truths)
+    /// the extended pick was right every time and the plain one wrong in 13 of 18; at
+    /// `skip == cf` the plain pick is wrong from both ends, which is the case pinned here.
+    #[test]
+    fn pick_fill_length_anchor_scores_the_extended_margins() {
+        let frames = 20_000usize;
+        let noise = {
+            let mut st = 11u64;
+            (0..frames)
+                .map(|_| {
+                    st = st
+                        .wrapping_mul(6364136223846793005)
+                        .wrapping_add(1442695040888963407);
+                    ((st >> 33) as f64 / (1u64 << 30) as f64) - 1.0
+                })
+                .collect::<Vec<f64>>()
+        };
+        let b: Vec<f32> = (0..frames)
+            .map(|i| {
+                let tone = (2.0 * std::f64::consts::PI * 440.0 * i as f64 / 48_000.0).sin();
+                (0.3 * tone + 0.3 * noise[i]) as f32
+            })
+            .collect();
+        // A is B: the true fill is `B[gs..ge]`, and the bracket overruns it by `skip` at one end.
+        let a = b.clone();
+        let (cf, gs, ge) = (480usize, 8_000usize, 8_960usize);
+        let skip = cf;
+        let a_pre: Vec<f64> = a[gs - cf..gs].iter().map(|&s| s as f64).collect();
+        let a_post: Vec<f64> = a[ge..ge + cf].iter().map(|&s| s as f64).collect();
+        let borders = test_borders(&a_pre, &a_post, &[], &[], cf, cf);
+        let pick = |lo: usize, hi: usize, seam_extend_fill: bool| {
+            let ctx = SpliceSeamContext {
+                seam_cf: cf,
+                gap_start_frame: gs,
+                gap_end_frame: ge,
+                a_samples: &a,
+                channels: 1,
+                geometry: SpliceSeamGeometry::single_lag(seam_extend_fill, &b, Some(lo)),
+            };
+            pick_fill_length_anchor(&b[lo..hi], 1, ge - gs, &borders, ctx).head_trim_frames
+        };
+
+        // Truth at the tail end of the bracket: trim the head.
+        assert_eq!(pick(gs - skip, ge, true), skip);
+        assert_eq!(pick(gs - skip, ge, false), 0, "plain picks the wrong end");
+        // Truth at the head end of the bracket: trim the tail.
+        assert_eq!(pick(gs, ge + skip, true), 0);
+        assert_eq!(
+            pick(gs, ge + skip, false),
+            skip,
+            "plain picks the wrong end"
         );
     }
 }

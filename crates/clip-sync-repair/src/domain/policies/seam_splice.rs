@@ -151,6 +151,36 @@ pub struct SeamMarginFill<'a> {
     pub tail: &'a [f32],
 }
 
+/// Borrow `cf` frames of B either side of a fill starting at `fill_start_frame`, as the `head` /
+/// `tail` of a [`SeamMarginFill`].
+///
+/// The one cut shared by the splice's caller and the splice-aware seam scorer, so the scorer falls
+/// back to the plain geometry exactly where [`apply_seam_crossfade_extended`] does. Frames are in
+/// `b_full`'s own timeline. Returns `None` when `cf == 0` or either margin falls outside `b_full`.
+pub fn seam_margin_slices(
+    b_full: &[f32],
+    channels: usize,
+    fill_start_frame: usize,
+    gap_frames: usize,
+    cf: usize,
+) -> Option<(&[f32], &[f32])> {
+    if cf == 0 {
+        return None;
+    }
+    let ch = channels.max(1);
+    let total_frames = b_full.len() / ch;
+    let head_start = fill_start_frame.checked_sub(cf)?;
+    let tail_start = fill_start_frame.checked_add(gap_frames)?;
+    let tail_end = tail_start.checked_add(cf)?;
+    if tail_end > total_frames {
+        return None;
+    }
+    Some((
+        &b_full[head_start * ch..fill_start_frame * ch],
+        &b_full[tail_start * ch..tail_end * ch],
+    ))
+}
+
 /// Splice with a double-ended crossfade that writes every output frame **once**.
 ///
 /// [`apply_seam_crossfade`] has only `gap_frames` of fill for a region spanning
@@ -238,7 +268,9 @@ pub fn apply_seam_crossfade_extended(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::policies::{fill_splice_seam_correlations, SpliceSeamContext};
+    use crate::domain::policies::{
+        fill_splice_seam_correlations, SpliceSeamContext, SpliceSeamGeometry,
+    };
 
     #[test]
     fn fill_splice_seam_correlations_uses_crossfade_offset() {
@@ -261,7 +293,7 @@ mod tests {
             gap_end_frame: gap_end,
             a_samples: &a_samples,
             channels: 1,
-            single_lag_alignment: true,
+            geometry: SpliceSeamGeometry::PlainCrossfade,
         };
 
         let (pre_cf, post_cf) =
@@ -278,7 +310,7 @@ mod tests {
                 gap_end_frame: gap_end,
                 a_samples: &a_samples,
                 channels: 1,
-                single_lag_alignment: true,
+                geometry: SpliceSeamGeometry::PlainCrossfade,
             },
         );
 
@@ -296,10 +328,10 @@ mod tests {
     /// A **dual-fit** fill's shoulders are independently matched at their own seam-local lag — the
     /// fill is NOT expected to sit at lag 0 against A's raw neighboring samples the way an ordinary
     /// rigid-lag splice fill is. Regression for the 2026-07-03 (`7a26a17`) / 2026-07-05 production
-    /// bug: with `single_lag_alignment: true`, the crossfade-window branch compares the fill's own
+    /// bug: with the plain crossfade geometry, the crossfade-window branch compares the fill's own
     /// head/tail against raw A at the literal gap boundary and collapses to a strongly NEGATIVE
     /// correlation even though the fill matches the border template (what `try_dual_fit`'s own
-    /// seam-local search validated) almost perfectly. `single_lag_alignment: false` must bypass that
+    /// seam-local search validated) almost perfectly. `BorderTemplate` must bypass that
     /// branch and score the border template instead.
     #[test]
     fn splice_seam_correlation_ignores_crossfade_lag0_window_when_not_single_lag_aligned() {
@@ -333,7 +365,7 @@ mod tests {
             gap_end_frame: gap_end,
             a_samples: &a_samples,
             channels: 1,
-            single_lag_alignment: false,
+            geometry: SpliceSeamGeometry::BorderTemplate,
         };
         let (pre_border, post_border) = fill_splice_seam_correlations(
             &fill,
@@ -354,7 +386,7 @@ mod tests {
             gap_end_frame: gap_end,
             a_samples: &a_samples,
             channels: 1,
-            single_lag_alignment: true,
+            geometry: SpliceSeamGeometry::PlainCrossfade,
         };
         let (pre_lag0, post_lag0) = fill_splice_seam_correlations(
             &fill,

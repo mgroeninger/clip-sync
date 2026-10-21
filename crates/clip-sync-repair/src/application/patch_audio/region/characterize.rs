@@ -47,7 +47,9 @@ use super::dual_fit::{
     try_dual_fit_rescue, DualFitAttempt, DualFitDecision, DualFitInputSpec, RouteKind,
 };
 use super::execute::execute_region_spec;
-use super::pcm::{b_extract_frames, b_mapped_start_frame, slice_b_extract};
+use super::pcm::{
+    b_extract_frames, b_mapped_start_frame, bracket_fill_margin_start, slice_b_extract,
+};
 use super::types::{
     skip_outcome_from_fields, skip_region_spec, RegionPatch, RegionPatchContext, RegionPatchMedia,
     RegionPatchOpts, RegionPatchOutcome,
@@ -735,7 +737,12 @@ pub(in crate::application::patch_audio) fn characterize_region(
         gap_end_frame: refined.end_frame,
         a_samples: &a_pcm.samples,
         channels,
-        single_lag_alignment: true,
+        // Pre-assembly: no trim, no padding yet (see `execute_bracket_fill_detail`).
+        geometry: policies::SpliceSeamGeometry::single_lag(
+            request.seam_extend_fill,
+            b_samples_full,
+            bracket_fill_margin_start(b_extract_start_frame, alignment.start_frame, 0, 0),
+        ),
     };
     // M0 perf instrumentation (archive/TEMP-patch-audio-bracket-fill-elimination-plan.md §3): time the fill
     // assembly itself. `char_gate_search` closes well before this point, so the assembly was previously
@@ -974,6 +981,9 @@ pub(in crate::application::patch_audio) fn characterize_region(
             seam_gate_frames,
             sample_rate,
             crossfade_secs: region.crossfade_secs,
+            b_samples_full,
+            b_extract_start_frame: bracket_b_extract.start_frame,
+            seam_extend_fill: request.seam_extend_fill,
         }),
         b_fill,
         "6b.3a: executor bracket-fill reconstruction must byte-match the inline fill"
@@ -1028,7 +1038,21 @@ pub(in crate::application::patch_audio) fn characterize_region(
                 pre_window: pre_gate_frames,
                 post_window: post_gate_frames,
             },
-            seam_ctx,
+            // The assembled fill as the splice will write it: past any head trim, and without
+            // margins when it was zero-padded.
+            policies::SpliceSeamContext {
+                geometry: policies::SpliceSeamGeometry::single_lag(
+                    request.seam_extend_fill,
+                    b_samples_full,
+                    bracket_fill_margin_start(
+                        b_extract_start_frame,
+                        alignment.start_frame,
+                        head_trim_frames,
+                        zero_pad_frames,
+                    ),
+                ),
+                ..seam_ctx
+            },
         );
         let gate_min = report_pre.min(report_post);
         let splice_min = splice_pre.min(splice_post);

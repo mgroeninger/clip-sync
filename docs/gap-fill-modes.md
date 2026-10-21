@@ -303,6 +303,16 @@ One semantic side effect on the flag arm: with margins the gap interior starts a
 than `b_fill[cf]`, so the +1 crossfade displacement disappears and a reported frame **is** the audio
 frame. Default-off keeps goldens and `registration_applied_ms` semantics as shipped.
 
+The flag also changes **scoring**, so the bracket path scores the splice it writes. The splice-aware
+seam scorer reads the geometry from `SpliceSeamContext::geometry`: `PlainCrossfade` scores the fill's
+own head and rewound tail, and `ExtendedCrossfade` scores the `head` / `tail` margins (see
+[seam-scoring.md](seam-scoring.md) § 4). Two Fit decisions read it: the trim-head vs trim-tail pick
+(`pick_fill_length_anchor`) and characterize's report-vs-splice reconciliation. The margins come from
+the same cutter the splice uses (`policies::seam_margin_slices`) at the same full-B start
+(`bracket_fill_margin_start`), so where the splice falls back to plain, the scorer does too. A
+**zero-padded** fill gets no margin on either side: full B past the padding is not contiguous with
+it. Dual-fit scores border templates (`BorderTemplate`) and is unaffected.
+
 > **Status:** the flag is validated but not yet default. Bracket-path validation is open (see
 > [dev/TEMP-dual-fit-registration-routing-plan.md](dev/archive/TEMP-dual-fit-registration-routing-plan.md)
 > § 7); the dual-fit path was ear-confirmed on 2026-09-24. One flag governs both paths, so the

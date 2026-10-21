@@ -23,7 +23,7 @@ pub use seam_residual::{
 pub use seam_scoring::{
     fill_repeat_correlations, fill_seam_correlations, fill_splice_seam_correlations,
     fill_splice_seam_correlations_interleaved, seam_channel_diagnostics, BorderSeamTemplates,
-    SeamChannelDiagnostics, SeamPlacement, SeamTemplates, SpliceSeamContext,
+    SeamChannelDiagnostics, SeamPlacement, SeamTemplates, SpliceSeamContext, SpliceSeamGeometry,
 };
 pub(crate) use seam_scoring::{
     fill_repeat_correlations_band, fill_seam_correlations_band,
@@ -31,7 +31,7 @@ pub(crate) use seam_scoring::{
 };
 pub use seam_splice::{
     apply_seam_crossfade, apply_seam_crossfade_extended, effective_seam_crossfade_frames,
-    SeamMarginFill,
+    seam_margin_slices, SeamMarginFill,
 };
 pub use silence::{
     absolute_silence_floor_db, compute_fill_gain, is_silent, is_silent_frame,

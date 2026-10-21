@@ -74,6 +74,23 @@ For a structure placement at B frame `start` with `gap_frames` length (`fill_sea
 
 `seam_gate_frames` (`w`) is the seam comparison window, capped by **`fill_seam_search_secs`** (default 0.25 s ≈ 250 ms). Note this is *narrow* — only the immediate ~250 ms at the boundary — whereas the **energy signature** matches a much wider envelope (`gap_signature_context_secs`, default 3 s). A difference that lives outside the 250 ms border won't move the waveform seam.
 
+### Splice-aware windows (assembled fill)
+
+Once a fill is assembled, `fill_splice_seam_correlations[_interleaved]` re-scores it as the splice
+will write it. `SpliceSeamContext::geometry` names that layout. With a crossfade of `cf` frames and
+`w = min(window, cf)`, the A side is raw A at the gap edge, `A[gs − w .. gs]` and `A[ge .. ge + w]`:
+
+| Geometry | Writer | `pre` B side | `post` B side |
+|----------|--------|--------------|---------------|
+| `PlainCrossfade` | `apply_seam_crossfade` (default) | `fill[cf − w .. cf]` | `fill[len − cf .. len − cf + w]` (the rewound tail) |
+| `ExtendedCrossfade` | `apply_seam_crossfade_extended` (`--seam-extend-fill`) | `head[cf − w .. cf]`, the B just before the fill | `tail[.. w]`, the B just after it |
+| `BorderTemplate` | dual-fit bridge | `fill[.. w]`, against the A pre-border template instead of raw A | `fill[len − w ..]`, against the A post-border template |
+
+`ExtendedCrossfade` is the same registration the placement search assumes (`b[start − w .. start]`
+above). `PlainCrossfade` peaks one crossfade early on the pre seam and one late on the post seam,
+because the plain post blend rewinds the fill. Where the extended margins cannot be cut, or
+`cf = 0`, the extended geometry scores as plain, which is what the splice then writes.
+
 ## 5. Gates & tiers — how pre/post decide the outcome
 
 Two gates consume the seam scores; both treat **short gaps** (≤ `short_gap_mean_correlation_secs`, default 2.0 s) more leniently.
@@ -163,7 +180,7 @@ A companion `fill residual channel breakdown` line (same debug target) reports `
 | Channel selection | `policies/seam_scoring.rs::seam_score_channel_indices` |
 | Peak-normalized Pearson | `policies/seam_scoring.rs::seam_pearson` |
 | Pre/post at a placement | `policies::fill_seam_correlations` (`seam_scoring.rs`) |
-| Splice-time per-channel seams | `policies::fill_splice_seam_correlations_interleaved` (`seam_scoring.rs`) |
+| Splice-time per-channel seams | `policies::fill_splice_seam_correlations_interleaved` (`seam_scoring.rs`); geometry `policies::SpliceSeamGeometry`, margins `policies::seam_margin_slices` (`seam_splice.rs`) |
 | Per-channel debug diagnostics | `policies::seam_channel_diagnostics` (`seam_scoring.rs`) |
 | Fit waveform tiers | `domain/gap_fill_fit.rs::classify_fill_waveform_confidence`, `fit_mode_waveform_floor_passes` |
 | Structure gate / gate-mode waveform gate | `application/patch_region.rs::structure_passes_gate`, `seams_pass_correlation_gate` |

@@ -12,7 +12,7 @@ use super::bracket::{
     execute_bracket_fill_detail, execute_bracket_output, ExecuteBracketFillCtx,
     ExecuteBracketOutputCtx,
 };
-use super::pcm::{seam_margin_from_b, slice_b_extract};
+use super::pcm::{bracket_fill_margin_start, seam_margin_from_b, slice_b_extract};
 use super::types::{RegionPatch, RegionPatchContext, RegionPatchMedia, RegionPatchOutcome};
 
 /// The executor entry: produce `(patch, outcome)` from a `GapRepairSpec` — the typed characterize→execute
@@ -96,6 +96,9 @@ pub(in crate::application::patch_audio) fn execute_region_spec(
                 seam_gate_frames: windows.seam_gate_frames,
                 sample_rate,
                 crossfade_secs,
+                b_samples_full: media.b_samples_full,
+                b_extract_start_frame: b_extract.start_frame,
+                seam_extend_fill: request.seam_extend_fill,
             });
             // Characterize assembled the same fill; the preview outcome reports its count, so the two
             // must agree or preview and write would disagree on the shortfall.
@@ -104,24 +107,32 @@ pub(in crate::application::patch_audio) fn execute_region_spec(
                 "executor re-assembly diverged from characterize's fill length"
             );
             // The fill is a contiguous B span starting `head_trim_frames` past the alignment, so the
-            // seam margins are the frames immediately either side of it. `None` (flag off, or the
-            // fill sitting within a crossfade of either end of B) splices exactly as it always did.
-            let seam_margin = if request.seam_extend_fill {
-                seam_margin_from_b(
-                    media.b_samples_full,
-                    channels,
-                    b_extract.start_frame + alignment.start_frame + bracket_fill.head_trim_frames,
-                    refined.end_frame.saturating_sub(refined.start_frame),
-                    crate::domain::policies::effective_seam_crossfade_frames(
-                        (crossfade_secs * sample_rate as f64) as usize,
-                        refined.start_frame,
-                        refined.end_frame,
-                        media.a_pcm.frames(),
-                    ),
-                )
-            } else {
-                None
-            };
+            // seam margins are the frames immediately either side of it. `None` (flag off, a
+            // zero-padded fill, or the fill sitting within a crossfade of either end of B) splices
+            // exactly as it always did.
+            let margin_start = bracket_fill_margin_start(
+                b_extract.start_frame,
+                alignment.start_frame,
+                bracket_fill.head_trim_frames,
+                bracket_fill.zero_pad_frames,
+            );
+            let seam_margin =
+                if let (true, Some(margin_start)) = (request.seam_extend_fill, margin_start) {
+                    seam_margin_from_b(
+                        media.b_samples_full,
+                        channels,
+                        margin_start,
+                        refined.end_frame.saturating_sub(refined.start_frame),
+                        crate::domain::policies::effective_seam_crossfade_frames(
+                            (crossfade_secs * sample_rate as f64) as usize,
+                            refined.start_frame,
+                            refined.end_frame,
+                            media.a_pcm.frames(),
+                        ),
+                    )
+                } else {
+                    None
+                };
             let (patch, outcome) = execute_bracket_output(ExecuteBracketOutputCtx {
                 fill: bracket_fill.pcm,
                 seam_margin,

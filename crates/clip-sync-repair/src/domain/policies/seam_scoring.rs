@@ -418,6 +418,30 @@ pub(crate) fn fill_repeat_correlations_band(
     Some(pre.into_iter().zip(post).collect())
 }
 
+/// The layout the splice will write at the seams — what the splice-aware scorer must score.
+#[derive(Clone, Copy)]
+pub enum SpliceSeamGeometry<'a> {
+    /// A **dual-fit** fill, whose pre/post shoulders were independently matched at their own
+    /// seam-local lags (that's the entire point of dual-fit: no single lag satisfies both seams) —
+    /// comparing the fill's head/tail against raw A at lag 0 there is a category error, so scoring
+    /// uses the border-window template dual-fit's own seam-local search already validated against.
+    BorderTemplate,
+    /// An ordinary (single rigid-lag) splice through
+    /// [`apply_seam_crossfade`](super::apply_seam_crossfade): the fill head bleeds over A's pre tail
+    /// and the fill tail is rewound over A's post head, so those are the crossfade windows scored.
+    PlainCrossfade,
+    /// A single-lag splice through
+    /// [`apply_seam_crossfade_extended`](super::apply_seam_crossfade_extended): `cf` frames of B
+    /// either side of the fill are blended over A instead. The margins are cut from `b_full`
+    /// (interleaved, [`SpliceSeamContext::channels`]) by [`seam_margin_slices`](super::seam_margin_slices)
+    /// — the splice's own cutter — at `fill_start_frame`. Where it cannot cut, the splice falls back
+    /// to the plain layout, and so does the score.
+    ExtendedCrossfade {
+        b_full: &'a [f32],
+        fill_start_frame: usize,
+    },
+}
+
 /// A-side gap bounds for splice-aware seam scoring on decoded PCM.
 #[derive(Clone, Copy)]
 pub struct SpliceSeamContext<'a> {
@@ -426,15 +450,69 @@ pub struct SpliceSeamContext<'a> {
     pub gap_end_frame: usize,
     pub a_samples: &'a [f32],
     pub channels: usize,
-    /// True for an ordinary (single rigid-lag) splice, where the fill genuinely sits at
-    /// `gap_start_frame`/`gap_end_frame` with no lag correction — so the crossfade-window scoring
-    /// below (checking the literal blended overlap against A's raw neighboring samples) is valid.
-    /// False for a **dual-fit** fill, whose pre/post shoulders were independently matched at their
-    /// own seam-local lags (that's the entire point of dual-fit: no single lag satisfies both
-    /// seams) — comparing the fill's head/tail against raw A at lag 0 there is a category error,
-    /// so scoring falls back to the border-window template dual-fit's own seam-local search
-    /// already validated against.
-    pub single_lag_alignment: bool,
+    pub geometry: SpliceSeamGeometry<'a>,
+}
+
+impl<'a> SpliceSeamGeometry<'a> {
+    /// The geometry of a single-lag fill: extended when `--seam-extend-fill` is on and the fill's
+    /// full-B start is known, plain otherwise. `fill_start_frame: None` is how a caller says the
+    /// splice will not get margins (e.g. a zero-padded fill), so it scores the plain fallback.
+    pub fn single_lag(
+        seam_extend_fill: bool,
+        b_full: &'a [f32],
+        fill_start_frame: Option<usize>,
+    ) -> Self {
+        match fill_start_frame {
+            Some(fill_start_frame) if seam_extend_fill => Self::ExtendedCrossfade {
+                b_full,
+                fill_start_frame,
+            },
+            _ => Self::PlainCrossfade,
+        }
+    }
+}
+
+impl<'a> SpliceSeamContext<'a> {
+    /// The same context for a fill that starts `frames` later in B — the trim-head candidate of
+    /// [`pick_fill_length_anchor`](crate::domain::gap_fill_fit::pick_fill_length_anchor), whose
+    /// extended margins sit `frames` later too. A no-op for the other geometries.
+    pub fn fill_advanced_by(self, frames: usize) -> Self {
+        let geometry = match self.geometry {
+            SpliceSeamGeometry::ExtendedCrossfade {
+                b_full,
+                fill_start_frame,
+            } => SpliceSeamGeometry::ExtendedCrossfade {
+                b_full,
+                fill_start_frame: fill_start_frame + frames,
+            },
+            other => other,
+        };
+        Self { geometry, ..self }
+    }
+
+    /// The crossfade windows against raw A are valid only for a single-lag fill.
+    fn single_lag(&self) -> bool {
+        !matches!(self.geometry, SpliceSeamGeometry::BorderTemplate)
+    }
+
+    /// Interleaved `(head, tail)` B margins the extended splice will write, for a fill of
+    /// `fill_frames`. `None` for every other geometry, and wherever the splice itself would fall
+    /// back to the plain layout.
+    fn extended_margin(&self, fill_frames: usize) -> Option<(&'a [f32], &'a [f32])> {
+        match self.geometry {
+            SpliceSeamGeometry::ExtendedCrossfade {
+                b_full,
+                fill_start_frame,
+            } => super::seam_margin_slices(
+                b_full,
+                self.channels,
+                fill_start_frame,
+                fill_frames,
+                self.seam_cf,
+            ),
+            _ => None,
+        }
+    }
 }
 
 fn mono_timeline_frames_f64(
@@ -457,9 +535,12 @@ fn mono_timeline_frames_f64(
         .collect()
 }
 
-/// Seam scores for a fitted fill chunk aligned with [`apply_seam_crossfade`] placement.
+/// Seam scores for a fitted fill chunk aligned with the splice `ctx.geometry` names.
 ///
-/// When `ctx.seam_cf > 0`, scores the A PCM windows that are actually crossfaded at splice time.
+/// When `ctx.seam_cf > 0` on a single-lag geometry, scores the A PCM windows that are actually
+/// crossfaded at splice time, against the B audio the splice blends over them: the fill's own head
+/// and tail ([`SpliceSeamGeometry::PlainCrossfade`]) or the B margins either side of it
+/// ([`SpliceSeamGeometry::ExtendedCrossfade`]).
 pub fn fill_splice_seam_correlations(
     fill_mono: &[f64],
     a_pre: &[f64],
@@ -468,14 +549,56 @@ pub fn fill_splice_seam_correlations(
     post_window: usize,
     ctx: SpliceSeamContext<'_>,
 ) -> (f64, f64) {
+    let margin = ctx.extended_margin(fill_mono.len()).map(|(head, tail)| {
+        (
+            interleaved_to_mono(head, ctx.channels),
+            interleaved_to_mono(tail, ctx.channels),
+        )
+    });
+    let (head, tail) = match &margin {
+        Some((head, tail)) => (Some(head.as_slice()), Some(tail.as_slice())),
+        None => (None, None),
+    };
     (
-        score_splice_pre_seam(fill_mono, a_pre, pre_window, ctx),
-        score_splice_post_seam(fill_mono, a_post, post_window, ctx),
+        score_splice_pre_seam(fill_mono, head, a_pre, pre_window, ctx),
+        score_splice_post_seam(fill_mono, tail, a_post, post_window, ctx),
     )
+}
+
+/// B window blended over A's last `w` pre-gap frames: the extended splice's `head` margin, or the
+/// plain splice's fill head.
+fn splice_pre_b_window<'b>(
+    fill: &'b [f64],
+    head: Option<&'b [f64]>,
+    cf: usize,
+    w: usize,
+) -> &'b [f64] {
+    match head {
+        Some(head) => &head[head.len() - w..],
+        None => &fill[cf - w..cf],
+    }
+}
+
+/// B window blended over A's first `w` post-gap frames: the extended splice's `tail` margin, or
+/// the plain splice's rewound fill tail.
+fn splice_post_b_window<'b>(
+    fill: &'b [f64],
+    tail: Option<&'b [f64]>,
+    cf: usize,
+    w: usize,
+) -> &'b [f64] {
+    match tail {
+        Some(tail) => &tail[..w.min(tail.len())],
+        None => {
+            let b_start = fill.len().saturating_sub(cf);
+            &fill[b_start..(b_start + w).min(fill.len())]
+        }
+    }
 }
 
 fn score_splice_pre_seam(
     fill_mono: &[f64],
+    head: Option<&[f64]>,
     a_pre: &[f64],
     pre_window: usize,
     ctx: SpliceSeamContext<'_>,
@@ -483,13 +606,13 @@ fn score_splice_pre_seam(
     if pre_window == 0 || fill_mono.is_empty() {
         return 0.0;
     }
-    if ctx.single_lag_alignment && ctx.seam_cf > 0 && ctx.gap_start_frame > 0 {
+    if ctx.single_lag() && ctx.seam_cf > 0 && ctx.gap_start_frame > 0 {
         let w = pre_window
             .min(ctx.seam_cf)
             .min(ctx.gap_start_frame)
             .min(fill_mono.len());
         if w > 0 {
-            let b = &fill_mono[ctx.seam_cf - w..ctx.seam_cf];
+            let b = splice_pre_b_window(fill_mono, head, ctx.seam_cf, w);
             let a = mono_timeline_frames_f64(
                 ctx.a_samples,
                 ctx.channels,
@@ -517,6 +640,7 @@ fn score_splice_pre_seam_border(fill_mono: &[f64], a_pre: &[f64], pre_window: us
 
 fn score_splice_post_seam(
     fill_mono: &[f64],
+    tail: Option<&[f64]>,
     a_post: &[f64],
     post_window: usize,
     ctx: SpliceSeamContext<'_>,
@@ -526,15 +650,13 @@ fn score_splice_post_seam(
     }
     let len = fill_mono.len();
     let total_frames = ctx.a_samples.len() / ctx.channels.max(1);
-    if ctx.single_lag_alignment && ctx.seam_cf > 0 && ctx.gap_end_frame < total_frames {
+    if ctx.single_lag() && ctx.seam_cf > 0 && ctx.gap_end_frame < total_frames {
         let w = post_window
             .min(ctx.seam_cf)
             .min(total_frames.saturating_sub(ctx.gap_end_frame))
             .min(len.saturating_sub(len.saturating_sub(ctx.seam_cf)));
         if w > 0 {
-            let b_start = len.saturating_sub(ctx.seam_cf);
-            let b_end = (b_start + w).min(len);
-            let b = &fill_mono[b_start..b_end];
+            let b = splice_post_b_window(fill_mono, tail, ctx.seam_cf, w);
             let a = mono_timeline_frames_f64(
                 ctx.a_samples,
                 ctx.channels,
@@ -604,24 +726,35 @@ pub fn fill_splice_seam_correlations_interleaved(
     }
 
     let gap_frames = fill_mono.len();
-    let score_channels = seam_score_channel_indices(a_pre_ch, a_post_ch);
-    let mut pre_scores = Vec::with_capacity(score_channels.len());
-    let mut post_scores = Vec::with_capacity(score_channels.len());
-    for &ch in &score_channels {
-        let ch_fill: Vec<f64> = fill_interleaved
+    let margin = ctx.extended_margin(gap_frames);
+    let channel_of = |samples: &[f32], ch: usize| -> Vec<f64> {
+        samples
             .iter()
             .skip(ch)
             .step_by(channels)
             .map(|&s| s as f64)
-            .collect();
+            .collect()
+    };
+    let score_channels = seam_score_channel_indices(a_pre_ch, a_post_ch);
+    let mut pre_scores = Vec::with_capacity(score_channels.len());
+    let mut post_scores = Vec::with_capacity(score_channels.len());
+    for &ch in &score_channels {
+        let ch_fill = channel_of(fill_interleaved, ch);
         if ch_fill.len() != gap_frames {
             continue;
         }
-        let pre = score_splice_pre_seam_channel(&ch_fill, &a_pre_ch[ch], pre_window, ctx, ch);
+        let ch_margin = margin.map(|(head, tail)| (channel_of(head, ch), channel_of(tail, ch)));
+        let (ch_head, ch_tail) = match &ch_margin {
+            Some((head, tail)) => (Some(head.as_slice()), Some(tail.as_slice())),
+            None => (None, None),
+        };
+        let pre =
+            score_splice_pre_seam_channel(&ch_fill, ch_head, &a_pre_ch[ch], pre_window, ctx, ch);
         if pre.is_finite() && pre > f64::NEG_INFINITY {
             pre_scores.push(pre);
         }
-        let post = score_splice_post_seam_channel(&ch_fill, &a_post_ch[ch], post_window, ctx, ch);
+        let post =
+            score_splice_post_seam_channel(&ch_fill, ch_tail, &a_post_ch[ch], post_window, ctx, ch);
         if post.is_finite() && post > f64::NEG_INFINITY {
             post_scores.push(post);
         }
@@ -663,6 +796,7 @@ pub(crate) fn interleaved_channel_timeline_f64(
 
 fn score_splice_pre_seam_channel(
     fill_mono: &[f64],
+    head: Option<&[f64]>,
     a_pre: &[f64],
     pre_window: usize,
     ctx: SpliceSeamContext<'_>,
@@ -671,13 +805,13 @@ fn score_splice_pre_seam_channel(
     if pre_window == 0 || fill_mono.is_empty() {
         return 0.0;
     }
-    if ctx.single_lag_alignment && ctx.seam_cf > 0 && ctx.gap_start_frame > 0 {
+    if ctx.single_lag() && ctx.seam_cf > 0 && ctx.gap_start_frame > 0 {
         let w = pre_window
             .min(ctx.seam_cf)
             .min(ctx.gap_start_frame)
             .min(fill_mono.len());
         if w > 0 {
-            let b = &fill_mono[ctx.seam_cf - w..ctx.seam_cf];
+            let b = splice_pre_b_window(fill_mono, head, ctx.seam_cf, w);
             let a = interleaved_channel_timeline_f64(
                 ctx.a_samples,
                 ctx.channels,
@@ -695,6 +829,7 @@ fn score_splice_pre_seam_channel(
 
 fn score_splice_post_seam_channel(
     fill_mono: &[f64],
+    tail: Option<&[f64]>,
     a_post: &[f64],
     post_window: usize,
     ctx: SpliceSeamContext<'_>,
@@ -705,15 +840,13 @@ fn score_splice_post_seam_channel(
     }
     let len = fill_mono.len();
     let total_frames = ctx.a_samples.len() / ctx.channels.max(1);
-    if ctx.single_lag_alignment && ctx.seam_cf > 0 && ctx.gap_end_frame < total_frames {
+    if ctx.single_lag() && ctx.seam_cf > 0 && ctx.gap_end_frame < total_frames {
         let w = post_window
             .min(ctx.seam_cf)
             .min(total_frames.saturating_sub(ctx.gap_end_frame))
             .min(len.saturating_sub(len.saturating_sub(ctx.seam_cf)));
         if w > 0 {
-            let b_start = len.saturating_sub(ctx.seam_cf);
-            let b_end = (b_start + w).min(len);
-            let b = &fill_mono[b_start..b_end];
+            let b = splice_post_b_window(fill_mono, tail, ctx.seam_cf, w);
             let a = interleaved_channel_timeline_f64(
                 ctx.a_samples,
                 ctx.channels,
@@ -1766,5 +1899,155 @@ mod tests {
             (base - seam_pearson(&scaled_left, &scaled_right)).abs() < 1e-12,
             "Pearson r should be scale-invariant: {base} vs scaled"
         );
+    }
+    /// A tone under deterministic noise. Pearson needs a signal that is not self-similar under a
+    /// shift — a ramp scores the same at every lag, so it cannot tell a displaced window apart.
+    fn splice_probe_signal(seed: u64, frames: usize) -> Vec<f32> {
+        let noise = det_noise(seed, frames);
+        (0..frames)
+            .map(|i| {
+                let tone = (2.0 * std::f64::consts::PI * 440.0 * i as f64 / 48_000.0).sin();
+                (0.3 * tone + 0.3 * noise[i]) as f32
+            })
+            .collect()
+    }
+
+    /// `(cf, gap_start, gap_end)` of the splice-geometry fixtures: A is B, so the true fill is
+    /// `B[gap_start..gap_end]` at registration zero.
+    const SPLICE_PROBE: (usize, usize, usize) = (480, 8_000, 8_960);
+
+    fn splice_probe_ctx<'a>(
+        a: &'a [f32],
+        channels: usize,
+        geometry: SpliceSeamGeometry<'a>,
+    ) -> SpliceSeamContext<'a> {
+        let (cf, gs, ge) = SPLICE_PROBE;
+        SpliceSeamContext {
+            seam_cf: cf,
+            gap_start_frame: gs,
+            gap_end_frame: ge,
+            a_samples: a,
+            channels,
+            geometry,
+        }
+    }
+
+    /// The extended geometry scores the frames `apply_seam_crossfade_extended` writes over A — B
+    /// either side of the fill — so a fill at exact registration scores a perfect seam on both
+    /// sides. The plain geometry scores the fill's own head and rewound tail there, which a
+    /// correctly placed fill does not match: that mismatch is the bug the geometry exists to fix.
+    #[test]
+    fn extended_splice_geometry_scores_the_written_margins() {
+        let (cf, gs, ge) = SPLICE_PROBE;
+        let b = splice_probe_signal(11, 20_000);
+        let a = b.clone();
+        let fill: Vec<f64> = b[gs..ge].iter().map(|&s| s as f64).collect();
+        let a_pre: Vec<f64> = a[gs - cf..gs].iter().map(|&s| s as f64).collect();
+        let a_post: Vec<f64> = a[ge..ge + cf].iter().map(|&s| s as f64).collect();
+        let score = |geometry| {
+            fill_splice_seam_correlations(
+                &fill,
+                &a_pre,
+                &a_post,
+                cf,
+                cf,
+                splice_probe_ctx(&a, 1, geometry),
+            )
+        };
+
+        let (pre, post) = score(SpliceSeamGeometry::ExtendedCrossfade {
+            b_full: &b,
+            fill_start_frame: gs,
+        });
+        assert!(
+            pre >= 0.99 && post >= 0.99,
+            "extended: pre={pre} post={post}"
+        );
+        let (plain_pre, plain_post) = score(SpliceSeamGeometry::PlainCrossfade);
+        assert!(
+            plain_pre.min(plain_post) < 0.5,
+            "fixture must separate the geometries: plain pre={plain_pre} post={plain_post}"
+        );
+    }
+
+    /// As above through the per-channel path: the interleaved entry point de-interleaves the
+    /// margins the same way it de-interleaves the fill.
+    #[test]
+    fn extended_splice_geometry_scores_the_written_margins_per_channel() {
+        let (cf, gs, ge) = SPLICE_PROBE;
+        let channels = 2usize;
+        let frames = 20_000usize;
+        let left = splice_probe_signal(11, frames);
+        let right = splice_probe_signal(29, frames);
+        let b: Vec<f32> = (0..frames).flat_map(|i| [left[i], right[i]]).collect();
+        let a = b.clone();
+        let fill = b[gs * channels..ge * channels].to_vec();
+        let window = |ch: &[f32], lo: usize, hi: usize| -> Vec<f64> {
+            ch[lo..hi].iter().map(|&s| s as f64).collect()
+        };
+        let a_pre_ch = vec![window(&left, gs - cf, gs), window(&right, gs - cf, gs)];
+        let a_post_ch = vec![window(&left, ge, ge + cf), window(&right, ge, ge + cf)];
+        let a_pre = interleaved_to_mono(&a[(gs - cf) * channels..gs * channels], channels);
+        let a_post = interleaved_to_mono(&a[ge * channels..(ge + cf) * channels], channels);
+        let borders = BorderSeamTemplates {
+            a_pre: &a_pre,
+            a_post: &a_post,
+            a_pre_ch: &a_pre_ch,
+            a_post_ch: &a_post_ch,
+            pre_window: cf,
+            post_window: cf,
+        };
+        let score = |geometry| {
+            fill_splice_seam_correlations_interleaved(
+                &fill,
+                channels,
+                &borders,
+                splice_probe_ctx(&a, channels, geometry),
+            )
+        };
+
+        let (pre, post) = score(SpliceSeamGeometry::ExtendedCrossfade {
+            b_full: &b,
+            fill_start_frame: gs,
+        });
+        assert!(
+            pre >= 0.99 && post >= 0.99,
+            "extended: pre={pre} post={post}"
+        );
+        let (plain_pre, plain_post) = score(SpliceSeamGeometry::PlainCrossfade);
+        assert!(
+            plain_pre.min(plain_post) < 0.5,
+            "plain pre={plain_pre} post={plain_post}"
+        );
+    }
+
+    /// Where the splice cannot cut a margin it falls back to the plain crossfade, so the scorer
+    /// must score exactly that: here B ends one frame short of the tail margin.
+    #[test]
+    fn extended_splice_geometry_falls_back_to_plain_where_the_splice_does() {
+        let (cf, gs, ge) = SPLICE_PROBE;
+        let b = splice_probe_signal(11, 20_000);
+        let a = b.clone();
+        let b_short = &b[..ge + cf - 1];
+        assert!(super::super::seam_margin_slices(b_short, 1, gs, ge - gs, cf).is_none());
+        let fill: Vec<f64> = b[gs..ge].iter().map(|&s| s as f64).collect();
+        let a_pre: Vec<f64> = a[gs - cf..gs].iter().map(|&s| s as f64).collect();
+        let a_post: Vec<f64> = a[ge..ge + cf].iter().map(|&s| s as f64).collect();
+        let score = |geometry| {
+            fill_splice_seam_correlations(
+                &fill,
+                &a_pre,
+                &a_post,
+                cf,
+                cf,
+                splice_probe_ctx(&a, 1, geometry),
+            )
+        };
+
+        let extended = score(SpliceSeamGeometry::ExtendedCrossfade {
+            b_full: b_short,
+            fill_start_frame: gs,
+        });
+        assert_eq!(extended, score(SpliceSeamGeometry::PlainCrossfade));
     }
 }

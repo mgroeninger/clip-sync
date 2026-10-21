@@ -13,6 +13,7 @@ use crate::domain::{
     policies::{self, GapBorderSpec, RefinedGapFrames},
 };
 
+use super::pcm::bracket_fill_margin_start;
 use super::types::{RegionPatch, RegionPatchOutcome};
 
 /// Inputs to [`assemble_bracket_fill`] — the sliced B fill (`b_fill_raw` + contiguous `b_extension`), the
@@ -149,6 +150,11 @@ pub(in crate::application::patch_audio::region) struct ExecuteBracketFillCtx<'a>
     pub(in crate::application::patch_audio::region) seam_gate_frames: usize,
     pub(in crate::application::patch_audio::region) sample_rate: u32,
     pub(in crate::application::patch_audio::region) crossfade_secs: f64,
+    /// Full decoded B and the extract's start in it — what an `--seam-extend-fill` splice cuts its
+    /// margins from, so the trim pick scores those same frames.
+    pub(in crate::application::patch_audio::region) b_samples_full: &'a [f32],
+    pub(in crate::application::patch_audio::region) b_extract_start_frame: usize,
+    pub(in crate::application::patch_audio::region) seam_extend_fill: bool,
 }
 
 /// The executor's bracket-fill reconstruction (6b.3a). Re-derives everything the fill needs from the spec's
@@ -189,6 +195,9 @@ pub(in crate::application::patch_audio::region) fn execute_bracket_fill_detail(
         seam_gate_frames,
         sample_rate,
         crossfade_secs,
+        b_samples_full,
+        b_extract_start_frame,
+        seam_extend_fill,
     } = ctx;
     // M0 (§3): the executor-side cost — border rebuild + assembly. In debug builds this nests under the
     // `debug_assert_eq!` shadow rather than the live path; measure on a release-profile run.
@@ -231,7 +240,13 @@ pub(in crate::application::patch_audio::region) fn execute_bracket_fill_detail(
         gap_end_frame: refined.end_frame,
         a_samples,
         channels,
-        single_lag_alignment: true,
+        // Before assembly there is no trim and no padding: the picker advances the trim-head
+        // candidate itself, and only scores when the bracket overruns the gap (never padded).
+        geometry: policies::SpliceSeamGeometry::single_lag(
+            seam_extend_fill,
+            b_samples_full,
+            bracket_fill_margin_start(b_extract_start_frame, alignment.start_frame, 0, 0),
+        ),
     };
     assemble_bracket_fill(BracketFillAssembly {
         b_fill_raw,
@@ -472,7 +487,7 @@ mod tests {
                 gap_end_frame: 20,
                 a_samples: &a_samples,
                 channels,
-                single_lag_alignment: true,
+                geometry: crate::domain::policies::SpliceSeamGeometry::PlainCrossfade,
             },
         });
 
