@@ -1,13 +1,13 @@
 #!/usr/bin/env pwsh
 #Requires -Version 7.0
-# Cross-arm OUTCOME differential for two `measure-patch-outcomes.ps1` runs
-# (docs/dev/TEMP-early-shoulder-locks-collapse-skip-plan.md § 8.1, Tier 2).
+# Cross-arm OUTCOME differential for two `measure-patch-outcomes.ps1` runs.
 #
-# Asks one question: does the same gap reach the same VERDICT in both arms? Not "did a number
-# move" — did production decide differently. That is the whole Tier-2 bar: on the two-arm control
-# (arm A default vs arm B `--lag-envelope-max-lag-ms 0`, same HEAD binary), every gap outside the
-# abut set must be bit-identical, and every gap inside it must be a `shoulders_abut` skip and
-# nothing else.
+# Asks one question: does the same gap reach the same VERDICT in both arms, and where it does, which
+# fields moved? Not "did one metric move" — did production decide differently, and is every
+# difference one the Change under test is supposed to make. Written for the early-shoulder Tier-2
+# control (docs/dev/archive/TEMP-early-shoulder-locks-collapse-skip-plan.md § 8.1); the expectation
+# is now a parameter (-ExpectReasons / -ExpectPaths), so any flag-off vs flag-on or old-vs-new pair
+# of arms can be judged against what it is meant to change.
 #
 # Unlike diff-patch-adjustments.ps1 this compares the WHOLE gap object field by field rather than
 # one metric, so a field this script has never heard of still shows up. New fields are a first-
@@ -46,28 +46,46 @@
 # as DERIVED and excluded from the verdict — counting them would guarantee noise on a Change that
 # worked. Everything else is INDEPENDENT and is a finding.
 #
-# VERDICT: changed gaps split into EXPECTED (the candidate skips with -AbutReason) and UNEXPLAINED
-# (everything else, unjoined gaps included). The Tier-2 bar is UNEXPLAINED = 0 AND run-level
-# INDEPENDENT = 0. The script exits 1 when either is non-zero so a run can be gated on it;
+# CHANGED PATHS: a run-wide table over the field_change gaps — each field path with array indices
+# folded to `[]`, how many gaps it moved on, and for numbers the median / max |delta| and how many
+# went up vs down. A flag that shifts one field on every patch reads as one row here instead of a
+# thousand per-gap dumps, and the rare path that should not have moved stands out. Status flips and
+# reason changes are left out of the table: their payload is replaced wholesale and would swamp it.
+#
+# VERDICT: changed gaps split into EXPECTED and UNEXPLAINED. A gap is EXPECTED when
+#   - it flipped status or changed reason, and the candidate's reason (or its status, when it has no
+#     reason — e.g. `patched`) matches a -ExpectReasons pattern; or
+#   - it is a field_change and EVERY changed path matches a -ExpectPaths pattern.
+# Unjoined gaps are never expected: the arms disagreeing about the gap set is always a finding. With
+# no expectation declared nothing is expected, so the bar is "bit-identical" — the right one for a
+# refactor or a default-off flag checked against its own baseline. The bar is UNEXPLAINED = 0 AND
+# run-level INDEPENDENT = 0; the script exits 1 when either is non-zero so a run can be gated on it.
 # -NoFailOnUnexplained keeps the exit code at 0 for exploratory diffs.
+#
+# PATTERNS (-IgnorePaths, -ExpectPaths, -ExpectReasons): `*` matches any run of characters, `?`
+# one; everything else is literal, `[` and `]` included, so 'tags[*].name' matches 'tags[3].name'
+# and 'residual.*' matches every residual leaf. Matched case-insensitively against the whole path.
 #
 # Usage:
 #   ./scripts/measure/diff-patch-outcomes.ps1 `
-#       -Baseline gap-files/2026-08-30-tier-2-off -Candidate gap-files/2026-08-30-tier-2-on
-#   ... -Detail                       # every changed field path, not just the count
-#   ... -ExcludePairs 22,28           # duplicate media (oriented corpus 6=22, 16=28)
-#   ... -CsvOut gap-files/tier-2-diff.csv
+#       -Baseline gap-files/<date>-flag-off -Candidate gap-files/<date>-flag-on
+#   ... -NoFailOnUnexplained          # exploratory: read the CHANGED PATHS table first
+#   ... -ExpectPaths 'status.patched.pre_correlation','status.patched.post_correlation'
+#   ... -ExpectReasons 'shoulders_abut'   # the old Tier-2 bar
+#   ... -Detail                       # every changed field path per gap, not just the count
+#   ... -ExcludePairs 75              # shared media (75 reuses 31's B file; see the manifest)
+#   ... -CsvOut gap-files/diff.csv
 #   ... -IgnorePaths 'tags.*','residual.placement_slide_frames'
 #
 # Layout: `<arm>/<pair>.json` — a `--patch-only --format json` report per pair, as written by
 # measure-patch-outcomes.ps1.
 #
 # BASELINE ORDER MATTERS for reading the output, not for the maths: name the OLD/control arm
-# -Baseline and the NEW/default arm -Candidate, so "reason_change -> shoulders_abut" reads in the
-# direction the Change actually moved.
+# -Baseline and the NEW/default arm -Candidate, so "reason_change -> shoulders_abut" and the deltas
+# in CHANGED PATHS read in the direction the Change actually moved.
 #
 # MEDIA HYGIENE: emit pair label, gap index and gap time only — never media paths or titles.
-# Docs: docs/dev/TEMP-early-shoulder-locks-collapse-skip-plan.md.
+# Docs: first written for docs/dev/archive/TEMP-early-shoulder-locks-collapse-skip-plan.md.
 
 [CmdletBinding()]
 param(
@@ -82,11 +100,11 @@ param(
     # Restrict to these pair labels (default: every pair present in BOTH arms).
     [int[]]$Pairs = @(),
 
-    # Drop these pair labels (duplicate media: oriented corpus 6=22, 16=28).
+    # Drop these pair labels (shared media; the manifest's header comments list the known cases).
     [int[]]$ExcludePairs = @(),
 
-    # Field paths to treat as equal, wildcards allowed (e.g. 'tags.*'). Ignored paths are counted
-    # and reported, never silently dropped — an ignore that fires is a caveat on the verdict.
+    # Field paths to treat as equal (see PATTERNS, e.g. 'tags.*'). Ignored paths are counted and
+    # reported, never silently dropped — an ignore that fires is a caveat on the verdict.
     [string[]]$IgnorePaths = @(),
 
     # Absolute tolerance for numeric fields. Default 0 = exact. Both arms come from one binary and
@@ -99,8 +117,13 @@ param(
     # boundary split. Every rescue is reported. 0 disables the pass (exact keys only).
     [double]$JoinToleranceMs = 1.0,
 
-    # Candidate-side skip reason the Change is EXPECTED to introduce.
-    [string]$AbutReason = 'shoulders_abut',
+    # Candidate-side reasons (or statuses, for a reasonless verdict like `patched`) a status flip or
+    # reason change is EXPECTED to land on. Default none.
+    [string[]]$ExpectReasons = @(),
+
+    # Field paths a same-verdict gap is EXPECTED to move on (see PATTERNS). A field_change gap is
+    # expected only when every one of its changed paths matches. Default none.
+    [string[]]$ExpectPaths = @(),
 
     # Print every changed field path per gap, not just the count.
     [switch]$Detail,
@@ -123,6 +146,25 @@ function Get-StartKey([object]$Secs) {
     # 1 ms resolution, culture-invariant, so two arms agree on the join key.
     return ([math]::Round([double]$Secs, 3)).ToString('F3', [cultureinfo]::InvariantCulture)
 }
+
+# Glob over field paths: `*` and `?` are the only metacharacters. PowerShell's -like would read the
+# `[3]` in an array path as a character class, so 'gaps[3]' would never match itself.
+$script:PatternCache = @{}
+function Test-PathMatch([string]$Path, [string[]]$Patterns) {
+    foreach ($pat in $Patterns) {
+        $rx = $script:PatternCache[$pat]
+        if ($null -eq $rx) {
+            $body = [regex]::Escape($pat).Replace('\*', '.*').Replace('\?', '.')
+            $rx = [regex]::new("^$body$", 'IgnoreCase, CultureInvariant')
+            $script:PatternCache[$pat] = $rx
+        }
+        if ($rx.IsMatch($Path)) { return $true }
+    }
+    return $false
+}
+
+# Array indices folded away, so one field across every element (and every gap) is one row.
+function Get-PathShape([string]$Path) { return [regex]::Replace($Path, '\[\d+\]', '[]') }
 
 function Test-HasProp([object]$Obj, [string]$Name) {
     if ($null -eq $Obj) { return $false }
@@ -324,6 +366,12 @@ function Get-ArmIndex {
         ForEach-Object {
             $label = [int]$_.BaseName
             $root = Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json
+            if ($null -eq $root) {
+                # measure-patch-outcomes.ps1 creates the report when a pair starts, so an empty file
+                # is usually the pair still running.
+                Write-Warning "pair $label in $(Split-Path -Leaf $Dir) is empty (still running?) - skipped"
+                return
+            }
             if ($null -eq $root.patch) {
                 Write-Warning "pair $label in $(Split-Path -Leaf $Dir) has no patch section - skipped"
                 return
@@ -404,8 +452,8 @@ if ($labels.Count -eq 0) { throw 'no pair label is present in both arms after -P
 
 # --- join and classify -----------------------------------------------------
 
-# Run-level fields that move mechanically with the per-gap verdicts. `shoulders_abut` is the run
-# level half of the same capture the gap status carries; the counts are recomputed from the gap
+# Run-level fields that move mechanically with the per-gap verdicts. `shoulders_abut` is the
+# run-level republish of the per-gap abut skips; the counts are recomputed from the gap
 # list by PatchSummary::from_outcomes. Anything NOT here is independent and counts as a finding.
 $script:DerivedRunFields = @(
     'patched_count', 'patched_marginal_count', 'skipped_count', 'not_planned_count',
@@ -484,9 +532,7 @@ foreach ($label in $labels) {
         $kept = [System.Collections.Generic.List[object]]::new()
         $nIgnored = 0
         foreach ($d in $all) {
-            $hit = $false
-            foreach ($pat in $IgnorePaths) { if ($d.Path -like $pat) { $hit = $true; break } }
-            if ($hit) {
+            if (Test-PathMatch $d.Path $IgnorePaths) {
                 $nIgnored++
                 if ($ignoredHits.ContainsKey($d.Path)) { $ignoredHits[$d.Path]++ } else { $ignoredHits[$d.Path] = 1 }
             }
@@ -506,7 +552,7 @@ foreach ($label in $labels) {
         $rows.Add([pscustomobject]@{
                 Pair       = $label
                 BaseIdx    = $b[$key].Idx
-                CandIdx    = $c[$key].Idx
+                CandIdx    = $c[$ckey].Idx
                 Start      = $key
                 Class      = $class
                 StatusBase = $sb
@@ -526,9 +572,7 @@ foreach ($label in $labels) {
     $runDiffs = [System.Collections.Generic.List[object]]::new()
     Compare-Node -A $baseIx.Runs[$label] -B $candIx.Runs[$label] -Path '' -Out $runDiffs
     foreach ($d in $runDiffs) {
-        $skip = $false
-        foreach ($pat in $IgnorePaths) { if ($d.Path -like $pat) { $skip = $true; break } }
-        if ($skip) {
+        if (Test-PathMatch $d.Path $IgnorePaths) {
             if ($ignoredHits.ContainsKey($d.Path)) { $ignoredHits[$d.Path]++ } else { $ignoredHits[$d.Path] = 1 }
             continue
         }
@@ -564,11 +608,19 @@ foreach ($label in $labels) {
 # --- report ----------------------------------------------------------------
 
 foreach ($r in $rows) {
-    # A gap is EXPECTED only when it became an abut skip. An unjoined gap is never expected: the
-    # arms disagreeing about the gap set is a finding whatever reason the surviving side carries.
-    $r | Add-Member -NotePropertyName Expected -NotePropertyValue (
-        $r.ReasonCand -eq $AbutReason -and ($r.Class -eq 'status_flip' -or $r.Class -eq 'reason_change')
-    )
+    # See VERDICT. An unjoined gap is never expected: the arms disagreeing about the gap set is a
+    # finding whatever reason the surviving side carries.
+    $exp = $false
+    if ($r.Class -eq 'status_flip' -or $r.Class -eq 'reason_change') {
+        $landed = $r.ReasonCand
+        if (-not $landed) { $landed = $r.StatusCand }
+        $exp = Test-PathMatch $landed $ExpectReasons
+    }
+    elseif ($r.Class -like 'field_change:*' -and $ExpectPaths.Count -gt 0) {
+        $exp = $true
+        foreach ($d in $r.Diffs) { if (-not (Test-PathMatch $d.Path $ExpectPaths)) { $exp = $false; break } }
+    }
+    $r | Add-Member -NotePropertyName Expected -NotePropertyValue $exp
 }
 $changed = @($rows | Where-Object { $_.Class -ne 'unchanged' })
 $expected = @($changed | Where-Object { $_.Expected })
@@ -623,9 +675,86 @@ function Show-Class([string]$Name, [object[]]$Set) {
     Write-Host ''
 }
 
+# One row per path shape over the same-verdict gaps (see CHANGED PATHS in the header).
+$fieldRows = @($changed | Where-Object { $_.Class -like 'field_change:*' })
+$pathStats = @{}
+foreach ($r in $fieldRows) {
+    $seen = @{}
+    foreach ($d in $r.Diffs) {
+        $shape = Get-PathShape $d.Path
+        $st = $pathStats[$shape]
+        if ($null -eq $st) {
+            $st = [pscustomobject]@{
+                Path = $shape; Gaps = 0; Leaves = 0; Added = 0; Removed = 0; Up = 0; Down = 0
+                Deltas = [System.Collections.Generic.List[double]]::new()
+                Moves  = @{}
+            }
+            $pathStats[$shape] = $st
+        }
+        $st.Leaves++
+        if (-not $seen.ContainsKey($shape)) { $st.Gaps++; $seen[$shape] = $true }
+        if ($d.Kind -eq 'added') { $st.Added++; continue }
+        if ($d.Kind -eq 'removed') { $st.Removed++; continue }
+        $bv = 0.0
+        $cv = 0.0
+        $inv = [cultureinfo]::InvariantCulture
+        if ([double]::TryParse($d.Base, [System.Globalization.NumberStyles]::Float, $inv, [ref]$bv) -and
+            [double]::TryParse($d.Cand, [System.Globalization.NumberStyles]::Float, $inv, [ref]$cv)) {
+            $delta = $cv - $bv
+            $st.Deltas.Add($delta)
+            if ($delta -gt 0) { $st.Up++ } elseif ($delta -lt 0) { $st.Down++ }
+        }
+        else {
+            # Booleans and enum names: the transition itself is the summary.
+            $mv = "$($d.Base)->$($d.Cand)"
+            if ($st.Moves.ContainsKey($mv)) { $st.Moves[$mv]++ } else { $st.Moves[$mv] = 1 }
+        }
+    }
+}
+if ($pathStats.Count -gt 0) {
+    Write-Host ("CHANGED PATHS over {0} same-verdict gap(s) - indices folded to []; delta = candidate - baseline:" -f $fieldRows.Count)
+    Write-Host ('  {0,-52} {1,5} {2,6} {3,11} {4,11} {5,9}  {6}' -f 'path', 'gaps', 'leaves', 'median d', 'max |d|', 'up/down', 'note')
+    $ordered = @($pathStats.Values | Sort-Object @{ Expression = 'Gaps'; Descending = $true }, Path)
+    foreach ($st in ($ordered | Select-Object -First $Show)) {
+        $med = ''
+        $max = ''
+        $ud = ''
+        if ($st.Deltas.Count -gt 0) {
+            $sorted = @($st.Deltas | Sort-Object)
+            $m = $sorted.Count
+            $medV = if ($m % 2) { $sorted[($m - 1) / 2] } else { ($sorted[$m / 2 - 1] + $sorted[$m / 2]) / 2 }
+            $maxV = (@($sorted | ForEach-Object { [math]::Abs($_) }) | Measure-Object -Maximum).Maximum
+            $med = $medV.ToString('G4', [cultureinfo]::InvariantCulture)
+            $max = ([double]$maxV).ToString('G4', [cultureinfo]::InvariantCulture)
+            $ud = "$($st.Up)/$($st.Down)"
+        }
+        $notes = @()
+        if ($st.Added -gt 0) { $notes += "added $($st.Added)" }
+        if ($st.Removed -gt 0) { $notes += "removed $($st.Removed)" }
+        if ($st.Moves.Count -gt 0) {
+            $top = @($st.Moves.GetEnumerator() | Sort-Object @{ Expression = 'Value'; Descending = $true }, Name)
+            $notes += (@($top | Select-Object -First 3 | ForEach-Object { "$($_.Name) x$($_.Value)" }) -join ' ')
+            if ($top.Count -gt 3) { $notes += "+$($top.Count - 3) more" }
+        }
+        if ($ExpectPaths.Count -gt 0 -and -not (Test-PathMatch $st.Path $ExpectPaths)) { $notes += 'NOT EXPECTED' }
+        Write-Host ('  {0,-52} {1,5} {2,6} {3,11} {4,11} {5,9}  {6}' -f $st.Path, $st.Gaps, $st.Leaves, $med, $max, $ud, ($notes -join ', '))
+    }
+    if ($ordered.Count -gt $Show) { Write-Host ("  ... {0} more path(s) (raise -Show)" -f ($ordered.Count - $Show)) }
+    Write-Host ''
+}
+
 Show-Class 'STATUS FLIPS' @($changed | Where-Object { $_.Class -eq 'status_flip' })
 Show-Class 'REASON CHANGES' @($changed | Where-Object { $_.Class -eq 'reason_change' })
-Show-Class 'FIELD CHANGES' @($changed | Where-Object { $_.Class -like 'field_change:*' })
+# With -ExpectPaths, list only the gaps that moved somewhere else; the expected ones are counted.
+$fieldExpected = @($fieldRows | Where-Object { $_.Expected })
+if ($ExpectPaths.Count -gt 0) {
+    Show-Class 'FIELD CHANGES OUTSIDE -ExpectPaths' @($fieldRows | Where-Object { -not $_.Expected })
+    if ($fieldExpected.Count -gt 0) {
+        Write-Host ("field changes inside -ExpectPaths: {0} gap(s) - -CsvOut to list them" -f $fieldExpected.Count)
+        Write-Host ''
+    }
+}
+else { Show-Class 'FIELD CHANGES' $fieldRows }
 Show-Class 'UNJOINED (baseline)' @($changed | Where-Object { $_.Class -eq 'unjoined_baseline' })
 Show-Class 'UNJOINED (candidate)' @($changed | Where-Object { $_.Class -eq 'unjoined_candidate' })
 
@@ -722,10 +851,18 @@ if ($CsvOut) {
 }
 
 Write-Host ('VERDICT  {0} changed of {1} joined' -f $changed.Count, $joined)
-Write-Host ('  expected          {0,5}  (candidate skips with reason {1})' -f $expected.Count, $AbutReason)
+if ($ExpectReasons.Count -eq 0 -and $ExpectPaths.Count -eq 0) {
+    Write-Host '  expected              0  (no -ExpectReasons / -ExpectPaths: the bar is bit-identical)'
+}
+else {
+    $why = @()
+    if ($ExpectReasons.Count -gt 0) { $why += ('reasons ' + ($ExpectReasons -join ',')) }
+    if ($ExpectPaths.Count -gt 0) { $why += ('paths ' + ($ExpectPaths -join ',')) }
+    Write-Host ('  expected          {0,5}  ({1})' -f $expected.Count, ($why -join '; '))
+}
 Write-Host ('  unexplained gaps  {0,5}' -f $unexplained.Count)
 Write-Host ('  run-level         {0,5}  (independent of the gap list)' -f $runIndependent.Count)
-Write-Host '                          Tier-2 bar: both zero'
+Write-Host '                          bar: both zero'
 Write-Host ''
 
 if (($unexplained.Count + $runIndependent.Count) -gt 0 -and -not $NoFailOnUnexplained) { exit 1 }

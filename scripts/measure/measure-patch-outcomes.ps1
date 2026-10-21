@@ -476,7 +476,8 @@ foreach ($row in $rows) {
     $maxNote = if ($null -eq $summary -or $null -eq $summary.MaxEdge) { '-' } else { '{0:N1}' -f $summary.MaxEdge }
     Write-Host ("[$label] exit {0} in {1:N1}s  gaps={2} patched={3} fill_level={4} max_edge={5}" -f
         $rc, $sw.Elapsed.TotalSeconds,
-        ($summary?.Gaps ?? '?'), ($summary?.Patched ?? '?'), ($summary?.WithLevel ?? '?'), $maxNote)
+        # Braces required: a bare `$summary?.Gaps` parses as the variable `summary?`, always null.
+        (${summary}?.Gaps ?? '?'), (${summary}?.Patched ?? '?'), (${summary}?.WithLevel ?? '?'), $maxNote)
     if ($rc -ne 0) {
         Remove-Item -LiteralPath $json -Force -ErrorAction SilentlyContinue
         Write-Warning "[$label] exited $rc (stderr kept at $log)"
