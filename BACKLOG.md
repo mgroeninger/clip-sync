@@ -4,7 +4,7 @@ Open follow-up work for `clip-sync`. Architecture: [PLAN.md](PLAN.md). Repair pi
 [docs/pipeline.md](docs/pipeline.md). Test corpus: [docs/dev/corpus-validation.md](docs/dev/corpus-validation.md).
 Error handling: [docs/error-mapping.md](docs/error-mapping.md).
 
-Last updated: 2026-10-20.
+Last updated: 2026-10-21.
 
 **How this doc works**
 
@@ -120,7 +120,6 @@ The dual-fit oracle's pre-shoulder unpin moved to [settled.md](docs/dev/settled.
 | **Run-mode selector** | Four modes (scan-only / `--repair-preview` / `--patch-only` / write) are selected today by three flags plus a TOML boolean, with mutual exclusions enforced pairwise in `RepairConfig::validate`. If picked up, do it as **one coherent mode selector** — not `--dry-run` / `--write` bolted on the side. Note `--patch-only` deliberately keeps `dry_run = true`, which an explicit `--write` would make incoherent | One selector, exclusions enforced centrally |
 | **`--flac` lossless output** | [TEMP-flac-output-plan.md](docs/dev/TEMP-flac-output-plan.md) — draft, not started. In-process FLAC encode as a peer of `--wav`; motivated by the RIFF `u32` data-chunk limit (a long repaired timeline overruns WAV) | `--flac` writes a lossless output alongside `--wav` |
 | **Expose `fill_marginal_margin` as a CLI flag** | Only `--min-fill-correlation` is settable; `fill_marginal_margin` (0.08) has no flag, so the real accept floor is `min_fill_correlation - fill_marginal_margin` (`gap_anchor_seam.rs:150`) — every calibration of the flag is off by a margin unless the reader knows to subtract it. Add `--fill-marginal-margin` as a peer of `--min-fill-correlation` (same clamp/validation shape), and correct [gap-fill-modes.md](docs/gap-fill-modes.md) line 115, which says the flag is a "floor on `min(pre, post)`" and names only the High-vs-Marginal split — it does not say accept happens one margin below | `--fill-marginal-margin` sets the value end to end (CLI → TOML → recipe), and the flag table states the `accept = min_fill_correlation - fill_marginal_margin` relationship |
-| **Carry `dual_fit_route` on the outcome; shrink `GapTagsPatchContext` to run-level settings** | Since `16ca2ea9`, `region_outcome_gap_tags` reads every placement fact (boundary grid, anchor seam/trust, zero pad, dual-fit step and post window) from `RegionPatchOutcome`, but `dual_fit_route` still rides `tag_ctx` — set only by characterize's registration-routing return (`region/characterize.rs`, `..tag_ctx`), and left `None` on gate-fail rescues through `skip_or_dual_fit` (`region/dual_fit.rs`) so it maps to `GateFail`. Move the route onto `RegionPatchOutcome::Patched` (and onto `Skipped` if a declined route is meant to be reported), then drop the placement-fact fields from `GapTagsPatchContext` — characterize already leaves them at their defaults — so the context is only `fill_mode`, thresholds, signature label and residual margin, and the copy-over block in `region_outcome_gap_tags` goes away. Same pass: `derive_gap_tags_from_status` rebuilds the mapping a second time from `GapPatchStatus::Patched` and hard-codes `fit_used_boundary_grid`/`anchor_trusted` false and the route `None` (documented lossy; reached today only for plan skips, `not_applied` and missing results) — either carry those on the status or assert it is never handed a patched gap. Pin with the two tag tests in `region/types.rs` (`dual_fit_patch_tags_ignore_…`, `bracket_patch_tags_read_…`), which should survive unchanged apart from the context constructor | `GapTagsPatchContext` holds no per-gap field; every per-gap tag value has one source, the outcome; the status-derived path either matches it or provably never sees a patched gap |
 | Scratch-buffer regression test | Dedicated unit test for the patch PCM path | Test exists |
 | Streaming / chunked WAV encode | Large multi-gap fills without holding full PCM | Implemented |
 
@@ -135,6 +134,18 @@ deferred-on-trigger items (M3, M4, L6, FD-1, NaN headroom, `veto_rescue`) moved 
 | Item | Next action | Done when |
 |------|-------------|-----------|
 | **G1** — residual on Pearson-only skips | Veto skips are done (`ResidualHeadroomExceeded` + `GapPatchOutcome.residual`). Pearson and structure skips still lack a residual — measure on the last grid candidate when `measure_residual` | Every skip class carries a residual |
+
+## Patch outcome types
+
+Follow-ups from carrying `dual_fit_route` on the outcome (2026-10-21): the tag join now reads placement facts
+from `RegionPatchOutcome` through `GapPatchPlacement`, and `GapTagsPatchContext` holds run-level settings only.
+No behaviour change is pending in any of these rows.
+
+| Item | Next action | Done when |
+|------|-------------|-----------|
+| **Bundle the dual-fit placement facts into one `Option`** | `dual_fit_route`, `dual_fit_step_real` and `dual_fit_post_window_ms` are three independent fields on both `RegionPatchOutcome::Patched` (`region/types.rs`) and `GapPatchPlacement` (`domain/gap_tags.rs`), so "the other two are `Some` only when the route is" is a convention, not a type. Replace them with one `Option<DualFitPlacement { route, step_real, post_window_ms }>` on both, built once in `execute_region_spec`'s SilenceSplice arm and `outcome_from_spec`. `GapPatchStatus::Patched` keeps its flat wire fields (JSON v1 is frozen); flatten at the status join | A non-dual-fit outcome cannot carry a step or post-window value, and `full_surface_repair.json` is byte-identical |
+| **`full_surface_repair` golden bypasses the real tag path** | `full_surface_patch_summary` (`infrastructure/cli/output.rs`) builds every gap with the `#[cfg(test)]` `GapPatchOutcome::with_tags_from_status`, which is lossy on `Patched`, then hand-sets `outcome.tags.dual_fit_route` (~line 1565). The golden therefore pins the JSON shape but not `derive_gap_tags_from_patch_outcome`. Build the patched gaps from a `GapPatchTierInput::Patched` + `GapPatchPlacement` through `derive_gap_tags_from_patch_outcome` instead, and drop the hand-patch | No golden gap's tags are assigned after construction, and the regenerated golden is byte-identical (or every diff is explained) |
+| **`characterize_region` returns a tuple for one per-gap label** | `characterize_region` returns `(GapRepairSpec, GapTagsPatchContext)`, but the context is now request settings plus the per-gap `signature_mode_label`. Move the label onto the spec (or the region outcome), build the context once from the request at the join (`region_outcome_gap_tags`), and drop the tuple from `characterize_region`, `prepare_region_patch` and the `patch_audio/mod.rs` characterization vector | `characterize_region` returns a bare `GapRepairSpec` and `GapTagsPatchContext` is constructed once per run |
 
 ## Gap selection
 

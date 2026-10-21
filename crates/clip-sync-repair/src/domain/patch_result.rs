@@ -1,9 +1,8 @@
 use serde::Serialize;
 
 use crate::domain::fill_level::FillLevelCheck;
-use crate::domain::fill_mode::FillMode;
 use crate::domain::gap_fill_fit::FillConfidence;
-use crate::domain::gap_tags::{derive_gap_tags_from_status, FillTierThresholds, GapTags};
+use crate::domain::gap_tags::GapTags;
 use crate::domain::policies::SeamResidualVerdict;
 
 /// Absent residual summary scalars on [`GapPatchStatus::Patched`] (tests / lossy builders).
@@ -417,15 +416,18 @@ impl GapPatchOutcome {
         self
     }
 
-    /// Build tags from [`GapPatchStatus`] only (lossy for patched/skipped fit gaps).
+    /// Build tags from [`GapPatchStatus`] only (lossy for patched/skipped fit gaps). Test-only: production
+    /// derives `Patched` tags from the region outcome, never from the status.
+    #[cfg(test)]
     pub fn with_tags_from_status(
         a_start_secs: f64,
         a_end_secs: f64,
         status: GapPatchStatus,
-        fill_mode: FillMode,
-        thresholds: FillTierThresholds,
+        fill_mode: crate::domain::fill_mode::FillMode,
+        thresholds: crate::domain::gap_tags::FillTierThresholds,
     ) -> Self {
-        let tags = derive_gap_tags_from_status(&status, fill_mode, thresholds);
+        let tags =
+            crate::domain::gap_tags::derive_gap_tags_from_status(&status, fill_mode, thresholds);
         Self::new(a_start_secs, a_end_secs, status, tags)
     }
 }

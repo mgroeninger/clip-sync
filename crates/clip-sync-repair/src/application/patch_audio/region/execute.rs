@@ -162,6 +162,7 @@ pub(in crate::application::patch_audio) fn execute_region_spec(
             step_real,
             dual_fit_post_window_ms,
             seam_margin,
+            route,
             ..
         }) => {
             // Dual-fit rescue: the fill is the synthesized bridge on the spec; seams sit at their own lags, so
@@ -196,7 +197,7 @@ pub(in crate::application::patch_audio) fn execute_region_spec(
                 anchor_seam_used: false,
                 anchor_bracket_move_frames: 0,
                 anchor_trusted: false,
-                dual_fit_used: true,
+                dual_fit_route: Some(route),
                 dual_fit_step_real: Some(step_real),
                 dual_fit_post_window_ms,
                 // No unified search on this path — see the preview arm.

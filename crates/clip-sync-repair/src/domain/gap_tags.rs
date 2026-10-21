@@ -356,55 +356,32 @@ pub enum DualFitRoute {
     RegistrationCommon,
 }
 
-/// Inputs for tag derivation during a fill-region patch attempt.
+/// Inputs for tag derivation that are fixed before placement: the run's settings plus the gap's
+/// resolved signature mode (`auto` resolves per gap). Nothing placement decides lives here — those
+/// facts ride the outcome as [`GapPatchPlacement`] and the residual verdict, so a skip or a routed
+/// dual-fit patch cannot inherit another fill's tags.
 #[derive(Debug, Clone, Copy)]
 pub struct GapTagsPatchContext {
     pub fill_mode: FillMode,
     pub thresholds: FillTierThresholds,
     pub signature_mode_label: &'static str,
+    pub residual_headroom_margin_db: f64,
+}
+
+/// Where and how a patched gap's fill was placed — the per-gap facts the tags report. The default is
+/// a plain single-lag bracket fill: baseline throat, no anchor, no dual-fit, filled to length.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct GapPatchPlacement {
     pub fit_used_boundary_grid: bool,
     pub anchor_seam_used: bool,
     pub anchor_bracket_move_frames: usize,
     pub anchor_trusted: bool,
-    pub dual_fit_used: bool,
+    /// `Some` exactly when dual-fit carried the gap; [`GapTags::dual_fit_used`] is derived from it.
+    pub dual_fit_route: Option<DualFitRoute>,
     pub dual_fit_step_real: Option<bool>,
     pub dual_fit_post_window_ms: Option<u32>,
-    /// Set only by registration routing; a dual-fit patch with this `None` is a gate-fail rescue.
-    pub dual_fit_route: Option<DualFitRoute>,
-    pub residual: Option<SeamResidualVerdict>,
-    pub residual_headroom_margin_db: f64,
     /// See [`GapTags::zero_pad_frames`].
     pub zero_pad_frames: usize,
-}
-
-impl GapTagsPatchContext {
-    pub fn fit_path_tag(self) -> Option<FitPathTag> {
-        if self.fill_mode == FillMode::Fit {
-            Some(FitPathTag::from_boundary_grid_used(
-                self.fit_used_boundary_grid,
-            ))
-        } else {
-            None
-        }
-    }
-
-    pub fn signature_mode_tag(self) -> Option<SignatureModeTag> {
-        if self.fill_mode == FillMode::Fit {
-            SignatureModeTag::parse_label(self.signature_mode_label)
-        } else {
-            None
-        }
-    }
-
-    pub fn residual_band_tag(self) -> Option<ResidualBand> {
-        self.residual
-            .map(|v| classify_residual_band(&v, self.residual_headroom_margin_db))
-    }
-
-    /// Companion to [`residual_band_tag`](Self::residual_band_tag): *why* the band is `no_floor`.
-    pub fn residual_uninformative_tag(self) -> Option<ResidualUninformative> {
-        self.residual.and_then(|v| v.uninformative_reason())
-    }
 }
 
 /// Classify seam shape from pre/post scores (guide heuristics).
@@ -459,18 +436,25 @@ fn patch_tier_from_patched(confidence: FillConfidence, fill_mode: FillMode) -> P
     }
 }
 
-/// Derive tags from a per-gap patch attempt outcome (fillable plan region).
+/// Derive tags from a per-gap patch attempt outcome (fillable plan region). Placement facts come from
+/// the `Patched` input (a skip has none); `residual` is the gap's own verdict on either arm.
 pub fn derive_gap_tags_from_patch_outcome(
     outcome: &GapPatchTierInput<'_>,
+    residual: Option<SeamResidualVerdict>,
     ctx: GapTagsPatchContext,
 ) -> GapTags {
+    let placement = match outcome {
+        GapPatchTierInput::Patched { placement, .. } => *placement,
+        GapPatchTierInput::Skipped(_) => GapPatchPlacement::default(),
+    };
     let (patch_tier, seam_shape) = match outcome {
         GapPatchTierInput::Patched {
             pre,
             post,
             confidence,
+            ..
         } => {
-            let tier = if ctx.anchor_trusted && ctx.fill_mode == FillMode::Fit {
+            let tier = if placement.anchor_trusted && ctx.fill_mode == FillMode::Fit {
                 PatchTier::AnchorTrusted
             } else {
                 patch_tier_from_patched(*confidence, ctx.fill_mode)
@@ -525,27 +509,36 @@ pub fn derive_gap_tags_from_patch_outcome(
         plan_skip_reason: None,
         patch_tier,
         seam_shape,
-        fit_path: ctx.fit_path_tag(),
-        signature_mode: ctx.signature_mode_tag(),
-        residual_band: ctx.residual_band_tag(),
-        residual_uninformative: ctx.residual_uninformative_tag(),
-        anchor_seam_used: ctx.anchor_seam_used,
-        anchor_bracket_move_frames: if ctx.anchor_seam_used {
-            ctx.anchor_bracket_move_frames
+        fit_path: (ctx.fill_mode == FillMode::Fit)
+            .then(|| FitPathTag::from_boundary_grid_used(placement.fit_used_boundary_grid)),
+        signature_mode: (ctx.fill_mode == FillMode::Fit)
+            .then(|| SignatureModeTag::parse_label(ctx.signature_mode_label))
+            .flatten(),
+        residual_band: residual
+            .map(|v| classify_residual_band(&v, ctx.residual_headroom_margin_db)),
+        // Companion to `residual_band`: *why* the band is `no_floor`.
+        residual_uninformative: residual.and_then(|v| v.uninformative_reason()),
+        anchor_seam_used: placement.anchor_seam_used,
+        anchor_bracket_move_frames: if placement.anchor_seam_used {
+            placement.anchor_bracket_move_frames
         } else {
             0
         },
-        dual_fit_used: ctx.dual_fit_used,
-        dual_fit_step_real: ctx.dual_fit_step_real,
-        dual_fit_post_window_ms: ctx.dual_fit_post_window_ms,
-        dual_fit_route: ctx
-            .dual_fit_used
-            .then(|| ctx.dual_fit_route.unwrap_or(DualFitRoute::GateFail)),
-        zero_pad_frames: ctx.zero_pad_frames,
+        dual_fit_used: placement.dual_fit_route.is_some(),
+        dual_fit_step_real: placement.dual_fit_step_real,
+        dual_fit_post_window_ms: placement.dual_fit_post_window_ms,
+        dual_fit_route: placement.dual_fit_route,
+        zero_pad_frames: placement.zero_pad_frames,
     }
 }
 
 /// Derive tags from a report-order [`GapPatchStatus`].
+///
+/// **Lossy on `Patched`:** the status does not carry the boundary grid, anchor trust, the residual
+/// verdict or the dual-fit route, so those read as a baseline throat, untrusted, unmeasured and
+/// `gate_fail`. Production never reaches that arm — `outcomes_in_report_order` hands this function
+/// only plan skips, `not_applied` and absent gaps, and takes patched tags from the region outcome —
+/// so a `Patched` status here is a test fixture's.
 pub fn derive_gap_tags_from_status(
     status: &GapPatchStatus,
     fill_mode: FillMode,
@@ -595,40 +588,31 @@ pub fn derive_gap_tags_from_status(
                 pre: *pre_correlation,
                 post: *post_correlation,
                 confidence: *confidence,
+                placement: GapPatchPlacement {
+                    anchor_seam_used: *anchor_seam_used,
+                    anchor_bracket_move_frames: *anchor_bracket_move_frames,
+                    dual_fit_route: dual_fit_used.then_some(DualFitRoute::GateFail),
+                    dual_fit_step_real: *dual_fit_step_real,
+                    dual_fit_post_window_ms: *dual_fit_post_window_ms,
+                    zero_pad_frames: *zero_pad_frames,
+                    ..GapPatchPlacement::default()
+                },
             },
+            None,
             GapTagsPatchContext {
                 fill_mode,
                 thresholds,
                 signature_mode_label: "bool",
-                fit_used_boundary_grid: false,
-                anchor_seam_used: *anchor_seam_used,
-                anchor_bracket_move_frames: *anchor_bracket_move_frames,
-                anchor_trusted: false,
-                dual_fit_used: *dual_fit_used,
-                dual_fit_step_real: *dual_fit_step_real,
-                dual_fit_post_window_ms: *dual_fit_post_window_ms,
-                dual_fit_route: None,
-                zero_pad_frames: *zero_pad_frames,
-                residual: None,
                 residual_headroom_margin_db: DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
             },
         ),
         GapPatchStatus::Skipped { reason } => derive_gap_tags_from_patch_outcome(
             &GapPatchTierInput::Skipped(reason),
+            None,
             GapTagsPatchContext {
                 fill_mode,
                 thresholds,
                 signature_mode_label: "bool",
-                fit_used_boundary_grid: false,
-                anchor_seam_used: false,
-                anchor_bracket_move_frames: 0,
-                anchor_trusted: false,
-                dual_fit_used: false,
-                dual_fit_step_real: None,
-                dual_fit_post_window_ms: None,
-                dual_fit_route: None,
-                zero_pad_frames: 0,
-                residual: None,
                 residual_headroom_margin_db: DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
             },
         ),
@@ -665,34 +649,7 @@ pub enum GapPatchTierInput<'a> {
         pre: f64,
         post: f64,
         confidence: FillConfidence,
-    },
-    Skipped(&'a GapPatchSkipReason),
-}
-
-impl<'a> From<&'a RegionPatchOutcomeView<'a>> for GapPatchTierInput<'a> {
-    fn from(view: &'a RegionPatchOutcomeView<'a>) -> Self {
-        match view {
-            RegionPatchOutcomeView::Patched {
-                pre_correlation,
-                post_correlation,
-                confidence,
-            } => GapPatchTierInput::Patched {
-                pre: *pre_correlation,
-                post: *post_correlation,
-                confidence: *confidence,
-            },
-            RegionPatchOutcomeView::Skipped(reason) => GapPatchTierInput::Skipped(reason),
-        }
-    }
-}
-
-/// Minimal outcome view for tag derivation without coupling to application enums.
-#[derive(Debug, Clone, Copy)]
-pub enum RegionPatchOutcomeView<'a> {
-    Patched {
-        pre_correlation: f64,
-        post_correlation: f64,
-        confidence: FillConfidence,
+        placement: GapPatchPlacement,
     },
     Skipped(&'a GapPatchSkipReason),
 }
@@ -783,16 +740,6 @@ mod tests {
             fill_mode: FillMode::Fit,
             thresholds: FillTierThresholds::DEFAULT,
             signature_mode_label: "bool",
-            fit_used_boundary_grid: false,
-            anchor_seam_used: false,
-            anchor_bracket_move_frames: 0,
-            anchor_trusted: false,
-            dual_fit_used: false,
-            zero_pad_frames: 0,
-            dual_fit_step_real: None,
-            dual_fit_post_window_ms: None,
-            dual_fit_route: None,
-            residual: None,
             residual_headroom_margin_db: DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
         }
     }
@@ -804,18 +751,29 @@ mod tests {
             min_correlation: 0.35,
             best_attempt: None,
         };
-        derive_gap_tags_from_patch_outcome(&GapPatchTierInput::Skipped(&reason), patch_ctx())
+        derive_gap_tags_from_patch_outcome(&GapPatchTierInput::Skipped(&reason), None, patch_ctx())
     }
 
-    fn tags_from_patched(pre: f64, post: f64, confidence: FillConfidence) -> GapTags {
+    fn tags_from_placed(
+        pre: f64,
+        post: f64,
+        confidence: FillConfidence,
+        placement: GapPatchPlacement,
+    ) -> GapTags {
         derive_gap_tags_from_patch_outcome(
             &GapPatchTierInput::Patched {
                 pre,
                 post,
                 confidence,
+                placement,
             },
+            None,
             patch_ctx(),
         )
+    }
+
+    fn tags_from_patched(pre: f64, post: f64, confidence: FillConfidence) -> GapTags {
+        tags_from_placed(pre, post, confidence, GapPatchPlacement::default())
     }
 
     #[test]
@@ -860,6 +818,7 @@ mod tests {
     fn patch_tier_structure_fail() {
         let tags = derive_gap_tags_from_patch_outcome(
             &GapPatchTierInput::Skipped(&GapPatchSkipReason::BoundaryAlignmentFailed),
+            None,
             patch_ctx(),
         );
         assert_eq!(tags.patch_tier, PatchTier::StructureFail);
@@ -896,16 +855,15 @@ mod tests {
 
     #[test]
     fn status_suffix_anchor_trusted_symmetric_weak() {
-        let mut ctx = patch_ctx();
-        ctx.anchor_trusted = true;
-        ctx.anchor_seam_used = true;
-        let tags = derive_gap_tags_from_patch_outcome(
-            &GapPatchTierInput::Patched {
-                pre: 0.31,
-                post: 0.29,
-                confidence: FillConfidence::Marginal,
+        let tags = tags_from_placed(
+            0.31,
+            0.29,
+            FillConfidence::Marginal,
+            GapPatchPlacement {
+                anchor_trusted: true,
+                anchor_seam_used: true,
+                ..GapPatchPlacement::default()
             },
-            ctx,
         );
         assert_eq!(tags.patch_tier, PatchTier::AnchorTrusted);
         assert_eq!(
@@ -948,17 +906,16 @@ mod tests {
 
     #[test]
     fn verbose_line_includes_anchor_seam_metadata() {
-        let mut ctx = patch_ctx();
-        ctx.anchor_seam_used = true;
-        ctx.anchor_bracket_move_frames = 1_200;
-        ctx.anchor_trusted = true;
-        let tags = derive_gap_tags_from_patch_outcome(
-            &GapPatchTierInput::Patched {
-                pre: 0.31,
-                post: 0.29,
-                confidence: FillConfidence::Marginal,
+        let tags = tags_from_placed(
+            0.31,
+            0.29,
+            FillConfidence::Marginal,
+            GapPatchPlacement {
+                anchor_seam_used: true,
+                anchor_bracket_move_frames: 1_200,
+                anchor_trusted: true,
+                ..GapPatchPlacement::default()
             },
-            ctx,
         );
         assert!(tags.anchor_seam_used);
         assert_eq!(tags.anchor_bracket_move_frames, 1_200);

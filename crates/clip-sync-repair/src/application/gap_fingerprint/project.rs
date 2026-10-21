@@ -667,6 +667,7 @@ pub fn fingerprint_to_spec(fp: &GapFingerprint) -> crate::domain::gap_repair_spe
             normalize_gain: 1.0,
             local_gain: crate::domain::LocalGainDecision::OFF,
             dual_fit_post_window_ms: None,
+            route: crate::domain::gap_tags::DualFitRoute::GateFail,
         })
     };
 

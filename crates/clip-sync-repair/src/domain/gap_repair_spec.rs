@@ -285,6 +285,10 @@ pub enum GapRepairStrategy {
         /// `None` when the post lock stayed at the 250 ms `fill_seam_search_secs` window — the
         /// common case, and the only one before this field existed.
         dual_fit_post_window_ms: Option<u32>,
+        /// Why dual-fit placed this fill: the single-lag fill failed the seam gate, or it passed but
+        /// missed a shoulder by more than a registration bound. Decided by the caller of
+        /// `try_dual_fit_rescue`, carried here so the outcome — not the tag context — reports it.
+        route: crate::domain::gap_tags::DualFitRoute,
         /// `--seam-extend-fill` for this arm: `cf` frames of B either side of the bridge, as
         /// `(head, tail)` interleaved PCM, so the seam blends use their own B content instead of the
         /// post seam replaying the bridge tail (`policies::apply_seam_crossfade` — see its doc for
@@ -649,6 +653,7 @@ mod tests {
             normalize_gain: 1.0,
             local_gain: crate::domain::LocalGainDecision::OFF,
             dual_fit_post_window_ms: None,
+            route: crate::domain::gap_tags::DualFitRoute::GateFail,
         }
     }
 

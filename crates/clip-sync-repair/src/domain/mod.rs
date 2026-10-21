@@ -70,9 +70,9 @@ pub use gap_signature::{GapSignature, GapSignatureMode};
 pub use gap_tags::{
     classify_residual_band, classify_seam_shape, derive_donor_relation,
     derive_gap_tags_from_patch_outcome, derive_gap_tags_from_status, format_gap_tags_status_suffix,
-    format_gap_tags_verbose_line, DonorRelation, FillTierThresholds, FitPathTag, GapPatchTierInput,
-    GapTags, GapTagsPatchContext, PatchTier, PlanKind, RegionPatchOutcomeView, ResidualBand,
-    SeamShape, SignatureModeTag,
+    format_gap_tags_verbose_line, DonorRelation, FillTierThresholds, FitPathTag, GapPatchPlacement,
+    GapPatchTierInput, GapTags, GapTagsPatchContext, PatchTier, PlanKind, ResidualBand, SeamShape,
+    SignatureModeTag,
 };
 pub use injected_time::{
     find_injected_time_runs, InjectedTimeReport, InjectedTimeRun, INJECTED_TIME_DELTA_MS,

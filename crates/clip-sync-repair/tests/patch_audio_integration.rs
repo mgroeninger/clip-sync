@@ -1800,6 +1800,11 @@ fn patch_audio_dual_fit_rescues_inverted_post_border() {
         } => {}
         other => panic!("expected a dual-fit-rescued patch (dual_fit_used), got {other:?}"),
     }
+    assert_eq!(
+        patched.summary.gaps[0].tags.dual_fit_route,
+        Some(DualFitRoute::GateFail),
+        "a rescue of a failed seam gate must report the gate_fail route"
+    );
     let pcm = expect_pcm(&patched);
     let gap_rms = rms_region(
         &pcm.samples,
@@ -1894,6 +1899,11 @@ fn patch_audio_dual_fit_rescues_constant_shift_as_rigid_seam_lock() {
             "expected a rigid dual-fit rescue (dual_fit_used, dual_fit_step_real: Some(false)), got {other:?}"
         ),
     }
+    assert_eq!(
+        patched.summary.gaps[0].tags.dual_fit_route,
+        Some(DualFitRoute::GateFail),
+        "a rescue of a failed seam gate must report the gate_fail route"
+    );
     let pcm = expect_pcm(&patched);
     let gap_rms = rms_region(&pcm.samples, SAMPLE_RATE, CHANNELS, GAP_START, GAP_END);
     assert!(

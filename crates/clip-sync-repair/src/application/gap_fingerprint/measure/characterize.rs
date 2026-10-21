@@ -249,6 +249,7 @@ pub fn characterize_gaps_from_decode(
                 normalize_gain: 1.0,
                 local_gain: crate::domain::LocalGainDecision::OFF,
                 dual_fit_post_window_ms: None,
+                route: crate::domain::gap_tags::DualFitRoute::GateFail,
             })
         };
         let spec = GapRepairSpec {

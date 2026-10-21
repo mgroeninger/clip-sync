@@ -2321,8 +2321,8 @@ mod tests {
     fn unified_gap_report_shows_anchor_trusted_patch_detail() {
         use crate::domain::residual_gate::DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB;
         use crate::domain::{
-            derive_gap_tags_from_patch_outcome, FillMode, FillTierThresholds, GapPatchTierInput,
-            GapTagsPatchContext,
+            derive_gap_tags_from_patch_outcome, FillMode, FillTierThresholds, GapPatchPlacement,
+            GapPatchTierInput, GapTagsPatchContext,
         };
 
         let report = minimal_report();
@@ -2356,21 +2356,18 @@ mod tests {
                 pre: 0.31,
                 post: 0.29,
                 confidence: crate::domain::FillConfidence::Marginal,
+                placement: GapPatchPlacement {
+                    anchor_seam_used: true,
+                    anchor_bracket_move_frames: 48_000,
+                    anchor_trusted: true,
+                    ..GapPatchPlacement::default()
+                },
             },
+            None,
             GapTagsPatchContext {
-                zero_pad_frames: 0,
                 fill_mode: FillMode::Fit,
                 thresholds: FillTierThresholds::DEFAULT,
                 signature_mode_label: "energy",
-                fit_used_boundary_grid: false,
-                anchor_seam_used: true,
-                anchor_bracket_move_frames: 48_000,
-                anchor_trusted: true,
-                dual_fit_used: false,
-                dual_fit_step_real: None,
-                dual_fit_post_window_ms: None,
-                dual_fit_route: None,
-                residual: None,
                 residual_headroom_margin_db: DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
             },
         );
@@ -2412,8 +2409,8 @@ mod tests {
     fn unified_gap_report_shows_dual_fit_patch_detail() {
         use crate::domain::residual_gate::DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB;
         use crate::domain::{
-            derive_gap_tags_from_patch_outcome, FillMode, FillTierThresholds, GapPatchTierInput,
-            GapTagsPatchContext,
+            derive_gap_tags_from_patch_outcome, gap_tags::DualFitRoute, FillMode,
+            FillTierThresholds, GapPatchPlacement, GapPatchTierInput, GapTagsPatchContext,
         };
 
         let report = minimal_report();
@@ -2447,21 +2444,17 @@ mod tests {
                 pre: 0.31,
                 post: 0.29,
                 confidence: crate::domain::FillConfidence::Marginal,
+                placement: GapPatchPlacement {
+                    dual_fit_route: Some(DualFitRoute::GateFail),
+                    dual_fit_step_real: Some(true),
+                    ..GapPatchPlacement::default()
+                },
             },
+            None,
             GapTagsPatchContext {
-                zero_pad_frames: 0,
                 fill_mode: FillMode::Fit,
                 thresholds: FillTierThresholds::DEFAULT,
                 signature_mode_label: "energy",
-                fit_used_boundary_grid: false,
-                anchor_seam_used: false,
-                anchor_bracket_move_frames: 0,
-                anchor_trusted: false,
-                dual_fit_used: true,
-                dual_fit_step_real: Some(true),
-                dual_fit_post_window_ms: None,
-                dual_fit_route: None,
-                residual: None,
                 residual_headroom_margin_db: DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
             },
         );

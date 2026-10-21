@@ -258,18 +258,6 @@ pub(in crate::application::patch_audio) fn characterize_region(
             fill_absolute_floor: request.fill_absolute_floor,
         },
         signature_mode_label,
-        // Placement facts, never written here: `region_outcome_gap_tags` reads them off a Patched
-        // outcome, and a skip keeps these defaults.
-        fit_used_boundary_grid: false,
-        anchor_seam_used: false,
-        anchor_bracket_move_frames: 0,
-        zero_pad_frames: 0,
-        anchor_trusted: false,
-        dual_fit_used: false,
-        dual_fit_step_real: None,
-        dual_fit_post_window_ms: None,
-        dual_fit_route: None,
-        residual: None,
         residual_headroom_margin_db: request.residual_headroom_margin_db,
     };
 
@@ -551,13 +539,12 @@ pub(in crate::application::patch_audio) fn characterize_region(
                     ) {
                         Ok(outcome) => outcome,
                         Err(retry_fail) => {
-                            let (decision, tag_ctx) = skip_or_dual_fit(
+                            let decision = skip_or_dual_fit(
                                 progress,
                                 request,
                                 region,
                                 retry_fail,
                                 min_structure_match_score,
-                                tag_ctx,
                                 dual_fit_attempt(),
                             );
                             return (
@@ -574,13 +561,12 @@ pub(in crate::application::patch_audio) fn characterize_region(
                     }
                 }
                 other => {
-                    let (decision, tag_ctx) = skip_or_dual_fit(
+                    let decision = skip_or_dual_fit(
                         progress,
                         request,
                         region,
                         other,
                         min_structure_match_score,
-                        tag_ctx,
                         dual_fit_attempt(),
                     );
                     return (
@@ -597,13 +583,12 @@ pub(in crate::application::patch_audio) fn characterize_region(
             }
         }
         Err(other) => {
-            let (decision, tag_ctx) = skip_or_dual_fit(
+            let decision = skip_or_dual_fit(
                 progress,
                 request,
                 region,
                 other,
                 min_structure_match_score,
-                tag_ctx,
                 dual_fit_attempt(),
             );
             return (
@@ -641,9 +626,8 @@ pub(in crate::application::patch_audio) fn characterize_region(
         ..
     } = gate_outcome;
     // The gate's placement facts (boundary grid, anchor seam and trust, zero pad) ride the spec to
-    // the outcome, and `region_outcome_gap_tags` reads them from there — `tag_ctx` is never written
-    // with them, so a routed dual-fit patch or a post-gate skip cannot inherit the single-lag
-    // fill's tags.
+    // the outcome, and `region_outcome_gap_tags` reads them from there — `tag_ctx` has no field for
+    // them, so a routed dual-fit patch or a post-gate skip cannot inherit the single-lag fill's tags.
 
     if confidence == FillConfidence::Marginal {
         log_marginal_gap_fill(
@@ -929,7 +913,11 @@ pub(in crate::application::patch_audio) fn characterize_region(
             r.registration_residual_pre_ms,
             r.registration_residual_post_ms,
         ) {
-            match try_dual_fit_rescue(request, region, df, locks) {
+            let route = match kind {
+                RouteKind::Step => DualFitRoute::RegistrationStep,
+                RouteKind::Common => DualFitRoute::RegistrationCommon,
+            };
+            match try_dual_fit_rescue(request, region, df, locks, route) {
                 Ok(rescue) => {
                     tracing::debug!(
                         gap = region.gap_index,
@@ -944,13 +932,7 @@ pub(in crate::application::patch_audio) fn characterize_region(
                             silence_splice_b_extract,
                             refined,
                         ),
-                        GapTagsPatchContext {
-                            dual_fit_route: Some(match kind {
-                                RouteKind::Step => DualFitRoute::RegistrationStep,
-                                RouteKind::Common => DualFitRoute::RegistrationCommon,
-                            }),
-                            ..tag_ctx
-                        },
+                        tag_ctx,
                     );
                 }
                 Err(_) => tracing::debug!(

@@ -294,7 +294,7 @@ pub(in crate::application::patch_audio::region) struct ExecuteBracketOutputCtx {
 }
 
 /// The executor's bracket `(RegionPatch, RegionPatchOutcome)` assembly. Recomputes the geometry slides
-/// independently and builds the structs from the resolved/spec values — `dual_fit_used` is always `false`
+/// independently and builds the structs from the resolved/spec values — `dual_fit_route` is always `None`
 /// for a bracket. **The authoritative bracket output path since 6b.3b** (was shadow-validated byte-identical
 /// across the full suite in 6b.3a before the inline construction was removed).
 pub(in crate::application::patch_audio::region) fn execute_bracket_output(
@@ -350,7 +350,7 @@ pub(in crate::application::patch_audio::region) fn execute_bracket_output(
         anchor_bracket_move_frames: ctx.anchor_bracket_move_frames,
         anchor_trusted: ctx.anchor_trusted,
         zero_pad_frames: ctx.zero_pad_frames,
-        dual_fit_used: false,
+        dual_fit_route: None,
         dual_fit_step_real: None,
         dual_fit_post_window_ms: None,
         fit_terms: ctx.fit_terms,

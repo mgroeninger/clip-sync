@@ -891,7 +891,10 @@ under `--no-dual-fit`).
   Accepted gap; superseded by a structural fix, **landed 2026-10-20**: characterize no
   longer writes placement facts into `tag_ctx`, `region_outcome_gap_tags` reads all five
   off the outcome, and the snapshot is gone. Pinned by pure unit tests in
-  `region/types.rs` (`dual_fit_patch_tags_ignore_single_lag_placement_facts_in_the_context`) — no fixture.
+  `region/types.rs` (now `dual_fit_patch_tags_read_the_route_from_the_outcome`) — no fixture.
+  Follow-up the same day: the route itself moved onto the outcome (`SilenceSplice::route` →
+  `RegionPatchOutcome::Patched::dual_fit_route`), so `GapTagsPatchContext` now has no field
+  placement can write — run settings plus the per-gap signature label only.
 - `registration_common` **landed 2026-10-08** with the common-mode knob (below). There is
   still no "routed, declined" value: a declined route keeps its single-lag fill and
   is visible only in the debug log. The human report has no one-word route suffix.

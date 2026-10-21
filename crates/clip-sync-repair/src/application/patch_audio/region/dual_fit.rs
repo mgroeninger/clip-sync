@@ -15,7 +15,7 @@ use crate::domain::{
         BExtractWindow, GapRepairSpec, GapRepairStrategy, GapRepairTags, GapRepairVerdict,
         SeamLocalTags,
     },
-    gap_tags::GapTagsPatchContext,
+    gap_tags::DualFitRoute,
     patch_result::GapPatchSkipReason,
     policies::{self, RefinedGapFrames},
 };
@@ -360,15 +360,14 @@ pub(in crate::application::patch_audio::region) fn skip_or_dual_fit(
     region: &FillRegion,
     fail: SeamGateFailure,
     min_structure_match_score: f32,
-    tag_ctx: GapTagsPatchContext,
     attempt: Option<DualFitAttempt<'_>>,
-) -> (DualFitDecision, GapTagsPatchContext) {
+) -> DualFitDecision {
     let mut failure = fail;
     let mut dual_fit_attempt: Option<crate::domain::patch_result::SeamScoreAttempt> = None;
     if dual_fit_eligible(request.dual_fit, fail) {
         if let Some(DualFitAttempt { input: df, locks }) = attempt {
-            match try_dual_fit_rescue(request, region, df, locks) {
-                Ok(rescue) => return (DualFitDecision::Rescued(rescue), tag_ctx),
+            match try_dual_fit_rescue(request, region, df, locks, DualFitRoute::GateFail) {
+                Ok(rescue) => return DualFitDecision::Rescued(rescue),
                 Err(DualFitDecline::NoFit) => {}
                 Err(DualFitDecline::Revalidation(scores)) => dual_fit_attempt = Some(scores),
                 Err(DualFitDecline::HeadroomExceeded {
@@ -381,15 +380,14 @@ pub(in crate::application::patch_audio::region) fn skip_or_dual_fit(
             }
         }
     }
-    let (_, outcome, tag_ctx) = seam_failure_outcome(
+    let (_, outcome) = seam_failure_outcome(
         progress,
         region,
         failure,
         min_structure_match_score,
-        tag_ctx,
         dual_fit_attempt,
     );
-    (dual_fit_skipped(outcome), tag_ctx)
+    dual_fit_skipped(outcome)
 }
 
 /// Why [`try_dual_fit_rescue`] did not produce a fill. `skip_or_dual_fit` reads it to pick the failure
@@ -408,12 +406,13 @@ pub(in crate::application::patch_audio::region) enum DualFitDecline {
 
 /// The dual-fit attempt proper: grow-post ladder, fit, seam re-validation, residual headroom gate and
 /// `SilenceSplice` assembly. It owns no skip decision — the caller does — so it can be entered without
-/// a `SeamGateFailure`.
+/// a `SeamGateFailure`. `route` is the caller's reason for entering, carried on the strategy.
 pub(in crate::application::patch_audio::region) fn try_dual_fit_rescue(
     request: &PatchAudioRequest,
     region: &FillRegion,
     df: &DualFitRepairInput<'_>,
     locks: &crate::domain::seam_locks::SeamLocks,
+    route: DualFitRoute,
 ) -> Result<Box<DualFitRescue>, DualFitDecline> {
     let local_gain = request.local_gain(region.gap_index);
     // Grow the post seam window before the fit is attempted (§0 lock 3 — grow before the
@@ -673,6 +672,7 @@ pub(in crate::application::patch_audio::region) fn try_dual_fit_rescue(
                     .total,
                     local_gain,
                     dual_fit_post_window_ms: grown.as_ref().map(|g| g.window_ms),
+                    route,
                 },
                 tags_ctx,
                 refined: RefinedGapFrames {
