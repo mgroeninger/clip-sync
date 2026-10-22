@@ -232,3 +232,59 @@ a re-read under the flag. Before the default flip:
 2. decide whether routing should compare against dual-fit's own seam scores rather than a residual
    bound alone.
 
+### 7a. Listen set (rendered 2026-10-22)
+
+`--gap-listen` renders of the five gaps, at the same build in both arms (`off` = default, `on` =
+`--seam-extend-fill`). Renders are in `gap-files/2026-10-22-listen-sef/`. The blind set is
+`gap-files/2026-10-22-blind-sef/`: 12 trials, made of 2 real trials per gap plus one null per arm. The
+key is in `gap-files/2026-10-22-blind-sef-key/`. Scoring follows the routing plan § 6d: a gap counts
+only if its two trials agree.
+
+Render checks: the A and B clips are bit-identical across arms, and so is the patched A outside the
+written region. The measured fill lag (40 ms windows just inside each end of the write, against
+`b_surround`) matches the report on every gap:
+
+| Gap | Stratum | off: fill lag (head / tail) | on: fill lag | on − off |
+|-----|---------|-----------------------------|--------------|----------|
+| 13/g27 | trim flip | +289.6 / +289.6 ms | +163.4 ms | −126 ms |
+| 33/g21 | trim flip | +25.6 / +25.6 ms | −49.9 ms | −76 ms |
+| 85/g86 | lost rescue (common) | −322.5 / −318.4 ms (dual-fit) | −356.1 ms | — |
+| 13/g16 | lost rescue (step) | +246.1 / +283.1 ms (dual-fit) | +277.8 ms | — |
+| 19/g2 | lost rescue (step) | +16.3 / +80.2 ms (dual-fit) | +67.3 ms | — |
+
+On both trim flips the off-arm audio sits exactly one crossfade (+10 ms) past its reported
+`registration_applied_ms`. This is the plain-crossfade +1 displacement documented in
+[gap-fill-modes.md](../gap-fill-modes.md). The on arm matches its report to the frame. 13/g16 also
+writes a longer region on the on arm: 1.042 s against 0.642 s.
+
+Confounds to keep out of the README:
+- **Trim flips:** the off arm also carries the post-seam crossfade duplication (~20 ms replayed). A
+  verdict for `on` there is not attributable to placement alone.
+- **Lost rescues:** the off arm is a dual-fit bridge, which the flag does not change. That comparison is
+  dual-fit against the flag's single-lag fill.
+
+### 7b. Listen result (2026-10-22, blind, 12 trials)
+
+| Gap | Stratum | Trials (unblinded) | Verdict |
+|-----|---------|--------------------|---------|
+| 13/g27 | trim flip | same, same | **no audible difference** |
+| 33/g21 | trim flip | on, on | **on better** (confounded, see below) |
+| 85/g86 | lost rescue (common) | on, same | does not count (disagree) |
+| 13/g16 | lost rescue (step) | on, on | **on better**: losing dual-fit helped |
+| 19/g2 | lost rescue (step) | off, off | **off better**: a real loss |
+| nulls | off/off, on/on | same, same | clean |
+
+Noise k = 1: no null was heard as different, and 85/g86's two trials disagreed.
+
+Readings:
+- **The cross-arm residual metric does not predict the ear.** The "worst" trim flip, 13/g27 (11 → 127 ms),
+  is inaudible. 33/g21 (12 → 77 ms) is *preferred* on. The 33/g21 win may come from removing the
+  off arm's post-seam crossfade duplication rather than from the placement, but it is not a placement
+  loss either. Neither gap supports holding the default flip on trim-flip grounds.
+- **The lost rescues split 1 – 1 – 1.** That is no evidence that the flag's routing changes hurt in
+  aggregate. Question 2 above needs care: a rule comparing dual-fit's own seam scores keeps dual-fit on
+  both 19/g2 (0.99/0.96 vs 0.59/0.58) and 13/g16 (0.99/0.98 vs 0.82/0.79). It would get 19/g2 right and
+  13/g16 wrong, so seam scores alone do not order these either. 85/g86 stays a weak-signal gap, as in
+  the routing plan § 6e.
+- The one real loss, 19/g2, is a candidate for a targeted look at why the flag's residual lands under
+  the step bound there. Its off-arm dual-fit lags are 16 / 80 ms, a 64 ms step.
