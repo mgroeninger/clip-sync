@@ -1,7 +1,8 @@
 # TEMP — Score the splice that `--seam-extend-fill` writes
 
-**Status:** implemented 2026-10-21 (uncommitted), zero-pad guard included. Open: the flag-on corpus
-run (§ 6), then close. One Change.
+**Status:** implemented 2026-10-21 (uncommitted), zero-pad guard included. Flag-on corpus run done
+2026-10-22 (§ 7): no verdict changes, 68 fills move, and the move interacts with dual-fit
+registration routing. Open: read § 7's findings before closing. One Change.
 Tracked as [BACKLOG.md](../../BACKLOG.md) § *Fill placement*, row *Default-on `--seam-extend-fill`*:
 this plan clears that row's blocker. Flipping the default is a **separate** step, gated on a
 bracket-path ear pass, and is not part of this Change.
@@ -183,3 +184,51 @@ the same geometry, at the assembled fill's start (`+ head_trim_frames`).
   scorer alike.
 - **How often decision 1 actually flips on the corpus.** It is unknown until a flag-on corpus run. Not
   needed to land this Change, because the flag is off by default. It is needed before the default flip.
+
+## 7. Corpus run (2026-10-22)
+
+Two `measure-patch-outcomes.ps1` arms over the full manifest (85 pairs), one release binary of this
+tree: `gap-files/2026-10-21-sef-off` (default) and `gap-files/2026-10-21-sef-on`
+(`-RepairArgs "--seam-extend-fill"`). Every pair exited 0 in both. Diffed with
+`diff-patch-outcomes.ps1 -NoFailOnUnexplained` (its CHANGED PATHS table is the summary below).
+
+- **Gap set and verdicts: identical.** 1775 joined gaps, 0 unjoined, 0 status flips, 0 reason
+  changes, 0 independent run-level changes. Only the derived `patched_marginal_count` moved.
+- **188 patched gaps changed fields.**
+  - **120 score-only.** Reported `pre_correlation` / `post_correlation` moved, nothing about the
+    placement did. Those are the reconciliation scores re-measured in the new geometry. They are not
+    comparable across arms, because the two arms score different frames.
+  - **68 moved the fill.** `registration_applied_ms` changed, which is
+    `alignment.start_frame + head_trim_frames − nominal`.
+- **Confidence tier:** marginal → high on 27 gaps, high → marginal on 15.
+- **33 of the 68 are pure trim flips.** Their placement-search seam scores are bit-identical and only
+  the trim moved, i.e. decision 1 flipped. Against the cross-arm-comparable residual (the max
+  `|registration_residual_{pre,post}_ms|`), 14 got better, 18 got worse and 1 tied.
+  - Worst: 13/g27 went 11.0 → 127.3 ms; 33/g21 went 11.9 → 77.4 ms; 85/g10 went
+    12.9 → 60.8 ms.
+  - Best: 1/g14 went 98.1 → 7.6 ms; 80/g5 went 62.4 → 3.8 ms.
+  - The synthetic fixture's "extended is always right" does **not** carry over to real content as a
+    clean win.
+- **35 of the 68 moved the placement-search seams as well.** Of the 30 that are comparable and not
+  dual-fit, the residual got better on 19, worse on 10 and tied on 1.
+- **Dual-fit registration routing changed on 4 gaps.** The single-lag fill moved, so its residual
+  against the shoulders crossed the routing bound (`dual_fit_registration_bound_ms` /
+  `_common_bound_ms`) in the other direction:
+  - **Lost the rescue:** 85/g86 (common), 13/g16 (step) and 19/g2 (step). The flag-on arm
+    keeps a single-lag fill, with seams of 0.48/0.48, 0.82/0.79 and 0.59/0.58. The flag-off arm's
+    dual-fit fills scored 0.999/0.954, 0.994/0.984 and 0.992/0.964 (border templates, the same
+    geometry in both arms). For example, 13/g16's flag-on single-lag fill sits 41.8 / 4.8 ms off its
+    shoulders, a 37 ms step that is under the 75 ms step bound, so routing never tries dual-fit.
+  - **Gained the rescue:** 3/g12 (step). The flag-off single-lag fill scored 0.28/0.29; flag-on
+    dual-fit scores 0.89/0.97.
+  - The routing bounds were set by ear on flag-off placements
+    ([archive/TEMP-dual-fit-registration-routing-plan.md](archive/TEMP-dual-fit-registration-routing-plan.md)),
+    so they are not validated under the flag.
+
+**What this means for the default flip** (BACKLOG § *Fill placement*): the scorer change does what it
+says, but its corpus effect is mixed by the one cross-arm measure we have. The routing bounds also need
+a re-read under the flag. Before the default flip:
+1. ear-check the worst trim flips (13/g27, 33/g21) and the three lost rescues;
+2. decide whether routing should compare against dual-fit's own seam scores rather than a residual
+   bound alone.
+
