@@ -160,7 +160,7 @@ pub(in crate::application::patch_audio::region) fn registration_route_taken(
     dual_fit: bool,
     step_bound_ms: Option<f64>,
     common_bound_ms: Option<f64>,
-    crossfade_ms: f64,
+    written_lead_ms: f64,
     pre_ms: Option<f64>,
     post_ms: Option<f64>,
 ) -> Option<RouteKind> {
@@ -168,7 +168,7 @@ pub(in crate::application::patch_audio::region) fn registration_route_taken(
         return None;
     }
     let taken = |bound_ms: Option<f64>, kind: RouteKind| {
-        registration_routes_to_dual_fit(bound_ms, crossfade_ms, pre_ms, post_ms)
+        registration_routes_to_dual_fit(bound_ms, written_lead_ms, pre_ms, post_ms)
             .filter(|routed| *routed == kind)
     };
     taken(step_bound_ms, RouteKind::Step).or_else(|| taken(common_bound_ms, RouteKind::Common))
@@ -192,20 +192,21 @@ pub(in crate::application::patch_audio::region) enum RouteKind {
 ///
 /// `pre_ms` / `post_ms` are the per-shoulder `registration_residual_*_ms` values as the patch report
 /// carries them — the **planned** frame, `None` for an unlicensed shoulder. The bound is quoted in the
-/// **written** frame, which runs one crossfade width ahead of the plan (plan § 3), so this adds
-/// `crossfade_ms` itself and a caller cannot forget it. The shift cancels in the step test.
+/// **written** frame, which runs `written_lead_ms` ahead of the plan, so this adds it itself and a
+/// caller cannot forget it: one crossfade width on the plain splice (plan § 3), none under
+/// `--seam-extend-fill` (`SpliceSeamContext::written_lead_frames`). The shift cancels in the step test.
 ///
 /// Strict `>` against the bound. `None` bound, an unlicensed shoulder (invariant 4: one-sided
 /// registration never routes) or a non-finite value never routes.
 pub(in crate::application::patch_audio::region) fn registration_routes_to_dual_fit(
     bound_ms: Option<f64>,
-    crossfade_ms: f64,
+    written_lead_ms: f64,
     pre_ms: Option<f64>,
     post_ms: Option<f64>,
 ) -> Option<RouteKind> {
     let bound = bound_ms?;
-    let pre = pre_ms? + crossfade_ms;
-    let post = post_ms? + crossfade_ms;
+    let pre = pre_ms? + written_lead_ms;
+    let post = post_ms? + written_lead_ms;
     if !(bound.is_finite() && pre.is_finite() && post.is_finite()) {
         return None;
     }

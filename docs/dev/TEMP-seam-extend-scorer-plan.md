@@ -288,3 +288,93 @@ Readings:
   the routing plan § 6e.
 - The one real loss, 19/g2, is a candidate for a targeted look at why the flag's residual lands under
   the step bound there. Its off-arm dual-fit lags are 16 / 80 ms, a 64 ms step.
+
+### 7c. 19/g2 and the step bound (2026-10-22)
+
+**Mechanism, confirmed by probe.** A patch-only run of pair 19 at the default splice with
+`--no-dual-fit-registration-routing` (`gap-files/2026-10-22-probe-19g2/`) shows the single-lag fill
+that the routing replaced without the flag. It sits at applied −113.8 ms, with residuals −120.1 / −184.0 ms
+against shoulders near +6 / +70 ms. That is a misplaced fill 174 ms off its far shoulder in the
+written frame, so routing fired. Under the flag the trim pick lands on the post shoulder (applied +67.3 ms,
+residuals +61.0 / −2.9 ms). A 64 ms step can never put a well-placed single-lag fill past the 75 ms bound.
+The no-flag rescue came from a bad pick reaching dual-fit, not from the bound.
+
+**Routing lead fixed under the flag.** `registration_routes_to_dual_fit` added one crossfade width to
+convert the planned frame to the written one. That holds only for the plain splice. Under
+`--seam-extend-fill` planned equals written (§ 7a render check), so the flag arm was biased +10 ms
+toward routing. The lead now comes from `SpliceSeamContext::written_lead_frames`: `cf` for plain and
+for the extended splice's plain fallback, 0 for extended and dual-fit. Characterize builds the written
+splice context once and shares it between routing and reconciliation. The default arm is unchanged.
+Test: `written_lead_is_a_crossfade_on_the_plain_splice_only`.
+
+**Census** (`-on` reports): single-lag fills with both shoulders licensed and a step over 20 ms (the
+step-kind population a lower bound would reach).
+
+| Far-shoulder error (on arm) | Fills | of which anchor seam |
+|-----------------------------|-------|----------------------|
+| > 30 ms | 56 | 27 |
+| > 40 ms | 45 | 22 |
+| > 50 ms | 25 | 12 |
+| > 60 ms | 8 | 5 |
+| > 65 ms | 0 | 0 |
+
+That is 75 fills in all (38 plain, 37 anchor seam). Their steps cluster at 20–45 ms; only 83/g1 (50.5 ms)
+and 19/g2 (63.9 ms) are larger. Nothing reaches 65 ms, so under the flag the 75 ms step bound routes no
+single-lag fill in the corpus. Every routed gap in the default arm reached dual-fit through a misplaced pick.
+
+**Re-listen design** (routing plan § 6c): dual-fit vs single-lag, both under the flag, drawn from this
+cohort and stratified by far error (40–50, 50–60, > 60 ms). It needs a bound override to force dual-fit
+on the comparison arm, and dual-fit must accept (its own gate) for a gap to enter the set.
+
+### 7d. Step-bound re-listen set (rendered 2026-10-22)
+
+**Forced pass.** `gap-files/2026-10-22-route40/force30/` is a patch-only run of the 32 cohort pairs with
+`--seam-extend-fill --dual-fit-registration-bound-ms 30`, built with the § 7c fix. Dual-fit accepted on
+**all 45** step-kind single-lag fills with a far error over 40 ms (0 declined), with seam scores of
+0.62–1.00, against 0.28–0.96 for the single-lag fill.
+
+**Set.** 8 gaps from 8 pairs, mixing plain and anchor-seam fills. 19/g2 and 13/g16 are left out
+because they have already been heard.
+
+| Far error | Gaps |
+|-----------|------|
+| 40–50 ms | 24/g81, 74/g7, 86/g9 |
+| 50–60 ms | 83/g1, 49/g9, 62/g3 |
+| > 60 ms | 43/g8, 27/g2 |
+
+Arms (both under the flag): `single` uses default routing, which routes nothing here. `dual` is forced
+at 30 ms. Renders are in `gap-files/2026-10-22-listen-route/`. The blind set is
+`gap-files/2026-10-22-blind-route/` (18 trials: 2 per gap plus one null per arm), and the key is in
+`gap-files/2026-10-22-blind-route-key/`. The checks passed on every gap: A/B clips and the region outside
+the writes are bit-identical, and single-lag audio matches the report to within 0.1 ms. Dual-fit
+renders show two shoulder lags, consistent with the forced reports. On four gaps (74/g7, 49/g9,
+62/g3, 27/g2) the two arms' write lengths differ, because the anchor-seam single-lag fill writes wider.
+That is a known confound for those trials (memory: anchor seam widens the A region).
+
+### 7e. Step-bound re-listen result (2026-10-23, blind, 18 trials)
+
+| Gap | Far error | Trials (unblinded) | Verdict |
+|-----|-----------|--------------------|---------|
+| 24/g81 | 40.9 | same, same | no difference |
+| 74/g7 | 49.1 | same, same | no difference |
+| 86/g9 | 49.8 | dual, same | does not count |
+| 83/g1 | 54.0 | same, same | no difference |
+| 49/g9 | 53.7 | dual, dual | **dual better**: the single-lag fill stutters, named on both trials |
+| 62/g3 | 59.0 | dual, dual | dual (listener: could not really tell) |
+| 43/g8 | 63.4 | dual, same | does not count |
+| 27/g2 | 64.1 | same, same | no difference |
+| nulls | — | same, same | clean |
+
+Noise k = 2: both are disagreements, and no null was heard as different. The listener reported that most
+pairs were indistinguishable, including some marked with a preference. The one confident verdict is
+49/g9's stutter. It is an anchor-seam single-lag fill, and its post seam sits 54 ms off.
+
+Readings:
+- **Single-lag was never preferred** in this set. With § 7b's 19/g2 (far 61 ms, dual better twice), the
+  evidence above 50 ms is 2 confident dual wins, 1 weak dual win, 2 no-difference and 1 uncounted, with no
+  single-lag wins.
+- **40–50 ms is inaudible here**, and the only single-lag win on record is 13/g16 (far 41.8 ms, § 7b).
+  Routing that band buys nothing audible and has one known loss.
+- That points to a step bound near **50 ms**, in place of 75 ms. On the flag arm's census that would route
+  25 fills (§ 7c; dual-fit accepted all of them in the forced pass). The evidence is thin, though: one
+  stutter carries it.

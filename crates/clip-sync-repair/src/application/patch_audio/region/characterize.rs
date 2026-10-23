@@ -901,6 +901,22 @@ pub(in crate::application::patch_audio) fn characterize_region(
         .map(|r| r.with_shoulder_quality(quality))
     };
 
+    // The assembled fill as the splice will write it: past any head trim, and without margins when it
+    // was zero-padded. Routing reads its frame lead; reconciliation scores it.
+    let written_splice_ctx = policies::SpliceSeamContext {
+        geometry: policies::SpliceSeamGeometry::single_lag(
+            request.seam_extend_fill,
+            b_samples_full,
+            bracket_fill_margin_start(
+                b_extract_start_frame,
+                alignment.start_frame,
+                head_trim_frames,
+                zero_pad_frames,
+            ),
+        ),
+        ..seam_ctx
+    };
+
     // Registration routing (docs/dev/archive/TEMP-dual-fit-registration-routing-plan.md § 5): the gate passed, but
     // the single-lag fill sits further off a licensed shoulder than the bound allows, so try dual-fit
     // first. A decline keeps the single-lag fill — routing never turns a patch into a skip (§ 2 inv. 1)
@@ -911,12 +927,15 @@ pub(in crate::application::patch_audio) fn characterize_region(
         seam_locks.as_ref(),
         registration_residual.as_ref(),
     ) {
-        let crossfade_ms = seam_cf as f64 * 1000.0 / sample_rate as f64;
+        // The written frame leads the plan by a crossfade on the plain splice only.
+        let written_lead_ms =
+            written_splice_ctx.written_lead_frames(b_fill.len() / channels.max(1)) as f64 * 1000.0
+                / sample_rate as f64;
         if let Some(kind) = registration_route_taken(
             request.dual_fit,
             request.dual_fit_registration_bound_ms,
             request.dual_fit_registration_common_bound_ms,
-            crossfade_ms,
+            written_lead_ms,
             r.registration_residual_pre_ms,
             r.registration_residual_post_ms,
         ) {
@@ -1038,21 +1057,7 @@ pub(in crate::application::patch_audio) fn characterize_region(
                 pre_window: pre_gate_frames,
                 post_window: post_gate_frames,
             },
-            // The assembled fill as the splice will write it: past any head trim, and without
-            // margins when it was zero-padded.
-            policies::SpliceSeamContext {
-                geometry: policies::SpliceSeamGeometry::single_lag(
-                    request.seam_extend_fill,
-                    b_samples_full,
-                    bracket_fill_margin_start(
-                        b_extract_start_frame,
-                        alignment.start_frame,
-                        head_trim_frames,
-                        zero_pad_frames,
-                    ),
-                ),
-                ..seam_ctx
-            },
+            written_splice_ctx,
         );
         let gate_min = report_pre.min(report_post);
         let splice_min = splice_pre.min(splice_post);

@@ -490,6 +490,18 @@ impl<'a> SpliceSeamContext<'a> {
         Self { geometry, ..self }
     }
 
+    /// How many frames the written fill runs ahead of its planned frame, for a fill of
+    /// `fill_frames`. The plain splice starts the gap interior at `fill[cf]`, so it is `seam_cf`; the
+    /// extended splice starts it at `fill[0]`, so it is 0 — except where its margins cannot be cut and
+    /// the splice falls back to plain. Dual-fit plans in the written frame already: 0.
+    pub fn written_lead_frames(&self, fill_frames: usize) -> usize {
+        match self.geometry {
+            SpliceSeamGeometry::BorderTemplate => 0,
+            _ if self.extended_margin(fill_frames).is_some() => 0,
+            _ => self.seam_cf,
+        }
+    }
+
     /// The crossfade windows against raw A are valid only for a single-lag fill.
     fn single_lag(&self) -> bool {
         !matches!(self.geometry, SpliceSeamGeometry::BorderTemplate)
@@ -2019,6 +2031,34 @@ mod tests {
             plain_pre.min(plain_post) < 0.5,
             "plain pre={plain_pre} post={plain_post}"
         );
+    }
+
+    /// Registration routing converts the planned frame to the written one by this lead: one
+    /// crossfade on the plain splice (and on the extended splice's plain fallback), none on the
+    /// extended splice or on dual-fit.
+    #[test]
+    fn written_lead_is_a_crossfade_on_the_plain_splice_only() {
+        let (cf, gs, ge) = SPLICE_PROBE;
+        let b = splice_probe_signal(11, 20_000);
+        let lead = |geometry: SpliceSeamGeometry<'_>| {
+            SpliceSeamContext {
+                seam_cf: cf,
+                gap_start_frame: gs,
+                gap_end_frame: ge,
+                a_samples: &b,
+                channels: 1,
+                geometry,
+            }
+            .written_lead_frames(ge - gs)
+        };
+        let extended = |b_full| SpliceSeamGeometry::ExtendedCrossfade {
+            b_full,
+            fill_start_frame: gs,
+        };
+        assert_eq!(lead(SpliceSeamGeometry::PlainCrossfade), cf);
+        assert_eq!(lead(extended(&b)), 0);
+        assert_eq!(lead(extended(&b[..ge + cf - 1])), cf, "plain fallback");
+        assert_eq!(lead(SpliceSeamGeometry::BorderTemplate), 0);
     }
 
     /// Where the splice cannot cut a margin it falls back to the plain crossfade, so the scorer

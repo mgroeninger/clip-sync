@@ -340,7 +340,8 @@ pub struct Args {
     /// Registration routing: try dual-fit first when a gate-passing single-lag fill misses a shoulder by
     /// more than this many ms (needs both shoulders licensed; keeps the single-lag fill if dual-fit
     /// declines). Measured in the written frame — the reported shoulder error plus the seam crossfade
-    /// width (--crossfade-ms) — so a bound at or below the crossfade routes everything. Ignored under
+    /// width (--crossfade-ms) on the plain splice, plus nothing under --seam-extend-fill — so on the
+    /// plain splice a bound at or below the crossfade routes everything. Ignored under
     /// --no-dual-fit or --no-dual-fit-registration-routing [default: 75].
     #[arg(long, value_name = "MS")]
     pub dual_fit_registration_bound_ms: Option<f64>,
