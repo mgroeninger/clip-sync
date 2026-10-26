@@ -4,7 +4,7 @@ Open follow-up work for `clip-sync`. Architecture: [PLAN.md](PLAN.md). Repair pi
 [docs/pipeline.md](docs/pipeline.md). Test corpus: [docs/dev/corpus-validation.md](docs/dev/corpus-validation.md).
 Error handling: [docs/error-mapping.md](docs/error-mapping.md).
 
-Last updated: 2026-10-21.
+Last updated: 2026-10-26.
 
 **How this doc works**
 
@@ -52,7 +52,7 @@ gap that sits in the end-clip window). Hole 1 was n=1 until 2026-09-21 (13/g16);
 
 | Item | Next action | Done when |
 |------|-------------|-----------|
-| **Gap start lands after A's dropout begins (soft leading edge left in the output)** | 50/g7, found 2026-10-05 ([interior-edit plan](docs/dev/archive/TEMP-dualfit-interior-edit-plan.md) § 4): a blip heard at ~2.8 s in every arm across three blind sittings sits in audio the patch never touches. Raw A's dropout begins at 2.974 s in the `--gap-listen` clip (a −20 dB fall in 2 ms on every channel, to −51…−65 dBFS) and only reaches digital silence (−104 dB) by 3.004 s. The write starts at 2.990 s (fill at 3.000 s less the 10 ms crossfade), so ~16 ms of partial dropout survives before the pre seam. That transition is the largest spectral-novelty event in the clip (100th percentile). Likely mechanism, not verified: the leading edge sits around the scan's `absolute_silence_rms` 0.001007 (−60 dBFS), so the detector calls it programme until it falls below the floor. The other suspect is the scan's boundary resolution. `gap_start_extend_on_pre_seam_fail` cannot catch it: it fires only on a pre-seam failure, and this seam passed. Whether it applies on the dual-fit path is also unchecked. The mirror case, a soft trailing edge at gap end, is unmeasured. Next: census the corpus. For every patched gap, locate A's dropout onset from the shoulder (the first ≥ 15 dB fall in 2 ms bins over the ~100 ms before the reported gap start) and from the far side at gap end. Report the onset-to-boundary distance per edge, then ear-check the largest. The `--gap-listen` clip is enough (patched == raw A before the write) | The per-edge onset-to-boundary distribution over the corpus is known. Either boundaries snap to the dropout onset (with a test on a soft-edged fixture), or the residual is shown inaudible by ear on the worst cases |
+| **Gap start lands after A's dropout begins (soft leading edge left in the output)** | 50/g7: ~16 ms of partial dropout plays before the pre seam, ear-confirmed in three blind sittings. Plan: [TEMP-soft-edge-census-plan.md](docs/dev/TEMP-soft-edge-census-plan.md). Next: Phase 1, an `edge-onset` bin piloted on existing listen clips, with go/no-go on reproducing 50/g7 | The per-edge onset-to-boundary distribution over the corpus is known. Either boundaries snap to the dropout onset (with a test on a soft-edged fixture), or the residual is shown inaudible by ear on the worst cases |
 
 ## Fill normalize boosts against a non-local reference
 
