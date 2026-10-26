@@ -222,7 +222,8 @@ fn dir_entries(dir: &Path) -> Vec<String> {
     names
 }
 
-/// `--seam-extend-fill` must reach the written audio, and change **only** the fill.
+/// `--seam-extend-fill` (the default) against `--no-seam-extend-fill`: the flag must reach the written
+/// audio, and change **only** the fill.
 ///
 /// The shipped seam path has `gap_frames` of fill for a region spanning `gap_frames + 2*cf`, and
 /// covers the shortfall by replaying the fill tail — the blended block is written both inside the
@@ -262,9 +263,11 @@ scan_both = false
             "25000",
             "--no-scan-both",
         ]);
-        if extend {
-            cmd.arg("--seam-extend-fill");
-        }
+        cmd.arg(if extend {
+            "--seam-extend-fill"
+        } else {
+            "--no-seam-extend-fill"
+        });
         assert!(cmd.status().expect("run clip-sync-repair").success());
         let mut reader = WavReader::open(&out_wav).expect("open patched wav");
         reader

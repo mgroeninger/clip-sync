@@ -144,7 +144,7 @@ pub struct PatchRequestSettings {
     /// dual-fit residual reuses `try_dual_fit`'s own per-shoulder lags and their own radius.
     pub residual_search_secs: f64,
     /// Extend the bracket fill one crossfade width past each gap edge so `apply_seam_crossfade_extended`
-    /// has real B content for both blends. Off (default) keeps the shipped `apply_seam_crossfade`,
+    /// has real B content for both blends. On by default; off keeps the plain `apply_seam_crossfade`,
     /// whose post seam replays ~2x crossfade of fill. Bracket and dual-fit fills alike.
     pub seam_extend_fill: bool,
     /// Gaps at or below this length (seconds) pass when mean(pre, post) correlation meets the

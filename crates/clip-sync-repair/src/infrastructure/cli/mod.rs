@@ -157,6 +157,8 @@ pub fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     }
     if args.seam_extend_fill {
         config.repair.seam_extend_fill = true;
+    } else if args.no_seam_extend_fill {
+        config.repair.seam_extend_fill = false;
     }
     if let Some(ms) = args.dual_fit_registration_bound_ms {
         config.repair.dual_fit_registration_bound_ms = Some(ms);
@@ -573,7 +575,7 @@ mod cli_override_tests {
         ]);
         apply_cli_overrides(&mut config, &args);
         let settings = config.repair.patch_settings();
-        assert_eq!(settings.dual_fit_registration_bound_ms, Some(75.0));
+        assert_eq!(settings.dual_fit_registration_bound_ms, Some(50.0));
         assert_eq!(settings.dual_fit_registration_common_bound_ms, Some(150.0));
     }
 
@@ -621,7 +623,7 @@ mod cli_override_tests {
             "0.6",
             "--fill-repeat-penalty-weight",
             "0.25",
-            "--seam-extend-fill",
+            "--no-seam-extend-fill",
             "--dual-fit-registration-bound-ms",
             "75",
             "--dual-fit-registration-common-bound-ms",
@@ -650,8 +652,8 @@ mod cli_override_tests {
         assert!((config.repair.border_standoff_secs - 0.5).abs() < f64::EPSILON);
         assert_eq!(config.repair.residual_border_standoff_secs, Some(0.35));
         assert!(
-            config.repair.seam_extend_fill,
-            "--seam-extend-fill must reach the config; default is off"
+            !config.repair.seam_extend_fill,
+            "--no-seam-extend-fill must reach the config; default is on"
         );
         assert_eq!(
             config.repair.dual_fit_registration_bound_ms,

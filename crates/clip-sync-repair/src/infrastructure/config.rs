@@ -138,8 +138,10 @@ pub struct RepairConfig {
     #[serde(default = "default_residual_search_secs")]
     pub residual_search_secs: f64,
     /// Extend the fill by one crossfade width past each gap edge so the seam crossfade has its
-    /// own B content. Off = the shipped path, whose post seam duplicates ~2x crossfade of audio.
-    #[serde(default)]
+    /// own B content. On by default (2026-10-26, `docs/dev/TEMP-seam-extend-scorer-plan.md` § 7);
+    /// off = the plain splice, whose post seam duplicates ~2x crossfade of audio and whose fill lands
+    /// one crossfade early.
+    #[serde(default = "default_true")]
     pub seam_extend_fill: bool,
     /// Gaps at or below this length use mean(pre, post) correlation for the fill gate.
     #[serde(default = "default_short_gap_mean_correlation_secs")]
@@ -210,10 +212,12 @@ pub struct RepairConfig {
     /// **Registration routing** (`docs/dev/archive/TEMP-dual-fit-registration-routing-plan.md` § 5): a
     /// gate-passing single-lag fill whose far-seam registration error exceeds this many ms (written
     /// frame) is tried as dual-fit first, keeping the single-lag fill if dual-fit declines. Needs both
-    /// shoulders licensed. On by default at 75 ms (§ 6b); `dual_fit_registration_routing = false`
+    /// shoulders licensed. On by default at 50 ms (§ 6b set 75; `docs/dev/TEMP-seam-extend-scorer-plan.md`
+    /// § 7g lowered it); `dual_fit_registration_routing = false`
     /// (`--no-dual-fit-registration-routing`) turns both routes off. Ignored under `dual_fit = false`.
     /// Quoted in the **written** frame: the report's planned-frame shoulder error plus the seam
-    /// crossfade width (`crossfade_ms`), so a bound at or below `crossfade_ms` routes everything.
+    /// crossfade width (`crossfade_ms`) on the plain splice and nothing under `seam_extend_fill`, so on
+    /// the plain splice a bound at or below `crossfade_ms` routes everything.
     #[serde(default = "default_dual_fit_registration_bound_ms")]
     pub dual_fit_registration_bound_ms: Option<f64>,
     /// **Common-mode registration routing** (routing plan § 6d/§ 6e): the same routing as
@@ -566,7 +570,7 @@ fn default_partial_structure_waveform_soften() -> f64 {
     0.85
 }
 fn default_dual_fit_registration_bound_ms() -> Option<f64> {
-    Some(75.0)
+    Some(50.0)
 }
 
 fn default_dual_fit_registration_common_bound_ms() -> Option<f64> {
@@ -713,7 +717,7 @@ impl Default for RepairConfig {
             border_standoff_secs: default_border_standoff_secs(),
             residual_border_standoff_secs: None,
             residual_search_secs: default_residual_search_secs(),
-            seam_extend_fill: false,
+            seam_extend_fill: true,
             short_gap_mean_correlation_secs: default_short_gap_mean_correlation_secs(),
             fill_length_slack_secs: default_fill_length_slack_secs(),
             fill_extract_tail_slack_secs: default_fill_extract_tail_slack_secs(),
@@ -1761,9 +1765,18 @@ dry_run = true
     }
 
     #[test]
+    fn seam_extend_fill_is_on_by_default_and_toml_can_turn_it_off() {
+        assert!(RepairConfig::default().patch_settings().seam_extend_fill);
+        let off: RepairConfig = toml::from_str("seam_extend_fill = false").expect("parse");
+        assert!(!off.patch_settings().seam_extend_fill);
+        let omitted: RepairConfig = toml::from_str("").expect("parse");
+        assert!(omitted.patch_settings().seam_extend_fill);
+    }
+
+    #[test]
     fn routing_bound_is_on_by_default_and_dropped_under_no_dual_fit_or_no_routing() {
         let default = RepairConfig::default().patch_settings();
-        assert_eq!(default.dual_fit_registration_bound_ms, Some(75.0));
+        assert_eq!(default.dual_fit_registration_bound_ms, Some(50.0));
         let no_dual_fit = RepairConfig {
             dual_fit: false,
             ..RepairConfig::default()

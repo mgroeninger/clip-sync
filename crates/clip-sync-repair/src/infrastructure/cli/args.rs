@@ -342,7 +342,7 @@ pub struct Args {
     /// declines). Measured in the written frame — the reported shoulder error plus the seam crossfade
     /// width (--crossfade-ms) on the plain splice, plus nothing under --seam-extend-fill — so on the
     /// plain splice a bound at or below the crossfade routes everything. Ignored under
-    /// --no-dual-fit or --no-dual-fit-registration-routing [default: 75].
+    /// --no-dual-fit or --no-dual-fit-registration-routing [default: 50].
     #[arg(long, value_name = "MS")]
     pub dual_fit_registration_bound_ms: Option<f64>,
 
@@ -364,9 +364,14 @@ pub struct Args {
     pub dual_fit_registration_routing: bool,
 
     /// Extend the fill one crossfade width past each gap edge so the seam blends use their own B
-    /// content, instead of the post seam replaying the fill tail [default: off].
-    #[arg(long)]
+    /// content, instead of the post seam replaying the fill tail [default: on].
+    #[arg(long, overrides_with = "no_seam_extend_fill")]
     pub seam_extend_fill: bool,
+
+    /// Plain seam splice: the fill's own head and tail are crossfaded over A, so the post seam
+    /// replays ~2x crossfade of fill and the fill lands one crossfade early.
+    #[arg(long, overrides_with = "seam_extend_fill")]
+    pub no_seam_extend_fill: bool,
 
     /// Per-gap B mapping [default: recommended]: `recommended`, `interpolated` (clip drift),
     /// or `anchored-retry` (two-pass patch anchors).

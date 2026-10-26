@@ -378,3 +378,52 @@ Readings:
 - That points to a step bound near **50 ms**, in place of 75 ms. On the flag arm's census that would route
   25 fills (§ 7c; dual-fit accepted all of them in the forced pass). The evidence is thin, though: one
   stutter carries it.
+
+### 7f. 50–65 ms band listen set (rendered 2026-10-23)
+
+This is the band that a 50 ms bound would newly route: all 25 single-lag fills on the flag arm with far error
+between 50 and 65 ms (§ 7c census). Each gap was re-rendered with `--gap-listen` in two arms:
+`--seam-extend-fill` (single) and `--seam-extend-fill --dual-fit-registration-bound-ms 30` (dual). That is
+22 pairs, run sequentially, and every pair exited 0 in both arms. The renders are in
+`gap-files/2026-10-23-listen-band50/{single,dual}`.
+
+Checks (all 25 pass):
+- The A and B clips are byte-identical across arms. So is the audio outside the writes.
+- The single-lag audio sits within 0.1 ms of its reported `registration_applied_ms`, which confirms the
+  routing fix's lead accounting for the flag splice.
+- Every dual render shows two lags, with `route=registration_step`.
+- The six gaps already heard (19/g2, 49/g9, 62/g3, 83/g1, 43/g8, 27/g2) reproduce their earlier lags.
+
+Confound: on 12 anchor-seam gaps the arms write different lengths, because dual-fit re-places the anchor
+bracket. The widest is 60/g5 (4.82 s single vs 1.92 s dual). On those gaps a preference may follow the
+write extent and not the step.
+
+Blind set: `gap-files/2026-10-23-blind-band50/`, with the key in `-key`. It covers the 19 unheard gaps,
+2 trials each plus 2 nulls, for 40 trials (seed 20261023).
+
+### 7g. 50–65 ms band result (2026-10-26, blind, 40 trials)
+
+The listener heard a difference on 4 of 38 real trials and on neither null. Unblinded:
+
+| Gap | Anchor seam | Residual pre / post (ms) | Trials | Verdict |
+|-----|-------------|--------------------------|--------|---------|
+| 50/g10 | yes | +16.1 / +59.9 | dual, dual | **dual better**: the single-lag fill stutters, named on both trials |
+| 10/g8 | no | +60.0 / +27.8 | dual, same | does not count |
+| 50/g14 | no | +50.2 / +8.1 | same, dual ("slight blip" on single) | does not count |
+| other 16 gaps | — | — | same, same | no difference |
+| nulls (44/g10, 83/g7) | — | — | same | clean |
+
+Noise k = 2: both are disagreements, and the nulls are clean. Single-lag was never preferred.
+
+Readings:
+- **50/g10 repeats 49/g9's pattern.** Both are anchor-seam single-lag fills whose far error is on the
+  post seam (54 and 60 ms), and on both the listener named a stutter twice. The pattern does not fire
+  every time, though. Three other anchor-seam fills with a far post error, 5/g8 (50.5), 38/g2 (63.1) and
+  44/g10 (60.4), were heard as no difference. Anchor seam plus far post error is therefore a risk class,
+  not a predictor.
+- **The full 50–65 ms band** (25 gaps; § 7e, § 7b's 19/g2 and this set) has 3 confident dual wins (19/g2,
+  49/g9, 50/g10), 1 weak dual win (62/g3), 4 uncounted gaps that all lean dual, 17 no-difference gaps and
+  **no single-lag wins**. Dual-fit accepted every gap in the band (§ 7d).
+- Recommendation: **lower the step bound from 75 ms to 50 ms.** Within the evidence, routing this band
+  costs nothing audible and fixes at least 3 gaps. Below 50 ms, keep single-lag: 13/g16 (41.8 ms) is the
+  only single-lag win on record, and the 40–50 ms gaps were inaudible (§ 7e).
