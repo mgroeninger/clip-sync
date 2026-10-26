@@ -1,14 +1,19 @@
 # TEMP — Score the splice that `--seam-extend-fill` writes
 
+**Closed 2026-10-26.** The scorer change shipped (`9a6f6c6a`), and so did the routing written-lead fix
+(`ff61e004`, § 7c). The step bound was lowered from 75 to 50 ms (§ 7g), and `--seam-extend-fill` became the
+default by user decision (`2d802623`), **without** the random-sample bracket-path ear pass. That pass is
+latched in [settled.md](../settled.md) § C.
+
 **Status:** implemented 2026-10-21 (uncommitted), zero-pad guard included. Flag-on corpus run done
 2026-10-22 (§ 7): no verdict changes, 68 fills move, and the move interacts with dual-fit
 registration routing. Open: read § 7's findings before closing. One Change.
-Tracked as [BACKLOG.md](../../BACKLOG.md) § *Fill placement*, row *Default-on `--seam-extend-fill`*:
+Tracked as [BACKLOG.md](../../../BACKLOG.md) § *Fill placement*, row *Default-on `--seam-extend-fill`*:
 this plan clears that row's blocker. Flipping the default is a **separate** step, gated on a
 bracket-path ear pass, and is not part of this Change.
 
-Companion: [gap-fill-modes.md](../gap-fill-modes.md) § *Seam crossfade and `--seam-extend-fill`*,
-[seam-scoring.md](../seam-scoring.md) § 4.
+Companion: [gap-fill-modes.md](../../gap-fill-modes.md) § *Seam crossfade and `--seam-extend-fill`*,
+[seam-scoring.md](../../seam-scoring.md) § 4.
 
 ---
 
@@ -222,7 +227,7 @@ tree: `gap-files/2026-10-21-sef-off` (default) and `gap-files/2026-10-21-sef-on`
   - **Gained the rescue:** 3/g12 (step). The flag-off single-lag fill scored 0.28/0.29; flag-on
     dual-fit scores 0.89/0.97.
   - The routing bounds were set by ear on flag-off placements
-    ([archive/TEMP-dual-fit-registration-routing-plan.md](archive/TEMP-dual-fit-registration-routing-plan.md)),
+    ([archive/TEMP-dual-fit-registration-routing-plan.md](TEMP-dual-fit-registration-routing-plan.md)),
     so they are not validated under the flag.
 
 **What this means for the default flip** (BACKLOG § *Fill placement*): the scorer change does what it
@@ -254,7 +259,7 @@ written region. The measured fill lag (40 ms windows just inside each end of the
 
 On both trim flips the off-arm audio sits exactly one crossfade (+10 ms) past its reported
 `registration_applied_ms`. This is the plain-crossfade +1 displacement documented in
-[gap-fill-modes.md](../gap-fill-modes.md). The on arm matches its report to the frame. 13/g16 also
+[gap-fill-modes.md](../../gap-fill-modes.md). The on arm matches its report to the frame. 13/g16 also
 writes a longer region on the on arm: 1.042 s against 0.642 s.
 
 Confounds to keep out of the README:

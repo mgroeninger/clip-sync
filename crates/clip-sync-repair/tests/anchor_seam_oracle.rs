@@ -397,8 +397,10 @@ fn a2_c3_pipeline_patches_speech_boundary_bool_mode() {
         .expect("patch");
 
     let gap = &response.summary.gaps[0];
-    // CHARACTERIZATION (step 1): C3 boundary gap patches *marginally* on the baseline throat with a
-    // symmetric-weak seam — the anchor path is not engaged. Lock current exit + tier.
+    // CHARACTERIZATION (step 1): C3 boundary gap patches *marginally* on the baseline throat — the
+    // anchor path is not engaged. Lock current exit + tier. The seam shape reads asymmetric-post since
+    // `seam_extend_fill` went default-on (2026-10-26): the reported seams are scored on the extended
+    // splice's margins. Under the plain splice the same patch reads symmetric-weak.
     assert_eq!(
         routing_facts(gap),
         RoutingFacts {
@@ -407,7 +409,7 @@ fn a2_c3_pipeline_patches_speech_boundary_bool_mode() {
             anchor_seam_used: false,
             anchor_move_nonzero: false,
             patch_tier: PatchTier::Marginal,
-            seam_shape: SeamShape::SymmetricWeak,
+            seam_shape: SeamShape::AsymmetricPost,
             fit_path: Some(FitPathTag::BaselineOnly),
         },
         "A2 routing characterization"

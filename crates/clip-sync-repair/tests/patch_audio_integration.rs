@@ -1993,7 +1993,8 @@ fn registration_routing_leaves_a_common_mode_fill_alone_at_any_bound() {
 }
 
 /// Common-mode routing (routing plan § 6d) has its own bound. On the same unshifted-copy noise fixture as
-/// the test above (both shoulders read the 10 ms written-frame crossfade error, equal), the common bound
+/// the test above, pinned to the plain splice (both shoulders read the 10 ms written-frame crossfade error,
+/// equal; under `--seam-extend-fill` the written error is 0 and nothing would route), the common bound
 /// routes it to dual-fit and tags the route `registration_common`, while a step bound alone still does not.
 /// A bound above the 10 ms error leaves the single-lag fill alone, and the patch is never a skip.
 #[test]
@@ -2037,6 +2038,7 @@ fn registration_routing_common_bound_routes_a_common_mode_fill() {
             partial_structure_waveform_soften: 1.0,
             dual_fit_registration_bound_ms: step,
             dual_fit_registration_common_bound_ms: common,
+            seam_extend_fill: false,
             ..Default::default()
         };
         let report = make_report(
@@ -2626,6 +2628,10 @@ fn patch_audio_fit_mode_marginal_tier_patches_with_warn_confidence() {
     let mut marginal_opts = fast_fit_patch_options();
     marginal_opts.gap_end_extend_on_post_seam_fail = false;
     marginal_opts.gap_start_extend_on_pre_seam_fail = false;
+    // The fixture's ~0.99 post seam is the plain splice's scoring window straddling B's distortion
+    // edge (the distortion is the same sine at lower amplitude, Pearson ~1.0 inside it). Under
+    // `--seam-extend-fill` the post window sits wholly inside it and scores High, so pin the plain splice.
+    marginal_opts.seam_extend_fill = false;
 
     // Threshold just above measured post seam (~0.99) so the patch lands in the warn tier.
     const MARGINAL_THRESHOLD: f32 = 0.999;
@@ -3219,6 +3225,8 @@ fn patch_audio_anchored_retry_marginal_flag_without_anchors_skips_pass2() {
     opts.fill_anchor_retry_marginal = true;
     opts.gap_end_extend_on_post_seam_fail = false;
     opts.gap_start_extend_on_pre_seam_fail = false;
+    // Plain splice: see `patch_audio_fit_mode_marginal_tier_patches_with_warn_confidence`.
+    opts.seam_extend_fill = false;
 
     let patched = run_patch(
         patch_request_with_options(report, false, 5.0, 0.999, opts),
@@ -3272,6 +3280,8 @@ fn patch_audio_anchored_retry_skips_pass2_when_no_anchors() {
     opts.fill_offset_mode = FillOffsetMode::AnchoredRetry;
     opts.gap_end_extend_on_post_seam_fail = false;
     opts.gap_start_extend_on_pre_seam_fail = false;
+    // Plain splice: see `patch_audio_fit_mode_marginal_tier_patches_with_warn_confidence`.
+    opts.seam_extend_fill = false;
 
     let patched = run_patch(
         patch_request_with_options(report, false, 5.0, 0.999, opts),

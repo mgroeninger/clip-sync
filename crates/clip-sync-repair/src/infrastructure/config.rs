@@ -138,7 +138,7 @@ pub struct RepairConfig {
     #[serde(default = "default_residual_search_secs")]
     pub residual_search_secs: f64,
     /// Extend the fill by one crossfade width past each gap edge so the seam crossfade has its
-    /// own B content. On by default (2026-10-26, `docs/dev/TEMP-seam-extend-scorer-plan.md` § 7);
+    /// own B content. On by default (2026-10-26, `docs/dev/archive/TEMP-seam-extend-scorer-plan.md` § 7);
     /// off = the plain splice, whose post seam duplicates ~2x crossfade of audio and whose fill lands
     /// one crossfade early.
     #[serde(default = "default_true")]
@@ -212,7 +212,7 @@ pub struct RepairConfig {
     /// **Registration routing** (`docs/dev/archive/TEMP-dual-fit-registration-routing-plan.md` § 5): a
     /// gate-passing single-lag fill whose far-seam registration error exceeds this many ms (written
     /// frame) is tried as dual-fit first, keeping the single-lag fill if dual-fit declines. Needs both
-    /// shoulders licensed. On by default at 50 ms (§ 6b set 75; `docs/dev/TEMP-seam-extend-scorer-plan.md`
+    /// shoulders licensed. On by default at 50 ms (§ 6b set 75; `docs/dev/archive/TEMP-seam-extend-scorer-plan.md`
     /// § 7g lowered it); `dual_fit_registration_routing = false`
     /// (`--no-dual-fit-registration-routing`) turns both routes off. Ignored under `dual_fit = false`.
     /// Quoted in the **written** frame: the report's planned-frame shoulder error plus the seam

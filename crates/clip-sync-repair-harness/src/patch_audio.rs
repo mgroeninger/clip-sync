@@ -68,6 +68,8 @@ pub struct PatchTestOptions {
     pub dual_fit_registration_bound_ms: Option<f64>,
     /// Common-mode routing bound (ms, written frame); `None` = off, as in production.
     pub dual_fit_registration_common_bound_ms: Option<f64>,
+    /// Match production default (`RepairConfig.seam_extend_fill`); `false` = the plain splice.
+    pub seam_extend_fill: bool,
     /// Gap subset filter; resolved in [`PatchRequestSettings::into_request`].
     pub gap_selection: GapSelectionMode,
 }
@@ -112,6 +114,8 @@ impl Default for PatchTestOptions {
             dual_fit: clip_sync_repair::infrastructure::config::RepairConfig::default().dual_fit,
             dual_fit_registration_bound_ms: None,
             dual_fit_registration_common_bound_ms: None,
+            seam_extend_fill: clip_sync_repair::infrastructure::config::RepairConfig::default()
+                .seam_extend_fill,
             gap_selection: GapSelectionMode::All,
         }
     }
@@ -287,8 +291,8 @@ pub fn patch_request_with_options(
     // defaults are exercised separately via `patch_request_from_repair`. Everything below is a caller arg, a
     // `PatchTestOptions` knob, or a deliberate synthetic-fixture deviation.
     //
-    // Of the 64 settings fields, 43 stay explicit (4 caller args, 31 options knobs, 8
-    // deviations) and 21 are absorbed by the seed. Each field absorbed at the time this was written
+    // Of the 64 settings fields, 44 stay explicit (4 caller args, 32 options knobs, 8
+    // deviations) and 20 are absorbed by the seed. Each field absorbed at the time this was written
     // already equaled its production default in the previous hand-written literal, so the built
     // request is value-identical to that literal; fields added since (the two `lag_envelope_*`
     // knobs) take their production defaults here deliberately.
@@ -333,6 +337,7 @@ pub fn patch_request_with_options(
         dual_fit: options.dual_fit,
         dual_fit_registration_bound_ms: options.dual_fit_registration_bound_ms,
         dual_fit_registration_common_bound_ms: options.dual_fit_registration_common_bound_ms,
+        seam_extend_fill: options.seam_extend_fill,
 
         // ---- deliberate deviations from production ----
         // Test-local settings for synthetic fixtures; production is covered elsewhere via
