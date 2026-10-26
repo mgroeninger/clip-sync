@@ -41,6 +41,14 @@ name = "shoulder-sweep"
 path = "src/bin/shoulder_sweep.rs"
 required-features = ["calibration"]
 
+# Calibration/dev tool: independent soft-edge census of the --gap-listen WAVs (dropout onset, floor
+# edge and measured write start per gap edge). Measures, never classifies; shares no silence code
+# with the scanner or refine_gap_frames. Contract: docs/dev/TEMP-soft-edge-census-plan.md section 3.
+[[bin]]
+name = "edge-onset"
+path = "src/bin/edge_onset.rs"
+required-features = ["calibration"]
+
 [features]
 default = []
 ffmpeg-mux = []

@@ -114,6 +114,8 @@ try {
             # The `shoulder-sweep` bin's colocated tests (its FFT Pearson, peak picker and census
             # assembly). `--bin` is needed because `autotests = false` never reaches it.
             '--bin', 'shoulder-sweep',
+            # And `edge-onset`'s (onset rule, floor edge, write-start bias, log/pair joins).
+            '--bin', 'edge-onset',
             # Likewise `equivalence-calibration`'s (replay input-shape detection, corpus discovery,
             # band arithmetic). Milliseconds; both bins are `calibration`-gated.
             '--bin', 'equivalence-calibration'
