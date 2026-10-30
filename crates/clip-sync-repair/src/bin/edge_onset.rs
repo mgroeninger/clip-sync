@@ -20,25 +20,43 @@
 //! onset rule, the floor edge, the write-start interval and its bias estimate, and the columns. Read
 //! it before changing any number here.
 //!
+//! **Two modes.** Listen mode (`--corpus`, Phase 1) reads `--gap-listen` WAVs and also measures the
+//! write. Media mode (`--report`, Phase 2) reads one `--patch-only --format json` report per pair,
+//! decodes that pair's A with the scanner's own sequential bucket decode, keeps only ±250 ms around
+//! each scan edge, and measures **every** gap. It has no write to measure, so it reports the § 4
+//! exposure estimate instead. No B, no oracle, no full-PCM hold.
+//!
 //! **Usage.**
 //!
 //! ```text
 //! cargo run --features calibration --bin edge-onset -- --corpus gap-files/<listen-run>
 //! cargo run --features calibration --bin edge-onset -- \
 //!     --corpus gap-files/<listen-run>/dual --also gap-files/<listen-run>/single
+//! cargo run --release --features calibration,he-aac --bin edge-onset -- \
+//!     --report gap-files/<census-run>/50.json --out gap-files/<census-run>/edge-onset
 //! ```
 //!
+//! Media mode needs `he-aac` even for AAC-LC: it registers the only AAC decoder. Reports are decoded
+//! one at a time, in order — never in parallel.
+//!
 //! Media hygiene: prints pair labels, gap indices, relative directories and file stems only — never
-//! media paths or titles. Relative `--corpus` / `--also` / `--out` resolve against the repo root.
+//! media paths or titles. A report's `video_a` path is opened but never printed; decode errors are
+//! scrubbed of it. Relative `--corpus` / `--also` / `--report` / `--out` resolve against the repo
+//! root.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::Parser;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
+use clip_sync::{
+    select_best_track, MediaReader, MediaSession, MediaSource, ProgressMode, ProgressReporter,
+    StderrProgressReporter, SymphoniaMediaReader,
+};
 use clip_sync_repair::application::gap_fingerprint::GapCorpus;
+use clip_sync_repair::domain::policies::{snap_gap_edges_to_onset, EdgeSnap, RefinedGapFrames};
 
 const A_SUFFIX: &str = "_a_surround.wav";
 const PATCHED_SUFFIX: &str = "_a_patched.wav";
@@ -67,15 +85,30 @@ const WIDE_WRITE_MS: f64 = 50.0;
 const SAME_WRITE_MS: f64 = 0.05;
 /// How deep below the gap dir the discovery walk goes (`<run>/<arm>/<pair>` is depth 2).
 const MAX_DEPTH: usize = 3;
+/// Media mode keeps this much either side of each scan edge: the onset window plus margin.
+const MEDIA_HALF_MS: f64 = 250.0;
+/// Media mode's decode bucket. Any length works; only frame positions matter.
+const MEDIA_BUCKET_SECS: f64 = 10.0;
 
 #[derive(Parser, Debug)]
 #[command(
-    about = "Soft-edge census of --gap-listen clips: dropout onset, floor edge and measured write start per gap edge"
+    about = "Soft-edge census: dropout onset, floor edge and write start (listen clips) or exposure estimate (media) per gap edge"
 )]
 struct Args {
-    /// A `--gap-listen` tree: any directory holding `*_a_surround.wav`, up to three levels down.
+    /// Listen mode: a `--gap-listen` tree, any directory holding `*_a_surround.wav` up to three
+    /// levels down.
+    #[arg(long, required_unless_present = "report", conflicts_with = "report")]
+    corpus: Option<PathBuf>,
+
+    /// Media mode: a pair's `--patch-only --format json` report. Repeat for several pairs; each is
+    /// decoded in turn. The pair label comes from the file or directory name (`50.json`, `50/…`),
+    /// else `--pair` when only one report is given.
     #[arg(long)]
-    corpus: PathBuf,
+    report: Vec<PathBuf>,
+
+    /// Media mode, one report only: open this A instead of the report's `video_a` (the corpus moved).
+    #[arg(long)]
+    media_a: Option<PathBuf>,
 
     /// Extra trees measured into the same census. Unlike `shoulder-sweep`, a stem seen in two trees
     /// is **kept** in both: two arms of one listen run share raw A but not the write, and comparing
@@ -87,7 +120,8 @@ struct Args {
     #[arg(long)]
     pair: Option<String>,
 
-    /// Where to write `census.csv` / `census.json`. Default `<corpus>/edge-onset/`.
+    /// Where to write `census.csv` / `census.json`. Default `<corpus>/edge-onset/`, or
+    /// `edge-onset/` beside the first report.
     #[arg(long)]
     out: Option<PathBuf>,
 
@@ -100,6 +134,13 @@ struct Args {
     /// `cf` of the bias estimate. A config value, not a reading of the seam code.
     #[arg(long, default_value_t = 10.0)]
     crossfade_ms: f64,
+
+    /// Media mode, diagnostic: also run the production `snap_gap_edges_to_onset` at this cap (ms)
+    /// on each edge window, with the scan boundary as the refined edge, and print one stderr line
+    /// per edge where either reading has an onset. A cross-check of the Phase 4 port against this
+    /// bin's reading; it changes no output file.
+    #[arg(long)]
+    snap_cross_check_ms: Option<f64>,
 }
 
 // -------------------------------------------------------------------------------------------
@@ -718,6 +759,12 @@ struct Row {
     exposure_lo_hard_ms: Option<f64>,
     /// Far onset to measured write, upper end — the room-tone reading of the same edge.
     exposure_far_hi_ms: Option<f64>,
+    /// Media mode, patched edges: the write's move **outward** from the refined edge, from the
+    /// report's adjust field (`−gap_start_adjust_frames` lead, `+gap_end_adjust_frames` trail).
+    gap_adjust_ms: Option<f64>,
+    /// Media mode: `onset_near_to_floor_ms − cf − gap_adjust_ms`, the § 4 estimate. Patched,
+    /// non-anchor-seam edges with an onset only — an anchor-seam write's side is not on the record.
+    exposure_est_ms: Option<f64>,
 }
 
 struct Site<'a> {
@@ -776,6 +823,8 @@ fn assemble_row(
         exposure_lo_ms: exposure_hi.zip(write.write_bias_ms).map(|(h, b)| h - b),
         exposure_lo_hard_ms: exposure_hi.map(|h| h - crossfade_ms),
         exposure_far_hi_ms: onset.onset_far_ms.zip(write.write_ms).map(|(o, w)| o - w),
+        gap_adjust_ms: None,
+        exposure_est_ms: None,
         onset,
         write,
     };
@@ -801,6 +850,8 @@ fn round_row(mut r: Row) -> Row {
         &mut r.exposure_lo_ms,
         &mut r.exposure_lo_hard_ms,
         &mut r.exposure_far_hi_ms,
+        &mut r.gap_adjust_ms,
+        &mut r.exposure_est_ms,
     ] {
         *v = v.map(r2);
     }
@@ -836,6 +887,8 @@ const CSV_FIELDS: &[&str] = &[
     "exposure_lo_ms",
     "exposure_lo_hard_ms",
     "exposure_far_hi_ms",
+    "gap_adjust_ms",
+    "exposure_est_ms",
     "context_secs",
     "tree",
     "stem",
@@ -882,6 +935,8 @@ fn census_csv(rows: &[Row]) -> String {
             num(r.exposure_lo_ms),
             num(r.exposure_lo_hard_ms),
             num(r.exposure_far_hi_ms),
+            num(r.gap_adjust_ms),
+            num(r.exposure_est_ms),
             format!("{:.3}", r.context_secs),
             r.tree.clone(),
             r.stem.clone(),
@@ -928,7 +983,37 @@ fn main() -> ExitCode {
 }
 
 fn run(args: &Args) -> Result<(), String> {
-    let corpus = resolve(&args.corpus);
+    match &args.corpus {
+        Some(corpus) => run_listen(args, corpus),
+        None => run_media(args),
+    }
+}
+
+/// `census.csv` and `census.json` (rows under `edges`, `contract` as `_contract`) into `out_dir`.
+fn write_census(
+    out_dir: &Path,
+    rows: &[Row],
+    contract: serde_json::Value,
+) -> Result<(PathBuf, PathBuf), String> {
+    std::fs::create_dir_all(out_dir).map_err(|e| format!("{}: {e}", out_dir.display()))?;
+    let census = out_dir.join("census.csv");
+    std::fs::write(&census, census_csv(rows)).map_err(|e| format!("{}: {e}", census.display()))?;
+    let json = out_dir.join("census.json");
+    let payload = serde_json::json!({
+        "_contract": contract,
+        "n": rows.len(),
+        "edges": rows,
+    });
+    std::fs::write(
+        &json,
+        serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| format!("{}: {e}", json.display()))?;
+    Ok((census, json))
+}
+
+fn run_listen(args: &Args, corpus: &Path) -> Result<(), String> {
+    let corpus = resolve(corpus);
     let out_dir = args
         .out
         .as_ref()
@@ -967,13 +1052,8 @@ fn run(args: &Args) -> Result<(), String> {
     sort_rows(&mut rows);
     print_table(&rows);
 
-    std::fs::create_dir_all(&out_dir).map_err(|e| format!("{}: {e}", out_dir.display()))?;
-    let census = out_dir.join("census.csv");
-    std::fs::write(&census, census_csv(&rows)).map_err(|e| format!("{}: {e}", census.display()))?;
-    let json = out_dir.join("census.json");
-    let payload = serde_json::json!({
-        "_contract": {
-            "instrument": "edge-onset (docs/dev/TEMP-soft-edge-census-plan.md § 3)",
+    let contract = serde_json::json!({
+            "instrument": "edge-onset listen mode (docs/dev/TEMP-soft-edge-census-plan.md § 3)",
             "distances": "milliseconds OUTWARD from the scan boundary into programme: before it on `lead`, after it on `trail`",
             "onset": format!("{BIN_MS} ms peak bins over {WINDOW_MS} ms; a >= {FALL_DB} dB fall (lead) / rise (trail) sustained to the boundary; refined to the sample"),
             "onset_far_vs_near": format!("far = earliest lead fall / latest trail rise; near = closest to the boundary; onsets within {REF_BINS} bins merge to the outermost. They disagree on the room-tone shape; flagged, not resolved"),
@@ -984,15 +1064,8 @@ fn run(args: &Args) -> Result<(), String> {
             "dump_refined_ms": "production's refined edge from the dump, joined as a cross-check — never an input",
             "arms": "a stem in several trees/dirs is kept in each: raw A is shared, the write is not",
             "denominator": "gap edges with listen WAVs, NOT gaps in the corpus — nothing in this file is a base rate",
-        },
-        "n": rows.len(),
-        "edges": rows,
     });
-    std::fs::write(
-        &json,
-        serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| format!("{}: {e}", json.display()))?;
+    let (census, json) = write_census(&out_dir, &rows, contract)?;
 
     print_summary(&rows, total, &skipped);
     println!("\nwrote {}", census.display());
@@ -1282,6 +1355,631 @@ fn print_summary(rows: &[Row], total: usize, skipped: &[String]) {
     );
     println!(
         "  denominator is gap edges with listen WAVs, not gaps in the corpus — this is not a base rate"
+    );
+}
+
+// -------------------------------------------------------------------------------------------
+// Media mode (Phase 2)
+// -------------------------------------------------------------------------------------------
+
+/// The slice of a `--patch-only --format json` report media mode reads. `video_a` is opened, never
+/// printed.
+#[derive(Deserialize)]
+struct PatchReportJson {
+    scan: ScanJson,
+    patch: Option<PatchJson>,
+}
+
+#[derive(Deserialize)]
+struct ScanJson {
+    video_a: PathBuf,
+    gaps: Vec<ScanGapJson>,
+}
+
+#[derive(Deserialize)]
+struct ScanGapJson {
+    video_a_start_secs: f64,
+    video_a_end_secs: f64,
+}
+
+#[derive(Deserialize)]
+struct PatchJson {
+    gaps: Vec<PatchGapJson>,
+}
+
+#[derive(Deserialize)]
+struct PatchGapJson {
+    a_start_secs: f64,
+    a_end_secs: f64,
+    /// Externally tagged `GapPatchStatus`, read as a value: only four fields of one arm are needed.
+    status: serde_json::Value,
+}
+
+/// One gap's patch outcome, from its status.
+#[derive(Debug, Clone, PartialEq)]
+struct Outcome {
+    /// The status tag: `patched`, `skipped`, `not_planned`, `not_applied`.
+    disposition: String,
+    /// `dual_fit`, `anchor_seam`, `single_lag` or `not_patched` — the listen-mode vocabulary.
+    fill_path: &'static str,
+    start_adjust_frames: i64,
+    end_adjust_frames: i64,
+}
+
+fn outcome_from_status(status: &serde_json::Value) -> Result<Outcome, String> {
+    let (tag, body) = status
+        .as_object()
+        .and_then(|o| o.iter().next())
+        .ok_or("status is not an externally tagged object")?;
+    let flag = |k: &str| body.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
+    let frames = |k: &str| body.get(k).and_then(|v| v.as_i64()).unwrap_or(0);
+    // Dual-fit first, as in the log parser: a dual-fit rescue is never an anchor-seam write.
+    let fill_path = match tag.as_str() {
+        "patched" if flag("dual_fit_used") => "dual_fit",
+        "patched" if flag("anchor_seam_used") => "anchor_seam",
+        "patched" => "single_lag",
+        _ => "not_patched",
+    };
+    Ok(Outcome {
+        disposition: tag.clone(),
+        fill_path,
+        start_adjust_frames: frames("gap_start_adjust_frames"),
+        end_adjust_frames: frames("gap_end_adjust_frames"),
+    })
+}
+
+/// A gap's scan edges as decoded-timeline frames, and its outcome.
+#[derive(Debug, Clone, PartialEq)]
+struct MediaGap {
+    index: usize,
+    lead: usize,
+    trail: usize,
+    outcome: Outcome,
+}
+
+/// Scan edges at `trunc(secs · rate)` — the listen-mode boundary arithmetic — paired with
+/// `patch.gaps`, which must be index-parallel to `scan.gaps` with the same bounds.
+fn media_gaps(report: &PatchReportJson, rate: u32) -> Result<Vec<MediaGap>, String> {
+    let patch = report
+        .patch
+        .as_ref()
+        .ok_or("report has no `patch` object; it needs a `--patch-only --format json` run")?;
+    if patch.gaps.len() != report.scan.gaps.len() {
+        return Err(format!(
+            "{} scan gaps but {} patch outcomes",
+            report.scan.gaps.len(),
+            patch.gaps.len()
+        ));
+    }
+    let r = f64::from(rate);
+    report
+        .scan
+        .gaps
+        .iter()
+        .zip(&patch.gaps)
+        .enumerate()
+        .map(|(index, (s, p))| {
+            if (s.video_a_start_secs - p.a_start_secs).abs() > 1e-6
+                || (s.video_a_end_secs - p.a_end_secs).abs() > 1e-6
+            {
+                return Err(format!("gap {index}: scan and patch bounds differ"));
+            }
+            Ok(MediaGap {
+                index,
+                lead: (s.video_a_start_secs * r) as usize,
+                trail: (s.video_a_end_secs * r) as usize,
+                outcome: outcome_from_status(&p.status).map_err(|e| format!("gap {index}: {e}"))?,
+            })
+        })
+        .collect()
+}
+
+/// Copies frame windows out of a sequential decode as it streams past, so only the windows are
+/// held. Windows may overlap and need not be sorted.
+struct WindowSink {
+    windows: Vec<(usize, usize)>,
+    bufs: Vec<Vec<f64>>,
+    channels: Option<usize>,
+    /// Decoded frames seen so far: the next bucket's first frame.
+    pos: usize,
+}
+
+impl WindowSink {
+    fn new(windows: Vec<(usize, usize)>) -> Self {
+        let bufs = vec![Vec::new(); windows.len()];
+        Self {
+            windows,
+            bufs,
+            channels: None,
+            pos: 0,
+        }
+    }
+
+    fn push(&mut self, samples: &[f32], channels: usize) -> Result<(), String> {
+        let ch = *self.channels.get_or_insert(channels);
+        if ch != channels || ch == 0 {
+            return Err(format!(
+                "decoded channel count changed mid-stream ({ch} → {channels})"
+            ));
+        }
+        let lo = self.pos;
+        let hi = lo + samples.len() / ch;
+        for (&(start, end), buf) in self.windows.iter().zip(&mut self.bufs) {
+            let (s, e) = (start.max(lo), end.min(hi));
+            if s < e {
+                buf.extend(
+                    samples[(s - lo) * ch..(e - lo) * ch]
+                        .iter()
+                        .map(|&x| f64::from(x)),
+                );
+            }
+        }
+        self.pos = hi;
+        Ok(())
+    }
+
+    /// One WAV per window, in window order; short when the decode ended inside it.
+    fn into_wavs(self, rate: u32) -> Vec<Wav> {
+        let channels = self.channels.unwrap_or(1);
+        self.bufs
+            .into_iter()
+            .map(|samples| Wav {
+                channels,
+                rate,
+                lsb: 2f64.powi(-24),
+                samples,
+            })
+            .collect()
+    }
+}
+
+/// Per-edge `(gap_adjust_ms, exposure_est_ms)` — see the [`Row`] fields. `(None, None)` unless
+/// patched.
+fn media_exposure(
+    onset_near_to_floor_ms: Option<f64>,
+    outcome: &Outcome,
+    edge: Edge,
+    rate: u32,
+    crossfade_ms: f64,
+) -> (Option<f64>, Option<f64>) {
+    if outcome.disposition != "patched" {
+        return (None, None);
+    }
+    let outward_frames = match edge {
+        Edge::Lead => -outcome.start_adjust_frames,
+        Edge::Trail => outcome.end_adjust_frames,
+    };
+    let outward = outward_frames as f64 / f64::from(rate) * 1000.0;
+    let est = onset_near_to_floor_ms
+        .filter(|_| outcome.fill_path != "anchor_seam")
+        .map(|d| d - crossfade_ms - outward);
+    (Some(outward), est)
+}
+
+/// Every occurrence of the A path (as given, and its file name) replaced by `<A>`.
+fn scrub(message: &str, a_path: &Path) -> String {
+    let mut out = message.replace(&a_path.display().to_string(), "<A>");
+    if let Some(name) = a_path.file_name().map(|n| n.to_string_lossy().into_owned()) {
+        if !name.is_empty() {
+            out = out.replace(&name, "<A>");
+        }
+    }
+    out
+}
+
+/// The report's pair label: its file stem, else its directory name (see [`pair_label`]).
+fn report_pair_label(report: &Path) -> Option<String> {
+    let name = |p: Option<&std::ffi::OsStr>| p.map(|n| n.to_string_lossy().into_owned());
+    let components: Vec<String> = [
+        name(report.parent().and_then(Path::file_name)),
+        name(report.file_stem()),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    pair_label(&components)
+}
+
+/// Rows from the per-edge windows. `windows[2k]` / `windows[2k + 1]` are gap `k`'s lead / trail.
+fn media_rows(
+    gaps: &[MediaGap],
+    windows: &[(usize, usize)],
+    wavs: &[Wav],
+    pair: &str,
+    codec: &str,
+    crossfade_ms: f64,
+    snap_cross_check_ms: Option<f64>,
+) -> Vec<Row> {
+    let mut rows = Vec::with_capacity(2 * gaps.len());
+    for (k, g) in gaps.iter().enumerate() {
+        let stem = format!("{pair}_g{}", g.index);
+        let site = Site {
+            pair,
+            rel_dir: ".",
+            tree: "media",
+            stem: &stem,
+            disposition: Some(g.outcome.disposition.clone()),
+            fill_path: Some(g.outcome.fill_path),
+            context_secs: 0.0,
+        };
+        let dump = DumpJoin {
+            index: Some(g.index),
+            codec: Some(codec.to_string()),
+            ..DumpJoin::default()
+        };
+        for (j, (edge, boundary)) in [(Edge::Lead, g.lead), (Edge::Trail, g.trail)]
+            .into_iter()
+            .enumerate()
+        {
+            let w = &wavs[2 * k + j];
+            let local = boundary - windows[2 * k + j].0;
+            let onset = measure_onset(w, local, edge);
+            if let Some(cap) = snap_cross_check_ms {
+                let prod = production_snap_ms(w, local, edge, cap);
+                if onset.onset_near_ms.is_some() || prod.is_some_and(|d| d > 0.0) {
+                    eprintln!(
+                        "snap-cross-check {pair}/g{} {} disposition={} fill_path={} census_near_ms={} census_floor_ms={} prod_snap_ms={}",
+                        g.index,
+                        edge.as_str(),
+                        g.outcome.disposition,
+                        g.outcome.fill_path,
+                        onset.onset_near_ms.map_or("-".into(), |v| format!("{v:.2}")),
+                        onset.floor_ms.map_or("-".into(), |v| format!("{v:.2}")),
+                        prod.map_or("-".into(), |v| format!("{v:.2}")),
+                    );
+                }
+            }
+            let mut row = assemble_row(
+                &site,
+                &dump,
+                edge,
+                onset,
+                WriteReading::default(),
+                crossfade_ms,
+            );
+            let (adjust, est) = media_exposure(
+                row.onset_near_to_floor_ms,
+                &g.outcome,
+                edge,
+                w.rate,
+                crossfade_ms,
+            );
+            row.gap_adjust_ms = adjust.map(r2);
+            row.exposure_est_ms = est.map(r2);
+            rows.push(row);
+        }
+    }
+    rows
+}
+
+/// The production snap's outward move (ms) on one edge window, the scan boundary standing in for
+/// the refined edge. The other edge is the window's far end, so only this edge can move.
+fn production_snap_ms(w: &Wav, boundary: usize, edge: Edge, cap_ms: f64) -> Option<f64> {
+    let samples: Vec<f32> = w.samples.iter().map(|&x| x as f32).collect();
+    let snap = EdgeSnap::from_ms(cap_ms, f64::from(w.rate));
+    let refined = match edge {
+        Edge::Lead => RefinedGapFrames {
+            start_frame: boundary,
+            end_frame: w.frames(),
+        },
+        Edge::Trail => RefinedGapFrames {
+            start_frame: 0,
+            end_frame: boundary,
+        },
+    };
+    if refined.start_frame >= refined.end_frame {
+        return None;
+    }
+    let out = snap_gap_edges_to_onset(&samples, w.channels, refined.start_frame, refined, snap);
+    let moved = match edge {
+        Edge::Lead => refined.start_frame - out.start_frame,
+        Edge::Trail => out.end_frame - refined.end_frame,
+    };
+    Some(w.frames_to_ms(moved as f64))
+}
+
+/// One report: open its A, decode it once, measure every gap edge. Returns rows and the gap count.
+fn measure_report(
+    args: &Args,
+    report_path: &Path,
+    pair: &str,
+) -> Result<(Vec<Row>, usize), String> {
+    let text = std::fs::read_to_string(report_path)
+        .map_err(|e| format!("report unreadable ({})", e.kind()))?;
+    let report: PatchReportJson =
+        serde_json::from_str(&text).map_err(|e| format!("not a repair JSON report: {e}"))?;
+    let a_path = args
+        .media_a
+        .clone()
+        .unwrap_or_else(|| report.scan.video_a.clone());
+    let hide = |e: String| scrub(&e, &a_path);
+
+    let mut session = SymphoniaMediaReader
+        .open(&MediaSource::new(a_path.clone()))
+        .map_err(|e| hide(e.to_string()))?;
+    let tracks = session.list_tracks().map_err(|e| hide(e.to_string()))?;
+    let track = select_best_track(&tracks)
+        .map_err(|e| hide(e.to_string()))?
+        .clone();
+    let gaps = media_gaps(&report, track.sample_rate)?;
+    let half = (MEDIA_HALF_MS / 1000.0 * f64::from(track.sample_rate)).round() as usize;
+    let windows: Vec<(usize, usize)> = gaps
+        .iter()
+        .flat_map(|g| [g.lead, g.trail])
+        .map(|b| (b.saturating_sub(half), b + half))
+        .collect();
+
+    let mut sink = WindowSink::new(windows.clone());
+    let mut sink_err: Option<String> = None;
+    let mut rate_seen: Option<u32> = None;
+    let mut skew = None;
+    let progress = StderrProgressReporter::new(ProgressMode::Auto);
+    session
+        .scan_interleaved_buckets(
+            &track,
+            MEDIA_BUCKET_SECS,
+            &progress,
+            &format!("pair {pair} A"),
+            &mut |bucket| {
+                if sink_err.is_none() {
+                    rate_seen.get_or_insert(bucket.pcm.sample_rate);
+                    if let Err(e) = sink.push(&bucket.pcm.samples, usize::from(bucket.pcm.channels))
+                    {
+                        sink_err = Some(e);
+                    }
+                }
+                Ok(())
+            },
+            &mut skew,
+        )
+        .map_err(|e| hide(e.to_string()))?;
+    progress.flush_progress();
+    if let Some(e) = sink_err {
+        return Err(e);
+    }
+    if let Some(rate) = rate_seen.filter(|&r| r != track.sample_rate) {
+        return Err(format!(
+            "decoded rate {rate} Hz differs from the track's {} Hz",
+            track.sample_rate
+        ));
+    }
+    let wavs = sink.into_wavs(track.sample_rate);
+    let rows = media_rows(
+        &gaps,
+        &windows,
+        &wavs,
+        pair,
+        &track.codec,
+        args.crossfade_ms,
+        args.snap_cross_check_ms,
+    );
+    Ok((rows, gaps.len()))
+}
+
+fn run_media(args: &Args) -> Result<(), String> {
+    if args.media_a.is_some() && args.report.len() != 1 {
+        return Err("--media-a names one A; pass exactly one --report with it".into());
+    }
+    if !cfg!(feature = "he-aac") {
+        eprintln!(
+            "warning: built without `he-aac` — AAC will not decode (use --features calibration,he-aac)"
+        );
+    }
+    let reports: Vec<PathBuf> = args.report.iter().map(|r| resolve(r)).collect();
+    let out_dir = args.out.as_ref().map(|o| resolve(o)).unwrap_or_else(|| {
+        reports[0]
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join("edge-onset")
+    });
+
+    let mut rows: Vec<Row> = Vec::new();
+    let mut skipped: Vec<String> = Vec::new();
+    let mut n_gaps = 0usize;
+    for (k, report) in reports.iter().enumerate() {
+        let pair =
+            report_pair_label(report).or_else(|| args.pair.clone().filter(|_| reports.len() == 1));
+        let Some(pair) = pair else {
+            skipped.push(format!(
+                "report #{}: no pair label in its file or directory name (pass --pair with one report)",
+                k + 1
+            ));
+            continue;
+        };
+        eprintln!("pair {pair}: decoding A ({} of {})", k + 1, reports.len());
+        match measure_report(args, report, &pair) {
+            Ok((mut r, n)) => {
+                n_gaps += n;
+                rows.append(&mut r);
+            }
+            Err(why) => skipped.push(format!("pair {pair}: {why}")),
+        }
+    }
+    if rows.is_empty() {
+        return Err(format!("no edges measured; {}", skipped.join("; ")));
+    }
+    sort_rows(&mut rows);
+    print_media_table(&rows);
+
+    let contract = serde_json::json!({
+        "instrument": "edge-onset media mode (docs/dev/TEMP-soft-edge-census-plan.md § 3, § 4 Phase 2)",
+        "distances": "milliseconds OUTWARD from the scan boundary into programme: before it on `lead`, after it on `trail`",
+        "onset": format!("{BIN_MS} ms peak bins over {WINDOW_MS} ms; a >= {FALL_DB} dB fall (lead) / rise (trail) sustained to the boundary; refined to the sample"),
+        "onset_far_vs_near": format!("far = earliest lead fall / latest trail rise; near = closest to the boundary; onsets within {REF_BINS} bins merge to the outermost. They disagree on the room-tone shape; flagged, not resolved"),
+        "n_inside_floor": "falls nearer the boundary than the floor edge (inside the silent run); counted, never an onset",
+        "floor": format!("first non-silent frame outward of the boundary, any channel |x| >= {FLOOR_AMP}; this bin's own comparison"),
+        "decode": format!("A only, the scanner's sequential bucket decode; ±{MEDIA_HALF_MS} ms kept per scan edge at trunc(video_a_*_secs · rate)"),
+        "write": "not measured in media mode (write_*, b_level_*, exposure_hi/lo/far columns are empty)",
+        "gap_adjust_ms": "patched edges: the write's outward move from the refined edge (-gap_start_adjust_frames lead, +gap_end_adjust_frames trail)",
+        "exposure_est_ms": format!("onset_near_to_floor_ms - cf - gap_adjust_ms with cf = --crossfade-ms {}; patched, non-anchor-seam edges with an onset only", args.crossfade_ms),
+        "anchor_seam": "no estimate: the anchor seam writes 0-2.2 s past the prediction and the report does not say which side moved",
+        "denominator": "every scan gap of each report's pair — a base rate for these pairs, split patched vs not",
+    });
+    let (census, json) = write_census(&out_dir, &rows, contract)?;
+    print_media_summary(&rows, n_gaps, reports.len(), &skipped);
+    println!("\nwrote {}", census.display());
+    println!("wrote {}", json.display());
+    Ok(())
+}
+
+/// Edges with an onset only; the full set is in the census.
+fn print_media_table(rows: &[Row]) {
+    let pw = rows.iter().map(|r| r.pair.len()).max().unwrap_or(4).max(4);
+    println!(
+        "{:>pw$} {:>5} {:<5} {:<11} {:>7} {:>7} {:>6} {:>7} {:>6} {:>7} {:<11}",
+        "pair", "gap", "edge", "disp", "near", "far", "floor", "n→fl", "adj", "est", "fill"
+    );
+    for r in rows.iter().filter(|r| r.onset.onset_near_ms.is_some()) {
+        println!(
+            "{:>pw$} {:>5} {:<5} {:<11} {:>7} {:>7} {:>6} {:>7} {:>6} {:>7} {:<11}",
+            r.pair,
+            r.gap_index
+                .map(|i| format!("g{i}"))
+                .unwrap_or_else(|| "?".into()),
+            r.edge,
+            r.disposition.as_deref().unwrap_or("-"),
+            fmt_opt(r.onset.onset_near_ms),
+            fmt_opt(r.onset.onset_far_ms),
+            fmt_opt(r.onset.floor_ms),
+            fmt_opt(r.onset_near_to_floor_ms),
+            fmt_opt(r.gap_adjust_ms),
+            fmt_opt(r.exposure_est_ms),
+            r.fill_path.unwrap_or("-")
+        );
+    }
+}
+
+/// One line per value of `key`: edges, with an onset, band above floor, estimate > 0 and > 5 ms.
+fn print_split(title: &str, rows: &[&Row], key: impl Fn(&Row) -> String) {
+    let mut groups: BTreeMap<String, [usize; 5]> = BTreeMap::new();
+    for r in rows {
+        let g = groups.entry(key(r)).or_default();
+        let est = r.exposure_est_ms;
+        g[0] += 1;
+        g[1] += usize::from(r.onset.onset_near_ms.is_some());
+        g[2] += usize::from(r.onset.band_above_floor == Some(true));
+        g[3] += usize::from(est.is_some_and(|e| e > 0.0));
+        g[4] += usize::from(est.is_some_and(|e| e > 5.0));
+    }
+    println!("{title}:");
+    for (k, g) in groups {
+        println!(
+            "  {k:<14} edges {:>5}  onset {:>4}  above-floor {:>4}  est>0 {:>4}  est>5ms {:>4}",
+            g[0], g[1], g[2], g[3], g[4]
+        );
+    }
+}
+
+fn print_media_summary(rows: &[Row], n_gaps: usize, n_reports: usize, skipped: &[String]) {
+    println!(
+        "\n{} edge(s) from {n_gaps} gap(s) over {n_reports} report(s); {} skipped",
+        rows.len(),
+        skipped.len()
+    );
+    for line in skipped {
+        println!("  skipped {line}");
+    }
+    let disagree = rows.iter().filter(|r| r.onsets_disagree).count();
+    let inside = rows.iter().filter(|r| r.onset.n_inside_floor > 0).count();
+    let clipped = rows
+        .iter()
+        .filter(|r| r.onset.window_ms + BIN_MS < WINDOW_MS)
+        .count();
+    println!(
+        "{disagree} edge(s) with far ≠ near (room-tone shape, flagged); {inside} with a fall inside \
+         the silent run; {clipped} window(s) clipped at a media edge"
+    );
+
+    let all: Vec<&Row> = rows.iter().collect();
+    let patched: Vec<&Row> = rows
+        .iter()
+        .filter(|r| r.disposition.as_deref() == Some("patched"))
+        .collect();
+    print_split("by disposition (all edges)", &all, |r| {
+        r.disposition.clone().unwrap_or_default()
+    });
+    print_split("by edge (all edges)", &all, |r| r.edge.to_string());
+    print_split("by edge (patched)", &patched, |r| r.edge.to_string());
+    print_split("by codec (patched)", &patched, |r| {
+        r.codec.clone().unwrap_or_default()
+    });
+    print_split("by fill path (patched)", &patched, |r| {
+        r.fill_path.unwrap_or("-").to_string()
+    });
+
+    let mut bands: Vec<f64> = patched
+        .iter()
+        .filter_map(|r| r.onset_near_to_floor_ms)
+        .collect();
+    bands.sort_by(f64::total_cmp);
+    if !bands.is_empty() {
+        let q = |p: f64| bands[((bands.len() - 1) as f64 * p).round() as usize];
+        println!(
+            "onset → floor on patched edges (n = {}): min {:.1}, median {:.1}, p90 {:.1}, max {:.1} ms",
+            bands.len(),
+            q(0.0),
+            q(0.5),
+            q(0.9),
+            q(1.0)
+        );
+    }
+
+    let anchor: Vec<&&Row> = patched
+        .iter()
+        .filter(|r| r.fill_path == Some("anchor_seam") && r.onset.onset_near_ms.is_some())
+        .collect();
+    println!(
+        "{} anchor-seam patched edge(s) with an onset — exposure unknown, listen clip only:",
+        anchor.len()
+    );
+    for r in anchor {
+        println!(
+            "  {}/g{} {}: onset → floor {} ms",
+            r.pair,
+            r.gap_index.unwrap_or_default(),
+            r.edge,
+            fmt_opt(r.onset_near_to_floor_ms)
+        );
+    }
+
+    // § 4's early exit: no patched edge besides 50/g7 over ~5 ms.
+    let mut exposed: Vec<&&Row> = patched
+        .iter()
+        .filter(|r| r.exposure_est_ms.is_some_and(|e| e > 5.0))
+        .filter(|r| !(r.pair == "50" && r.gap_index == Some(7) && r.edge == "lead"))
+        .collect();
+    exposed.sort_by(|x, y| {
+        y.exposure_est_ms
+            .unwrap_or_default()
+            .total_cmp(&x.exposure_est_ms.unwrap_or_default())
+    });
+    println!(
+        "early exit (§ 4): {} patched edge(s) besides 50/g7 lead with est > 5 ms{}",
+        exposed.len(),
+        if exposed.is_empty() {
+            " — the exit holds"
+        } else {
+            ""
+        }
+    );
+    for r in exposed.iter().take(25) {
+        println!(
+            "  {}/g{} {}: est {} ms (onset → floor {}, adjust {}, band peak {} dBFS, fill {})",
+            r.pair,
+            r.gap_index.unwrap_or_default(),
+            r.edge,
+            fmt_opt(r.exposure_est_ms),
+            fmt_opt(r.onset_near_to_floor_ms),
+            fmt_opt(r.gap_adjust_ms),
+            fmt_opt(r.onset.band_peak_dbfs),
+            r.fill_path.unwrap_or("-")
+        );
+    }
+    if exposed.len() > 25 {
+        println!("  … {} more in the census", exposed.len() - 25);
+    }
+    println!(
+        "  denominator is every scan gap of the given pairs; audibility applies to patched edges only"
     );
 }
 
@@ -1621,5 +2319,206 @@ mod tests {
         assert_eq!(pair_label(&s(&["dual", "10"])), Some("10".into()));
         assert_eq!(pair_label(&s(&["50_g7", "dual-xf"])), Some("50".into()));
         assert_eq!(pair_label(&s(&["dual-xf"])), None);
+    }
+
+    fn outcome(status: serde_json::Value) -> Outcome {
+        outcome_from_status(&status).unwrap()
+    }
+
+    #[test]
+    fn status_gives_disposition_fill_path_and_adjusts() {
+        let o = outcome(serde_json::json!({"patched": {
+            "dual_fit_used": true, "anchor_seam_used": true,
+            "gap_start_adjust_frames": -96, "gap_end_adjust_frames": 48}}));
+        assert_eq!(
+            o,
+            Outcome {
+                disposition: "patched".into(),
+                fill_path: "dual_fit",
+                start_adjust_frames: -96,
+                end_adjust_frames: 48,
+            }
+        );
+        let anchor = outcome(serde_json::json!({"patched": {"anchor_seam_used": true}}));
+        assert_eq!(anchor.fill_path, "anchor_seam");
+        assert_eq!(anchor.start_adjust_frames, 0);
+        let single = outcome(serde_json::json!({"patched": {"dual_fit_used": false}}));
+        assert_eq!(single.fill_path, "single_lag");
+        let skipped = outcome(serde_json::json!({"skipped": {"reason": "x"}}));
+        assert_eq!(
+            (skipped.disposition.as_str(), skipped.fill_path),
+            ("skipped", "not_patched")
+        );
+        assert!(outcome_from_status(&serde_json::json!("patched")).is_err());
+    }
+
+    fn report(scan: &[(f64, f64)], patch: Option<&[(f64, f64)]>) -> PatchReportJson {
+        PatchReportJson {
+            scan: ScanJson {
+                video_a: PathBuf::from("a.mkv"),
+                gaps: scan
+                    .iter()
+                    .map(|&(s, e)| ScanGapJson {
+                        video_a_start_secs: s,
+                        video_a_end_secs: e,
+                    })
+                    .collect(),
+            },
+            patch: patch.map(|p| PatchJson {
+                gaps: p
+                    .iter()
+                    .map(|&(s, e)| PatchGapJson {
+                        a_start_secs: s,
+                        a_end_secs: e,
+                        status: serde_json::json!({"not_planned": {}}),
+                    })
+                    .collect(),
+            }),
+        }
+    }
+
+    #[test]
+    fn media_gaps_truncate_the_scan_bounds_and_refuse_bad_reports() {
+        let bounds = [(1.000_01, 2.5), (10.0, 10.75)];
+        let gaps = media_gaps(&report(&bounds, Some(&bounds)), SR).unwrap();
+        assert_eq!((gaps[0].lead, gaps[0].trail), (48_000, 120_000));
+        assert_eq!(
+            (gaps[1].index, gaps[1].lead, gaps[1].trail),
+            (1, 480_000, 516_000)
+        );
+        assert_eq!(gaps[1].outcome.disposition, "not_planned");
+        assert!(media_gaps(&report(&bounds, None), SR)
+            .unwrap_err()
+            .contains("--patch-only"));
+        assert!(media_gaps(&report(&bounds, Some(&bounds[..1])), SR).is_err());
+        assert!(media_gaps(&report(&bounds, Some(&[(1.0, 2.5), (10.0, 10.8)])), SR).is_err());
+    }
+
+    #[test]
+    fn sink_collects_overlapping_windows_across_buckets() {
+        // Stereo, frame i = (i, -i); windows overlap, are unsorted, and one runs past the end.
+        let frames: Vec<f32> = (0..100).flat_map(|i| [i as f32, -(i as f32)]).collect();
+        let mut sink = WindowSink::new(vec![(30, 60), (5, 12), (50, 70), (95, 120)]);
+        for bucket in frames.chunks(2 * 7) {
+            sink.push(bucket, 2).unwrap();
+        }
+        let wavs = sink.into_wavs(SR);
+        let firsts = |w: &Wav| w.samples.iter().step_by(2).copied().collect::<Vec<f64>>();
+        let range = |a: usize, b: usize| (a..b).map(|i| i as f64).collect::<Vec<f64>>();
+        assert_eq!(firsts(&wavs[0]), range(30, 60));
+        assert_eq!(firsts(&wavs[1]), range(5, 12));
+        assert_eq!(firsts(&wavs[2]), range(50, 70));
+        assert_eq!(
+            firsts(&wavs[3]),
+            range(95, 100),
+            "truncated at the end of the decode"
+        );
+        assert_eq!(wavs[0].samples[1], -30.0);
+        assert_eq!((wavs[0].channels, wavs[0].rate), (2, SR));
+    }
+
+    #[test]
+    fn sink_refuses_a_channel_change() {
+        let mut sink = WindowSink::new(vec![(0, 10)]);
+        sink.push(&[0.0; 8], 2).unwrap();
+        assert!(sink.push(&[0.0; 8], 1).is_err());
+    }
+
+    #[test]
+    fn exposure_estimate_subtracts_crossfade_and_the_outward_move() {
+        let patched = |fill_path, start, end| Outcome {
+            disposition: "patched".into(),
+            fill_path,
+            start_adjust_frames: start,
+            end_adjust_frames: end,
+        };
+        // Lead moved 5 ms outward (start adjust −240 frames); trail moved 2 ms inward.
+        let o = patched("single_lag", -240, -96);
+        let (adj, est) = media_exposure(Some(25.0), &o, Edge::Lead, SR, 10.0);
+        assert_eq!(adj, Some(5.0));
+        assert!((est.unwrap() - 10.0).abs() < 1e-9);
+        let (adj, est) = media_exposure(Some(25.0), &o, Edge::Trail, SR, 10.0);
+        assert_eq!(adj, Some(-2.0));
+        assert!((est.unwrap() - 17.0).abs() < 1e-9);
+        // Anchor seam: the move is reported, the estimate is not.
+        let (adj, est) = media_exposure(
+            Some(25.0),
+            &patched("anchor_seam", -48, 0),
+            Edge::Lead,
+            SR,
+            10.0,
+        );
+        assert_eq!((adj, est), (Some(1.0), None));
+        // No onset: no estimate. Not patched: nothing.
+        assert_eq!(media_exposure(None, &o, Edge::Lead, SR, 10.0).1, None);
+        let skipped = Outcome {
+            disposition: "skipped".into(),
+            ..patched("not_patched", -240, 0)
+        };
+        assert_eq!(
+            media_exposure(Some(25.0), &skipped, Edge::Lead, SR, 10.0),
+            (None, None)
+        );
+    }
+
+    #[test]
+    fn scrub_hides_the_a_path_and_name() {
+        let a = Path::new("media/some title.mkv");
+        let msg = format!("cannot open {}; some title.mkv missing", a.display());
+        assert_eq!(scrub(&msg, a), "cannot open <A>; <A> missing");
+    }
+
+    #[test]
+    fn report_label_comes_from_the_stem_or_its_directory() {
+        assert_eq!(
+            report_pair_label(Path::new("x/reports/50.json")),
+            Some("50".into())
+        );
+        assert_eq!(
+            report_pair_label(Path::new("x/31/patch.json")),
+            Some("31".into())
+        );
+        assert_eq!(report_pair_label(Path::new("x/reports/patch.json")), None);
+    }
+
+    /// The decode check in miniature: the 50/g7 lead shape streamed through the sink in buckets
+    /// reads the same onset as the whole clip measured at the same boundary.
+    #[test]
+    fn bucketed_window_reads_the_same_onset_as_the_whole_clip() {
+        let boundary = ms(3_000.0) + 17;
+        let onset = boundary - ms(25.3);
+        let f = |i: usize| match i {
+            i if i < onset => sine(i, 0.1, 440.0),
+            i if i < boundary + ms(800.0) => {
+                if i < boundary {
+                    sine(i, 0.003, 1000.0)
+                } else {
+                    0.0
+                }
+            }
+            _ => sine(i, 0.1, 440.0),
+        };
+        let pcm: Vec<f32> = (0..ms(6_000.0))
+            .flat_map(|i| [f(i) as f32, f(i) as f32])
+            .collect();
+        let whole = Wav {
+            channels: 2,
+            rate: SR,
+            lsb: 2f64.powi(-24),
+            samples: pcm.iter().map(|&x| f64::from(x)).collect(),
+        };
+        let half = ms(MEDIA_HALF_MS);
+        let windows = vec![(boundary - half, boundary + half)];
+        let mut sink = WindowSink::new(windows.clone());
+        for bucket in pcm.chunks(2 * 4_801) {
+            sink.push(bucket, 2).unwrap();
+        }
+        let wavs = sink.into_wavs(SR);
+        let got = measure_onset(&wavs[0], boundary - windows[0].0, Edge::Lead);
+        assert_eq!(got, measure_onset(&whole, boundary, Edge::Lead));
+        assert!(
+            (got.onset_near_ms.expect("an onset") - 25.3).abs() < 1.0,
+            "{got:?}"
+        );
     }
 }

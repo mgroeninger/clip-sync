@@ -180,7 +180,7 @@ pub(in crate::application::patch_audio) fn characterize_region(
 
     let reported_start_frame = (region.a_start_secs * sample_rate as f64) as usize;
     let reported_end_frame = (region.a_end_secs * sample_rate as f64) as usize;
-    let mut refined: RefinedGapFrames = policies::refine_gap_frames(
+    let mut refined: RefinedGapFrames = policies::refine_and_snap_gap_frames(
         &a_pcm.samples,
         channels,
         reported_start_frame,
@@ -188,6 +188,7 @@ pub(in crate::application::patch_audio) fn characterize_region(
         silence_peak_fraction,
         absolute_silence_rms,
         max_refine_frames,
+        policies::EdgeSnap::from_ms(request.edge_snap_max_ms, f64::from(sample_rate)),
     );
 
     let refined_a_start_secs = refined.start_frame as f64 / sample_rate as f64;

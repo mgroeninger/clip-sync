@@ -147,6 +147,9 @@ pub struct PatchRequestSettings {
     /// has real B content for both blends. On by default; off keeps the plain `apply_seam_crossfade`,
     /// whose post seam replays ~2x crossfade of fill. Bracket and dual-fit fills alike.
     pub seam_extend_fill: bool,
+    /// Edge snap cap (ms) for every production edge walk (`refine_and_snap_gap_frames`): patch
+    /// characterize, injected-time detection, and fingerprint measure. `0` = off.
+    pub edge_snap_max_ms: f64,
     /// Gaps at or below this length (seconds) pass when mean(pre, post) correlation meets the
     /// threshold instead of requiring both seams individually.
     pub short_gap_mean_correlation_secs: f64,

@@ -59,7 +59,7 @@ pub(super) fn detect_injected_time(
         );
         let reported_start = (region.a_start_secs * rate) as usize;
         let reported_end = (region.a_end_secs * rate) as usize;
-        let refined = policies::refine_gap_frames(
+        let refined = policies::refine_and_snap_gap_frames(
             &a_pcm.samples,
             channels,
             reported_start,
@@ -67,6 +67,7 @@ pub(super) fn detect_injected_time(
             request.report.recipe.silence_peak_fraction(),
             request.absolute_silence_rms,
             max_refine_frames,
+            policies::EdgeSnap::from_ms(request.edge_snap_max_ms, rate),
         );
         let start_frame =
             b_mapped_frame_in_haystack(refined.start_frame, rate, gap_offset_secs, 0.0);

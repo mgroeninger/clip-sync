@@ -460,6 +460,11 @@ mod tests {
             "max_refine_secs default drifted from production refine budget"
         );
         assert_eq!(
+            crate::infrastructure::config::RepairConfig::default().edge_snap_max_ms,
+            defaults.edge_snap_max_ms,
+            "RepairConfig and FingerprintConfig edge-snap defaults drifted"
+        );
+        assert_eq!(
             defaults.lag_envelope_max_lag_ms,
             super::super::measure::DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
             "lag_envelope_max_lag_ms default moved"

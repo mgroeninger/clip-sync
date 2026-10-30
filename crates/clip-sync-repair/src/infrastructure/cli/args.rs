@@ -373,6 +373,11 @@ pub struct Args {
     #[arg(long, overrides_with = "seam_extend_fill")]
     pub no_seam_extend_fill: bool,
 
+    /// Prototype: snap each gap edge past the silence floor to A's dropout onset when the soft band
+    /// between them is at most this long (ms), so the fill covers it. 0 = off [default: 0].
+    #[arg(long, value_name = "MS")]
+    pub edge_snap_max_ms: Option<f64>,
+
     /// Per-gap B mapping [default: recommended]: `recommended`, `interpolated` (clip drift),
     /// or `anchored-retry` (two-pass patch anchors).
     #[arg(long, value_parser = clap::value_parser!(FillOffsetMode), value_name = "MODE")]

@@ -301,3 +301,125 @@ scan_both = false
         "audio after the gap must be untouched"
     );
 }
+
+/// Replace the `band_ms + ramp_ms` before `edge_secs` with a soft dropout edge: a 1 kHz tone at
+/// −30 dBFS, then a gradual decay (3.25 dB/ms, never a 15 dB step inside two 2 ms bins) toward
+/// silence. The gap's silence floor is reached inside the decay, so refinement stops there and the
+/// band stays raw A unless the edge snap moves the write to the band's first frame.
+fn soften_lead_edge(path: &Path, sample_rate: u32, edge_secs: u32, band_ms: f64, ramp_ms: f64) {
+    let mut reader = WavReader::open(path).expect("open wav");
+    let mut samples: Vec<i16> = reader
+        .samples::<i16>()
+        .map(|sample| sample.expect("read sample"))
+        .collect();
+    let rate = f64::from(sample_rate);
+    let edge = (u64::from(sample_rate) * u64::from(edge_secs)) as usize;
+    let band = (band_ms / 1000.0 * rate).round() as usize;
+    let ramp = (ramp_ms / 1000.0 * rate).round() as usize;
+    let start = edge - band - ramp;
+    for (k, sample) in samples[start..edge].iter_mut().enumerate() {
+        let db = if k < band {
+            -30.0
+        } else {
+            -30.0 - 3.25 * ((k - band) as f64 * 1000.0 / rate)
+        };
+        let phase = 2.0 * std::f64::consts::PI * 1000.0 * k as f64 / rate;
+        *sample = (10f64.powf(db / 20.0) * phase.sin() * 32767.0).round() as i16;
+    }
+    let spec = WavSpec {
+        channels: 1,
+        sample_rate,
+        bits_per_sample: 16,
+        sample_format: SampleFormat::Int,
+    };
+    let mut writer = WavWriter::create(path, spec).expect("create wav");
+    for sample in samples {
+        writer.write_sample(sample).expect("write sample");
+    }
+    writer.finalize().expect("finalize wav");
+}
+
+/// `--edge-snap-max-ms` must move the write onto a soft lead band, and nothing well before it.
+///
+/// Without the snap, the band between A's dropout onset and the silence floor is raw A beside the
+/// fill (`docs/dev/TEMP-soft-edge-census-plan.md` § 1). With it, the fill starts at the onset.
+#[test]
+fn edge_snap_writes_over_a_soft_lead_band() {
+    const BAND_MS: f64 = 25.0;
+    const RAMP_MS: f64 = 20.0;
+    fn run(dir: &Path, snap: bool) -> (Vec<i16>, Vec<i16>) {
+        let (path_a, path_b) =
+            write_offset_chirp_wav_pair(dir, SAMPLE_RATE, TOTAL_SECS, OFFSET_SECS);
+        zero_wav_segment(&path_a, SAMPLE_RATE, SILENT_START_SECS, SILENT_END_SECS);
+        soften_lead_edge(&path_a, SAMPLE_RATE, SILENT_START_SECS, BAND_MS, RAMP_MS);
+        let raw_a: Vec<i16> = WavReader::open(&path_a)
+            .expect("open a")
+            .samples::<i16>()
+            .map(|s| s.expect("read sample"))
+            .collect();
+        let out_wav = dir.join("patched.wav");
+        let config_path = dir.join("repair.toml");
+        std::fs::write(
+            &config_path,
+            "[clip]
+clip_length = 60
+
+[repair]
+min_fill_correlation = -1.0
+scan_both = false
+",
+        )
+        .expect("write config");
+        let bin = env!("CARGO_BIN_EXE_clip-sync-repair");
+        let mut cmd = Command::new(bin);
+        cmd.args([
+            path_a.to_str().expect("path_a utf8"),
+            path_b.to_str().expect("path_b utf8"),
+            "--config",
+            config_path.to_str().expect("config utf8"),
+            "--wav",
+            out_wav.to_str().expect("out utf8"),
+            "--min-gap-ms",
+            "25000",
+            "--no-scan-both",
+        ]);
+        if snap {
+            cmd.args(["--edge-snap-max-ms", "40"]);
+        }
+        assert!(cmd.status().expect("run clip-sync-repair").success());
+        let patched = WavReader::open(&out_wav)
+            .expect("open patched wav")
+            .samples::<i16>()
+            .map(|s| s.expect("read sample"))
+            .collect();
+        (raw_a, patched)
+    }
+
+    let off_dir = tempfile::tempdir().expect("tempdir");
+    let on_dir = tempfile::tempdir().expect("tempdir");
+    let (raw_a, off) = run(off_dir.path(), false);
+    let (_, on) = run(on_dir.path(), true);
+    assert_eq!(off.len(), on.len(), "splice is length-preserving");
+
+    let rate = f64::from(SAMPLE_RATE);
+    let edge = (SAMPLE_RATE * SILENT_START_SECS) as usize;
+    let onset = edge - ((BAND_MS + RAMP_MS) / 1000.0 * rate).round() as usize;
+    // The band's first 5 ms: clear of the unsnapped pre-seam crossfade, which opens near the floor.
+    let probe = onset..onset + (0.005 * rate) as usize;
+    assert_eq!(
+        off[probe.clone()],
+        raw_a[probe.clone()],
+        "without the snap the band stays raw A"
+    );
+    assert_ne!(
+        on[probe.clone()],
+        raw_a[probe],
+        "with the snap the fill covers the band"
+    );
+    let before = onset - (0.1 * rate) as usize;
+    assert_eq!(
+        off[..before],
+        on[..before],
+        "audio 100 ms before the onset must be untouched"
+    );
+}

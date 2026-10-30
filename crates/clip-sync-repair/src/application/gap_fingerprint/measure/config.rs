@@ -84,6 +84,9 @@ pub struct FingerprintConfig {
     pub min_fill_correlation: f32,
     pub fill_absolute_floor: f32,
     pub max_refine_secs: f64,
+    /// Edge snap cap (ms) after refinement; `0` = off. Must match the patch's
+    /// (`PatchAudioRequest::edge_snap_max_ms`) or the fingerprint geometry drifts from the patch.
+    pub edge_snap_max_ms: f64,
     pub lag_max_lag_ms: u32,
     /// Coarse per-shoulder envelope half-width (ms) that recenters the ±`lag_max_lag_ms` fine
     /// sweep. Default [`DEFAULT_LAG_ENVELOPE_MAX_LAG_MS`]. `0` disables recenter (nominal
@@ -134,6 +137,7 @@ impl Default for FingerprintConfig {
             min_fill_correlation: 0.35,
             fill_absolute_floor: 0.12,
             max_refine_secs: GAP_EDGE_REFINE_SECS,
+            edge_snap_max_ms: 0.0,
             lag_max_lag_ms: LAG_DECISION_MAX_LAG_MS,
             lag_envelope_max_lag_ms: DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
             border_capture: BorderCapture::Narrow,
@@ -185,6 +189,7 @@ impl FingerprintConfig {
             min_fill_correlation: request.min_fill_correlation,
             fill_absolute_floor: request.fill_absolute_floor,
             max_refine_secs: GAP_EDGE_REFINE_SECS,
+            edge_snap_max_ms: request.edge_snap_max_ms,
             // `b_mapped_start`/`b_mapped_end` share a single rigid per-gap offset (gap_offset_secs) —
             // pre/post are NOT independently registered. The full-corpus rescan showed real steps up
             // to 322 ms from that nominal, so ±200 ms clips genuine peaks off the search edge and

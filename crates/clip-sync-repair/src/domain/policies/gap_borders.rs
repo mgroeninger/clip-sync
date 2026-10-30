@@ -136,6 +136,242 @@ pub fn refine_gap_frames(
     }
 }
 
+/// Level-bin width for [`snap_gap_edges_to_onset`] (ms).
+const EDGE_SNAP_BIN_MS: f64 = 2.0;
+/// A fall into the dropout (rise out of it) at least this large, sustained to the edge, is its onset.
+const EDGE_SNAP_FALL_DB: f64 = 15.0;
+/// The fall is measured from the loudest of this many bins before it, so a fall straddling a bin edge
+/// still reads as one step. Onsets this many bins apart or closer are one fall.
+const EDGE_SNAP_REF_BINS: usize = 2;
+/// Level of an all-zero bin, so digital silence orders below everything without `-inf`.
+const EDGE_SNAP_ZERO_DB: f64 = -140.0;
+
+/// How far [`snap_gap_edges_to_onset`] may move an edge past the silence floor.
+///
+/// `max_frames == 0` is off. The cap keeps a quiet-programme decay (a word ending into room tone
+/// before the dropout) from handing real programme to B; see `docs/dev/TEMP-soft-edge-census-plan.md`
+/// § 4 Phase 4.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct EdgeSnap {
+    pub max_frames: usize,
+    pub bin_frames: usize,
+}
+
+impl EdgeSnap {
+    pub const OFF: Self = Self {
+        max_frames: 0,
+        bin_frames: 0,
+    };
+
+    /// `max_ms <= 0` is [`EdgeSnap::OFF`].
+    #[must_use]
+    pub fn from_ms(max_ms: f64, sample_rate: f64) -> Self {
+        if max_ms.is_nan() || max_ms <= 0.0 {
+            return Self::OFF;
+        }
+        Self {
+            max_frames: (max_ms / 1000.0 * sample_rate).round() as usize,
+            bin_frames: ((EDGE_SNAP_BIN_MS / 1000.0 * sample_rate).round() as usize).max(1),
+        }
+    }
+
+    #[must_use]
+    pub fn is_off(self) -> bool {
+        self.max_frames == 0
+    }
+}
+
+fn frame_peak(samples: &[f32], channels: usize, frame: usize) -> f64 {
+    samples[frame * channels..(frame + 1) * channels]
+        .iter()
+        .fold(0.0f64, |m, &s| m.max(f64::from(s.abs())))
+}
+
+fn level_db(peak: f64) -> f64 {
+    if peak <= 0.0 {
+        EDGE_SNAP_ZERO_DB
+    } else {
+        (20.0 * peak.log10()).max(EDGE_SNAP_ZERO_DB)
+    }
+}
+
+/// Per-bin peak dBFS (max across channels), `nbins` chronological bins of `bin` frames from `lo`.
+fn snap_bin_levels(
+    samples: &[f32],
+    channels: usize,
+    lo: usize,
+    nbins: usize,
+    bin: usize,
+) -> Vec<f64> {
+    (0..nbins)
+        .map(|k| {
+            let s = lo + k * bin;
+            level_db(
+                (s..s + bin)
+                    .map(|f| frame_peak(samples, channels, f))
+                    .fold(0.0, f64::max),
+            )
+        })
+        .collect()
+}
+
+/// Collapse onsets (outward distances, frames) closer than `merge` into one, represented by its
+/// outermost member — two bins of one decay can both clear the fall by a fraction of a dB. Returns
+/// distances ascending, nearest first.
+fn merge_onsets(mut outward: Vec<usize>, merge: usize) -> Vec<usize> {
+    outward.sort_unstable();
+    let mut out: Vec<usize> = Vec::new();
+    for d in outward {
+        match out.last_mut() {
+            Some(last) if d - *last <= merge => *last = d,
+            _ => out.push(d),
+        }
+    }
+    out
+}
+
+/// The nearest merged onset, as frames outward of the edge.
+fn nearest_onset(outward: Vec<usize>, bin: usize) -> Option<usize> {
+    merge_onsets(outward, EDGE_SNAP_REF_BINS * bin)
+        .into_iter()
+        .next()
+}
+
+/// Lead onset: frames back from `edge` to where the sustained fall into the dropout begins.
+fn lead_onset(samples: &[f32], channels: usize, edge: usize, snap: EdgeSnap) -> Option<usize> {
+    let bin = snap.bin_frames.max(1);
+    let want = snap.max_frames + EDGE_SNAP_REF_BINS * bin;
+    let nbins = want.div_ceil(bin).min(edge / bin);
+    let lo = edge - nbins * bin;
+    let l = snap_bin_levels(samples, channels, lo, nbins, bin);
+    let mut suffix_max = vec![f64::NEG_INFINITY; nbins + 1];
+    for i in (0..nbins).rev() {
+        suffix_max[i] = suffix_max[i + 1].max(l[i]);
+    }
+    let onsets = (1..nbins)
+        .filter_map(|i| {
+            let reference = l[i.saturating_sub(EDGE_SNAP_REF_BINS)..i]
+                .iter()
+                .copied()
+                .fold(f64::NEG_INFINITY, f64::max);
+            if suffix_max[i] > reference - EDGE_SNAP_FALL_DB {
+                return None;
+            }
+            // Refine to the sample: the frame after the last one in the reference bins still above
+            // the fall threshold. Every later frame up to the edge is below it by construction.
+            let thr = 10f64.powf((reference - EDGE_SNAP_FALL_DB) / 20.0);
+            let s = lo + i.saturating_sub(EDGE_SNAP_REF_BINS) * bin;
+            let f = (s..lo + i * bin)
+                .rev()
+                .find(|&f| frame_peak(samples, channels, f) > thr)
+                .map_or(s, |f| f + 1);
+            Some(edge - f)
+        })
+        .collect();
+    nearest_onset(onsets, bin)
+}
+
+/// Trail onset: frames forward from `edge` to where programme rises out of the dropout.
+fn trail_onset(samples: &[f32], channels: usize, edge: usize, snap: EdgeSnap) -> Option<usize> {
+    let bin = snap.bin_frames.max(1);
+    let total = samples.len() / channels;
+    let want = snap.max_frames + EDGE_SNAP_REF_BINS * bin;
+    let nbins = want.div_ceil(bin).min((total - edge) / bin);
+    let l = snap_bin_levels(samples, channels, edge, nbins, bin);
+    let mut prefix_max = f64::NEG_INFINITY;
+    let mut onsets = Vec::new();
+    for j in 0..nbins {
+        let level = l[j..(j + EDGE_SNAP_REF_BINS).min(nbins)]
+            .iter()
+            .copied()
+            .fold(f64::NEG_INFINITY, f64::max);
+        if j >= 1 && prefix_max <= level - EDGE_SNAP_FALL_DB {
+            let thr = 10f64.powf((level - EDGE_SNAP_FALL_DB) / 20.0);
+            let s = edge + j * bin;
+            let f = (s..edge + (j + EDGE_SNAP_REF_BINS).min(nbins) * bin)
+                .find(|&f| frame_peak(samples, channels, f) > thr)
+                .unwrap_or(s);
+            onsets.push(f - edge);
+        }
+        prefix_max = prefix_max.max(l[j]);
+    }
+    nearest_onset(onsets, bin)
+}
+
+/// Move refined gap edges outward from the silence floor to A's dropout onset.
+///
+/// A dropout can decay through a soft band above the silence floor before it reaches it (50/g7:
+/// −22 → −30 → −45 dBFS over 26 ms). [`refine_gap_frames`] stops at the floor, so the band stays raw
+/// A beside the fill. This continues the walk: in 2 ms peak bins, the **nearest** fall of at least
+/// 15 dB below the loudest of the two bins before it, sustained into the gap, refined to the sample
+/// (the trail edge mirrors it). The bins end at the edge, as the census instrument's end at the scan
+/// boundary, so a band that ends in a hard step to silence still snaps. An onset beyond
+/// `snap.max_frames` is refused, and the edge stays where refinement left it. The cap is the only
+/// guard against a word ending into room tone before the dropout: the rule cannot tell that room
+/// tone from a soft band.
+///
+/// The lead edge is not snapped when refinement *advanced* it past `reported_start_frame`: the
+/// scanner opened that run early, so the frames before it are programme, not a dropout's decay.
+///
+/// Its own rule, not the scanner's silence predicate — the census instrument (`edge-onset`) holds
+/// the reference reading and shares no code with this.
+#[must_use]
+pub fn snap_gap_edges_to_onset(
+    samples: &[f32],
+    channels: usize,
+    reported_start_frame: usize,
+    refined: RefinedGapFrames,
+    snap: EdgeSnap,
+) -> RefinedGapFrames {
+    let channels = channels.max(1);
+    let total_frames = samples.len() / channels;
+    if snap.is_off() || refined.start_frame >= refined.end_frame || refined.end_frame > total_frames
+    {
+        return refined;
+    }
+    let mut out = refined;
+    if refined.start_frame <= reported_start_frame {
+        if let Some(d) = lead_onset(samples, channels, refined.start_frame, snap) {
+            if d > 0 && d <= snap.max_frames {
+                out.start_frame = refined.start_frame - d;
+            }
+        }
+    }
+    if let Some(d) = trail_onset(samples, channels, refined.end_frame, snap) {
+        if d > 0 && d <= snap.max_frames {
+            out.end_frame = refined.end_frame + d;
+        }
+    }
+    out
+}
+
+/// [`refine_gap_frames`], then [`snap_gap_edges_to_onset`]: the one edge walk every production caller
+/// (patch characterize, injected-time detection, fingerprint measure) runs, so the patch and the
+/// fingerprint geometry cannot drift apart.
+#[allow(clippy::too_many_arguments)]
+#[must_use]
+pub fn refine_and_snap_gap_frames(
+    samples: &[f32],
+    channels: usize,
+    start_frame: usize,
+    end_frame: usize,
+    silence_peak_fraction: f32,
+    absolute_rms_floor: f32,
+    max_refine_frames: usize,
+    snap: EdgeSnap,
+) -> RefinedGapFrames {
+    let refined = refine_gap_frames(
+        samples,
+        channels,
+        start_frame,
+        end_frame,
+        silence_peak_fraction,
+        absolute_rms_floor,
+        max_refine_frames,
+    );
+    snap_gap_edges_to_onset(samples, channels, start_frame, refined, snap)
+}
+
 struct GapBorderFrameRange {
     pre_start: usize,
     pre_end: usize,
@@ -390,6 +626,173 @@ pub fn selected_seam_channels(
 mod tests {
     use super::*;
     use crate::domain::policies::{seam_channel_diagnostics, SeamPlacement, SeamTemplates};
+
+    const SNAP_RATE: f64 = 48_000.0;
+    /// −60 dBFS, the production floor (`absolute_silence_rms` default).
+    const SNAP_FLOOR: f32 = 0.001;
+
+    fn ms_frames(ms: f64) -> usize {
+        (ms / 1000.0 * SNAP_RATE).round() as usize
+    }
+
+    fn dbfs(db: f64) -> f32 {
+        10f64.powf(db / 20.0) as f32
+    }
+
+    /// `ms` of a constant stereo level; the right channel 6 dB under the left.
+    fn level(out: &mut Vec<f32>, db: f64, ms: f64) {
+        for _ in 0..ms_frames(ms) {
+            out.extend([dbfs(db), dbfs(db - 6.0)]);
+        }
+    }
+
+    /// A gradual decay (or rise, with `db_per_ms > 0`) from `from_db`: never a 15 dB step in two bins.
+    fn ramp(out: &mut Vec<f32>, from_db: f64, db_per_ms: f64, ms: f64) {
+        let n = ms_frames(ms);
+        for k in 0..n {
+            let db = from_db + db_per_ms * (k as f64 * 1000.0 / SNAP_RATE);
+            out.extend([dbfs(db), dbfs(db - 6.0)]);
+        }
+    }
+
+    fn silence(out: &mut Vec<f32>, ms: f64) {
+        out.extend(std::iter::repeat_n(0.0, 2 * ms_frames(ms)));
+    }
+
+    fn snap_40() -> EdgeSnap {
+        EdgeSnap::from_ms(40.0, SNAP_RATE)
+    }
+
+    fn refine_snap(samples: &[f32], start: usize, end: usize, snap: EdgeSnap) -> RefinedGapFrames {
+        let max_refine = (GAP_EDGE_REFINE_SECS * SNAP_RATE).round() as usize;
+        refine_and_snap_gap_frames(samples, 2, start, end, 0.01, SNAP_FLOOR, max_refine, snap)
+    }
+
+    fn refine_only(samples: &[f32], start: usize, end: usize) -> RefinedGapFrames {
+        refine_snap(samples, start, end, EdgeSnap::OFF)
+    }
+
+    /// Programme, a soft band of `band_ms` at −35 dBFS, a gradual decay through the floor, silence;
+    /// then the mirror image back into programme. Returns samples, band start, and band end (the
+    /// trail band's last frame + 1), plus the scanner's (late) reported edges.
+    fn soft_edged(band_ms: f64) -> (Vec<f32>, usize, usize, usize, usize) {
+        let mut s = Vec::new();
+        level(&mut s, -10.0, 300.0);
+        let band_start = s.len() / 2;
+        level(&mut s, -35.0, band_ms);
+        ramp(&mut s, -35.0, -3.25, 20.0);
+        silence(&mut s, 500.0);
+        ramp(&mut s, -100.0, 3.25, 20.0);
+        level(&mut s, -35.0, band_ms);
+        let band_end = s.len() / 2;
+        level(&mut s, -10.0, 300.0);
+        // The scanner reports a block-quantized run: late on the lead, early on the trail.
+        let reported_start = band_start + ms_frames(band_ms + 40.0);
+        let reported_end = band_end - ms_frames(band_ms + 40.0);
+        (s, band_start, band_end, reported_start, reported_end)
+    }
+
+    #[test]
+    fn edge_snap_moves_both_soft_edges_to_the_onset() {
+        let (s, band_start, band_end, rs, re) = soft_edged(20.0);
+        let refined = refine_only(&s, rs, re);
+        // Refinement stops at the floor, inside the decay: the band stays outside the gap.
+        assert!(refined.start_frame > band_start + ms_frames(20.0));
+        assert!(refined.end_frame < band_end - ms_frames(20.0));
+        let snapped = refine_snap(&s, rs, re, snap_40());
+        assert_eq!(
+            snapped.start_frame, band_start,
+            "lead snaps to the band's first frame"
+        );
+        assert_eq!(
+            snapped.end_frame, band_end,
+            "trail snaps past the band's last frame"
+        );
+    }
+
+    #[test]
+    fn edge_snap_refuses_a_band_beyond_its_cap() {
+        let (s, _, _, rs, re) = soft_edged(60.0);
+        assert_eq!(refine_snap(&s, rs, re, snap_40()), refine_only(&s, rs, re));
+    }
+
+    #[test]
+    fn edge_snap_is_a_no_op_on_a_hard_edge() {
+        let mut s = Vec::new();
+        level(&mut s, -10.0, 300.0);
+        let start = s.len() / 2;
+        silence(&mut s, 500.0);
+        let end = s.len() / 2;
+        level(&mut s, -10.0, 300.0);
+        let late = start + ms_frames(30.0);
+        let refined = refine_only(&s, late, end);
+        assert_eq!(refined.start_frame, start);
+        assert_eq!(refine_snap(&s, late, end, snap_40()), refined);
+    }
+
+    #[test]
+    fn edge_snap_is_a_no_op_on_a_sub_floor_bucket_edge() {
+        // Below the floor throughout: refinement already walks the band and lands on the crossing.
+        let mut s = Vec::new();
+        level(&mut s, -10.0, 300.0);
+        let crossing = s.len() / 2;
+        level(&mut s, -66.0, 26.0);
+        silence(&mut s, 500.0);
+        let end = s.len() / 2;
+        level(&mut s, -10.0, 300.0);
+        let late = crossing + ms_frames(60.0);
+        let refined = refine_only(&s, late, end);
+        assert_eq!(refined.start_frame, crossing);
+        assert_eq!(refine_snap(&s, late, end, snap_40()), refined);
+    }
+
+    #[test]
+    fn edge_snap_moves_a_band_ending_in_a_hard_step() {
+        // The band steps straight to silence (36/g5's shape) rather than decaying through the
+        // floor. Room tone after a word has the same shape; only the cap tells them apart.
+        let mut s = Vec::new();
+        level(&mut s, -10.0, 300.0);
+        let band_start = s.len() / 2;
+        level(&mut s, -45.0, 30.0);
+        let start = s.len() / 2;
+        silence(&mut s, 500.0);
+        let end = s.len() / 2;
+        level(&mut s, -45.0, 30.0);
+        let band_end = s.len() / 2;
+        level(&mut s, -10.0, 300.0);
+        let late = start + ms_frames(30.0);
+        let refined = refine_only(&s, late, end);
+        assert_eq!((refined.start_frame, refined.end_frame), (start, end));
+        let snapped = refine_snap(&s, late, end, snap_40());
+        assert_eq!(
+            (snapped.start_frame, snapped.end_frame),
+            (band_start, band_end)
+        );
+    }
+
+    #[test]
+    fn edge_snap_does_not_undo_a_start_the_refinement_advanced() {
+        // The scanner opened the run early, inside programme. Refinement advances the start past
+        // it; the frames before the advanced start are programme, so the lead does not snap.
+        let (s, band_start, _, _, re) = soft_edged(20.0);
+        let early = band_start - ms_frames(100.0);
+        let refined = refine_only(&s, early, re);
+        assert!(refined.start_frame > early, "refinement advanced the start");
+        let snapped = refine_snap(&s, early, re, snap_40());
+        assert_eq!(snapped.start_frame, refined.start_frame);
+    }
+
+    #[test]
+    fn edge_snap_off_is_refine_alone() {
+        let (s, _, _, rs, re) = soft_edged(20.0);
+        let max_refine = (GAP_EDGE_REFINE_SECS * SNAP_RATE).round() as usize;
+        assert_eq!(
+            refine_only(&s, rs, re),
+            refine_gap_frames(&s, 2, rs, re, 0.01, SNAP_FLOOR, max_refine)
+        );
+        assert!(EdgeSnap::from_ms(0.0, SNAP_RATE).is_off());
+        assert!(EdgeSnap::from_ms(f64::NAN, SNAP_RATE).is_off());
+    }
 
     #[test]
     fn refine_gap_frames_retracts_through_leading_silence_before_reported_start() {

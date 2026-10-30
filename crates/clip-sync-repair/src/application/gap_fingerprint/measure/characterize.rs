@@ -7,7 +7,7 @@ use crate::application::gap_fingerprint::schema::*;
 use crate::domain::gap_equivalence::{ChannelReduction, EquivalenceMeasurement, SpanKind};
 
 use crate::domain::patch_result::GapPatchSkipReason;
-use crate::domain::policies::{refine_gap_frames, RefinedGapFrames};
+use crate::domain::policies::{refine_and_snap_gap_frames, EdgeSnap, RefinedGapFrames};
 
 use super::build::*;
 use super::config::*;
@@ -146,6 +146,7 @@ pub fn characterize_gaps_from_decode(
     let ch = channels.max(1);
     let b_total = b_samples_full.len() / ch;
     let max_refine_frames = (cfg.max_refine_secs * rate).round() as usize;
+    let edge_snap = EdgeSnap::from_ms(cfg.edge_snap_max_ms, rate);
     let context_frames = (cfg.gap_signature_context_secs * rate).round() as usize;
     let bin_frames = ((cfg.gap_signature_bin_ms as f64 / 1000.0) * rate)
         .round()
@@ -170,7 +171,7 @@ pub fn characterize_gaps_from_decode(
         let Some((b_start, b_end)) = gap.mapped_b_span() else {
             continue;
         };
-        let refined = refine_gap_frames(
+        let refined = refine_and_snap_gap_frames(
             &a_pcm.samples,
             ch,
             (gap.video_a_start_secs * rate) as usize,
@@ -178,6 +179,7 @@ pub fn characterize_gaps_from_decode(
             cfg.silence_peak_fraction,
             cfg.absolute_silence_rms,
             max_refine_frames,
+            edge_snap,
         );
         let gap_frames = refined.end_frame.saturating_sub(refined.start_frame);
         if gap_frames == 0 {
