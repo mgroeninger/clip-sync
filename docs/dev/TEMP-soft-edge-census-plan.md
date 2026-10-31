@@ -961,14 +961,15 @@ against the guarded run (`gap-files/2026-10-30-edge-snap-guard/` vs `2026-10-26-
   `shoulders_ordered` read the unsnapped bridge (`without_edge_snap`), so the dump keeps
   predicting the abut skip.
 
-### Step 3 — listen protocol (DRAFT 2026-10-31; pre-registered only once approved, before any render)
+### Step 3 — listen protocol (PRE-REGISTERED 2026-10-31: approved by the user before any render)
 
 **Question:** does default-on, with its re-placements, ever make a gap audibly worse? Phase 3
 already showed the snap removes an audible blip. Re-placement is balanced churn, with no expected
 direction. So this test is for **non-inferiority**: it looks for regressions, not wins.
 
-**Arms.** One build (the guard build; the library differs from `01de590b` only by
-`gap_reaches_zero`). The *current* arm uses defaults. The *snapped* arm adds `--edge-snap-max-ms 40`.
+**Arms.** One build: the guard build plus the abut fix. The library differs from `01de590b` only by
+`gap_reaches_zero` and `without_edge_snap`; neither touches a gap with the snap off, and the abut fix
+reaches only 11/g9 and 31/g7 with it on. The *current* arm uses defaults. The *snapped* arm adds `--edge-snap-max-ms 40`.
 Both are real repairs (`--only-gaps`, `--mux` to `.mkv` with FLAC audio), run sequentially, as in
 Phase 3.
 
@@ -1017,27 +1018,26 @@ listener is not told which clips are the flips.
 
 **Blind key.** As in Phase 3, under `gap-files/2026-10-31-blind-default-on/` with a `-key` sibling.
 22 A/B trials, shuffled with the seed, with no two trials of one gap adjacent. *snapped* is on *a* in
-exactly 10 of the 20 non-control trials. The 4 absolute clips are scored in their own block. All
-scoring happens in one sitting.
+exactly 10 of the 20 non-control trials. All scoring happens in one sitting.
 
 **Decision rule.** Tolerance confirmed by the user on 2026-10-31: a single gap that sounds worse
 blocks default-on.
 - `k` and `w` are defined as in Phase 3: control false-differences plus opposite repeats. **k ≥ 2
   is inconclusive.**
-- Over the 18 A/B gaps, a repeat counts only when both its verdicts agree. Status flips pass when
-  both are *clean*. A *defect* that also appears on a reference clip counts as listener noise and
-  adds 1 to `k`.
-  - **Default-on:** *current better* ≤ `w`, and both status flips pass. Build step 4 (snap
+- Over the 18 A/B gaps, a repeat counts only when both its verdicts agree. (The status-flip clauses
+  went with the dropped block.)
+  - **Default-on:** *current better* ≤ `w`. Build step 4 (snap
     reporting), then flip the default and close per § 7.
   - **Refute default-on as built:** *current better* ≥ 2 and greater than *snapped better*. Record
     it in settled § A. The snap stays opt-in, and write-only (option 1) is reopened.
-  - **Otherwise stay opt-in** (settled § C). This includes a single regression, or a flip with a
-    defect. It is latched on a second sitting from walk ranks 4–8, plus a look at the losing gap's
+  - **Otherwise stay opt-in** (settled § C). This includes a single regression. It is latched on a second sitting from walk ranks 4–8, plus a look at the losing gap's
     stratum. A regression confined to one stratum would argue for a stratum guard (for example,
     no snap when it would flip `anchor_seam_used`), not for dropping the snap.
 
-**Executable half:** a re-placed mode for `build-edge-snap-listen-set.ps1`, built only after this
-draft is approved. Estimated media cost is about 2 × 20 pair-runs at about 6 minutes each, around
+**Executable half:** `scripts/measure/build-default-on-listen-set.ps1`, a sibling of the Phase 3
+script (which stays the record of that listen). Its stratified walk, two-report candidate match and
+confined check did not fit as a mode. Before any run, it re-derives every listed gap's stratum from
+the two corpus reports and the census, and throws on a mismatch (`-PlanOnly` passes). Estimated media cost is about 2 × 20 pair-runs at about 6 minutes each, around
 4 hours sequential, plus rounds for replacements.
 
 ### Step 4 — snap reporting (planned 2026-10-31; built after the listen, before the flip)
