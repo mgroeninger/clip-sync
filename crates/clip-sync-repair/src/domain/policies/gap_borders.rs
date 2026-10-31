@@ -145,22 +145,35 @@ const EDGE_SNAP_FALL_DB: f64 = 15.0;
 const EDGE_SNAP_REF_BINS: usize = 2;
 /// Level of an all-zero bin, so digital silence orders below everything without `-inf`.
 const EDGE_SNAP_ZERO_DB: f64 = -140.0;
+/// "Digital zero" for the snap's dropout test: every channel within 2.5 LSB at 16 bits (about
+/// −82 dBFS). AAC dropouts decode to ±1 LSB at 16 bits; quiet programme sits far above this.
+const EDGE_SNAP_ZERO_AMP: f32 = 2.5 / 32768.0;
+/// The digital-zero run must start within this far into the gap. On the corpus the soft band's
+/// codec tail reaches zero at most 29 ms past the refined edge.
+const EDGE_SNAP_ZERO_SEARCH_MS: f64 = 85.0;
+/// Shortest run of digital-zero frames that counts as the dropout.
+const EDGE_SNAP_ZERO_RUN_MS: f64 = 5.0;
 
-/// How far [`snap_gap_edges_to_onset`] may move an edge past the silence floor.
+/// How far [`snap_gap_edges_to_onset`] may move an edge past the silence floor, and the
+/// digital-zero test it applies first.
 ///
-/// `max_frames == 0` is off. The cap keeps a quiet-programme decay (a word ending into room tone
-/// before the dropout) from handing real programme to B; see `docs/dev/TEMP-soft-edge-census-plan.md`
-/// § 4 Phase 4.
+/// `max_frames == 0` is off. The cap keeps quiet programme that runs up to a dropout (room tone
+/// after a word) from being handed to B. The zero test cannot catch that case. See
+/// `docs/dev/TEMP-soft-edge-census-plan.md` § 4 Phase 4 and § 5.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct EdgeSnap {
     pub max_frames: usize,
     pub bin_frames: usize,
+    pub zero_search_frames: usize,
+    pub zero_run_frames: usize,
 }
 
 impl EdgeSnap {
     pub const OFF: Self = Self {
         max_frames: 0,
         bin_frames: 0,
+        zero_search_frames: 0,
+        zero_run_frames: 0,
     };
 
     /// `max_ms <= 0` is [`EdgeSnap::OFF`].
@@ -172,6 +185,9 @@ impl EdgeSnap {
         Self {
             max_frames: (max_ms / 1000.0 * sample_rate).round() as usize,
             bin_frames: ((EDGE_SNAP_BIN_MS / 1000.0 * sample_rate).round() as usize).max(1),
+            zero_search_frames: (EDGE_SNAP_ZERO_SEARCH_MS / 1000.0 * sample_rate).round() as usize,
+            zero_run_frames: ((EDGE_SNAP_ZERO_RUN_MS / 1000.0 * sample_rate).round() as usize)
+                .max(1),
         }
     }
 
@@ -193,6 +209,35 @@ fn level_db(peak: f64) -> f64 {
     } else {
         (20.0 * peak.log10()).max(EDGE_SNAP_ZERO_DB)
     }
+}
+
+/// Whether the gap `[start, end)` reaches digital zero beside the edge being snapped: a run of
+/// `snap.zero_run_frames` frames, every channel within [`EDGE_SNAP_ZERO_AMP`], starting within
+/// `snap.zero_search_frames` of `start` (`lead`) or of `end` (trail), walking into the gap.
+fn gap_reaches_zero(
+    samples: &[f32],
+    channels: usize,
+    (start, end): (usize, usize),
+    lead: bool,
+    snap: EdgeSnap,
+) -> bool {
+    let reach = (snap.zero_search_frames + snap.zero_run_frames).min(end - start);
+    let mut run = 0;
+    for k in 0..reach {
+        let f = if lead { start + k } else { end - 1 - k };
+        if samples[f * channels..(f + 1) * channels]
+            .iter()
+            .all(|s| s.abs() <= EDGE_SNAP_ZERO_AMP)
+        {
+            run += 1;
+            if run >= snap.zero_run_frames {
+                return true;
+            }
+        } else {
+            run = 0;
+        }
+    }
+    false
 }
 
 /// Per-bin peak dBFS (max across channels), `nbins` chronological bins of `bin` frames from `lo`.
@@ -305,10 +350,16 @@ fn trail_onset(samples: &[f32], channels: usize, edge: usize, snap: EdgeSnap) ->
 /// A beside the fill. This continues the walk: in 2 ms peak bins, the **nearest** fall of at least
 /// 15 dB below the loudest of the two bins before it, sustained into the gap, refined to the sample
 /// (the trail edge mirrors it). The bins end at the edge, as the census instrument's end at the scan
-/// boundary, so a band that ends in a hard step to silence still snaps. An onset beyond
-/// `snap.max_frames` is refused, and the edge stays where refinement left it. The cap is the only
-/// guard against a word ending into room tone before the dropout: the rule cannot tell that room
-/// tone from a soft band.
+/// boundary, so a band that ends in a hard step to silence still snaps.
+///
+/// Two guards, and the edge stays where refinement left it unless both pass:
+/// - **The gap reaches digital zero** beside the edge ([`gap_reaches_zero`]). The band is then
+///   codec noise smeared after a hard cut, and the onset is the cut (frame-grid census,
+///   `docs/dev/TEMP-soft-edge-census-plan.md` § 5). A gap whose interior is quiet programme rather
+///   than a dropout never snaps.
+/// - **The onset is within `snap.max_frames`.** The zero test cannot tell quiet programme that runs
+///   up to the cut (58/g2 trail: 107 ms flat at −57 dBFS, then zero) from a soft band, so the cap
+///   still guards it. The step test cannot either: room tone after a word starts with a step too.
 ///
 /// The lead edge is not snapped when refinement *advanced* it past `reported_start_frame`: the
 /// scanner opened that run early, so the frames before it are programme, not a dropout's decay.
@@ -330,15 +381,17 @@ pub fn snap_gap_edges_to_onset(
         return refined;
     }
     let mut out = refined;
+    let gap = (refined.start_frame, refined.end_frame);
     if refined.start_frame <= reported_start_frame {
         if let Some(d) = lead_onset(samples, channels, refined.start_frame, snap) {
-            if d > 0 && d <= snap.max_frames {
+            if d > 0 && d <= snap.max_frames && gap_reaches_zero(samples, channels, gap, true, snap)
+            {
                 out.start_frame = refined.start_frame - d;
             }
         }
     }
     if let Some(d) = trail_onset(samples, channels, refined.end_frame, snap) {
-        if d > 0 && d <= snap.max_frames {
+        if d > 0 && d <= snap.max_frames && gap_reaches_zero(samples, channels, gap, false, snap) {
             out.end_frame = refined.end_frame + d;
         }
     }
@@ -712,7 +765,44 @@ mod tests {
 
     #[test]
     fn edge_snap_refuses_a_band_beyond_its_cap() {
+        // The gap is digital zero, so only the cap refuses this band (58/g2 trail's shape).
         let (s, _, _, rs, re) = soft_edged(60.0);
+        assert_eq!(refine_snap(&s, rs, re, snap_40()), refine_only(&s, rs, re));
+    }
+
+    #[test]
+    fn edge_snap_refuses_a_band_beside_a_gap_that_is_not_digital_zero() {
+        // A quiet passage, not a dropout: the gap sits at −70 dBFS (below the floor, so the scanner
+        // and refinement call it silent) and never reaches digital zero.
+        let (mut s, _, _, rs, re) = soft_edged(20.0);
+        let quiet = dbfs(-70.0);
+        for x in &mut s {
+            if x.abs() < quiet {
+                *x = quiet;
+            }
+        }
+        let refined = refine_only(&s, rs, re);
+        assert!(refined.end_frame > refined.start_frame);
+        assert_eq!(refine_snap(&s, rs, re, snap_40()), refined);
+    }
+
+    #[test]
+    fn edge_snap_needs_the_zero_run_near_the_edge() {
+        // Digital zero exists, but only beyond the search reach: the gap's first 200 ms hold
+        // −70 dBFS, so neither edge sees zero within 85 ms.
+        let (mut s, _, _, rs, re) = soft_edged(20.0);
+        let refined = refine_only(&s, rs, re);
+        let quiet = dbfs(-70.0);
+        let reach = ms_frames(200.0);
+        for f in (refined.start_frame..refined.start_frame + reach)
+            .chain(refined.end_frame - reach..refined.end_frame)
+        {
+            for c in 0..2 {
+                if s[2 * f + c].abs() < quiet {
+                    s[2 * f + c] = quiet;
+                }
+            }
+        }
         assert_eq!(refine_snap(&s, rs, re, snap_40()), refine_only(&s, rs, re));
     }
 

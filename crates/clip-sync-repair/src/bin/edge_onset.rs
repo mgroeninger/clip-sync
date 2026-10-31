@@ -141,6 +141,17 @@ struct Args {
     /// bin's reading; it changes no output file.
     #[arg(long)]
     snap_cross_check_ms: Option<f64>,
+
+    /// Media mode, diagnostic: write `frame-grid.csv` to the out dir — per edge, the exact-zero
+    /// run's edge on the decoded timeline (mod 1024 / 2048) and the envelope of the 1024 frames
+    /// beside it against the AAC window halves. Tests whether lead bands are the decoder's
+    /// overlap-add tail. Changes no other output.
+    #[arg(long)]
+    frame_grid: bool,
+
+    /// `--frame-grid` only: the amplitude at or below which a frame counts as silent (every channel).
+    #[arg(long, default_value_t = 0.0)]
+    grid_zero_amp: f64,
 }
 
 // -------------------------------------------------------------------------------------------
@@ -1678,12 +1689,265 @@ fn production_snap_ms(w: &Wav, boundary: usize, edge: Edge, cap_ms: f64) -> Opti
     Some(w.frames_to_ms(moved as f64))
 }
 
-/// One report: open its A, decode it once, measure every gap edge. Returns rows and the gap count.
+/// AAC frame hop (samples): the MDCT overlap is one hop, so a decoder tail is at most this long.
+const GRID_HOP: usize = 1024;
+/// Envelope blocks per hop for the window-shape fit.
+const GRID_BLOCKS: usize = 8;
+/// How far past the scan boundary (frames) the zero run may open: the scan's floor is −60 dBFS,
+/// so a decay can cross it well before reaching digital silence.
+const GRID_SEARCH: usize = 4 * GRID_HOP;
+/// Silence run (frames) the zero edge must open onto, so a zero crossing is never read as the gap.
+const GRID_MIN_RUN: usize = 256;
+
+/// Every channel at or below `amp` (`0.0`: exact digital zero).
+fn frame_is_zero(w: &Wav, f: usize, amp: f64) -> bool {
+    w.frame(f).iter().all(|&x| x.abs() <= amp)
+}
+
+/// What every frame-grid reading shares: the two window shapes and the silence amplitude.
+struct GridCtx {
+    sine: Vec<f64>,
+    kbd: Vec<f64>,
+    zero_amp: f64,
+}
+
+/// The zero run's programme-side edge near `boundary`, as a local frame: on `lead` the first
+/// all-zero frame of the run, on `trail` the first non-zero frame after it. Searches up to
+/// [`GRID_SEARCH`] into the gap when the boundary frame is not itself zero.
+fn zero_edge(w: &Wav, boundary: usize, edge: Edge, amp: f64) -> Option<usize> {
+    let n = w.frames();
+    let run_from = |s: usize, dir: i64| -> usize {
+        let mut k = 0usize;
+        let mut f = s as i64;
+        while f >= 0 && (f as usize) < n && frame_is_zero(w, f as usize, amp) {
+            k += 1;
+            f += dir;
+        }
+        k
+    };
+    match edge {
+        // The first frame (walking into the gap) that opens a run of at least GRID_MIN_RUN, so an
+        // isolated quiet frame inside the decay is never read as the silence.
+        Edge::Lead => {
+            let first = (boundary..n.min(boundary + GRID_SEARCH))
+                .find(|&f| run_from(f, 1) >= GRID_MIN_RUN)?;
+            let mut z = first;
+            while z > 0 && frame_is_zero(w, z - 1, amp) {
+                z -= 1;
+            }
+            Some(z)
+        }
+        Edge::Trail => {
+            let last = (boundary.saturating_sub(GRID_SEARCH)..=boundary.min(n.checked_sub(1)?))
+                .rev()
+                .find(|&f| run_from(f, -1) >= GRID_MIN_RUN)?;
+            let mut e = last;
+            while e + 1 < n && frame_is_zero(w, e + 1, amp) {
+                e += 1;
+            }
+            (e + 1 < n).then_some(e + 1)
+        }
+    }
+}
+
+/// Window `w(m)`, `m` in `0..2*GRID_HOP`: sine, or Kaiser-Bessel-derived with alpha 4 (AAC long).
+fn aac_windows() -> (Vec<f64>, Vec<f64>) {
+    let len = 2 * GRID_HOP;
+    let sine: Vec<f64> = (0..len)
+        .map(|m| (std::f64::consts::PI * (m as f64 + 0.5) / len as f64).sin())
+        .collect();
+    let i0 = |x: f64| {
+        let (mut sum, mut term, mut k) = (1.0, 1.0, 1.0);
+        while term > 1e-12 * sum {
+            term *= (x / (2.0 * k)).powi(2);
+            sum += term;
+            k += 1.0;
+        }
+        sum
+    };
+    let alpha = 4.0 * std::f64::consts::PI;
+    let kaiser: Vec<f64> = (0..=GRID_HOP)
+        .map(|j| {
+            let t = 2.0 * j as f64 / GRID_HOP as f64 - 1.0;
+            i0(alpha * (1.0 - t * t).max(0.0).sqrt())
+        })
+        .collect();
+    let total: f64 = kaiser.iter().sum();
+    let mut acc = 0.0;
+    let mut kbd = vec![0.0; len];
+    for m in 0..GRID_HOP {
+        acc += kaiser[m];
+        let v = (acc / total).sqrt();
+        kbd[m] = v;
+        kbd[len - 1 - m] = v;
+    }
+    (sine, kbd)
+}
+
+/// Peak dBFS over hops 2–5 inside the gap from `boundary` (clear of the transition): how silent
+/// the silence is.
+fn silence_peak_db(w: &Wav, boundary: usize, edge: Edge) -> Option<f64> {
+    let (lo, hi) = match edge {
+        Edge::Lead => (
+            boundary + 2 * GRID_HOP,
+            (boundary + 6 * GRID_HOP).min(w.frames()),
+        ),
+        Edge::Trail => (
+            boundary.saturating_sub(6 * GRID_HOP),
+            boundary.saturating_sub(2 * GRID_HOP),
+        ),
+    };
+    (lo < hi).then(|| {
+        let peak = (lo..hi).fold(0.0f64, |m, f| m.max(w.frame_peak(f)));
+        20.0 * peak.max(1e-12).log10()
+    })
+}
+
+/// RMS over all channels of local frames `lo..hi`; `None` if out of the window.
+fn block_rms(w: &Wav, lo: i64, hi: i64) -> Option<f64> {
+    if lo < 0 || hi as usize > w.frames() || hi <= lo {
+        return None;
+    }
+    let s = &w.samples[lo as usize * w.channels..hi as usize * w.channels];
+    Some((s.iter().map(|x| x * x).sum::<f64>() / s.len() as f64).sqrt())
+}
+
+/// Block levels (dB re the next hop out) over the hop beside `edge_at`, ordered programme → silence,
+/// and the matching window-half levels. `lead`: hop `[at-HOP, at)`, falling half. `trail`: hop
+/// `[at, at+HOP)`, rising half, reversed.
+fn hop_envelope(w: &Wav, at: i64, edge: Edge, win: &[f64]) -> Option<(Vec<f64>, Vec<f64>)> {
+    let hop = GRID_HOP as i64;
+    let b = hop / GRID_BLOCKS as i64;
+    let db = |x: f64| 20.0 * x.max(1e-12).log10();
+    let (hop_lo, ref_lo, ref_hi) = match edge {
+        Edge::Lead => (at - hop, at - 2 * hop, at - hop),
+        Edge::Trail => (at, at + hop, at + 2 * hop),
+    };
+    let reference = block_rms(w, ref_lo, ref_hi)?;
+    if reference <= 0.0 {
+        return None;
+    }
+    let mut levels = Vec::with_capacity(GRID_BLOCKS);
+    let mut model = Vec::with_capacity(GRID_BLOCKS);
+    for k in 0..GRID_BLOCKS as i64 {
+        let lo = hop_lo + k * b;
+        levels.push(db(block_rms(w, lo, lo + b)? / reference));
+        let m0 = match edge {
+            Edge::Lead => (hop + k * b) as usize,
+            Edge::Trail => (k * b) as usize,
+        };
+        let ms = &win[m0..m0 + b as usize];
+        model.push(db((ms.iter().map(|x| x * x).sum::<f64>()
+            / ms.len() as f64)
+            .sqrt()));
+    }
+    if edge == Edge::Trail {
+        levels.reverse();
+        model.reverse();
+    }
+    Some((levels, model))
+}
+
+/// Offset-free misfit: sd of `levels - model` (dB), and its mean.
+fn misfit(levels: &[f64], model: &[f64]) -> (f64, f64) {
+    let d: Vec<f64> = levels.iter().zip(model).map(|(l, m)| l - m).collect();
+    let mean = d.iter().sum::<f64>() / d.len() as f64;
+    let var = d.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / d.len() as f64;
+    (var.sqrt(), mean)
+}
+
+const FRAME_GRID_HEADER: &str = "pair,gap_index,edge,disposition,fill_path,rate,channels,onset_near_ms,silence_peak_db,zero_edge_vs_boundary,residue_1024,residue_2048,sd_flat_db,sd_sine_db,sd_kbd_db,mean_sine_db,mean_kbd_db,ctrl_sd_flat_db,ctrl_sd_sine_db,ctrl_sd_kbd_db,levels_db,env_dbfs";
+
+/// One `frame-grid.csv` line per edge; empty fields where the edge has no zero run.
+fn frame_grid_line(
+    pair: &str,
+    g: &MediaGap,
+    edge: Edge,
+    w: &Wav,
+    (window_start, local_boundary): (usize, usize),
+    onset_near_ms: Option<f64>,
+    ctx: &GridCtx,
+) -> String {
+    let opt = |v: Option<f64>| v.map_or(String::new(), |x| format!("{x:.3}"));
+    let head = format!(
+        "{pair},{},{},{},{},{},{},{},{}",
+        g.index,
+        edge.as_str(),
+        g.outcome.disposition,
+        g.outcome.fill_path,
+        w.rate,
+        w.channels,
+        opt(onset_near_ms),
+        opt(silence_peak_db(w, local_boundary, edge)),
+    );
+    let Some(at) = zero_edge(w, local_boundary, edge, ctx.zero_amp) else {
+        return format!("{head},,,,,,,,,,,,,,");
+    };
+    let abs = window_start + at;
+    let fit = |at: i64| -> Option<(f64, f64, f64, f64, f64, Vec<f64>)> {
+        let (lv, sine) = hop_envelope(w, at, edge, &ctx.sine)?;
+        let (_, kbd) = hop_envelope(w, at, edge, &ctx.kbd)?;
+        let flat = vec![0.0; lv.len()];
+        let (sd_flat, _) = misfit(&lv, &flat);
+        let (sd_sine, mean_sine) = misfit(&lv, &sine);
+        let (sd_kbd, mean_kbd) = misfit(&lv, &kbd);
+        Some((sd_flat, sd_sine, sd_kbd, mean_sine, mean_kbd, lv))
+    };
+    let at_i = at as i64;
+    // Control: the same reading 4 hops into programme, where no window applies.
+    let ctrl_at = match edge {
+        Edge::Lead => at_i - 4 * GRID_HOP as i64,
+        Edge::Trail => at_i + 4 * GRID_HOP as i64,
+    };
+    let main = fit(at_i);
+    let ctrl = fit(ctrl_at);
+    let f = |v: f64| format!("{v:.3}");
+    let (m1, m2, m3, m4, m5, lv) = match &main {
+        Some((a, b, c, d, e, lv)) => (
+            f(*a),
+            f(*b),
+            f(*c),
+            f(*d),
+            f(*e),
+            lv.iter()
+                .map(|x| format!("{x:.1}"))
+                .collect::<Vec<_>>()
+                .join(" "),
+        ),
+        None => Default::default(),
+    };
+    let (c1, c2, c3) = match &ctrl {
+        Some((a, b, c, ..)) => (f(*a), f(*b), f(*c)),
+        None => Default::default(),
+    };
+    // Absolute envelope (dBFS RMS, 128-frame blocks) over the three hops on the programme side,
+    // ordered programme → silence, so the whole fall is visible.
+    let blk = (GRID_HOP / GRID_BLOCKS) as i64;
+    let env: Vec<String> = (0..3 * GRID_BLOCKS as i64)
+        .filter_map(|k| {
+            let lo = match edge {
+                Edge::Lead => at_i - 3 * GRID_HOP as i64 + k * blk,
+                Edge::Trail => at_i + 3 * GRID_HOP as i64 - (k + 1) * blk,
+            };
+            block_rms(w, lo, lo + blk).map(|r| format!("{:.0}", 20.0 * r.max(1e-12).log10()))
+        })
+        .collect();
+    format!(
+        "{head},{},{},{},{m1},{m2},{m3},{m4},{m5},{c1},{c2},{c3},{lv},{}",
+        at as i64 - local_boundary as i64,
+        abs % GRID_HOP,
+        abs % (2 * GRID_HOP),
+        env.join(" "),
+    )
+}
+
+/// One report: open its A, decode it once, measure every gap edge. Returns rows, the gap count and
+/// any `frame-grid.csv` lines.
 fn measure_report(
     args: &Args,
     report_path: &Path,
     pair: &str,
-) -> Result<(Vec<Row>, usize), String> {
+) -> Result<(Vec<Row>, usize, Vec<String>), String> {
     let text = std::fs::read_to_string(report_path)
         .map_err(|e| format!("report unreadable ({})", e.kind()))?;
     let report: PatchReportJson =
@@ -1753,7 +2017,37 @@ fn measure_report(
         args.crossfade_ms,
         args.snap_cross_check_ms,
     );
-    Ok((rows, gaps.len()))
+    let mut grid = Vec::new();
+    if args.frame_grid {
+        let (sine, kbd) = aac_windows();
+        let ctx = GridCtx {
+            sine,
+            kbd,
+            zero_amp: args.grid_zero_amp,
+        };
+        for (k, g) in gaps.iter().enumerate() {
+            for (j, (edge, boundary)) in [(Edge::Lead, g.lead), (Edge::Trail, g.trail)]
+                .into_iter()
+                .enumerate()
+            {
+                let start = windows[2 * k + j].0;
+                let onset = rows
+                    .iter()
+                    .find(|r| r.gap_index == Some(g.index) && r.edge == edge.as_str())
+                    .and_then(|r| r.onset.onset_near_ms);
+                grid.push(frame_grid_line(
+                    pair,
+                    g,
+                    edge,
+                    &wavs[2 * k + j],
+                    (start, boundary - start),
+                    onset,
+                    &ctx,
+                ));
+            }
+        }
+    }
+    Ok((rows, gaps.len(), grid))
 }
 
 fn run_media(args: &Args) -> Result<(), String> {
@@ -1776,6 +2070,7 @@ fn run_media(args: &Args) -> Result<(), String> {
     let mut rows: Vec<Row> = Vec::new();
     let mut skipped: Vec<String> = Vec::new();
     let mut n_gaps = 0usize;
+    let mut grid: Vec<String> = Vec::new();
     for (k, report) in reports.iter().enumerate() {
         let pair =
             report_pair_label(report).or_else(|| args.pair.clone().filter(|_| reports.len() == 1));
@@ -1788,9 +2083,10 @@ fn run_media(args: &Args) -> Result<(), String> {
         };
         eprintln!("pair {pair}: decoding A ({} of {})", k + 1, reports.len());
         match measure_report(args, report, &pair) {
-            Ok((mut r, n)) => {
+            Ok((mut r, n, mut g)) => {
                 n_gaps += n;
                 rows.append(&mut r);
+                grid.append(&mut g);
             }
             Err(why) => skipped.push(format!("pair {pair}: {why}")),
         }
@@ -1816,6 +2112,17 @@ fn run_media(args: &Args) -> Result<(), String> {
         "denominator": "every scan gap of each report's pair — a base rate for these pairs, split patched vs not",
     });
     let (census, json) = write_census(&out_dir, &rows, contract)?;
+    if args.frame_grid {
+        let path = out_dir.join("frame-grid.csv");
+        let mut text = String::from(FRAME_GRID_HEADER);
+        text.push('\n');
+        for line in &grid {
+            text.push_str(line);
+            text.push('\n');
+        }
+        std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
+        println!("wrote {}", path.display());
+    }
     print_media_summary(&rows, n_gaps, reports.len(), &skipped);
     println!("\nwrote {}", census.display());
     println!("wrote {}", json.display());

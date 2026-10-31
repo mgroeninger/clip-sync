@@ -180,7 +180,9 @@ pub(in crate::application::patch_audio) fn characterize_region(
 
     let reported_start_frame = (region.a_start_secs * sample_rate as f64) as usize;
     let reported_end_frame = (region.a_end_secs * sample_rate as f64) as usize;
-    let mut refined: RefinedGapFrames = policies::refine_and_snap_gap_frames(
+    // Refine and snap split (not `refine_and_snap_gap_frames`) so the abut verdict below can be read
+    // on the unsnapped edges.
+    let unsnapped = policies::refine_gap_frames(
         &a_pcm.samples,
         channels,
         reported_start_frame,
@@ -188,8 +190,16 @@ pub(in crate::application::patch_audio) fn characterize_region(
         silence_peak_fraction,
         absolute_silence_rms,
         max_refine_frames,
+    );
+    let mut refined: RefinedGapFrames = policies::snap_gap_edges_to_onset(
+        &a_pcm.samples,
+        channels,
+        reported_start_frame,
+        unsnapped,
         policies::EdgeSnap::from_ms(request.edge_snap_max_ms, f64::from(sample_rate)),
     );
+    let snap_lead_frames = unsnapped.start_frame.saturating_sub(refined.start_frame);
+    let snap_trail_frames = refined.end_frame.saturating_sub(unsnapped.end_frame);
 
     let refined_a_start_secs = refined.start_frame as f64 / sample_rate as f64;
     let refined_a_end_secs = refined.end_frame as f64 / sample_rate as f64;
@@ -469,11 +479,15 @@ pub(in crate::application::patch_audio) fn characterize_region(
         )
     });
 
-    if let (Some(df), Some(locks)) = (dual_fit_input.as_ref(), seam_locks.as_ref()) {
+    if let (Some(df), Some(snapped_locks)) = (dual_fit_input.as_ref(), seam_locks.as_ref()) {
+        // Read and record the verdict on the unsnapped edges: the snap adds no donor material, so it
+        // must not turn an abut into a bridge (`SeamLocks::without_edge_snap`).
+        let locks = snapped_locks.without_edge_snap(snap_lead_frames, snap_trail_frames);
         if locks.abut() {
             // Both shoulders lock confidently (`gate_pass`) and land on top of each other or crossed:
             // there is no donor bridge between them, so A's gap is introduced silence, not missing
             // content. Skip before `evaluate_seam_gate` — the fill search has nothing to find.
+            let gap_frames = unsnapped.end_frame.saturating_sub(unsnapped.start_frame);
             let reason = GapPatchSkipReason::ShouldersAbut(ShouldersAbutLocks {
                 pre_lag_ms: locks.pre.lag as f64 * 1000.0 / f64::from(sample_rate),
                 post_lag_ms: locks.post.lag as f64 * 1000.0 / f64::from(sample_rate),
@@ -487,7 +501,7 @@ pub(in crate::application::patch_audio) fn characterize_region(
                 edge_pinned: locks.pre.edge_pinned || locks.post.edge_pinned,
                 program_quiet: crate::domain::donor::program_quiet_at_nominal(
                     &df.b_mono,
-                    df.templates.b_mapped_start(),
+                    df.templates.b_mapped_start() + snap_lead_frames,
                     gap_frames,
                     df.params.a_gap_floor_db,
                     sample_rate,
@@ -500,8 +514,12 @@ pub(in crate::application::patch_audio) fn characterize_region(
                     None,
                     region,
                     gap_offset_secs,
-                    refined,
-                    silence_splice_b_extract,
+                    unsnapped,
+                    BExtractWindow {
+                        b_mapped_start_frame: silence_splice_b_extract.b_mapped_start_frame
+                            + snap_lead_frames,
+                        ..silence_splice_b_extract
+                    },
                 ),
                 tag_ctx,
             );

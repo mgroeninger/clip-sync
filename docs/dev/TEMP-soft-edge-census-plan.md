@@ -755,6 +755,399 @@ commit predates it), and the attribution below finds no change outside snapped g
      Re-run this diff to confirm: every remaining change should be an edge write.
   2. *Default-on as built*, after a blind listen of a sample of the 95 re-placed gaps plus 31/g7.
 
+### What the soft lead band is (2026-10-30): encoder noise after a hard cut
+
+`edge-onset --frame-grid --grid-zero-amp 0.0000763` (hidden diagnostic, media mode) over all 85
+pairs. It finds each edge's true silent run: every channel within ±2.5 LSB at 16 bits, for at
+least 256 frames, up to 4 hops into the gap. It records where that run starts on the decoded
+timeline, mod 1024, and the envelope of the 3 hops beside it. Output:
+`gap-files/2026-10-30-frame-grid/frame-grid.csv`.
+- **Patched gaps are true digital dropouts.** 1152 of 1162 patched edges open onto a silent run at
+  1 LSB at 16 bits (−90.3 dBFS). The fdk-aac decoder emits 16-bit PCM. Only 235 of 2364
+  `not_planned` edges do, so those are mostly quiet passages.
+- **The silence starts after the scan boundary.** The scan's −60 dBFS floor crossing is not
+  digital silence. On hard leads the run begins a median 141 frames (2.9 ms) later.
+- **Soft-lead shape:** programme drops about 20 dB in one step at the onset, to around −55 dBFS.
+  Then a smooth tail decays to about −80 dBFS and stops at true silence. The census band is the
+  part of that tail above −60. Programme never fades through it.
+- **Its length is bounded by one AAC long window.** Onset to silent run: 217 of 218 soft leads
+  are ≤ 2048 frames (median 1292, q25 1099, q75 1454).
+- **Its end is locked to the 1024-frame block grid.** Within a pair, a soft lead's silent-run start
+  lies within ±64 frames of the other soft leads' circular mean in 60% of cases (n = 171;
+  uniform 12.5%). Hard leads: 25%. Hard trails: 11%, so there is no lock.
+- **Reading.** The original audio was cut hard to digital zero at the onset. The encoder coded the
+  cut in a long block, which spreads quantization noise forward to the window's end, a block
+  boundary. The decoder reproduces that noise about 20 dB under the programme. So the band is a
+  codec artifact, and the onset is the true cut. That fits the ear check: the "blip" is the noise
+  burst. Hard leads, and nearly all trails, are cuts the encoder resolved tightly.
+  - Why trails rarely have a band is not settled. Encoders switch to short blocks on attacks,
+    which would confine the noise. But the trail mod-128 test is weak (19% vs 12.5%), so that is
+    a hypothesis.
+- **For the snap:** moving the write to the onset is correct by construction; it does not
+  overwrite programme. A principled lead cap is one long window, 2048 frames (42.7 ms at 48 kHz),
+  in place of the empirical 40 ms. It does not change the churn question: placement should
+  still not move with the edge.
+- **Superseded by a signal guard (2026-10-30).** A per-codec window bound needs a codec table,
+  which is rejected ([settled.md](settled.md) § A). Proposed instead, to be tested offline on
+  `frame-grid.csv` before any code changes: snap only when the band opens with a step down and its
+  tail ends in digital zero. That is the codec-smear signature. It also rejects § 3's programme-decay
+  shape, which fades from programme level and doesn't step. The ms cap stays as a loose,
+  codec-agnostic backstop.
+
+### Signal-guard test (2026-10-30): zero-termination adopted; the cap stays load-bearing
+
+Offline, over `frame-grid.csv`: every edge with a census onset, with its envelope at 128-frame
+resolution from 3 hops before the silent run. Only planned gaps (patched or skipped) are snapped in
+production, so they are the population that matters.
+
+| group (onset distance) | edges | gap reaches digital zero | onset → zero ≤ 2048 frames |
+|---|---|---|---|
+| planned, onset ≤ 40 ms | 391 | 389 | 389 |
+| planned, onset > 40 ms | 5 | 3 (two are refinement-origin cases) | 2 |
+| unpatched, 4–40 ms | 90 | 12 | 11 |
+| unpatched, > 40 ms | 75 | 3 | 0 |
+
+- **"The gap reaches digital zero" is adopted as a guard.** A run of ≥ 5 ms with every channel
+  within 2.5 LSB at 16 bits, starting within 85 ms of the edge. Every planned soft band passes
+  except 10/g11 trail and 14/g10 trail. Their gaps sit at −62 to −66 dBFS: quiet programme, not
+  dropouts, so refusing them is right. On planned edges reaching zero, the zero run starts at most
+  1376 frames (29 ms) past the refined edge.
+- **The step half adds nothing new.** The onset rule already is a step test: a ≥ 15 dB fall within
+  4 ms, sustained. Measured steps on patched leads: p10 21 dB, median 26 dB. A smooth programme
+  fade cannot produce one.
+- **A decay-shape test is rejected.** Patched leads decay through the band (tail end: median
+  −82 dBFS, p90 −75). Patched trails don't: 26 of 46 end above −70, a flat band of median length
+  345 frames (7 ms). That fits short-block pre-echo, but is unverified. A decay test would refuse
+  them.
+- **The ms cap cannot be replaced; it is load-bearing, not loose.** 58/g2 trail (anchor seam) is a
+  flat band at −57 dBFS for 107 ms that ends in a hard cut to zero. It passes the step and zero
+  tests, and only the cap refuses it: quiet programme running up to the cut. On this corpus any
+  cap between 31.3 ms (the longest real band) and about 89 ms (the shortest such programme case)
+  gives the same result. **40 ms stays.** It is already churned and listened at.
+- **What "codec-agnostic" now means.** The guard is AAC-LC validated. A codec without a transform
+  window has no band, so the snap is inert there. A codec with longer windows (HE-AAC, about
+  85 ms) has bands that can exceed the cap. Those stay unsnapped, which is today's behaviour, so
+  the failure is safe.
+- **Trails are unheard.** Phase 3's candidates were all leads. The trail snaps (99 patched trail
+  edges have an onset) ship with default-on, and their band shape differs from the leads'. The
+  step 3 listen must include a trail-snapped stratum.
+
+Code: `gap_reaches_zero` in `domain/policies/gap_borders.rs`, applied after the cap, with two new
+tests (a quiet non-zero gap; zero only beyond the reach). Both fail with the guard disabled.
+
+### Next (decided 2026-10-30): option 2, default-on as built, gated by the signal guard
+
+Write-only (option 1) is dropped. With a guard that snaps only on the codec-smear shape, the snapped
+edge is the true cut. The unsnapped geometry is then the wrong one: its pre-seam template carries
+codec noise. Write-only would keep placement there, and the work across six consumers would be
+thrown away. The re-placements are still unheard, so the listen stays. The snap stays at home (b),
+in repair. Moving the scan boundary (option (a)) would reopen the equivalence-gate validation and
+is not proposed.
+
+1. **Test the guard offline** on `frame-grid.csv` and the census. It must keep nearly all of the
+   218 soft leads, and it must reject what the 40 ms cap refuses, or explain the difference. If it
+   fails, the 40 ms cap stays and write-only is reconsidered.
+2. **Build the guard into `snap_gap_edges_to_onset`.** Add tests for both shapes: step plus a tail
+   to zero snaps; programme fading through the band does not. Re-run the corpus churn at
+   default-on.
+3. **Pre-registered blind listen of a stratified sample of the re-placed gaps.**
+   - Strata: anchor flips, dual-fit flips, tier changes, the largest moves (69/g9, 32/g10), and
+     trail snaps (never heard; see the signal-guard test).
+   - Plus the two status flips, 31/g7 and 11/g9.
+   - The decision rule is fixed before rendering.
+4. **Build the snap reporting** (added 2026-10-31; spec in *Step 4 — snap reporting* below). It
+   comes after the listen and before the flip. The listen does not read it, and its one
+   behaviour-adjacent change needs a full-corpus run that the flip pays for anyway.
+5. **Flip the default if the listen passes.** Then close per § 7, with one settled row.
+   - The claim is AAC-validated only. On codecs without a transform window the guard is inert by
+     construction.
+
+### Step 2 — corpus churn with the guard (2026-10-30): exactly as predicted
+
+Candidate: `measure-patch-outcomes.ps1 -RepairArgs "--edge-snap-max-ms 40"` over all 85 pairs, with
+`gap_reaches_zero` built in. Output: `gap-files/2026-10-30-edge-snap-guard/`, with diff CSVs
+`diff-vs-10-29.csv` and `diff-vs-10-26.csv`. Both diffs joined 1775 of 1775 gaps.
+
+- **The guard's own effect (vs the unguarded 2026-10-29 run): 2 changed, 1773 bit-identical.** The
+  changes are 10/g11 (patched: the anchor seam is dropped and the write's end returns 900 ms) and
+  14/g10 (still skipped, correlation fields only). Those are the two trails the offline test
+  refused. Both are now bit-identical to the 2026-10-26 baseline. No run-level change.
+- **Default-on churn (vs the 2026-10-26 baseline): 313 changed** (311 patched with field changes,
+  2 status flips) across 83 pairs, against 315 unguarded. Every change has a census onset. The
+  only ones further out than 40 ms are 68/g5 and 83/g7, the refinement-origin cases above. Status
+  flips are unchanged: 11/g9 and 31/g7, both skipped→patched, both now single-lag `high` with dual
+  fit. No patch is lost. *(Both flips were an abut artifact. Reverted by the abut fix, see the chain
+  audit below. With it, default-on churn is 311 gaps and has no status flips.)*
+
+**Listen strata (input to step 3; not pre-registered and not rendered).** Counted over the 311
+patched→patched gaps. "Moved" means the write's start or end adjust, the anchor bracket, or
+`align_adjustment` changed by more than 40 ms.
+
+| stratum | gaps | detail |
+|---|---|---|
+| `anchor_seam_used` flip | 37 | 20 on, 17 off |
+| `dual_fit_used` flip | 30 | 13 on, 17 off |
+| `patch_tier` change | 46 | marginal↔high 12/12, anchor_trusted↔high 8/8, anchor_trusted→marginal 5, marginal→anchor_trusted 1 |
+| moved > 40 ms | 94 | start adjust 35, end adjust 23, anchor bracket 22, align 14 (largest: 32/g10, anchor bracket 4.0 s) |
+| **re-placed (union of the four above)** | **111** | 55 in one stratum, 24 in two, 24 in three, 8 in all four |
+| named: 69/g9 | 1 | anchor off, dual on, end adjust moves 1150 ms (align 426 ms) |
+| named: 32/g10 | 1 | anchor on, dual off, anchor bracket moves 4.0 s |
+| trail snap (trail onset ≤ 40 ms) | 96 | 40 also re-placed; 63 also snap the lead; **27 trail-only and not re-placed** (the clean trail stratum, like Phase 3's leads) |
+| status flip | 2 → 0 after the abut fix | 11/g9, 31/g7 (skipped again) |
+| lead-only, scoring-only | 144 | no stratum: the population Phase 3 already heard |
+
+- The 10-29 "about 95" counted moves only. The union of all four placement signals is 111. That
+  is the population step 3 samples. The guard removed one of its gaps (10/g11).
+- Trail onsets are short: median 3.8 ms, at most 20.7 ms. The clean trail stratum isolates a
+  ≤ 21 ms post-seam move. A trail snap moves the post seam, so render check 2 needs the
+  trail-onset variant, which the Phase 3 script already has.
+
+### Chain audit (2026-10-31): the snap overturns two latched skips; nothing else double-corrects
+
+The user asked whether default-on breaks anything built to cope with the unsnapped edge. That
+includes latched and blocked items in settled.md. Each consumer of the refined edge was checked
+against the guarded run (`gap-files/2026-10-30-edge-snap-guard/` vs `2026-10-26-edge-onset/`).
+
+- **`shoulders_abut` skip (`SeamLocks::abut`, `bridge_frames <= 0`): BROKEN, two latches
+  overturned.** The status flips are not repairs. Both gaps keep exactly the same shoulder lags
+  (11/g9 pre −71.96 / post −675.71 ms; 31/g7 pre −38.23 / post −1160.25 ms). Their base bridges sat
+  just below zero: −205 and −153 frames (−4.3 / −3.2 ms). The lead snap lengthens each gap by its
+  band (5.6 / 7.3 ms), which pushes the bridge to +1.3 / +4.1 ms. `abut()` stops firing, and
+  dual-fit splices across the whole 604 / 1122 ms step with almost no donor bridge. That is the
+  case the skip exists to refuse: introduced silence, not missing content. It is the same
+  arithmetic coincidence as the retired `collapsed_bridge` reading (bridge = gap + step).
+  - settled § C: "11/g9 stays skip until" the introduced-silence collapse decision. 11/g9's post
+    lock is the corpus's known false peak (step agreement 607.99 ms, § C two-probe row), so its new
+    patch registers its post seam on a false lag (`registration_residual_post_ms` 675.7).
+  - settled § D: 31/g7's step-boundary skip verdict is blocked on a listen tree. Default-on would
+    patch it anyway, without one.
+  - The run-level `shoulders_abut` list, which the latched collapse Change reads for its targets,
+    goes from 2 entries to 0.
+  - **FIXED (2026-10-31, uncommitted): `abut` is read on the unsnapped geometry.** The snap
+    corrects the write, not a skip verdict. Repair characterize now splits refine and snap, and
+    `SeamLocks::without_edge_snap(lead, trail)` moves each seam back in by its edge's snap (lags
+    unchanged). The skip is decided and recorded on that geometry: bridge, `gap_frames`, the A
+    frames, and the B start for `program_quiet`. Placement after the check stays on the snapped
+    edges. Unit test `edge_snap_does_not_lift_an_abut`.
+    - **Re-run of pairs 11 and 31 with `--edge-snap-max-ms 40`** (`gap-files/2026-10-31-abut-fix/`):
+      11/g9 and 31/g7 are `shoulders_abut` skips again. They match the 10-26 baseline exactly on
+      lags, bridge (−205 / −153), `gap_frames` (28775 / 53704) and the run-level abut rows. The
+      one difference is `pre_z` (19.58 vs 19.87; 14.37 vs 14.14), because the pre lock is still
+      measured on the snapped template, as intended. Every other gap in both pairs is identical to
+      the guarded run (16/17, 12/13), so the fix only reaches the two skips. PR tier: 1134 passed.
+    - **Not mirrored in the fingerprint:** `schema.rs` still reads `shoulders_ordered` on the
+      snapped bridge. That is harmless while the fingerprint's `edge_snap_max_ms` defaults to 0. It
+      joins the default-flip to-do below.
+- **Border (structure) templates: unaffected by design.** They are cut `border_standoff_secs`
+  (0.35 s) back from the edge, then trimmed below 12 % of peak. That already excluded the band (at
+  about −55 dBFS), so a ≤ 31 ms edge move only translates them. The standoff's unmeasured "click or
+  fade" rationale (settled § E) is not touched in either direction.
+- **Seam-lock templates (`wide_a_slicer`, flush with the edge, D ≡ 0): moved, as intended.** These
+  carried the band, and removing it is the stated reason for keeping placement on the snapped edge.
+  This is the source of the 111 re-placements, which step 3 listens to.
+- **A-boundary extension (`gap_start/end_adjust`, ≤ 500 ms):** 58 of the 94 large moves. Some
+  extensions may have been escaping band-contaminated seams. They are re-placements, so they are in
+  step 3's strata, not a separate defect.
+- **Short fills (`census-zero-pad.ps1`):** 0 of 359 bracket-eligible gaps on the snapped run, and
+  0 of 355 on baseline. The longer snapped gaps did not exhaust a donor.
+- **A4 injected-time** (it measures shoulder lags at the snapped edges): no warning in either arm.
+- **Run-level `donor_relation`** flipped on 4 pairs. It is a report-only summary of the gap tags
+  (`derive_donor_relation`), with no decision consumer.
+- **Scan, the equivalence gate and `not_planned` gaps:** untouched by construction (the snap lives
+  in repair). 0 `not_planned` gaps changed.
+- **To do at the default flip:** `gap_fingerprint/contract.rs` pins the fingerprint's
+  `edge_snap_max_ms` default against `RepairConfig`'s, so both must flip together. Otherwise the
+  dump geometry drifts from the patch. In the same change, have the fingerprint's
+  `shoulders_ordered` read the unsnapped bridge (`without_edge_snap`), so the dump keeps
+  predicting the abut skip.
+
+### Step 3 — listen protocol (DRAFT 2026-10-31; pre-registered only once approved, before any render)
+
+**Question:** does default-on, with its re-placements, ever make a gap audibly worse? Phase 3
+already showed the snap removes an audible blip. Re-placement is balanced churn, with no expected
+direction. So this test is for **non-inferiority**: it looks for regressions, not wins.
+
+**Arms.** One build (the guard build; the library differs from `01de590b` only by
+`gap_reaches_zero`). The *current* arm uses defaults. The *snapped* arm adds `--edge-snap-max-ms 40`.
+Both are real repairs (`--only-gaps`, `--mux` to `.mkv` with FLAC audio), run sequentially, as in
+Phase 3.
+
+**Selection.** Every re-placed gap goes in exactly one primary stratum, checked in this order:
+anchor flip, dual flip, tier change, moved > 40 ms. The draw uses seed **20261031**: within each
+stratum, sort by (pair, gap), then shuffle. Take candidates in walk order until the quota passes the
+render checks. Don't go past rank 8 in any stratum. A candidate that fails a check is recorded with
+its reason.
+
+| stratum | n | quota | walk order (ranks 1–8) |
+|---|---|---|---|
+| named | 2 | 2 | 69/g9, 32/g10 (both always in) |
+| anchor flip | 35 | 3 | 48/g3, 48/g5, 83/g7, 50/g8, 49/g34, 85/g85, 7/g4, 86/g12 |
+| dual flip | 11 | 3 | 68/g3, 17/g34, 43/g7, 10/g8, 26/g6, 33/g14, 80/g11, 79/g9 |
+| tier change | 22 | 3 | 45/g1, 69/g5, 39/g7, 84/g9, 32/g13, 68/g2, 5/g3, 63/g5 |
+| moved only | 41 | 3 | 71/g12, 76/g3, 13/g31, 13/g17, 64/g46, 23/g4, 3/g17, 9/g5 |
+| clean trail (trail-only snap, not re-placed) | 27 | 4 | 12/g1, 51/g1, 37/g5, 11/g4, 85/g88, 80/g8, 72/g6, 65/g9 |
+
+That gives 18 A/B gaps: 14 re-placed and 4 trail.
+
+**Controls (2), A/B.** In the two named pairs, the lowest-index patched gap that is unchanged and has
+no onset on either edge: **69/g6** (dual fit) and **32/g9** (single lag). The arms must be
+byte-identical. **Repeats (2):** two of the 14 re-placed gaps, drawn with the seed, presented twice.
+In total, 22 A/B trials.
+
+**Status flips (separate block): DROPPED 2026-10-31.** The abut fix landed (chain audit above),
+both gaps stay skipped, and there is nothing to hear. The original design is kept below for the
+record. It applies only if the fix is ever reverted. For 31/g7 and 11/g9, the current arm is an
+unrepaired hole, so an A/B comparison tests nothing. Instead, render each snapped-arm clip on its own.
+Shuffle them with two reference clips of unchanged patched gaps, **11/g3** and **32/g3** (pair 31 has
+no unchanged, onset-free patched gap). Score each clip *clean* or *defect*, with a location. The
+listener is not told which clips are the flips.
+
+**Render checks.**
+- *Trail stratum and controls:* Phase 3 checks 1–3 unchanged, with check 2's trail-onset variant.
+- *Re-placed strata*, which re-place by design, so check 3 is dropped:
+  1. **Reference match.** The current arm reproduces `gap-files/2026-10-26-edge-onset/<pair>.json`,
+     as in Phase 3.
+  2. **Candidate match.** The snapped arm reproduces `gap-files/2026-10-30-edge-snap-guard/<pair>.json`:
+     the same `anchor_seam_used`, `dual_fit_used`, `patch_tier` and adjust frames, and
+     `align_adjustment_secs` within 0.1 ms. That way we hear the re-placement the corpus made.
+  3. **Confined.** The arms are byte-identical outside [earliest write start − 12 ms, latest write
+     end + 12 ms], taken over both arms.
+- **Clip window:** 4 s before the earlier of the two write starts, to 4 s after the later write end.
+  It is the same window for both arms. Anchor brackets move up to 4 s, so some clips are long.
+
+**Blind key.** As in Phase 3, under `gap-files/2026-10-31-blind-default-on/` with a `-key` sibling.
+22 A/B trials, shuffled with the seed, with no two trials of one gap adjacent. *snapped* is on *a* in
+exactly 10 of the 20 non-control trials. The 4 absolute clips are scored in their own block. All
+scoring happens in one sitting.
+
+**Decision rule.** Tolerance confirmed by the user on 2026-10-31: a single gap that sounds worse
+blocks default-on.
+- `k` and `w` are defined as in Phase 3: control false-differences plus opposite repeats. **k ≥ 2
+  is inconclusive.**
+- Over the 18 A/B gaps, a repeat counts only when both its verdicts agree. Status flips pass when
+  both are *clean*. A *defect* that also appears on a reference clip counts as listener noise and
+  adds 1 to `k`.
+  - **Default-on:** *current better* ≤ `w`, and both status flips pass. Build step 4 (snap
+    reporting), then flip the default and close per § 7.
+  - **Refute default-on as built:** *current better* ≥ 2 and greater than *snapped better*. Record
+    it in settled § A. The snap stays opt-in, and write-only (option 1) is reopened.
+  - **Otherwise stay opt-in** (settled § C). This includes a single regression, or a flip with a
+    defect. It is latched on a second sitting from walk ranks 4–8, plus a look at the losing gap's
+    stratum. A regression confined to one stratum would argue for a stratum guard (for example,
+    no snap when it would flip `anchor_seam_used`), not for dropping the snap.
+
+**Executable half:** a re-placed mode for `build-edge-snap-listen-set.ps1`, built only after this
+draft is approved. Estimated media cost is about 2 × 20 pair-runs at about 6 minutes each, around
+4 hours sequential, plus rounds for replacements.
+
+### Step 4 — snap reporting (planned 2026-10-31; built after the listen, before the flip)
+
+**Why.** Default-on moves the write on 311 gaps, and no report says so.
+- The scan report keeps the floor edge. That is the accepted cost from § 4 Phase 4.
+- The patch entry's `gap_start_adjust_frames` / `gap_end_adjust_frames` are measured from the
+  refined edge, and that becomes the snapped edge. A reader can no longer recover the write start
+  from `start_secs`.
+- `characterize.rs` computes `snap_lead_frames` / `snap_trail_frames` for the abut fix, then drops
+  them.
+- A's codec is decoded (`SourceDescriptor`) and dropped (`sources: _` in `patch_audio/mod.rs`).
+  Only the fingerprint dump keeps it.
+- The guard is validated on AAC-LC only (signal-guard test). On any other codec, the report is the
+  only place a misfit would show.
+
+**Why after the listen.** The listen reads no new field, and the reporting does not touch the
+audio. The one change near behaviour, the search window below, needs a full-corpus run to clear.
+The flip needs that run anyway, so both share it.
+
+**Prerequisite: the onset search must reach past the cap.** `lead_onset` / `trail_onset` search only
+`max_frames` plus two bins. A band longer than that has no 15 dB fall inside the window, so it returns
+no onset, and a cap refusal reads as a hard edge. That is the HE-AAC case (about 85 ms windows), and
+it is 58/g2's trail today.
+- Fix: search a fixed observation window (200 ms, the census window), and let the cap limit only the
+  move.
+- This is not provably neutral. `merge_onsets` chains onsets ≤ 4 ms apart to the outermost. An onset
+  newly visible past the old window could, in principle, pull a nearby snap outward or into a
+  refusal. The verification run checks it.
+
+**Per-edge record.** An optional `edge_snap` object on every gap that reaches characterize, patched
+or skipped, with a `lead` and a `trail` entry. `not_planned` gaps never run the snap. Absent when the
+snap is off. Frames are at A's rate, as for the adjust fields.
+
+| field | meaning | what it shows on another codec |
+|---|---|---|
+| `outcome` | `snapped`, `hard` (no onset), `refused_cap`, `refused_no_zero`, or `not_attempted_advanced` (lead only: refinement advanced the start). The refusals follow the code's order: cap first, then zero | The two refusals are the codec canaries |
+| `onset_frames` | Onset to the refined edge, also on refusals; absent on `hard` | A codec's band length shows as a new cluster |
+| `moved_frames` | How far the write's edge moved (`snap_lead_frames` / `snap_trail_frames`); 0 unless `snapped` | With `start_secs` and the adjust field, it gives the write start |
+| `reaches_zero` | The `gap_reaches_zero` result, on every edge with an onset | Kept separate from `outcome`, so a long band that also never reaches zero reads as programme |
+| `onset_to_zero_frames` | Onset to the start of the digital-zero run | AAC-LC: ≤ 2048 (217 of 218 soft leads). A different window length shows here |
+| `band_peak_dbfs`, `step_db` | Band shape | The encoder-noise shape is a step of about 20 dB to about −55 dBFS |
+| `gap_floor_dbfs` | Only on `refused_no_zero`: the lowest 2 ms bin inside the zero search | Separates a noise-filled dropout (dither, comfort noise) from quiet programme (10/g11, 14/g10 trails at −62 … −66 dBFS) |
+
+**Run level.**
+- `PatchSummary` gets an `edge_snap` settings echo: the cap in ms, the zero amplitude, the zero
+  search and run lengths in ms, and the observation window in ms. This is the `fill_geometry`
+  pattern, so a two-arm differential can be traced to the setting.
+- `PatchSummary` also gets counts per side per `outcome`, and the largest `onset_frames` among
+  `refused_cap`.
+- `TrackCompatibility` gets `a_codec` / `b_codec`, with the native sample rate and bit depth when
+  the probe has them. Check on one HE-AAC file whether these separate HE-AAC from LC. If they
+  don't, also record the profile.
+
+**Human output** (`docs/cli-output.md`). The default output does not change.
+- Under `--verbose`, split the `A gap (refined)` line into a refine line and a snap line, for example
+  `A gap (snapped): lead −21.8 ms (zero at +27.1 ms)`. A refusal prints as
+  `edge snap refused (cap): lead onset −62.0 ms`.
+- One run summary line with the outcome counts.
+
+**Other records.**
+- **Fingerprint dump:** add `a_unsnapped_start_secs` / `a_unsnapped_end_secs` beside `a_refined_*`
+  (`schema.rs`). Then dumps from before and after the flip stay comparable. This lands with the
+  `shoulders_ordered` to-do in the chain audit.
+- **`edge-onset`:** compare its floor edge against the unsnapped edge. On snapped reports, read
+  exposure from `moved_frames`, not from the onset − floor − 10 ms estimate. Otherwise it reports
+  exposure that has already been fixed.
+- **Abut skip record:** `ShouldersAbutLocks` carries the lead and trail snap frames, so the skip
+  shows it was read on the unsnapped geometry.
+
+**Contract.** Every field is optional and additive, so the contract stays v1. Follow the
+[json-output.md](../json-output.md) revision procedure. Populate every new field in the
+`full_surface_repair.json` golden, including one refusal with `gap_floor_dbfs`. Then regenerate it
+with `write_full_surface_repair_golden`.
+
+**Tests.**
+- Domain: one test per `outcome`, on the existing `edge_snap_*` fixtures.
+- Domain: a band longer than the cap reports `refused_cap` with its onset. Before the window change,
+  it reads `hard`.
+- Domain: a merge-chain case where the wider window must not change the move.
+- CLI: extend `edge_snap_writes_over_a_soft_lead_band` to check that `moved_frames` equals the
+  shift of the written start.
+
+**Verification: one full-corpus run, at the flip.** Build the reporting, the window and the default
+flip together, including the fingerprint to-do. Run `measure-patch-outcomes.ps1` at defaults over all
+85 pairs. It passes when:
+- Every field that existed before is identical to the listened build's snapped arm. That means the
+  2026-10-30 guard reports, with 11/g9 and 31/g7 taken from `2026-10-31-abut-fix/`. Any difference
+  comes from the window change and must be explained before the flip.
+- `moved_frames` > 0 on every gap the guarded churn changed (311). Anywhere else, it is > 0 only on
+  edges with a census onset ≤ 40 ms whose report did not change. The 2026-10-29 churn had 15 such
+  gaps.
+- 58/g2 trail reads `refused_cap` (onset 107.5 ms). 10/g11 and 14/g10 trails read `refused_no_zero`,
+  with `gap_floor_dbfs` in −62 … −66.
+- On snapped leads, `onset_to_zero_frames` ≤ 2048, matching `frame-grid.csv`.
+
+That run is the first report that records the snap. It is also the baseline for any later codec.
+
+**Reading a first run on another codec.** Neither signal changes behaviour; each one triggers a
+measurement.
+- `refused_cap` > 0, with `onset_frames` clustered: the codec's window is longer than the cap. Those
+  edges stay unsnapped, which is safe. The open question is the cap.
+- `refused_no_zero`, with `gap_floor_dbfs` well below quiet programme: the codec's dropouts do not
+  decode to zero. The open question is the zero threshold.
+
+**Not added.**
+- The 1024-frame grid lock. It is a census diagnostic, read per pair, and stays in `edge-onset`.
+- Codec labels or per-codec verdicts ([settled.md](settled.md) § A). The report carries signal
+  values beside the codec, and the reader groups them.
+
 ## 6. Non-goals
 
 - Lowering `absolute_silence_rms` or changing `is_silent_interleaved` (§ 0).

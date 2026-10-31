@@ -174,6 +174,27 @@ impl SeamLocks {
     pub fn clamped(&self) -> bool {
         self.b_post_seam_unclamped - self.b_pre_seam_unclamped > 0 && self.bridge_frames <= 0
     }
+
+    /// The same locks re-expressed on the gap edges before the onset snap moved them out by
+    /// `lead_frames` / `trail_frames`: each seam moves back in by its edge's snap, lags unchanged.
+    ///
+    /// The abut verdict must be read here. The snap only strips a codec tail off A's edges; it adds
+    /// no donor material, yet it lengthens the nominal bridge by exactly the snap and so lifts a
+    /// few-ms crossing above zero (11/g9, 31/g7 — `TEMP-soft-edge-census-plan.md` § 5 chain audit).
+    pub fn without_edge_snap(&self, lead_frames: usize, trail_frames: usize) -> SeamLocks {
+        let b_pre_seam_unclamped = self.b_pre_seam_unclamped + lead_frames as i64;
+        let b_post_seam_unclamped = self.b_post_seam_unclamped - trail_frames as i64;
+        let b_pre_seam = b_pre_seam_unclamped.max(0) as usize;
+        let b_post_seam = b_post_seam_unclamped.max(0) as usize;
+        SeamLocks {
+            b_pre_seam,
+            b_post_seam,
+            bridge_frames: b_post_seam as i64 - b_pre_seam as i64,
+            b_pre_seam_unclamped,
+            b_post_seam_unclamped,
+            ..*self
+        }
+    }
 }
 
 /// The two gate floors, together, so a caller cannot pass one and forget the other.
@@ -568,6 +589,24 @@ mod tests {
             b_pre_seam_unclamped: pre_unclamped,
             b_post_seam_unclamped: post_unclamped,
         }
+    }
+
+    /// A soft lead snap lengthens the nominal bridge without adding donor material: a −4 ms crossing
+    /// snapped 6 ms earlier reads as a +2 ms bridge, but unsnapped it still abuts.
+    #[test]
+    fn edge_snap_does_not_lift_an_abut() {
+        let rate = 48_000_i64;
+        let lead = (rate * 6 / 1000) as usize;
+        let snapped = locks(100_000, 100_000 - rate * 4 / 1000 + lead as i64, true);
+        assert!(!snapped.abut(), "the snapped geometry shows a bridge");
+        let unsnapped = snapped.without_edge_snap(lead, 0);
+        assert!(unsnapped.abut());
+        assert_eq!(unsnapped.bridge_frames, -(rate * 4 / 1000));
+        assert_eq!(
+            snapped.without_edge_snap(0, 0).bridge_frames,
+            snapped.bridge_frames,
+            "no snap, no change"
+        );
     }
 
     /// `clamped` is the lookalike tag for "the `.max(0)` manufactured this abut": both seams landed left of
