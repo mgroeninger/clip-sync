@@ -1211,14 +1211,29 @@ with `write_full_surface_repair_golden`.
     `refine_start_frames` is non-zero. `fill_source_start_secs` equals the refined start plus the
     fixture's 3 s offset plus `registration_applied_ms`, to 2 frames. Fit places this fixture's fill
     2.3 ms early against the true content (the chirp barely correlates at the seams), and the field
-    reports that move. This covers the Fit path only.
+    reports that move. The body is a shared helper, run on the margin path (default) and again as
+    `placement_on_the_plain_seam_path_reports_the_crossfade_offset_fill_frame`
+    (`--no-seam-extend-fill`), where the gap start carries `fill[cf]` and the fill source sits one
+    crossfade (441 frames) later.
+  - Integration: `patch_audio_dual_fit_rescues_constant_shift_as_rigid_seam_lock`
+    (`patch_audio_integration.rs`) now checks the dual-fit fill source. On the white-noise fixture
+    (B shifted 0.35 s) it equals the gap start plus 0.35 s to 2 frames, and the patched A frames
+    correlate with B there at r(0) > 0.99 and r(±1) < 0.5. A mutation (+441 frames on the dual-fit
+    `fill_source_frame`) fails it.
   - Golden: `full_surface_repair.json` carries one placement with both refine keys, and one
     (dual-fit) without them.
+  - Scripts: `measure-patch-outcomes.ps1` writes `placement-rollup.csv` (one row per spliced gap with
+    `placement`). `diff-patch-outcomes.ps1` cross-tabs re-placement (`fill_source_start_secs` or the
+    write extent moved) against `registration_applied_ms`, and flags a registration move with no
+    placement move as `odd:` (legitimate only when the B offset itself moved).
 - **Still open:**
-  - `fill_source_start_secs` on dual-fit and anchor-seam fixtures: correlate the output's first
-    post-crossfade frames against B at that time.
+  - A step-real dual-fit check. That fixture is a sine, so a fill-source correlation is ambiguous
+    there.
+  - Anchor-seam `fill_source_start_secs`. Low priority: it shares the bracket formula the Fit tests
+    cover.
   - A true refine-retraction fixture (leading silence before the reported start, 83/g7's shape).
-    The soft lead only moves the edge a few ms.
+    The soft lead only moves the edge a few ms. Deferred to the flip, with the verbose lines and
+    the skipped-gap refine move.
 
 **Verification: one full-corpus run, at the flip.** Build the reporting, the window and the default
 flip together, including the fingerprint to-do. Run `measure-patch-outcomes.ps1` at defaults over all

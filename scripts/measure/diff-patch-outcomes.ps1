@@ -52,6 +52,17 @@
 # thousand per-gap dumps, and the rare path that should not have moved stands out. Status flips and
 # reason changes are left out of the table: their payload is replaced wholesale and would swamp it.
 #
+# RE-PLACEMENT: a cross-tab over joined gaps patched in both arms, by the rule in
+# docs/json-output.md § PatchPlacement — a gap is RE-PLACED when `placement.fill_source_start_secs`
+# or the write extent (`write_start_secs` / `write_end_secs`) moved. It is set against the old
+# signal, `status.patched.registration_applied_ms`, so the gaps the old strata missed (re-placed,
+# registration unchanged) are named. `odd:` (registration moved, placement did not) is listed to be
+# read, not a bug by itself: registration is measured from the nominal map, so a gap whose B offset
+# moved between arms (anchored retry, `fill_offset_mode`) can shift it with the fill held still.
+# Dual-fit gaps are counted apart: their registration reads 0.0, so they had no old signal at all.
+# A gap without `placement` on either side (a report from before 2026-10-31) reads UNKNOWN, never
+# "not re-placed". Report-only: it does not enter the VERDICT, which still judges every field.
+#
 # VERDICT: changed gaps split into EXPECTED and UNEXPLAINED. A gap is EXPECTED when
 #   - it flipped status or changed reason, and the candidate's reason (or its status, when it has no
 #     reason — e.g. `patched`) matches a -ExpectReasons pattern; or
@@ -194,6 +205,33 @@ function Get-ReasonName([object]$Status) {
     $payload = $Status.PSObject.Properties[$name].Value
     if (-not (Test-HasProp $payload 'reason')) { return '' }
     return Get-VariantName $payload.reason
+}
+
+# RE-PLACEMENT class for one joined row (see the header). '' when the row is not patched in both
+# arms. Placement times are frame / rate, so equal frames give bit-equal doubles; 1e-7 s (well under
+# one frame at 48 kHz) only absorbs JSON round-tripping.
+function Get-ReplacementClass([object]$Row) {
+    if ($Row.StatusBase -ne 'patched' -or $Row.StatusCand -ne 'patched') { return '' }
+    $pb = $Row.GapBase.status.patched
+    $pc = $Row.GapCand.status.patched
+    $dual = [bool]$pb.dual_fit_used -or [bool]$pc.dual_fit_used
+    $prefix = $(if ($dual) { 'dual_fit:' } else { '' })
+    $lb = $Row.GapBase.placement
+    $lc = $Row.GapCand.placement
+    if ($null -eq $lb -or $null -eq $lc) { return "${prefix}unknown_no_placement" }
+    $moved = $false
+    foreach ($k in 'fill_source_start_secs', 'write_start_secs', 'write_end_secs') {
+        if ([math]::Abs([double]$lc.$k - [double]$lb.$k) -gt 1e-7) { $moved = $true }
+    }
+    $rb = $pb.registration_applied_ms
+    $rc = $pc.registration_applied_ms
+    $regMoved = $(if ($null -eq $rb -and $null -eq $rc) { $false }
+        elseif ($null -eq $rb -or $null -eq $rc) { $true }
+        else { [math]::Abs([double]$rc - [double]$rb) -gt 1e-6 })
+    if ($moved -and $regMoved) { return "${prefix}replaced:registration_moved" }
+    if ($moved) { return "${prefix}replaced:registration_unchanged" }
+    if ($regMoved) { return "${prefix}odd:registration_moved_placement_did_not" }
+    return "${prefix}not_replaced"
 }
 
 function Test-IsNumber([object]$V) {
@@ -562,6 +600,8 @@ foreach ($label in $labels) {
                 Diffs      = @($kept)
                 Ignored    = $nIgnored
                 NearMissMs = $nearMissMs
+                GapBase    = $gb
+                GapCand    = $gc
             })
     }
 
@@ -793,6 +833,25 @@ if ($geo.Count -gt 0) {
     Write-Warning ("the arms ran DIFFERENT fill geometry ({0} field(s)); a gap-level difference is not attributable to the flag under test alone." -f $geo.Count)
 }
 
+foreach ($r in $rows) {
+    $rc = ''
+    if ($null -ne $r.PSObject.Properties['GapBase']) { $rc = Get-ReplacementClass $r }
+    $r | Add-Member -NotePropertyName Replacement -NotePropertyValue $rc -Force
+}
+$placedRows = @($rows | Where-Object { $_.Replacement })
+if ($placedRows.Count -gt 0) {
+    Write-Host ("RE-PLACEMENT over {0} gap(s) patched in both arms (rule: fill_source_start_secs or write extent moved):" -f $placedRows.Count)
+    foreach ($grp in ($placedRows | Group-Object Replacement | Sort-Object Name)) {
+        Write-Host ('  {0,-60} {1,5}' -f $grp.Name, $grp.Count)
+    }
+    $flagged = @($placedRows | Where-Object { $_.Replacement -like '*registration_unchanged' -or $_.Replacement -like '*odd:*' })
+    foreach ($r in ($flagged | Select-Object -First $Show)) {
+        Write-Host ('    pair {0} gap {1} @ {2}s  {3}' -f $r.Pair, $r.BaseIdx, $r.Start, $r.Replacement)
+    }
+    if ($flagged.Count -gt $Show) { Write-Host ("    ... {0} more (raise -Show, or use -CsvOut)" -f ($flagged.Count - $Show)) }
+    Write-Host ''
+}
+
 if ($CsvOut) {
     $dir = Split-Path -Parent $CsvOut
     if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
@@ -821,6 +880,7 @@ if ($CsvOut) {
                 changed_count = $r.Diffs.Count
                 ignored_count = $r.Ignored
                 near_miss_ms  = $r.NearMissMs
+                replacement   = $r.Replacement
                 changed_paths = $paths
             })
     }
@@ -842,6 +902,7 @@ if ($CsvOut) {
                 changed_count = 1
                 ignored_count = 0
                 near_miss_ms  = $null
+                replacement   = ''
                 changed_paths = "$($r.Path)=$($r.Base)->$($r.Cand)"
             })
     }

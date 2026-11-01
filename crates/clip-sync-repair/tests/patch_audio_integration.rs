@@ -1866,7 +1866,7 @@ fn patch_audio_dual_fit_rescues_constant_shift_as_rigid_seam_lock() {
         8_000.0,
     );
 
-    let report = make_report(path_a, path_b, stereo_identical_compat(SAMPLE_RATE));
+    let report = make_report(path_a, path_b.clone(), stereo_identical_compat(SAMPLE_RATE));
 
     // Bracket search radius far below SHIFT_SECS: keep-path cannot reach the shared lock lag. Dual-fit's
     // per-shoulder search (fixed ±600ms, independent of this option) still can.
@@ -1909,6 +1909,56 @@ fn patch_audio_dual_fit_rescues_constant_shift_as_rigid_seam_lock() {
     assert!(
         gap_rms > 100.0 / 32767.0,
         "rigid-rescued gap should contain audio, rms={gap_rms}"
+    );
+
+    // `placement.fill_source_start_secs` on the SilenceSplice arm (origin `locks.b_pre_seam`):
+    // B is A's noise delayed by SHIFT_SECS, so the true fill source is the gap start + SHIFT_SECS.
+    // The noise is white, so the written frames match B at that source and nowhere a frame away.
+    let placement = patched.summary.gaps[0]
+        .placement
+        .expect("a spliced dual-fit gap carries a placement record");
+    let rate = f64::from(SAMPLE_RATE);
+    let cf = (0.010 * rate) as usize; // run_patch's 10 ms crossfade
+    let gap_start = (placement.write_start_secs * rate).round() as usize + cf;
+    let source = (placement.fill_source_start_secs * rate).round() as i64;
+    assert!(
+        (source - (gap_start as f64 + SHIFT_SECS * rate).round() as i64).abs() <= 2,
+        "fill source {:.6} s must sit {SHIFT_SECS} s after the gap start {:.6} s",
+        placement.fill_source_start_secs,
+        gap_start as f64 / rate
+    );
+    let b_left: Vec<f32> = WavReader::open(&path_b)
+        .expect("open b")
+        .samples::<i16>()
+        .step_by(usize::from(CHANNELS))
+        .map(|s| f32::from(s.expect("read sample")) / 32768.0)
+        .collect();
+    let ch = usize::from(CHANNELS);
+    let window = SAMPLE_RATE as usize / 10;
+    let written: Vec<f32> = (0..window)
+        .map(|k| pcm.samples[(gap_start + k) * ch])
+        .collect();
+    let r_at = |lag: i64| {
+        let from = (source + lag) as usize;
+        let b = &b_left[from..from + window];
+        let (ma, mb) = (
+            written.iter().sum::<f32>() / window as f32,
+            b.iter().sum::<f32>() / window as f32,
+        );
+        let (mut num, mut da, mut db) = (0.0f64, 0.0f64, 0.0f64);
+        for (x, y) in written.iter().zip(b) {
+            let (x, y) = (f64::from(x - ma), f64::from(y - mb));
+            num += x * y;
+            da += x * x;
+            db += y * y;
+        }
+        num / (da * db).sqrt()
+    };
+    let (r0, r_early, r_late) = (r_at(0), r_at(-1), r_at(1));
+    assert!(
+        r0 > 0.99 && r_early < 0.5 && r_late < 0.5,
+        "the gap's written frames must be B at fill_source_start_secs exactly: \
+         r(0)={r0:.4} r(-1)={r_early:.4} r(+1)={r_late:.4}"
     );
 }
 

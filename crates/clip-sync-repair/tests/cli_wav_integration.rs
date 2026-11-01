@@ -431,8 +431,10 @@ scan_both = false
 /// crossfade of slack). B is A delayed by `OFFSET_SECS`, so the fill frame at the gap's first frame
 /// sits `OFFSET_SECS` later in B, moved by the registration Fit applied. The soft lead is moved by
 /// refinement, which `refine_start_frames` must carry.
-#[test]
-fn placement_locates_the_write_and_the_fill() {
+///
+/// `fill_extra_frames` is the fill frame the seam layout puts on the gap's first frame: `0` on the
+/// margin path (`fill[0]`), one crossfade on the plain path (its pre blend consumes `fill[..cf]`).
+fn assert_placement_locates_the_write_and_the_fill(extra_args: &[&str], fill_extra_frames: usize) {
     let temp = tempfile::tempdir().expect("tempdir");
     let (path_a, path_b) =
         write_offset_chirp_wav_pair(temp.path(), SAMPLE_RATE, TOTAL_SECS, OFFSET_SECS);
@@ -471,6 +473,7 @@ scan_both = false
             "25000",
             "--no-scan-both",
         ])
+        .args(extra_args)
         .output()
         .expect("run clip-sync-repair");
     assert!(
@@ -524,10 +527,29 @@ scan_both = false
     let applied_ms = gaps[0]["status"]["patched"]["registration_applied_ms"]
         .as_f64()
         .expect("a Fit patch reports registration_applied_ms");
-    let expected = gap_start + f64::from(OFFSET_SECS) + applied_ms / 1000.0;
+    // `registration_applied_ms` locates `fill[0]`; the layout decides which fill frame is written
+    // at the gap start.
+    let expected =
+        gap_start + f64::from(OFFSET_SECS) + applied_ms / 1000.0 + fill_extra_frames as f64 / rate;
     // Two frames covers rounding in the reported seconds; a crossfade-sized slip is 441 frames.
     assert!(
         (fill_source - expected).abs() <= 2.0 / rate,
-        "fill source {fill_source:.6} s must sit {OFFSET_SECS} s + {applied_ms:.4} ms after          gap start {gap_start:.6} s ({expected:.6} s)"
+        "fill source {fill_source:.6} s must sit {OFFSET_SECS} s + {applied_ms:.4} ms + \
+         {fill_extra_frames} frames after gap start {gap_start:.6} s ({expected:.6} s)"
     );
+}
+
+/// Margin path (`--seam-extend-fill`, the default): the gap's first frame carries `fill[0]`.
+#[test]
+fn placement_locates_the_write_and_the_fill() {
+    assert_placement_locates_the_write_and_the_fill(&[], 0);
+}
+
+/// Plain path (`--no-seam-extend-fill`): the pre blend consumes the first crossfade of fill, so
+/// the gap's first frame carries `fill[cf]` and the fill source sits one crossfade (441 frames)
+/// later than `registration_applied_ms` alone says.
+#[test]
+fn placement_on_the_plain_seam_path_reports_the_crossfade_offset_fill_frame() {
+    let cf = (0.01 * f64::from(SAMPLE_RATE)) as usize;
+    assert_placement_locates_the_write_and_the_fill(&["--no-seam-extend-fill"], cf);
 }

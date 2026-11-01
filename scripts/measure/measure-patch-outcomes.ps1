@@ -16,6 +16,8 @@
 # `post_correlation`, the tier and confidence, and the `tags` block are all here too. The rolled-up
 # CSV covers `fill_level` plus `normalize_gain` (the one non-`fill_level` column, and only because
 # the level fields are measured after that gain); for anything else, read the JSON.
+# A second CSV, `placement-rollup.csv`, carries each spliced gap's `placement` record (write extent,
+# fill source, refine move) — the fields to diff for re-placement, not `align_adjustment_secs`.
 #
 # Usage:
 #   ./scripts/measure/measure-patch-outcomes.ps1 -Manifest pairs.csv
@@ -325,6 +327,56 @@ function Write-FillLevelRollup {
     }
 }
 
+# One row per spliced gap that carries `placement` (docs/json-output.md § PatchPlacement): where the
+# splice wrote and from where in B. This is the placement to diff across arms — a gap is re-placed
+# when `fill_source_start_secs` or the write extent moves (`diff-patch-outcomes.ps1` prints the
+# cross-tab). `RegistrationAppliedMs` / `AlignAdjustmentSecs` ride along only to show what the old
+# signal said: the first misses Fit's trim-head move on dual-fit (reads 0.0), the second misses it
+# everywhere. Reports from before 2026-10-31 carry no `placement` and contribute no rows.
+function Write-PlacementRollup {
+    param(
+        [string]$Directory,
+        [object[]]$PairLabels
+    )
+    $all = [System.Collections.Generic.List[object]]::new()
+    foreach ($label in $PairLabels) {
+        $json = Join-Path $Directory "$label.json"
+        if (-not (Test-Path -LiteralPath $json)) { continue }
+        try {
+            $doc = Get-Content -LiteralPath $json -Raw | ConvertFrom-Json
+            if ($null -eq $doc.patch -or $null -eq $doc.patch.gaps) { continue }
+            $i = 0
+            foreach ($g in @($doc.patch.gaps)) {
+                $pl = $g.placement
+                if ($null -ne $pl) {
+                    $p = $g.status.patched
+                    $all.Add([pscustomobject]@{
+                            Label                 = $label
+                            Gap0Based             = $i
+                            AStartSecs            = $g.a_start_secs
+                            AEndSecs              = $g.a_end_secs
+                            RefineStartFrames     = $pl.refine_start_frames
+                            RefineEndFrames       = $pl.refine_end_frames
+                            WriteStartSecs        = [double]$pl.write_start_secs
+                            WriteEndSecs          = [double]$pl.write_end_secs
+                            FillSourceStartSecs   = [double]$pl.fill_source_start_secs
+                            RegistrationAppliedMs = $(if ($null -ne $p) { $p.registration_applied_ms } else { $null })
+                            AlignAdjustmentSecs   = $(if ($null -ne $p) { $p.align_adjustment_secs } else { $null })
+                            DualFitUsed           = Get-DualFitUsed -Outcome $g
+                        })
+                }
+                $i++
+            }
+        }
+        catch {
+            Write-Warning "[$label] placement rollup skipped (unreadable): $_"
+        }
+    }
+    $csv = Join-Path $Directory 'placement-rollup.csv'
+    $all | Export-Csv -LiteralPath $csv -NoTypeInformation -Encoding utf8
+    return [pscustomobject]@{ Path = $csv; Count = $all.Count }
+}
+
 # Top edge deltas, floored references held out (they sort to the top and mean nothing there).
 function Write-FillLevelCandidates {
     param([object]$Rollup)
@@ -370,6 +422,8 @@ if ($RollupOnly) {
     $rollup = Write-FillLevelRollup -Directory $OutDir -PairLabels @($labels)
     Write-Host "Rollup: $($rollup.Count) fill_level row(s) → $($rollup.Path)" -ForegroundColor Green
     Write-FillLevelCandidates -Rollup $rollup
+    $placementRollup = Write-PlacementRollup -Directory $OutDir -PairLabels @($labels)
+    Write-Host "Placement: $($placementRollup.Count) row(s) → $($placementRollup.Path)" -ForegroundColor Green
     Write-Host ''
     Write-Host "Docs: docs/pipeline.md § Fill-level check; docs/json-output.md § FillLevelCheck" -ForegroundColor DarkGray
     return
@@ -547,11 +601,13 @@ Write-Host ('-' * 72)
 
 $doneLabels = @($results | Where-Object { $_.ExitCode -eq 0 } | ForEach-Object { $_.Label })
 $rollup = Write-FillLevelRollup -Directory $OutDir -PairLabels $doneLabels
+$placementRollup = Write-PlacementRollup -Directory $OutDir -PairLabels $doneLabels
 
 Write-Host ''
 Write-Host "Reports: $OutDir" -ForegroundColor DarkGray
 Write-Host "Logs:    $LogDir" -ForegroundColor DarkGray
 Write-Host "Rollup:  $($rollup.Path) ($($rollup.Count) row(s), sorted by edge_delta_db desc)" -ForegroundColor DarkGray
+Write-Host "Placement: $($placementRollup.Path) ($($placementRollup.Count) row(s))" -ForegroundColor DarkGray
 
 Write-FillLevelCandidates -Rollup $rollup
 
