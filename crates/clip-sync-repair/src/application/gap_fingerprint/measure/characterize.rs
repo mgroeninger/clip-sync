@@ -241,6 +241,7 @@ pub fn characterize_gaps_from_decode(
                 post_seam_r: 0.0,
                 pre_lag: 0,
                 post_lag: 0,
+                fill_extract_start_frame: 0,
                 trim_frames: 0,
                 step_real: false,
                 residual: None,
@@ -263,6 +264,7 @@ pub fn characterize_gaps_from_decode(
                 start_frame: (fp.geometry.a_refined_start_secs * rate).round() as usize,
                 end_frame: (fp.geometry.a_refined_end_secs * rate).round() as usize,
             },
+            edge_refine: None,
             b_extract: BExtractWindow {
                 start_frame: 0,
                 end_frame: 0,

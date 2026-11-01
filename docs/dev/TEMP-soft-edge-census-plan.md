@@ -857,7 +857,9 @@ is not proposed.
    - The decision rule is fixed before rendering.
 4. **Build the snap reporting** (added 2026-10-31; spec in *Step 4 — snap reporting* below). It
    comes after the listen and before the flip. The listen does not read it, and its one
-   behaviour-adjacent change needs a full-corpus run that the flip pays for anyway.
+   behaviour-adjacent change needs a full-corpus run that the flip pays for anyway. Split
+   2026-10-31: the snap-independent `placement` record (write extent, fill source, refine move) is
+   built now; the snap-specific half waits for the verdict.
 5. **Flip the default if the listen passes.** Then close per § 7, with one settled row.
    - The claim is AAC-validated only. On codecs without a transform window the guard is inert by
      construction.
@@ -1072,7 +1074,7 @@ Two candidates failed their checks, and the walk replaced both as specified. Fin
   snap predictions (the render's `Get-SnapMs`, the strata's `lead ≤ 40`) are wrong wherever refinement
   moves an edge. This predates the snap: the write start was never recoverable from the report.
 
-### Step 4 — snap reporting (planned 2026-10-31; built after the listen, before the flip)
+### Step 4 — snap reporting (planned 2026-10-31; split the same day: placement built now, snap record after the listen)
 
 **Why.** Default-on moves the write on 311 gaps, and no report says so.
 - The scan report keeps the floor edge. That is the accepted cost from § 4 Phase 4.
@@ -1091,9 +1093,18 @@ Two candidates failed their checks, and the walk replaced both as specified. Fin
 - The guard is validated on AAC-LC only (signal-guard test). On any other codec, the report is the
   only place a misfit would show.
 
-**Why after the listen.** The listen reads no new field, and the reporting does not touch the
-audio. The one change near behaviour, the search window below, needs a full-corpus run to clear.
-The flip needs that run anyway, so both share it.
+**Why after the listen, and the split (user decision 2026-10-31).** The listen reads no new field,
+and the reporting does not touch the audio. The one change near behaviour, the search window below,
+needs a full-corpus run to clear. The flip needs that run anyway, so both share it.
+- **Built now (2026-10-31, uncommitted):** the snap-independent half. That is the write extent, the
+  fill source and the refine move, in a per-gap `placement` object (*Write extent and fill source*
+  below). These fields are missing whether or not the snap ships: 83/g7's refine retraction and the
+  62 registration-only re-placements are pre-snap holes in the report.
+- **Deferred until the listen verdict:** everything snap-specific. That is the `edge_snap` record,
+  the run counts and settings echo, the verbose lines, the wider onset window and the abut-row snap
+  frames. A verdict that blocks default-on would leave those fields describing an opt-in feature.
+- **Corpus runs for both arms wait for the verdict.** The placement fields get their corpus read in
+  the verification run below, not before.
 
 **Prerequisite: the onset search must reach past the cap.** `lead_onset` / `trail_onset` search only
 `max_frames` plus two bins. A band longer than that has no 15 dB fall inside the window, so it returns
@@ -1114,20 +1125,39 @@ snap is off. Frames are at A's rate, as for the adjust fields.
 | `outcome` | `snapped`, `hard` (no onset), `refused_cap`, `refused_no_zero`, or `not_attempted_advanced` (lead only: refinement advanced the start). The refusals follow the code's order: cap first, then zero | The two refusals are the codec canaries |
 | `onset_frames` | Onset to the refined edge, also on refusals; absent on `hard` | A codec's band length shows as a new cluster |
 | `moved_frames` | How far the write's edge moved (`snap_lead_frames` / `snap_trail_frames`); 0 unless `snapped` | Ties a write move to the snap. The write itself is recorded directly (below), not reconstructed |
-| `refined_frames` | Floor edge (`a_start_secs` / `a_end_secs`) to the refined edge, signed. It is the move the snap starts from, and it is recorded whether or not the snap is on | Explains a census onset that disagrees with `onset_frames`: the census measures from the floor edge (83/g7: census 92.81 ms = refine 90.5 + snap 2.3) |
 | `reaches_zero` | The `gap_reaches_zero` result, on every edge with an onset | Kept separate from `outcome`, so a long band that also never reaches zero reads as programme |
 | `onset_to_zero_frames` | Onset to the start of the digital-zero run | AAC-LC: ≤ 2048 (217 of 218 soft leads). A different window length shows here |
 | `band_peak_dbfs`, `step_db` | Band shape | The encoder-noise shape is a step of about 20 dB to about −55 dBFS |
 | `gap_floor_dbfs` | Only on `refused_no_zero`: the lowest 2 ms bin inside the zero search | Separates a noise-filled dropout (dither, comfort noise) from quiet programme (10/g11, 14/g10 trails at −62 … −66 dBFS) |
 
-**Write extent and fill source (every patched gap, snap on or off).** The splice already knows both,
-so this records them rather than having a reader rebuild them from edges and adjust fields.
-- `write_start_secs` / `write_end_secs`: the first and last A frame the splice changes, with the
-  crossfades included. This is the extent a WAV diff sees. Check 3 rebuilt it from fields and got
-  83/g7 wrong by 90 ms.
+**Write extent and fill source (every patched gap, snap on or off). BUILT 2026-10-31** as the
+optional per-gap `placement` object on `GapPatchOutcome` (`domain::PatchPlacement`, documented in
+[json-output.md](../json-output.md) § PatchPlacement). The splice already knows both, so this records
+them rather than having a reader rebuild them from edges and adjust fields. It is present only on gaps
+whose fill was spliced, like `fill_level`: write runs and `--patch-only`, never `--repair-preview`.
+- `refine_start_frames` / `refine_end_frames` (was `refined_frames` in the `edge_snap` table): the
+  signed refine move from the reported edge to the unsnapped refined edge (refined − reported), at
+  A's rate. It explains a census onset that disagrees with the snap's `onset_frames`, because the
+  census measures from the floor edge (83/g7: census 92.81 ms = refine 90.5 + snap 2.3).
+  - **Patched gaps only, for now.** It lives on the placement record, so a skipped gap's refine move
+    is still unrecorded. The `edge_snap` record at the flip should carry it for skips too (*Snap as
+    the base* below).
+  - Computed in repair characterize (`EdgeRefineFrames::between`) and carried on
+    `GapRepairSpec.edge_refine`. Fingerprint projections and fixtures leave it absent.
+- `write_start_secs` / `write_end_secs`: the A range the splice changes, crossfades included,
+  **end exclusive**. This is the extent a WAV diff sees. The crossfade's first frame weighs the fill
+  at zero, so a diff's first changed sample can sit up to one crossfade inside the range. Check 3
+  rebuilt it from fields and got 83/g7 wrong by 90 ms. `splice_into_a` returns it (`SpliceWrite`),
+  using the same clamped crossfade width (`effective_seam_crossfade_frames`) as both seam paths.
 - `fill_source_start_secs`: the B time of the fill frame written at the gap's pre seam. That is
   the placement itself, on every path, dual-fit included. `registration_applied_ms` stays as the
   registration read.
+  - On the plain seam path the pre crossfade consumes the first `cf` fill frames, so the gap-start
+    frame is `fill[cf]`. On the margin path (`--seam-extend-fill`) it is `fill[0]`.
+    `apply_seam_crossfade_extended` now returns which layout it wrote.
+  - SilenceSplice dual-fit takes its B origin from `locks.b_pre_seam`
+    (`SilenceSplice.fill_extract_start_frame`). That differs from `b_mapped + pre_lag` when the lock
+    is clamped.
 - **Rule for differentials** (strata, render checks, `diff-vs-*.csv`): a gap is re-placed when
   `fill_source_start_secs` or the write extent moves. Never judge it from `align_adjustment_secs`
   alone. Until these fields exist, read `registration_applied_ms` and treat dual-fit as unknown.
@@ -1170,12 +1200,23 @@ with `write_full_surface_repair_golden`.
 - Domain: a merge-chain case where the wider window must not change the move.
 - CLI: extend `edge_snap_writes_over_a_soft_lead_band` to check that `moved_frames` equals the
   shift of the written start.
-- CLI: on a fixture with leading silence before the reported start (a refine retraction), check
-  that `write_start_secs` equals the first frame that differs from the input, and that
-  `refined_frames` carries the retraction. That is 83/g7's shape. Also check `write_end_secs` against
-  the last differing frame.
-- CLI: on Fit, dual-fit and anchor-seam fixtures, check that `fill_source_start_secs` locates the
-  written fill. Correlate the output's first post-crossfade fill frames against B at that time.
+- **Built 2026-10-31:**
+  - Unit: `splice_write_reports_the_range_and_the_fill_frame_at_the_gap_start` (`region/pcm.rs`)
+    checks both seam paths: every changed frame lies inside the range, and the gap start carries
+    `fill[cf]` (plain) or `fill[0]` (margin).
+  - Unit: `patch_placement_converts_the_write_and_offsets_the_fill_source` (`region/types.rs`).
+  - CLI: `placement_locates_the_write_and_the_fill` (`cli_wav_integration.rs`), on the soft-lead
+    fixture, where refinement moves the lead. Every changed sample lies inside the write, and the
+    first and last lie within 30 ms of its ends. `refine_start_frames` is non-zero.
+    `fill_source_start_secs` sits at the refined start plus the fixture's 3 s offset (±50 ms). This
+    covers the Fit path only.
+  - Golden: `full_surface_repair.json` carries one placement with both refine keys, and one
+    (dual-fit) without them.
+- **Still open:**
+  - `fill_source_start_secs` on dual-fit and anchor-seam fixtures: correlate the output's first
+    post-crossfade frames against B at that time.
+  - A true refine-retraction fixture (leading silence before the reported start, 83/g7's shape).
+    The soft lead only moves the edge a few ms.
 
 **Verification: one full-corpus run, at the flip.** Build the reporting, the window and the default
 flip together, including the fingerprint to-do. Run `measure-patch-outcomes.ps1` at defaults over all
@@ -1189,7 +1230,7 @@ flip together, including the fingerprint to-do. Run `measure-patch-outcomes.ps1`
 - 58/g2 trail reads `refused_cap` (onset 107.5 ms). 10/g11 and 14/g10 trails read `refused_no_zero`,
   with `gap_floor_dbfs` in −62 … −66.
 - On snapped leads, `onset_to_zero_frames` ≤ 2048, matching `frame-grid.csv`.
-- 83/g7 reads `refined_frames` ≈ −90.5 ms on the lead and `moved_frames` ≈ 2.3 ms, and
+- 83/g7 reads `placement.refine_start_frames` ≈ −90.5 ms on the lead and `moved_frames` ≈ 2.3 ms, and
   `write_start_secs` matches the unpatched-A diff. That is `a_start_secs` − 100.48 ms with the snap
   off (dual-fit), and `a_start_secs` − 600 ms − 102.77 ms with it on (anchor seam). The job's tmp
   directory keeps the cut and the script.
@@ -1199,6 +1240,65 @@ flip together, including the fingerprint to-do. Run `measure-patch-outcomes.ps1`
   before.
 
 That run is the first report that records the snap. It is also the baseline for any later codec.
+
+**Snap as the base measurement (decided 2026-10-31; lands at the flip, with the `edge_snap` record).**
+Once the snap is on by default, the snapped edge is the gap every downstream step measures from. The
+report should say so: take the snapped edge as the base, and record the chain floor → refine → snap
+as signed steps.
+- **What already uses the snapped edge** (verified 2026-10-31 in repair characterize):
+  - the dual-fit input, the seam locks and `b_mapped`;
+  - the signature context halves and the anchor candidates;
+  - the adjust fields (`gap_start_adjust_frames` / `gap_end_adjust_frames`);
+  - the `ShouldersAbutSkip` frames (`spec.refined`).
+- **What does not.** The abut **verdict** reads the unsnapped edges (`without_edge_snap`). The census
+  and `edge-onset` read the floor edge.
+- **Keep the unsnapped edge recorded.** The abut verdict is read there (settled § C: 11/g9; § D:
+  31/g7), and the fingerprint `shoulders_ordered` to-do must read it too.
+- **Keep floor-based steps.** Old census CSVs, `edge-onset` and pre-flip dumps measure from the
+  floor edge. Recording refine and snap as steps from the floor keeps them comparable. A base-only
+  record would not.
+- **Already base-agnostic: the fields built 2026-10-31.** The write extent and fill source are
+  absolute times, and the refine step runs floor → unsnapped. Re-basing adds the snap step beside
+  them and changes none of them.
+
+**Doc entries to update at the flip** (audited 2026-10-31). Each names a quantity whose base moves
+from the unsnapped to the snapped edge, or a default that changes.
+- [json-output.md](../json-output.md):
+  - Revision header: add the `edge_snap` record, the `PatchSummary` echo and counts, and the
+    `TrackCompatibility` codecs.
+  - § GapPatchStatus: `gap_start_adjust_frames` / `gap_end_adjust_frames` appear only in the shape
+    line and have no row. Add one that names the base (the snapped edge once the snap is on).
+  - § GapPatchStatus: `anchor_bracket_move_frames` reads "displacement from scan-refined baseline".
+    That baseline becomes the snapped edge.
+  - § GapPatchStatus, registration keys: the shoulder templates already exclude the band (chain
+    audit), but `registration_residual_pre_z` is measured on the snapped template. It was the 11/31
+    re-run's only difference. Say so beside the z keys.
+  - § ShouldersAbutSkip: `a_start_frame` / `a_end_frame` are "its refined throat".
+    - They come from `spec.refined`, which is snapped, while the verdict was read on the unsnapped
+      edges. Say which edge they hold.
+    - Decide whether the collapse consumer (settled § C) wants the band included.
+    - Add the lead and trail snap frames to the `shoulders_abut` payload (*Abut skip record* above).
+  - § PatchPlacement: the refine keys say "before the edge snap". Add the snap step beside them, or
+    point to the `edge_snap` record. Drop "patched only" once skips carry the refine step.
+  - New sections: the `edge_snap` object, and the `PatchSummary.edge_snap` echo and counts.
+- [cli-output.md](../cli-output.md): under `--verbose`, the per-gap `A gap (refined)` line splits
+  into a refine line and a snap line. The run summary gains the outcome-count line.
+- [pipeline.md](../pipeline.md) step table: the row "A edge refine | `refine_gap_frames`" gains the
+  snap step (`snap_gap_edges_to_onset`) and the note that the abut verdict reads the unsnapped edges.
+- [gap-fill-modes.md](../gap-fill-modes.md):
+  - The flag table (line ~131, beside `--seam-extend-fill`) gains `--edge-snap-max-ms` /
+    `edge_snap_max_ms` with the new 40 ms default.
+  - § Signature context and contour geometry says the context halves are built from the refined
+    edges (`refine_gap_frames`). Once the snap is on, they are built from the snapped edges.
+- Fingerprint dump (`gap_fingerprint/schema.rs`, `GapGeometry`, doc comment "reported + refined"):
+  - The fingerprint path calls `refine_and_snap_gap_frames`, so `a_refined_*` becomes the snapped
+    edge at the flip.
+  - Add `a_unsnapped_start_secs` / `a_unsnapped_end_secs` (*Other records* above), and say in the
+    comment which edge each pair holds.
+  - [gap-fingerprint.md](gap-fingerprint.md) has no `a_refined_*` entry today, so nothing there
+    changes.
+- Code: `RepairConfig::default` (`edge_snap_max_ms: 0.0`), the `--edge-snap-max-ms` help text, and
+  any test that pins the 0 default.
 
 **Reading a first run on another codec.** Neither signal changes behaviour; each one triggers a
 measurement.

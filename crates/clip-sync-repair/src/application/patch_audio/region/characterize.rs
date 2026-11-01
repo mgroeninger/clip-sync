@@ -200,6 +200,11 @@ pub(in crate::application::patch_audio) fn characterize_region(
     );
     let snap_lead_frames = unsnapped.start_frame.saturating_sub(refined.start_frame);
     let snap_trail_frames = refined.end_frame.saturating_sub(unsnapped.end_frame);
+    let edge_refine = Some(policies::EdgeRefineFrames::between(
+        reported_start_frame,
+        reported_end_frame,
+        unsnapped,
+    ));
 
     let refined_a_start_secs = refined.start_frame as f64 / sample_rate as f64;
     let refined_a_end_secs = refined.end_frame as f64 / sample_rate as f64;
@@ -574,6 +579,7 @@ pub(in crate::application::patch_audio) fn characterize_region(
                                     region,
                                     gap_offset_secs,
                                     silence_splice_b_extract,
+                                    edge_refine,
                                     refined,
                                 ),
                                 tag_ctx,
@@ -596,6 +602,7 @@ pub(in crate::application::patch_audio) fn characterize_region(
                             region,
                             gap_offset_secs,
                             silence_splice_b_extract,
+                            edge_refine,
                             refined,
                         ),
                         tag_ctx,
@@ -618,6 +625,7 @@ pub(in crate::application::patch_audio) fn characterize_region(
                     region,
                     gap_offset_secs,
                     silence_splice_b_extract,
+                    edge_refine,
                     refined,
                 ),
                 tag_ctx,
@@ -975,6 +983,7 @@ pub(in crate::application::patch_audio) fn characterize_region(
                             region,
                             gap_offset_secs,
                             silence_splice_b_extract,
+                            edge_refine,
                             refined,
                         ),
                         tag_ctx,
@@ -1114,6 +1123,7 @@ pub(in crate::application::patch_audio) fn characterize_region(
         a_end_secs: region.a_end_secs,
         gap_offset_secs,
         refined,
+        edge_refine,
         b_extract: bracket_b_extract,
         crossfade_secs: region.crossfade_secs,
         verdict: GapRepairVerdict::Patch(GapRepairStrategy::Bracket {

@@ -209,6 +209,7 @@ fn empty_plan_result(
         },
         &[],
         &[],
+        &[],
     ))
     .with_fill_geometry(fill_geometry_for(request))
     .with_program_gain(program_gain_report(request));
@@ -222,22 +223,23 @@ fn empty_plan_result(
     }
 }
 
-/// Join the per-slot fill-level measurements onto gap indices, dropping any gap whose splice failed.
+/// Join per-slot splice records (fill level, placement) onto gap indices, dropping any gap whose
+/// splice failed.
 ///
 /// A failed splice left A byte-identical across the gap (`splice_into_a`'s contract), so there is
-/// no written fill to report a level for — reporting one would describe a buffer that never reached
-/// the timeline. Slots with no gap attribution are dropped for the same reason the splice loop only
+/// no written fill to report on — a record would describe a buffer that never reached the
+/// timeline. Slots with no gap attribution are dropped for the same reason the splice loop only
 /// warns about them: nothing can be said about a gap that cannot be named.
-fn fill_level_by_gap(
-    fill_level_by_slot: &[Option<crate::domain::FillLevelCheck>],
+fn join_by_gap<T: Copy>(
+    by_slot: &[Option<T>],
     gap_index_by_slot: &[Option<usize>],
     not_applied: &[(usize, GapPatchNotAppliedReason)],
-) -> Vec<(usize, crate::domain::FillLevelCheck)> {
-    fill_level_by_slot
+) -> Vec<(usize, T)> {
+    by_slot
         .iter()
         .enumerate()
-        .filter_map(|(slot, check)| {
-            Some((gap_index_by_slot.get(slot).copied().flatten()?, (*check)?))
+        .filter_map(|(slot, record)| {
+            Some((gap_index_by_slot.get(slot).copied().flatten()?, (*record)?))
         })
         .filter(|(gap_index, _)| !not_applied.iter().any(|(failed, _)| failed == gap_index))
         .collect()
@@ -450,7 +452,8 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                     program_gain: request.program_gain.gain(),
                 },
                 // Preview never splices, so no splice can fail — and nothing is written to
-                // measure a fill level on.
+                // measure a fill level on, or to record a placement for.
+                &[],
                 &[],
                 &[],
             ))
@@ -620,6 +623,8 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             };
 
         let mut not_applied: Vec<(usize, GapPatchNotAppliedReason)> = Vec::new();
+        let mut placement_by_slot: Vec<Option<crate::domain::PatchPlacement>> =
+            vec![None; patches.len()];
         if patch_count > 0 {
             let _splice_span = tracing::info_span!("patch_splice", patch_count).entered();
             for (index, patch) in patches.iter().enumerate() {
@@ -628,7 +633,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                 let b_gained = region::gained_fill(patch, channels);
                 let margin = region::gained_seam_margin(patch, channels);
 
-                if let Err(reason) = splice_into_a(
+                match splice_into_a(
                     &mut a_pcm.samples,
                     region::SpliceFill {
                         b_samples: &b_gained,
@@ -640,9 +645,13 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                     patch.a_start_frame,
                     patch.a_end_frame,
                 ) {
+                    Ok(write) => {
+                        placement_by_slot[index] =
+                            Some(region::patch_placement(patch, write, sample_rate));
+                    }
                     // A is unchanged across this gap. Downgrade the gate's `Patched` verdict so no
                     // consumer — gap table, JSON, `--gap-listen` WAVs — claims a repair happened.
-                    match gap_index_by_slot.get(index).copied().flatten() {
+                    Err(reason) => match gap_index_by_slot.get(index).copied().flatten() {
                         Some(gap_index) => not_applied.push((gap_index, reason)),
                         None => tracing::warn!(
                             slot = index,
@@ -650,7 +659,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                             "splice failed for a patch with no gap attribution; outcome will still \
                              read patched"
                         ),
-                    }
+                    },
                 }
             }
         }
@@ -661,7 +670,8 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             visit_shoulders_abut(skip, &a_pcm);
         }
 
-        let fill_level = fill_level_by_gap(&fill_level_by_slot, &gap_index_by_slot, &not_applied);
+        let fill_level = join_by_gap(&fill_level_by_slot, &gap_index_by_slot, &not_applied);
+        let placement = join_by_gap(&placement_by_slot, &gap_index_by_slot, &not_applied);
 
         let mut summary = PatchSummary::from_outcomes(outcomes_in_report_order(
             &request.report.gaps,
@@ -674,6 +684,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             },
             &not_applied,
             &fill_level,
+            &placement,
         ))
         .with_fill_geometry(fill_geometry_for(&request))
         .with_program_gain(program_gain_report(&request))
@@ -760,7 +771,7 @@ mod tests {
             },
         )];
 
-        let joined = fill_level_by_gap(&levels, &slots, &not_applied);
+        let joined = join_by_gap(&levels, &slots, &not_applied);
 
         assert_eq!(joined.len(), 1, "{joined:?}");
         assert_eq!(
@@ -774,7 +785,7 @@ mod tests {
         let levels = vec![Some(check(3.0)), None, Some(check(21.0))];
         let slots = vec![Some(7), Some(8), Some(9)];
 
-        let joined = fill_level_by_gap(&levels, &slots, &[]);
+        let joined = join_by_gap(&levels, &slots, &[]);
 
         assert_eq!(joined.len(), 2, "the unmeasured slot drops out: {joined:?}");
         assert_eq!(joined[0].0, 7);
@@ -786,7 +797,7 @@ mod tests {
     /// rather than guessed at, matching how the splice loop treats the same case.
     #[test]
     fn an_unattributed_slot_is_dropped() {
-        let joined = fill_level_by_gap(&[Some(check(3.0))], &[None], &[]);
+        let joined = join_by_gap(&[Some(check(3.0))], &[None], &[]);
         assert!(joined.is_empty(), "{joined:?}");
     }
 
@@ -794,6 +805,8 @@ mod tests {
     /// mismatch against a populated slot table rather than indexing past it.
     #[test]
     fn no_measurements_joins_to_nothing() {
-        assert!(fill_level_by_gap(&[], &[Some(7), Some(9)], &[]).is_empty());
+        assert!(
+            join_by_gap::<crate::domain::FillLevelCheck>(&[], &[Some(7), Some(9)], &[]).is_empty()
+        );
     }
 }

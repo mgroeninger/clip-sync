@@ -1496,7 +1496,18 @@ mod tests {
                         },
                     )),
                 },
-            ),
+            )
+            // Populated so the nested object and both optional refine keys are pinned. Refine
+            // retracted the lead 441 frames (10 ms) and left the trail; the 10 ms crossfades put
+            // the write 10 ms outside each refined edge, and the fill frame on the refined start
+            // (44.99 s) sits 3 s behind it in B plus the 20 ms `align_adjustment_secs`.
+            .with_placement(Some(crate::domain::PatchPlacement {
+                refine_start_frames: Some(-441),
+                refine_end_frames: Some(0),
+                write_start_secs: 44.98,
+                write_end_secs: 47.51,
+                fill_source_start_secs: 48.01,
+            })),
             gap_patch_outcome(
                 120.0,
                 125.0,
@@ -1564,6 +1575,14 @@ mod tests {
                 );
                 outcome.tags.dual_fit_route =
                     Some(crate::domain::gap_tags::DualFitRoute::RegistrationStep);
+                // A placement with no refine step pins the refine keys' absence.
+                outcome.placement = Some(crate::domain::PatchPlacement {
+                    refine_start_frames: None,
+                    refine_end_frames: None,
+                    write_start_secs: 159.99,
+                    write_end_secs: 160.41,
+                    fill_source_start_secs: 163.0,
+                });
                 outcome
             },
             gap_patch_outcome(

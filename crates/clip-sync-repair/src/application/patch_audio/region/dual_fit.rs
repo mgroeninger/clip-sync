@@ -656,6 +656,7 @@ pub(in crate::application::patch_audio::region) fn try_dual_fit_rescue(
                     post_seam_r: splice_post,
                     pre_lag: r.pre_lag,
                     post_lag: r.post_lag,
+                    fill_extract_start_frame: locks.b_pre_seam,
                     trim_frames: r.trim_frames,
                     step_real: r.step_real,
                     residual,
@@ -738,6 +739,7 @@ pub(in crate::application::patch_audio::region) fn finalize_dual_fit(
     region: &FillRegion,
     gap_offset_secs: f64,
     b_extract: BExtractWindow,
+    edge_refine: Option<crate::domain::policies::EdgeRefineFrames>,
     gap_refined: RefinedGapFrames,
 ) -> GapRepairSpec {
     match decision {
@@ -754,6 +756,7 @@ pub(in crate::application::patch_audio::region) fn finalize_dual_fit(
                 a_end_secs: region.a_end_secs,
                 gap_offset_secs,
                 refined,
+                edge_refine,
                 b_extract,
                 crossfade_secs,
                 verdict: GapRepairVerdict::Patch(strategy),

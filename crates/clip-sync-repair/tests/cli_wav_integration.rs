@@ -423,3 +423,105 @@ scan_both = false
         "audio 100 ms before the onset must be untouched"
     );
 }
+
+/// `placement` must locate the write in the output and its fill in B.
+///
+/// Every sample the splice changed lies inside `[write_start_secs, write_end_secs)`, and the first
+/// change opens the range (the crossfade's first frame weighs the fill at zero, so allow one
+/// crossfade of slack). B is A delayed by `OFFSET_SECS`, so the fill frame at the gap's first frame
+/// sits `OFFSET_SECS` later in B. The soft lead is moved by refinement, which `refine_start_frames`
+/// must carry.
+#[test]
+fn placement_locates_the_write_and_the_fill() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let (path_a, path_b) =
+        write_offset_chirp_wav_pair(temp.path(), SAMPLE_RATE, TOTAL_SECS, OFFSET_SECS);
+    zero_wav_segment(&path_a, SAMPLE_RATE, SILENT_START_SECS, SILENT_END_SECS);
+    soften_lead_edge(&path_a, SAMPLE_RATE, SILENT_START_SECS, 25.0, 20.0);
+    let raw_a: Vec<i16> = WavReader::open(&path_a)
+        .expect("open a")
+        .samples::<i16>()
+        .map(|s| s.expect("read sample"))
+        .collect();
+    let out_wav = temp.path().join("patched.wav");
+    let config_path = temp.path().join("repair.toml");
+    std::fs::write(
+        &config_path,
+        "[clip]
+clip_length = 60
+
+[repair]
+min_fill_correlation = -1.0
+scan_both = false
+",
+    )
+    .expect("write config");
+    let bin = env!("CARGO_BIN_EXE_clip-sync-repair");
+    let output = Command::new(bin)
+        .args([
+            path_a.to_str().expect("path_a utf8"),
+            path_b.to_str().expect("path_b utf8"),
+            "--config",
+            config_path.to_str().expect("config utf8"),
+            "--wav",
+            out_wav.to_str().expect("out utf8"),
+            "--format",
+            "json",
+            "--min-gap-ms",
+            "25000",
+            "--no-scan-both",
+        ])
+        .output()
+        .expect("run clip-sync-repair");
+    assert!(
+        output.status.success(),
+        "repair should exit 0: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let doc: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("--format json emits a report");
+    let gaps = doc["patch"]["gaps"].as_array().expect("a patch block");
+    assert_eq!(gaps.len(), 1, "one gap: {gaps:#?}");
+    let placement = &gaps[0]["placement"];
+    let secs = |key: &str| {
+        placement[key]
+            .as_f64()
+            .unwrap_or_else(|| panic!("placement.{key} missing: {placement:#?}"))
+    };
+    let rate = f64::from(SAMPLE_RATE);
+    let write_start = (secs("write_start_secs") * rate).round() as usize;
+    let write_end = (secs("write_end_secs") * rate).round() as usize;
+
+    let patched: Vec<i16> = WavReader::open(&out_wav)
+        .expect("open patched wav")
+        .samples::<i16>()
+        .map(|s| s.expect("read sample"))
+        .collect();
+    assert_eq!(patched.len(), raw_a.len(), "splice is length-preserving");
+    let changed: Vec<usize> = (0..raw_a.len())
+        .filter(|&i| patched[i] != raw_a[i])
+        .collect();
+    let (first, last) = (changed[0], *changed.last().expect("the splice changed A"));
+    assert!(
+        write_start <= first && last < write_end,
+        "changed [{first}, {last}] must lie inside the write [{write_start}, {write_end})"
+    );
+    let slack = (0.03 * rate) as usize;
+    assert!(
+        first - write_start <= slack && write_end - 1 - last <= slack,
+        "the write must be tight: changed [{first}, {last}] vs [{write_start}, {write_end})"
+    );
+
+    // The gap's first written frame, in A seconds: the B fill frame there is OFFSET_SECS later.
+    let refine_start = placement["refine_start_frames"]
+        .as_i64()
+        .expect("a patched gap from repair characterize records its refine move");
+    assert_ne!(refine_start, 0, "the soft lead must move the start edge");
+    let a_start = gaps[0]["a_start_secs"].as_f64().expect("a_start_secs");
+    let gap_start = a_start + refine_start as f64 / rate;
+    let fill_source = secs("fill_source_start_secs");
+    assert!(
+        (fill_source - (gap_start + f64::from(OFFSET_SECS))).abs() < 0.05,
+        "fill source {fill_source:.4} s must sit {OFFSET_SECS} s after gap start {gap_start:.4} s"
+    );
+}

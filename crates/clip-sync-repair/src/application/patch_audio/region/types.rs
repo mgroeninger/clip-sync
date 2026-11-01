@@ -51,6 +51,11 @@ pub(in crate::application::patch_audio) struct RegionPatch {
     pub(in crate::application::patch_audio) a_start_frame: usize,
     pub(in crate::application::patch_audio) a_end_frame: usize,
     pub(in crate::application::patch_audio) crossfade_secs: f64,
+    /// Full-B frame of `b_samples[0]` (the frame a margin splice writes at `a_start_frame`).
+    /// Record-only: the splice turns it into `PatchPlacement::fill_source_start_secs`.
+    pub(in crate::application::patch_audio) fill_source_frame: i64,
+    /// The spec's refine step, carried to the splice for `PatchPlacement`. Record-only.
+    pub(in crate::application::patch_audio) edge_refine: Option<policies::EdgeRefineFrames>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -201,6 +206,7 @@ pub(in crate::application::patch_audio) fn outcomes_in_report_order(
     stamps: ReportStamps,
     not_applied: &[(usize, GapPatchNotAppliedReason)],
     fill_level: &[(usize, crate::domain::FillLevelCheck)],
+    placement: &[(usize, crate::domain::PatchPlacement)],
 ) -> Vec<GapPatchOutcome> {
     let ReportStamps {
         fill_mode,
@@ -209,6 +215,8 @@ pub(in crate::application::patch_audio) fn outcomes_in_report_order(
     } = stamps;
     let mut fill_level_by_gap: HashMap<usize, crate::domain::FillLevelCheck> =
         fill_level.iter().copied().collect();
+    let mut placement_by_gap: HashMap<usize, crate::domain::PatchPlacement> =
+        placement.iter().copied().collect();
     let mut status_by_gap: HashMap<usize, GapPatchStatus> = HashMap::new();
     let mut tags_by_gap: HashMap<usize, GapTags> = HashMap::new();
     let mut residual_by_gap: HashMap<usize, policies::SeamResidualVerdict> = HashMap::new();
@@ -313,8 +321,29 @@ pub(in crate::application::patch_audio) fn outcomes_in_report_order(
             GapPatchOutcome::new(gap.video_a_start_secs, gap.video_a_end_secs, status, tags)
                 .with_residual(residual_by_gap.remove(&key))
                 .with_fill_level(fill_level_by_gap.remove(&key))
+                .with_placement(placement_by_gap.remove(&key))
         })
         .collect()
+}
+
+/// The placement record for one successful splice: the refine step the spec carried, the range the
+/// splice wrote, and the B time of the fill frame that landed on the gap's first frame. B and A
+/// share `sample_rate` (B is decoded to A's rate).
+pub(in crate::application::patch_audio) fn patch_placement(
+    patch: &RegionPatch,
+    write: super::pcm::SpliceWrite,
+    sample_rate: u32,
+) -> crate::domain::PatchPlacement {
+    let sr = f64::from(sample_rate);
+    crate::domain::PatchPlacement {
+        refine_start_frames: patch.edge_refine.map(|r| r.start_frames),
+        refine_end_frames: patch.edge_refine.map(|r| r.end_frames),
+        write_start_secs: write.start_frame as f64 / sr,
+        write_end_secs: write.end_frame as f64 / sr,
+        fill_source_start_secs: (patch.fill_source_frame + write.fill_frame_at_gap_start as i64)
+            as f64
+            / sr,
+    }
 }
 
 /// Per-run values derived once in `execute` and shared by every fill region.
@@ -464,6 +493,7 @@ pub(in crate::application::patch_audio::region) fn skip_region_spec(
         a_end_secs: region.a_end_secs,
         gap_offset_secs,
         refined,
+        edge_refine: None,
         b_extract,
         crossfade_secs: region.crossfade_secs,
         verdict: GapRepairVerdict::skip_with_cell(cell, reason),
@@ -641,6 +671,7 @@ mod tests {
                 start_frame: 48_000,
                 end_frame: 96_000,
             },
+            edge_refine: None,
             b_extract: BExtractWindow {
                 start_frame: 48_000,
                 end_frame: 96_000,
@@ -654,6 +685,7 @@ mod tests {
                 post_seam_r: 0.97,
                 pre_lag: 0,
                 post_lag: 0,
+                fill_extract_start_frame: 0,
                 trim_frames: 0,
                 step_real: true,
                 residual: None,
@@ -776,6 +808,7 @@ mod tests {
                 thresholds,
                 program_gain: 1.0,
             },
+            &[],
             &[],
             &[],
         );
@@ -902,6 +935,7 @@ mod tests {
                 program_gain: 1.0,
             },
             &[(0, reason.clone())],
+            &[],
             &[],
         );
 
@@ -1072,5 +1106,47 @@ mod tests {
             }
             other => panic!("expected a Patched preview, got {other:?}"),
         }
+    }
+
+    /// `fill_source_start_secs` adds the splice's fill frame at the gap start to the patch's B
+    /// origin, and the refine step passes through unchanged (absent when the spec has none).
+    #[test]
+    fn patch_placement_converts_the_write_and_offsets_the_fill_source() {
+        let mut patch = RegionPatch {
+            b_samples: Vec::new(),
+            seam_margin: None,
+            gain: 1.0,
+            a_start_frame: 1000,
+            a_end_frame: 2000,
+            crossfade_secs: 0.01,
+            fill_source_frame: 5000,
+            edge_refine: Some(policies::EdgeRefineFrames {
+                start_frames: -30,
+                end_frames: 12,
+            }),
+        };
+        let write = super::super::pcm::SpliceWrite {
+            start_frame: 990,
+            end_frame: 2010,
+            fill_frame_at_gap_start: 10,
+        };
+        let placement = patch_placement(&patch, write, 1000);
+        assert_eq!(
+            placement,
+            crate::domain::PatchPlacement {
+                refine_start_frames: Some(-30),
+                refine_end_frames: Some(12),
+                write_start_secs: 0.99,
+                write_end_secs: 2.01,
+                fill_source_start_secs: 5.01,
+            }
+        );
+
+        patch.edge_refine = None;
+        let placement = patch_placement(&patch, write, 1000);
+        assert_eq!(
+            (placement.refine_start_frames, placement.refine_end_frames),
+            (None, None)
+        );
     }
 }

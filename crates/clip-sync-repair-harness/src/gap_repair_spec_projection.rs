@@ -229,6 +229,7 @@ mod tests {
                 start_frame: 240_000,
                 end_frame: 259_200,
             },
+            edge_refine: None,
             b_extract: BExtractWindow {
                 start_frame: 0,
                 end_frame: 0,
@@ -258,6 +259,7 @@ mod tests {
             post_seam_r: 0.95,
             pre_lag: 4,
             post_lag: -4,
+            fill_extract_start_frame: 0,
             trim_frames: 240,
             residual: None,
             confidence: FillConfidence::High,

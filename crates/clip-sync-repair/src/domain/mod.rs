@@ -124,8 +124,8 @@ pub use patch_result::{
     format_gap_fill_marginal_warn_reason, format_gap_fill_skip_verbose_line,
     format_gap_patch_not_applied_reason, format_gap_patch_skip_reason,
     format_gap_patch_skip_warn_reason, residual_summary_scalar_fields, GapFillSkipReason,
-    GapPatchNotAppliedReason, GapPatchOutcome, GapPatchSkipReason, GapPatchStatus, PatchSummary,
-    ShouldersAbutLocks, ShouldersAbutSkip,
+    GapPatchNotAppliedReason, GapPatchOutcome, GapPatchSkipReason, GapPatchStatus, PatchPlacement,
+    PatchSummary, ShouldersAbutLocks, ShouldersAbutSkip,
 };
 pub use track_match::{
     assess_track_compatibility, CompatibilityVerdict, TrackCompatibility, TrackDescriptor,

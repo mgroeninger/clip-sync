@@ -1,6 +1,6 @@
 # JSON output contract — v1
 
-Authoritative field-by-field contract for `--format json` output of both CLIs. **Frozen as v1 (2026-06-10).** Additive revisions: optional `end_clip_anchor` on analyzer/repair alignment reports (2026-06-17); optional `video_b_window_*` on clip entries when B differs from A; optional `audio_timeline_skew` on repair `GapReport` (2026-06-19); additive scan-recipe echo keys `min_gap_ms`, `silence_hold_ms` (effective), and `absolute_silence_rms` (normalized) on repair `GapReport` (2026-07-31); optional `fill_geometry` on repair `PatchSummary` (2026-08-17), with optional `residual_border_standoff_secs` inside it (2026-09-19); optional `program_levels` on repair `GapReport` (2026-08-26); optional per-gap `collar_level` on repair `Gap`, with `map_lag_ms` recording the map each collar was read through (2026-08-27); optional `local_pair_collar_secs` knob echo on repair `GapReport` (2026-08-27); new `shoulders_abut` skip reason and optional `shoulders_abut` list on repair `PatchSummary` (2026-08-28); `local_gain` and `local_gain_reason` on repair `GapPatchStatus::Patched` (2026-08-31); optional `injected_time` on repair `PatchSummary` (A4, 2026-09-08); optional `stall_min_secs` and `b_stalls` on repair `GapReport`, and optional per-gap `after_b_stall` on repair `Gap` (A5, 2026-09-14). Per-stall `shift_secs`, and optional `evidence`, `verdict_reason`, `pre_lag_secs`, `step_r`, `flat_r` on repair `BStall`, with `offset_used_secs` now accumulating each earlier stall's `shift_secs` (A5 shoulder confirmation, 2026-09-14). Optional per-gap `stall_map_advance_secs` when a confirmed (`evidence: shoulder`) stall remaps later holes (stall-segmented map, 2026-09-15). Optional `registration_residual_pre_ms`, `registration_residual_post_ms` and `registration_applied_ms` beside `registration_residual_ms` on repair `GapPatchStatus::Patched` (2026-09-22). Optional `zero_pad_frames` on repair `GapPatchStatus::Patched` and on `GapTags` (2026-09-23). Optional `registration_residual_{pre,post}_edge_pinned` and `registration_residual_{pre,post}_z` on repair `GapPatchStatus::Patched`, and required `residual_search_secs` inside `fill_geometry` (2026-09-25).
+Authoritative field-by-field contract for `--format json` output of both CLIs. **Frozen as v1 (2026-06-10).** Additive revisions: optional `end_clip_anchor` on analyzer/repair alignment reports (2026-06-17); optional `video_b_window_*` on clip entries when B differs from A; optional `audio_timeline_skew` on repair `GapReport` (2026-06-19); additive scan-recipe echo keys `min_gap_ms`, `silence_hold_ms` (effective), and `absolute_silence_rms` (normalized) on repair `GapReport` (2026-07-31); optional `fill_geometry` on repair `PatchSummary` (2026-08-17), with optional `residual_border_standoff_secs` inside it (2026-09-19); optional `program_levels` on repair `GapReport` (2026-08-26); optional per-gap `collar_level` on repair `Gap`, with `map_lag_ms` recording the map each collar was read through (2026-08-27); optional `local_pair_collar_secs` knob echo on repair `GapReport` (2026-08-27); new `shoulders_abut` skip reason and optional `shoulders_abut` list on repair `PatchSummary` (2026-08-28); `local_gain` and `local_gain_reason` on repair `GapPatchStatus::Patched` (2026-08-31); optional `injected_time` on repair `PatchSummary` (A4, 2026-09-08); optional `stall_min_secs` and `b_stalls` on repair `GapReport`, and optional per-gap `after_b_stall` on repair `Gap` (A5, 2026-09-14). Per-stall `shift_secs`, and optional `evidence`, `verdict_reason`, `pre_lag_secs`, `step_r`, `flat_r` on repair `BStall`, with `offset_used_secs` now accumulating each earlier stall's `shift_secs` (A5 shoulder confirmation, 2026-09-14). Optional per-gap `stall_map_advance_secs` when a confirmed (`evidence: shoulder`) stall remaps later holes (stall-segmented map, 2026-09-15). Optional `registration_residual_pre_ms`, `registration_residual_post_ms` and `registration_applied_ms` beside `registration_residual_ms` on repair `GapPatchStatus::Patched` (2026-09-22). Optional `zero_pad_frames` on repair `GapPatchStatus::Patched` and on `GapTags` (2026-09-23). Optional `registration_residual_{pre,post}_edge_pinned` and `registration_residual_{pre,post}_z` on repair `GapPatchStatus::Patched`, and required `residual_search_secs` inside `fill_geometry` (2026-09-25). Optional per-gap `placement` on repair `GapPatchOutcome` (2026-10-31).
 
 Any change to field names, types, optionality, or nesting is a contract revision: update this document, regenerate the golden fixtures, and call the revision out explicitly in the changelog/commit.
 
@@ -395,6 +395,7 @@ offset is the signature of an undetected dynamics mismatch — a 2:1-compressed 
 | `tags` | [GapTags](#gaptags) | always | Vocabulary tags derived at patch time (see [gap-repair-guide.md](gap-repair-guide.md) § Vocabulary) |
 | `residual` | object | when measured | Full [`SeamResidualVerdict`](#seamresidualverdict) (gate active or `measure_residual`) |
 | `fill_level` | object | spliced gaps, when `measure_fill_level` | [FillLevelCheck](#filllevelcheck) — how loud the written fill is against the A around it |
+| `placement` | object | spliced gaps (added 2026-10-31; contract stays v1) | [PatchPlacement](#patchplacement) — where the splice wrote in A and where its fill came from in B |
 
 ### SeamResidualVerdict
 
@@ -550,6 +551,29 @@ separation, and the one direction it showed inverted its own hypothesis — the 
 had the most uniform neighbourhood in the set. Reports written in that window carry it; nothing
 reads it.
 
+### PatchPlacement
+
+Record-only, recorded by the splice itself: what it wrote into A and which B time it drew from. Like
+`fill_level`, it appears only on gaps whose fill was actually spliced, so it is present on write-mode
+runs and `--patch-only` and absent under `--repair-preview`. It exists because the write cannot be
+rebuilt from the other fields. `a_start_secs` plus `gap_start_adjust_frames` misses refinement's edge
+moves (one corpus gap's lead moved 90.5 ms, recorded nowhere else), and `align_adjustment_secs` misses
+Fit's trim-head move and reads `0.0` on dual-fit.
+
+**Differentials:** count a gap as re-placed when `fill_source_start_secs` or the write extent moves.
+Before this object, `registration_applied_ms` was the only field that carried the trim-head move.
+
+| Field | Type | Presence | Meaning |
+|-------|------|----------|---------|
+| `refine_start_frames` / `refine_end_frames` | integer | when the spec came from repair characterize | Signed move refinement made to the reported edge against A's PCM, in A frames (refined − reported: negative = earlier). Taken before the edge snap and any boundary extension. Absent on specs built elsewhere (test fixtures) |
+| `write_start_secs` | number | always | First A frame the splice changes, crossfade included, in seconds on A's decoded PCM timeline |
+| `write_end_secs` | number | always | **Exclusive** end of the changed range (the first frame after the last one written), crossfade included. `[write_start_secs, write_end_secs)` is the extent a WAV diff sees. The crossfade's first frame weighs the fill at zero, so a diff's first changed sample can sit up to one crossfade inside the range |
+| `fill_source_start_secs` | number | always | B time (seconds on B's decoded PCM timeline, resampled to A's rate) of the fill frame written at the gap's first frame, i.e. at the pre seam. Covers every path, dual-fit included. A plain splice's pre crossfade consumes the fill frames before it |
+
+Both timelines are decoded PCM, not container time. An external decode (ffmpeg) can lead the repair's
+PCM by the codec priming (3856 frames on one AAC corpus pair), so align a WAV diff to it by search, not
+by sample index.
+
 ### GapTags
 
 Orthogonal gap classification tags. `plan_skip_reason`, `fit_path`, and `signature_mode` are omitted from JSON when not applicable.
@@ -680,7 +704,8 @@ discarded it, and it is what the dual-fit routing trigger reads
 
 `registration_applied_ms` is the `applied_ms` both residuals subtract from: `align_adjustment_secs * 1000` plus
 Fit's trim-head move on a bracket patch, and `0.0` on dual-fit. It is written wherever `registration_residual_ms`
-is, and it is the only place the trim-head move appears in the report. Each seam's `applied_ms −
+is. Until `placement` (2026-10-31) it was the only place the trim-head move appeared in the report;
+`placement.fill_source_start_secs` now carries the written fill's B position directly. Each seam's `applied_ms −
 registration_residual_*_ms` recovers that shoulder's lag in the B-at-nominal frame.
 
 **Trust keys (added 2026-09-25).** `registration_residual_pre_edge_pinned` /

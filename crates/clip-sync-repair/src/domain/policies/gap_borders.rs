@@ -28,6 +28,31 @@ pub struct RefinedGapFrames {
     pub end_frame: usize,
 }
 
+/// The signed move [`refine_gap_frames`] made to each reported edge, in A frames: refined − reported.
+/// Negative on the lead = retracted (earlier), positive on the trail = extended (later).
+///
+/// The first step of the edge chain floor → refine → snap: measured before the edge snap and before
+/// any gate boundary extension, so a refine move is never mistaken for a snap or Fit move (83/g7: a
+/// 90.5 ms lead retraction that no other field recorded).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EdgeRefineFrames {
+    pub start_frames: i64,
+    pub end_frames: i64,
+}
+
+impl EdgeRefineFrames {
+    pub fn between(
+        reported_start_frame: usize,
+        reported_end_frame: usize,
+        refined: RefinedGapFrames,
+    ) -> Self {
+        Self {
+            start_frames: refined.start_frame as i64 - reported_start_frame as i64,
+            end_frames: refined.end_frame as i64 - reported_end_frame as i64,
+        }
+    }
+}
+
 /// How far [`refine_gap_frames`] may walk a reported edge against A's decoded PCM (seconds).
 ///
 /// One budget for every caller: production `PatchAudio`, fingerprint

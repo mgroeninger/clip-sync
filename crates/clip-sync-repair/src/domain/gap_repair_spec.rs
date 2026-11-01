@@ -23,7 +23,9 @@ use crate::domain::donor::DonorInterior;
 use crate::domain::gap_fill::GapFillSkipped;
 use crate::domain::gap_fill_fit::{FillConfidence, UnifiedFitBreakdown};
 use crate::domain::patch_result::GapPatchSkipReason;
-use crate::domain::policies::{FillAlignment, RefinedGapFrames, SeamResidualVerdict};
+use crate::domain::policies::{
+    EdgeRefineFrames, FillAlignment, RefinedGapFrames, SeamResidualVerdict,
+};
 
 /// [gap-vocabulary.md] cell — a gap-type we **see and reconcile to an action** (patch OR a *reasoned* skip).
 /// Derived from the real code disposition, not an abstract axis space; `cell()` is total onto these.
@@ -256,6 +258,10 @@ pub enum GapRepairStrategy {
         /// `b_pre_seam` / `b_post_seam` for A6 residual and A7 re-validation.
         pre_lag: i64,
         post_lag: i64,
+        /// B-extract frame of `fill[0]`: the pre lock's `b_pre_seam`, the frame the bridge is cut
+        /// from. Equals `b_mapped_start_frame + pre_lag` unless the lock was clamped to the extract.
+        /// Record-only — the splice reports it as `PatchPlacement::fill_source_start_secs`.
+        fill_extract_start_frame: usize,
         /// `bridge − gap`.
         trim_frames: i64,
         /// Copied from the one `DualFitResult` (single-source, A7). `true` = a real length edit (interior-
@@ -332,6 +338,10 @@ pub struct GapRepairSpec {
     pub gap_offset_secs: f64,
     /// Refined throat on A's PCM timeline.
     pub refined: RefinedGapFrames,
+    /// The refine step of the edge chain (reported → refined, before the snap). `Some` on every
+    /// `Patch` spec repair characterize builds; `None` on skips (nothing is written to report it
+    /// on), fingerprint projections and fixtures. Report-only: the splice records it.
+    pub edge_refine: Option<EdgeRefineFrames>,
     pub b_extract: BExtractWindow,
     pub crossfade_secs: f64,
     pub verdict: GapRepairVerdict,
@@ -585,6 +595,7 @@ mod tests {
                 start_frame: 0,
                 end_frame: 48_000,
             },
+            edge_refine: None,
             b_extract: BExtractWindow {
                 start_frame: 0,
                 end_frame: 96_000,
@@ -644,6 +655,7 @@ mod tests {
             post_seam_r: 0.97,
             pre_lag: 24,
             post_lag: -600,
+            fill_extract_start_frame: 0,
             trim_frames: 480,
             step_real: true,
             residual: None,

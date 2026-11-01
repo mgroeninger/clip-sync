@@ -306,6 +306,10 @@ pub(in crate::application::patch_audio::region) struct ExecuteBracketOutputCtx {
     /// S1: read straight off the spec — decided at characterize time, never recomputed here.
     pub(in crate::application::patch_audio::region) registration_residual:
         Option<crate::domain::patch_result::RegistrationResidual>,
+    /// Full-B frame of `fill[0]` — see [`RegionPatch::fill_source_frame`].
+    pub(in crate::application::patch_audio::region) fill_source_frame: i64,
+    pub(in crate::application::patch_audio::region) edge_refine:
+        Option<crate::domain::policies::EdgeRefineFrames>,
 }
 
 /// The executor's bracket `(RegionPatch, RegionPatchOutcome)` assembly. Recomputes the geometry slides
@@ -349,6 +353,8 @@ pub(in crate::application::patch_audio::region) fn execute_bracket_output(
             ctx.refined.end_frame
         },
         crossfade_secs: ctx.crossfade_secs,
+        fill_source_frame: ctx.fill_source_frame,
+        edge_refine: ctx.edge_refine,
     };
     let outcome = RegionPatchOutcome::Patched {
         pre_correlation: ctx.final_pre,
@@ -423,6 +429,8 @@ mod tests {
             offset_nominal_start: 0,
             sample_rate: 44_100,
             fit_terms: None,
+            fill_source_frame: 0,
+            edge_refine: None,
             registration_residual: None,
         }
     }

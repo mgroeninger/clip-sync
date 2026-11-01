@@ -222,13 +222,24 @@ pub(in crate::application::patch_audio) struct SpliceFill<'a> {
     pub(in crate::application::patch_audio) sample_rate: u32,
 }
 
+/// What [`splice_into_a`] wrote, in A frames. Record-only: becomes `PatchPlacement`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::application::patch_audio) struct SpliceWrite {
+    /// `[start_frame, end_frame)` is every A frame the splice changed, crossfades included.
+    pub(in crate::application::patch_audio) start_frame: usize,
+    pub(in crate::application::patch_audio) end_frame: usize,
+    /// Index of the fill frame written at `gap_start_frame`: `cf` on the plain seam path (its pre
+    /// blend consumes the first `cf` fill frames), `0` on the margin path or with no crossfade.
+    pub(in crate::application::patch_audio) fill_frame_at_gap_start: usize,
+}
+
 pub(in crate::application::patch_audio) fn splice_into_a(
     a_samples: &mut [f32],
     fill: SpliceFill<'_>,
     channels: usize,
     gap_start_frame: usize,
     gap_end_frame: usize,
-) -> Result<(), GapPatchNotAppliedReason> {
+) -> Result<SpliceWrite, GapPatchNotAppliedReason> {
     let SpliceFill {
         b_samples,
         seam_margin,
@@ -290,8 +301,15 @@ pub(in crate::application::patch_audio) fn splice_into_a(
     }
 
     let crossfade_frames = (crossfade_secs * sample_rate as f64) as usize;
+    // The width both seam paths clamp to internally, so the written range is theirs, not a guess.
+    let cf = policies::effective_seam_crossfade_frames(
+        crossfade_frames,
+        gap_start_frame,
+        gap_end_frame,
+        a_samples.len() / channels,
+    );
 
-    match seam_margin {
+    let margin_written = match seam_margin {
         Some((head, tail)) => policies::apply_seam_crossfade_extended(
             a_samples,
             policies::SeamMarginFill {
@@ -304,16 +322,23 @@ pub(in crate::application::patch_audio) fn splice_into_a(
             gap_end_frame,
             crossfade_frames,
         ),
-        None => policies::apply_seam_crossfade(
-            a_samples,
-            b_samples,
-            channels,
-            gap_start_frame,
-            gap_end_frame,
-            crossfade_frames,
-        ),
-    }
-    Ok(())
+        None => {
+            policies::apply_seam_crossfade(
+                a_samples,
+                b_samples,
+                channels,
+                gap_start_frame,
+                gap_end_frame,
+                crossfade_frames,
+            );
+            false
+        }
+    };
+    Ok(SpliceWrite {
+        start_frame: gap_start_frame - cf,
+        end_frame: gap_end_frame + cf,
+        fill_frame_at_gap_start: if margin_written { 0 } else { cf },
+    })
 }
 
 #[cfg(test)]
@@ -454,10 +479,66 @@ mod tests {
         let mut a = vec![0.25f32; 16];
         assert_eq!(
             splice_into_a(&mut a, plain_fill(&fill), 2, 0, 8),
-            Ok(()),
+            Ok(super::SpliceWrite {
+                start_frame: 0,
+                end_frame: 8,
+                fill_frame_at_gap_start: 0,
+            }),
             "a well-formed splice still succeeds"
         );
         assert_ne!(a, before, "a successful splice must modify A");
+    }
+
+    /// **The reported write covers every changed frame and names the fill frame at the gap start.**
+    ///
+    /// `PatchPlacement` is built from this record alone, so it must match what each seam path
+    /// actually wrote: the plain path's pre blend consumes the first `cf` fill frames, the margin
+    /// path blends its head over A and puts `fill[0]` on the gap's first frame.
+    #[test]
+    fn splice_write_reports_the_range_and_the_fill_frame_at_the_gap_start() {
+        const RATE: u32 = 1000;
+        let (gap_start, gap_end, cf) = (40usize, 60usize, 4usize);
+        // A distinct value per fill frame, so the frame on the gap start identifies itself.
+        let fill: Vec<f32> = (0..gap_end - gap_start).map(|i| 1.0 + i as f32).collect();
+        let head = vec![-1.0f32; cf];
+        let tail = vec![-2.0f32; cf];
+        for (margin, expected_fill_frame) in [(None, cf), (Some((&head[..], &tail[..])), 0)] {
+            let mut a = vec![0.0f32; 100];
+            let write = splice_into_a(
+                &mut a,
+                SpliceFill {
+                    b_samples: &fill,
+                    seam_margin: margin,
+                    crossfade_secs: cf as f64 / f64::from(RATE),
+                    sample_rate: RATE,
+                },
+                1,
+                gap_start,
+                gap_end,
+            )
+            .expect("a well-formed splice succeeds");
+            assert_eq!(
+                write,
+                SpliceWrite {
+                    start_frame: gap_start - cf,
+                    end_frame: gap_end + cf,
+                    fill_frame_at_gap_start: expected_fill_frame,
+                },
+                "margin path: {}",
+                margin.is_some()
+            );
+            let changed: Vec<usize> = (0..a.len()).filter(|&i| a[i] != 0.0).collect();
+            assert!(
+                changed
+                    .iter()
+                    .all(|&i| (write.start_frame..write.end_frame).contains(&i)),
+                "changed frames {changed:?} must lie inside {write:?}"
+            );
+            assert_eq!(
+                a[gap_start], fill[expected_fill_frame],
+                "the gap's first frame carries fill[{expected_fill_frame}]"
+            );
+        }
     }
 
     /// The fill-length invariant is *enforced*, not sampled. Every fill path terminates in

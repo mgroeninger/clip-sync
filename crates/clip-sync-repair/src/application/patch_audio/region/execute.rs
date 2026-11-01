@@ -37,6 +37,7 @@ pub(in crate::application::patch_audio) fn execute_region_spec(
     } = ctx;
     let GapRepairSpec {
         refined,
+        edge_refine,
         crossfade_secs,
         b_extract,
         verdict,
@@ -158,6 +159,12 @@ pub(in crate::application::patch_audio) fn execute_region_spec(
                 offset_nominal_start: b_extract.b_mapped_start_frame,
                 sample_rate,
                 registration_residual: registration_residual.map(|r| *r),
+                // The same contiguous-span start the margin cut uses, without its zero-pad bail:
+                // a short fill still starts here.
+                fill_source_frame: (b_extract.start_frame
+                    + alignment.start_frame
+                    + bracket_fill.head_trim_frames) as i64,
+                edge_refine,
             });
             (Some(patch), outcome)
         }
@@ -174,6 +181,7 @@ pub(in crate::application::patch_audio) fn execute_region_spec(
             dual_fit_post_window_ms,
             seam_margin,
             route,
+            fill_extract_start_frame,
             ..
         }) => {
             // Dual-fit rescue: the fill is the synthesized bridge on the spec; seams sit at their own lags, so
@@ -191,6 +199,9 @@ pub(in crate::application::patch_audio) fn execute_region_spec(
                 a_start_frame: refined.start_frame,
                 a_end_frame: refined.end_frame,
                 crossfade_secs,
+                // The bridge is cut from the pre lock; move that extract frame to full-B.
+                fill_source_frame: (b_extract.start_frame + fill_extract_start_frame) as i64,
+                edge_refine,
             };
             let outcome = RegionPatchOutcome::Patched {
                 pre_correlation: pre_seam_r,

@@ -390,6 +390,38 @@ pub struct GapPatchOutcome {
     /// [`crate::domain::fill_level`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fill_level: Option<FillLevelCheck>,
+    /// Where the splice wrote and from where in B (record-only). Present only for gaps that were
+    /// actually spliced; absent on preview runs, which splice nothing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub placement: Option<PatchPlacement>,
+}
+
+/// What one splice did to A, recorded by the splice itself rather than rebuilt from edges and
+/// adjust fields (`docs/dev/TEMP-soft-edge-census-plan.md` step 4). A reader rebuilding the write from
+/// `a_start_secs` and `gap_start_adjust_frames` misses refine moves (83/g7: 90 ms) and Fit's
+/// trim-head move.
+///
+/// **Rule for differentials:** a gap is re-placed when `fill_source_start_secs` or the write extent
+/// moves. `align_adjustment_secs` alone misses moves, and reads `0.0` on dual-fit.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct PatchPlacement {
+    /// The signed move refinement made to the reported lead edge against A's PCM, in A frames
+    /// (refined − reported; negative = retracted earlier). Before the edge snap and any boundary
+    /// extension. Absent when the spec was not built by repair characterize.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refine_start_frames: Option<i64>,
+    /// As `refine_start_frames`, for the trail edge (positive = extended later).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refine_end_frames: Option<i64>,
+    /// First A frame the splice changes, crossfade included, in seconds on A's decoded PCM timeline.
+    pub write_start_secs: f64,
+    /// End of the changed range (exclusive: the first frame after the last one written), crossfade
+    /// included. `[write_start_secs, write_end_secs)` is the extent a WAV diff sees.
+    pub write_end_secs: f64,
+    /// The B time (seconds on B's decoded PCM timeline) of the fill frame written at the gap's
+    /// first frame — the pre seam. The placement itself, on every path, dual-fit included; a plain
+    /// splice's pre crossfade consumes the fill frames before it.
+    pub fill_source_start_secs: f64,
 }
 
 impl GapPatchOutcome {
@@ -401,6 +433,7 @@ impl GapPatchOutcome {
             tags,
             residual: None,
             fill_level: None,
+            placement: None,
         }
     }
 
@@ -413,6 +446,12 @@ impl GapPatchOutcome {
     /// Attach the fill-level check (record-only); no-op when `None`.
     pub fn with_fill_level(mut self, fill_level: Option<FillLevelCheck>) -> Self {
         self.fill_level = fill_level;
+        self
+    }
+
+    /// Attach the splice's placement record; no-op when `None`.
+    pub fn with_placement(mut self, placement: Option<PatchPlacement>) -> Self {
+        self.placement = placement;
         self
     }
 

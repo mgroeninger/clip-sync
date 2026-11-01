@@ -197,6 +197,9 @@ pub fn seam_margin_slices(
 ///
 /// Falls back to [`apply_seam_crossfade`] when `cf == 0` or either margin is short, so a caller that
 /// cannot supply margins at the edges of B degrades to current behaviour rather than failing.
+///
+/// Returns whether the margin layout was written (`false` = the fallback ran), so the caller can
+/// say which fill frame landed on the gap's first frame.
 pub fn apply_seam_crossfade_extended(
     a_samples: &mut [f32],
     fill: SeamMarginFill<'_>,
@@ -204,12 +207,12 @@ pub fn apply_seam_crossfade_extended(
     gap_start_frame: usize,
     gap_end_frame: usize,
     crossfade_frames: usize,
-) {
+) -> bool {
     let channels = channels.max(1);
     let total_frames = a_samples.len() / channels;
     let gap_frames = gap_end_frame.saturating_sub(gap_start_frame);
     if gap_frames == 0 || fill.fill.len() < gap_frames * channels {
-        return;
+        return false;
     }
     let cf = effective_seam_crossfade_frames(
         crossfade_frames,
@@ -227,7 +230,7 @@ pub fn apply_seam_crossfade_extended(
             gap_end_frame,
             crossfade_frames,
         );
-        return;
+        return false;
     }
 
     // Pre seam: A fades out, the fill's own lead-in fades in, over A's real pre-gap audio.
@@ -263,6 +266,7 @@ pub fn apply_seam_crossfade_extended(
             a_samples[dest * channels + ch] = blend_samples(a_val, b_val, a_w, b_w);
         }
     }
+    true
 }
 
 #[cfg(test)]
@@ -562,13 +566,16 @@ mod tests {
         let tail = &b[cf + gap_frames..];
 
         let mut a = vec![0.5f32; 30];
-        apply_seam_crossfade_extended(
-            &mut a,
-            SeamMarginFill { head, fill, tail },
-            1,
-            gap_start,
-            gap_end,
-            cf,
+        assert!(
+            apply_seam_crossfade_extended(
+                &mut a,
+                SeamMarginFill { head, fill, tail },
+                1,
+                gap_start,
+                gap_end,
+                cf,
+            ),
+            "margins long enough: the margin layout runs"
         );
 
         // Interior is the planned content, undisplaced: no `+1 crossfade` shift on this path.
@@ -605,17 +612,20 @@ mod tests {
         apply_seam_crossfade(&mut plain, &b_fill, 1, gap_start, gap_end, cf);
 
         let mut ext = vec![0.5f32; 30];
-        apply_seam_crossfade_extended(
-            &mut ext,
-            SeamMarginFill {
-                head: &[],
-                fill: &b_fill,
-                tail: &[],
-            },
-            1,
-            gap_start,
-            gap_end,
-            cf,
+        assert!(
+            !apply_seam_crossfade_extended(
+                &mut ext,
+                SeamMarginFill {
+                    head: &[],
+                    fill: &b_fill,
+                    tail: &[],
+                },
+                1,
+                gap_start,
+                gap_end,
+                cf,
+            ),
+            "no margin: the plain fallback runs"
         );
         assert_eq!(
             plain, ext,

@@ -657,6 +657,7 @@ pub fn fingerprint_to_spec(fp: &GapFingerprint) -> crate::domain::gap_repair_spe
             post_seam_r: 0.0,
             pre_lag: 0,
             post_lag: 0,
+            fill_extract_start_frame: 0,
             trim_frames: 0,
             step_real: false,
             residual: None,
@@ -682,6 +683,7 @@ pub fn fingerprint_to_spec(fp: &GapFingerprint) -> crate::domain::gap_repair_spe
             end_frame: (fp.geometry.a_refined_end_secs * f64::from(fp.sample_rate)).round()
                 as usize,
         },
+        edge_refine: None,
         b_extract: BExtractWindow {
             start_frame: 0,
             end_frame: 0,
@@ -847,6 +849,7 @@ mod tests {
                 start_frame: 480_000,
                 end_frame: 504_000,
             },
+            edge_refine: None,
             b_extract: BExtractWindow {
                 start_frame: 0,
                 end_frame: 0,
@@ -1046,6 +1049,7 @@ mod tests {
                 start_frame: 480_000,
                 end_frame: 504_000,
             },
+            edge_refine: None,
             b_extract: BExtractWindow {
                 start_frame: 0,
                 end_frame: 0,
@@ -1239,6 +1243,7 @@ mod tests {
                 start_frame: 48_000,
                 end_frame: 72_000,
             },
+            edge_refine: None,
             b_extract: BExtractWindow {
                 start_frame: 0,
                 end_frame: 0,
