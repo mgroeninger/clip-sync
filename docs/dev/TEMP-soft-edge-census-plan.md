@@ -1040,13 +1040,50 @@ confined check did not fit as a mode. Before any run, it re-derives every listed
 the two corpus reports and the census, and throws on a mismatch (`-PlanOnly` passes). Estimated media cost is about 2 × 20 pair-runs at about 6 minutes each, around
 4 hours sequential, plus rounds for replacements.
 
+**Post-registration observation (2026-10-31, during the render; the protocol is unchanged).**
+Two candidates failed their checks, and the walk replaced both as specified. Final set: 22 trials
+(18 gaps, 2 repeats, 2 controls), all strata at quota, snapped on *a* in 10 of 20.
+- **37/g5 (trail) failed check 2.** Its first difference falls 3228 ms before the post seam. It is an
+  anchor-seam gap whose write starts 2.6 s before the gap, and the snapped arm writes a different
+  fill across the whole write. `align_adjustment_secs`, the adjust frames, gains, dual-fit and tier
+  match in both arms. `registration_applied_ms` does not: it is −294.9 ms vs −273.0 ms, a 21.9 ms move.
+  That field adds Fit's trim-head move, which `align_adjustment_secs` does not carry
+  (`patch_result.rs`, `RegistrationResidual`). The strata and the render's check 3 read
+  `align_adjustment_secs` only, so they miss this kind of re-placement. (A first reading called it
+  "invisible in the report". That was wrong.)
+- **The strata under-count re-placement.** Of the patched gaps outside the four placement strata,
+  62 moved `registration_applied_ms` by more than 0.1 ms between the 10-26 and guarded runs. 20 of
+  them are anchor-seam and 42 are not. 21 are trail-stratum gaps; the trail render's check 2 rejects
+  them, as it did 37/g5. The rest are lead-only. The move is up to 49.6 ms (50/g7, 10/g10, 11/g14 above
+  48 ms), and it does not track the lead onset: within 1 ms on only 6 of 62. So the real re-placed set
+  is about 95 + 62. The listen set itself is sound, because every accepted gap passed an audio check
+  (confined, trail window or byte-identical). But the 62 have not been heard, and Phase 3 never
+  covered them either (it excluded anchor-seam gaps, and drew on report fields). Covering them is a
+  separate decision after this sitting, for example a `registration_applied_ms` stratum.
+- **83/g7 (anchor) failed check 3. Diagnosed: the refine move is unreported, not a write bug.** The arms
+  differ from 102.8 ms before the earliest write start that `a_start_secs + gap_start_adjust_frames`
+  (plus the snap lead) predicts. Each arm was compared against an unpatched A cut (ffmpeg, aligned
+  sample-exact, residual 0.1 RMS outside the writes). *Both* arms write early: current from −100.48 ms
+  of its predicted start, snapped from −102.77 ms, and both ends at +10 ms (the crossfade). So
+  `refine_gap_frames` retracted the lead edge 90.5 ms through leading silence, because the scanner
+  started the run late (`a_start_secs` is 5970.000). No field records that move, and the adjust fields
+  are measured from the refined edge. The snap then moved 2.3 ms from the refined edge to the onset.
+  The census measures the same onset from the floor edge, as 92.81 ms, beyond the cap. So census-based
+  snap predictions (the render's `Get-SnapMs`, the strata's `lead ≤ 40`) are wrong wherever refinement
+  moves an edge. This predates the snap: the write start was never recoverable from the report.
+
 ### Step 4 — snap reporting (planned 2026-10-31; built after the listen, before the flip)
 
 **Why.** Default-on moves the write on 311 gaps, and no report says so.
 - The scan report keeps the floor edge. That is the accepted cost from § 4 Phase 4.
 - The patch entry's `gap_start_adjust_frames` / `gap_end_adjust_frames` are measured from the
-  refined edge, and that becomes the snapped edge. A reader can no longer recover the write start
-  from `start_secs`.
+  refined edge, and that becomes the snapped edge. That was already a gap before the snap:
+  `refine_gap_frames` moves edges too, and no field records it. On 83/g7 refinement retracted the
+  lead 90.5 ms (step 3 observation), so neither arm's write start can be recovered from
+  `a_start_secs`. The snap adds a second unrecorded move on top.
+- Where B is read from is only partly recorded. `align_adjustment_secs` does not carry Fit's
+  trim-head move. `registration_applied_ms` does, but it reads 0.0 on dual-fit. A differential on
+  `align_adjustment_secs` missed 62 re-placed gaps, with moves up to 49.6 ms (step 3 observation).
 - `characterize.rs` computes `snap_lead_frames` / `snap_trail_frames` for the abut fix, then drops
   them.
 - A's codec is decoded (`SourceDescriptor`) and dropped (`sources: _` in `patch_audio/mod.rs`).
@@ -1076,11 +1113,24 @@ snap is off. Frames are at A's rate, as for the adjust fields.
 |---|---|---|
 | `outcome` | `snapped`, `hard` (no onset), `refused_cap`, `refused_no_zero`, or `not_attempted_advanced` (lead only: refinement advanced the start). The refusals follow the code's order: cap first, then zero | The two refusals are the codec canaries |
 | `onset_frames` | Onset to the refined edge, also on refusals; absent on `hard` | A codec's band length shows as a new cluster |
-| `moved_frames` | How far the write's edge moved (`snap_lead_frames` / `snap_trail_frames`); 0 unless `snapped` | With `start_secs` and the adjust field, it gives the write start |
+| `moved_frames` | How far the write's edge moved (`snap_lead_frames` / `snap_trail_frames`); 0 unless `snapped` | Ties a write move to the snap. The write itself is recorded directly (below), not reconstructed |
+| `refined_frames` | Floor edge (`a_start_secs` / `a_end_secs`) to the refined edge, signed. It is the move the snap starts from, and it is recorded whether or not the snap is on | Explains a census onset that disagrees with `onset_frames`: the census measures from the floor edge (83/g7: census 92.81 ms = refine 90.5 + snap 2.3) |
 | `reaches_zero` | The `gap_reaches_zero` result, on every edge with an onset | Kept separate from `outcome`, so a long band that also never reaches zero reads as programme |
 | `onset_to_zero_frames` | Onset to the start of the digital-zero run | AAC-LC: ≤ 2048 (217 of 218 soft leads). A different window length shows here |
 | `band_peak_dbfs`, `step_db` | Band shape | The encoder-noise shape is a step of about 20 dB to about −55 dBFS |
 | `gap_floor_dbfs` | Only on `refused_no_zero`: the lowest 2 ms bin inside the zero search | Separates a noise-filled dropout (dither, comfort noise) from quiet programme (10/g11, 14/g10 trails at −62 … −66 dBFS) |
+
+**Write extent and fill source (every patched gap, snap on or off).** The splice already knows both,
+so this records them rather than having a reader rebuild them from edges and adjust fields.
+- `write_start_secs` / `write_end_secs`: the first and last A frame the splice changes, with the
+  crossfades included. This is the extent a WAV diff sees. Check 3 rebuilt it from fields and got
+  83/g7 wrong by 90 ms.
+- `fill_source_start_secs`: the B time of the fill frame written at the gap's pre seam. That is
+  the placement itself, on every path, dual-fit included. `registration_applied_ms` stays as the
+  registration read.
+- **Rule for differentials** (strata, render checks, `diff-vs-*.csv`): a gap is re-placed when
+  `fill_source_start_secs` or the write extent moves. Never judge it from `align_adjustment_secs`
+  alone. Until these fields exist, read `registration_applied_ms` and treat dual-fit as unknown.
 
 **Run level.**
 - `PatchSummary` gets an `edge_snap` settings echo: the cap in ms, the zero amplitude, the zero
@@ -1120,6 +1170,12 @@ with `write_full_surface_repair_golden`.
 - Domain: a merge-chain case where the wider window must not change the move.
 - CLI: extend `edge_snap_writes_over_a_soft_lead_band` to check that `moved_frames` equals the
   shift of the written start.
+- CLI: on a fixture with leading silence before the reported start (a refine retraction), check
+  that `write_start_secs` equals the first frame that differs from the input, and that
+  `refined_frames` carries the retraction. That is 83/g7's shape. Also check `write_end_secs` against
+  the last differing frame.
+- CLI: on Fit, dual-fit and anchor-seam fixtures, check that `fill_source_start_secs` locates the
+  written fill. Correlate the output's first post-crossfade fill frames against B at that time.
 
 **Verification: one full-corpus run, at the flip.** Build the reporting, the window and the default
 flip together, including the fingerprint to-do. Run `measure-patch-outcomes.ps1` at defaults over all
@@ -1133,6 +1189,14 @@ flip together, including the fingerprint to-do. Run `measure-patch-outcomes.ps1`
 - 58/g2 trail reads `refused_cap` (onset 107.5 ms). 10/g11 and 14/g10 trails read `refused_no_zero`,
   with `gap_floor_dbfs` in −62 … −66.
 - On snapped leads, `onset_to_zero_frames` ≤ 2048, matching `frame-grid.csv`.
+- 83/g7 reads `refined_frames` ≈ −90.5 ms on the lead and `moved_frames` ≈ 2.3 ms, and
+  `write_start_secs` matches the unpatched-A diff. That is `a_start_secs` − 100.48 ms with the snap
+  off (dual-fit), and `a_start_secs` − 600 ms − 102.77 ms with it on (anchor seam). The job's tmp
+  directory keeps the cut and the script.
+- Re-placement re-count with the new rule: every gap among the 62 whose `registration_applied_ms`
+  moved shows a `fill_source_start_secs` move, and no gap the old strata called unchanged shows a
+  move that registration missed. Report any dual-fit move separately: there was no reading for it
+  before.
 
 That run is the first report that records the snap. It is also the baseline for any later codec.
 
