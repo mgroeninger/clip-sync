@@ -429,8 +429,8 @@ scan_both = false
 /// Every sample the splice changed lies inside `[write_start_secs, write_end_secs)`, and the first
 /// change opens the range (the crossfade's first frame weighs the fill at zero, so allow one
 /// crossfade of slack). B is A delayed by `OFFSET_SECS`, so the fill frame at the gap's first frame
-/// sits `OFFSET_SECS` later in B. The soft lead is moved by refinement, which `refine_start_frames`
-/// must carry.
+/// sits `OFFSET_SECS` later in B, moved by the registration Fit applied. The soft lead is moved by
+/// refinement, which `refine_start_frames` must carry.
 #[test]
 fn placement_locates_the_write_and_the_fill() {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -506,7 +506,8 @@ scan_both = false
         write_start <= first && last < write_end,
         "changed [{first}, {last}] must lie inside the write [{write_start}, {write_end})"
     );
-    let slack = (0.03 * rate) as usize;
+    // One default seam crossfade (10 ms).
+    let slack = (0.01 * rate) as usize;
     assert!(
         first - write_start <= slack && write_end - 1 - last <= slack,
         "the write must be tight: changed [{first}, {last}] vs [{write_start}, {write_end})"
@@ -520,8 +521,13 @@ scan_both = false
     let a_start = gaps[0]["a_start_secs"].as_f64().expect("a_start_secs");
     let gap_start = a_start + refine_start as f64 / rate;
     let fill_source = secs("fill_source_start_secs");
+    let applied_ms = gaps[0]["status"]["patched"]["registration_applied_ms"]
+        .as_f64()
+        .expect("a Fit patch reports registration_applied_ms");
+    let expected = gap_start + f64::from(OFFSET_SECS) + applied_ms / 1000.0;
+    // Two frames covers rounding in the reported seconds; a crossfade-sized slip is 441 frames.
     assert!(
-        (fill_source - (gap_start + f64::from(OFFSET_SECS))).abs() < 0.05,
-        "fill source {fill_source:.4} s must sit {OFFSET_SECS} s after gap start {gap_start:.4} s"
+        (fill_source - expected).abs() <= 2.0 / rate,
+        "fill source {fill_source:.6} s must sit {OFFSET_SECS} s + {applied_ms:.4} ms after          gap start {gap_start:.6} s ({expected:.6} s)"
     );
 }

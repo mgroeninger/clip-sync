@@ -1207,9 +1207,11 @@ with `write_full_surface_repair_golden`.
   - Unit: `patch_placement_converts_the_write_and_offsets_the_fill_source` (`region/types.rs`).
   - CLI: `placement_locates_the_write_and_the_fill` (`cli_wav_integration.rs`), on the soft-lead
     fixture, where refinement moves the lead. Every changed sample lies inside the write, and the
-    first and last lie within 30 ms of its ends. `refine_start_frames` is non-zero.
-    `fill_source_start_secs` sits at the refined start plus the fixture's 3 s offset (±50 ms). This
-    covers the Fit path only.
+    first and last lie within one crossfade (10 ms) of its ends; observed 1 and 0 frames.
+    `refine_start_frames` is non-zero. `fill_source_start_secs` equals the refined start plus the
+    fixture's 3 s offset plus `registration_applied_ms`, to 2 frames. Fit places this fixture's fill
+    2.3 ms early against the true content (the chirp barely correlates at the seams), and the field
+    reports that move. This covers the Fit path only.
   - Golden: `full_surface_repair.json` carries one placement with both refine keys, and one
     (dual-fit) without them.
 - **Still open:**
