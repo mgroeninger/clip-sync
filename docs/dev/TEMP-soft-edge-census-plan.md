@@ -1220,6 +1220,13 @@ with `write_full_surface_repair_golden`.
     (B shifted 0.35 s) it equals the gap start plus 0.35 s to 2 frames, and the patched A frames
     correlate with B there at r(0) > 0.99 and r(±1) < 0.5. A mutation (+441 frames on the dual-fit
     `fill_source_frame`) fails it.
+  - Integration (2026-11-06): `patch_audio_dual_fit_step_real_reports_the_pre_lock_fill_source`
+    covers the length-edit arm (`dual_fit_step_real: Some(true)`) on the step fixture with white
+    noise (`periodic_hz: None`), B delayed 0.20 s before the gap midpoint and 0.28 s after. The fill
+    source equals the gap start plus the pre delay to 2 frames. The first 100 ms after the pre seam
+    match B there, and the last 100 ms before the post crossfade match B at the post delay, each at
+    r(0) > 0.99 and r(±1) < 0.5. A mutation (origin moved by the 80 ms step, i.e. reported at the
+    post lock) fails it.
   - Golden: `full_surface_repair.json` carries one placement with both refine keys, and one
     (dual-fit) without them.
   - Scripts: `measure-patch-outcomes.ps1` writes `placement-rollup.csv` (one row per spliced gap with
@@ -1227,8 +1234,6 @@ with `write_full_surface_repair_golden`.
     write extent moved) against `registration_applied_ms`, and flags a registration move with no
     placement move as `odd:` (legitimate only when the B offset itself moved).
 - **Still open:**
-  - A step-real dual-fit check. That fixture is a sine, so a fill-source correlation is ambiguous
-    there.
   - Anchor-seam `fill_source_start_secs`. Low priority: it shares the bracket formula the Fit tests
     cover.
   - A true refine-retraction fixture (leading silence before the reported start, 83/g7's shape).

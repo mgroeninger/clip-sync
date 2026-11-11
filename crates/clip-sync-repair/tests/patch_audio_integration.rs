@@ -1927,19 +1927,40 @@ fn patch_audio_dual_fit_rescues_constant_shift_as_rigid_seam_lock() {
         placement.fill_source_start_secs,
         gap_start as f64 / rate
     );
-    let b_left: Vec<f32> = WavReader::open(&path_b)
-        .expect("open b")
+    assert_written_frames_are_b_at(
+        &pcm.samples,
+        &left_channel_f32(&path_b),
+        gap_start,
+        source,
+        "the gap's first written frames vs B at fill_source_start_secs",
+    );
+}
+
+/// Left channel of a stereo 16-bit WAV, as `f32` in `[-1, 1)`.
+fn left_channel_f32(path: &Path) -> Vec<f32> {
+    WavReader::open(path)
+        .expect("open wav")
         .samples::<i16>()
         .step_by(usize::from(CHANNELS))
         .map(|s| f32::from(s.expect("read sample")) / 32768.0)
-        .collect();
+        .collect()
+}
+
+/// Assert that 100 ms of the patched output from A frame `a_frame` is B from frame `b_frame`, and
+/// not B a frame either side. Only meaningful on white-noise content, which decorrelates within a
+/// frame.
+fn assert_written_frames_are_b_at(
+    patched: &[f32],
+    b_left: &[f32],
+    a_frame: usize,
+    b_frame: i64,
+    what: &str,
+) {
     let ch = usize::from(CHANNELS);
     let window = SAMPLE_RATE as usize / 10;
-    let written: Vec<f32> = (0..window)
-        .map(|k| pcm.samples[(gap_start + k) * ch])
-        .collect();
+    let written: Vec<f32> = (0..window).map(|k| patched[(a_frame + k) * ch]).collect();
     let r_at = |lag: i64| {
-        let from = (source + lag) as usize;
+        let from = (b_frame + lag) as usize;
         let b = &b_left[from..from + window];
         let (ma, mb) = (
             written.iter().sum::<f32>() / window as f32,
@@ -1957,8 +1978,104 @@ fn patch_audio_dual_fit_rescues_constant_shift_as_rigid_seam_lock() {
     let (r0, r_early, r_late) = (r_at(0), r_at(-1), r_at(1));
     assert!(
         r0 > 0.99 && r_early < 0.5 && r_late < 0.5,
-        "the gap's written frames must be B at fill_source_start_secs exactly: \
-         r(0)={r0:.4} r(-1)={r_early:.4} r(+1)={r_late:.4}"
+        "{what}: must match exactly, got r(0)={r0:.4} r(-1)={r_early:.4} r(+1)={r_late:.4}"
+    );
+}
+
+/// The length-edit ("real step") dual-fit arm reports its fill source at the pre shoulder's lock.
+/// B is white noise whose lag steps 80 ms at the gap midpoint (B is A delayed by `PRE_DELAY_SECS`
+/// before it, `POST_DELAY_SECS` after), so the fill is cut at the pre lock (`locks.b_pre_seam`) and
+/// an interior jump realigns it to the post lock. The bracket search radius is far below both
+/// delays, so only dual-fit's per-shoulder search can place the fill.
+///
+/// Checks both ends of the written fill against B: the frames after the pre seam at
+/// `fill_source_start_secs`, and the frames before the post seam at the post delay.
+#[test]
+fn patch_audio_dual_fit_step_real_reports_the_pre_lock_fill_source() {
+    const PRE_DELAY_SECS: f64 = 0.20;
+    const POST_DELAY_SECS: f64 = 0.28;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let (path_a, path_b) = (temp.path().join("a.wav"), temp.path().join("b.wav"));
+    // The fixture's shifts are B-leads-A (`B[t] = A[t + shift]`), so a delay is a negative shift.
+    clip_sync_repair_fixtures::registration_step::write_registration_step_pair(
+        &clip_sync_repair_fixtures::registration_step::RegistrationStepSpec {
+            sample_rate: SAMPLE_RATE,
+            total_secs: f64::from(TOTAL_SECS),
+            gap_start_secs: GAP_START,
+            gap_end_secs: GAP_END,
+            pre_shift_secs: -PRE_DELAY_SECS,
+            post_shift_secs: -POST_DELAY_SECS,
+            seed: 7,
+            amplitude: 0.5,
+            periodic_hz: None,
+            b_dropout_secs: None,
+        },
+        &path_a,
+        &path_b,
+    );
+    let report = make_report(path_a, path_b.clone(), stereo_identical_compat(SAMPLE_RATE));
+    let opts = PatchTestOptions {
+        fill_border_search_secs: 0.05,
+        short_gap_one_strong_seam_fallback: false,
+        gap_end_extend_on_post_seam_fail: false,
+        gap_start_extend_on_pre_seam_fail: false,
+        disable_structure_trust: true,
+        partial_structure_waveform_soften: 1.0,
+        ..Default::default()
+    };
+    let patched = run_patch(
+        patch_request_with_options(report, false, 2.0, 0.12, opts),
+        10,
+    );
+    match &patched.summary.gaps[0].status {
+        GapPatchStatus::Patched {
+            dual_fit_used: true,
+            dual_fit_step_real: Some(true),
+            ..
+        } => {}
+        other => panic!(
+            "expected a step-real dual-fit patch (dual_fit_used, dual_fit_step_real: Some(true)), \
+             got {other:?}"
+        ),
+    }
+
+    let placement = patched.summary.gaps[0]
+        .placement
+        .expect("a spliced dual-fit gap carries a placement record");
+    let rate = f64::from(SAMPLE_RATE);
+    let cf = (0.010 * rate) as usize; // run_patch's 10 ms crossfade
+    let gap_start = (placement.write_start_secs * rate).round() as usize + cf;
+    let gap_end = (placement.write_end_secs * rate).round() as usize - cf;
+    let pre_delay = (PRE_DELAY_SECS * rate).round() as i64;
+    let post_delay = (POST_DELAY_SECS * rate).round() as i64;
+    let source = (placement.fill_source_start_secs * rate).round() as i64;
+    assert!(
+        (source - (gap_start as i64 + pre_delay)).abs() <= 2,
+        "fill source {:.6} s must sit {PRE_DELAY_SECS} s (the pre delay, not the post) after the \
+         gap start {:.6} s",
+        placement.fill_source_start_secs,
+        gap_start as f64 / rate
+    );
+
+    let pcm = expect_pcm(&patched);
+    let b_left = left_channel_f32(&path_b);
+    assert_written_frames_are_b_at(
+        &pcm.samples,
+        &b_left,
+        gap_start,
+        source,
+        "the gap's first written frames vs B at fill_source_start_secs",
+    );
+    // Stop a crossfade short of the gap end: the plain splice blends its post seam there.
+    let window = SAMPLE_RATE as usize / 10;
+    let tail = gap_end - cf - window;
+    assert_written_frames_are_b_at(
+        &pcm.samples,
+        &b_left,
+        tail,
+        tail as i64 + post_delay,
+        "the gap's last written frames vs B at the post delay",
     );
 }
 

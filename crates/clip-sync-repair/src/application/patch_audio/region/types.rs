@@ -18,7 +18,7 @@ use crate::domain::{
     },
     gap_tags::{
         derive_gap_tags_from_patch_outcome, derive_gap_tags_from_status, DualFitRoute,
-        FillTierThresholds, GapPatchPlacement, GapPatchTierInput, GapTags, GapTagsPatchContext,
+        FillTierThresholds, GapPatchTierInput, GapTagPlacementInput, GapTags, GapTagsPatchContext,
     },
     patch_anchor::PatchAnchorTable,
     patch_result::{
@@ -383,7 +383,7 @@ pub(in crate::application::patch_audio) fn region_outcome_gap_tags(
                 pre: *pre_correlation,
                 post: *post_correlation,
                 confidence: *confidence,
-                placement: GapPatchPlacement {
+                placement: GapTagPlacementInput {
                     fit_used_boundary_grid: *fit_used_boundary_grid,
                     anchor_seam_used: *anchor_seam_used,
                     anchor_bracket_move_frames: *anchor_bracket_move_frames,

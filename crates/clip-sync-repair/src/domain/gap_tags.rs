@@ -358,7 +358,7 @@ pub enum DualFitRoute {
 
 /// Inputs for tag derivation that are fixed before placement: the run's settings plus the gap's
 /// resolved signature mode (`auto` resolves per gap). Nothing placement decides lives here — those
-/// facts ride the outcome as [`GapPatchPlacement`] and the residual verdict, so a skip or a routed
+/// facts ride the outcome as [`GapTagPlacementInput`] and the residual verdict, so a skip or a routed
 /// dual-fit patch cannot inherit another fill's tags.
 #[derive(Debug, Clone, Copy)]
 pub struct GapTagsPatchContext {
@@ -371,7 +371,7 @@ pub struct GapTagsPatchContext {
 /// Where and how a patched gap's fill was placed — the per-gap facts the tags report. The default is
 /// a plain single-lag bracket fill: baseline throat, no anchor, no dual-fit, filled to length.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub struct GapPatchPlacement {
+pub struct GapTagPlacementInput {
     pub fit_used_boundary_grid: bool,
     pub anchor_seam_used: bool,
     pub anchor_bracket_move_frames: usize,
@@ -445,7 +445,7 @@ pub fn derive_gap_tags_from_patch_outcome(
 ) -> GapTags {
     let placement = match outcome {
         GapPatchTierInput::Patched { placement, .. } => *placement,
-        GapPatchTierInput::Skipped(_) => GapPatchPlacement::default(),
+        GapPatchTierInput::Skipped(_) => GapTagPlacementInput::default(),
     };
     let (patch_tier, seam_shape) = match outcome {
         GapPatchTierInput::Patched {
@@ -588,14 +588,14 @@ pub fn derive_gap_tags_from_status(
                 pre: *pre_correlation,
                 post: *post_correlation,
                 confidence: *confidence,
-                placement: GapPatchPlacement {
+                placement: GapTagPlacementInput {
                     anchor_seam_used: *anchor_seam_used,
                     anchor_bracket_move_frames: *anchor_bracket_move_frames,
                     dual_fit_route: dual_fit_used.then_some(DualFitRoute::GateFail),
                     dual_fit_step_real: *dual_fit_step_real,
                     dual_fit_post_window_ms: *dual_fit_post_window_ms,
                     zero_pad_frames: *zero_pad_frames,
-                    ..GapPatchPlacement::default()
+                    ..GapTagPlacementInput::default()
                 },
             },
             None,
@@ -649,7 +649,7 @@ pub enum GapPatchTierInput<'a> {
         pre: f64,
         post: f64,
         confidence: FillConfidence,
-        placement: GapPatchPlacement,
+        placement: GapTagPlacementInput,
     },
     Skipped(&'a GapPatchSkipReason),
 }
@@ -758,7 +758,7 @@ mod tests {
         pre: f64,
         post: f64,
         confidence: FillConfidence,
-        placement: GapPatchPlacement,
+        placement: GapTagPlacementInput,
     ) -> GapTags {
         derive_gap_tags_from_patch_outcome(
             &GapPatchTierInput::Patched {
@@ -773,7 +773,7 @@ mod tests {
     }
 
     fn tags_from_patched(pre: f64, post: f64, confidence: FillConfidence) -> GapTags {
-        tags_from_placed(pre, post, confidence, GapPatchPlacement::default())
+        tags_from_placed(pre, post, confidence, GapTagPlacementInput::default())
     }
 
     #[test]
@@ -859,10 +859,10 @@ mod tests {
             0.31,
             0.29,
             FillConfidence::Marginal,
-            GapPatchPlacement {
+            GapTagPlacementInput {
                 anchor_trusted: true,
                 anchor_seam_used: true,
-                ..GapPatchPlacement::default()
+                ..GapTagPlacementInput::default()
             },
         );
         assert_eq!(tags.patch_tier, PatchTier::AnchorTrusted);
@@ -910,11 +910,11 @@ mod tests {
             0.31,
             0.29,
             FillConfidence::Marginal,
-            GapPatchPlacement {
+            GapTagPlacementInput {
                 anchor_seam_used: true,
                 anchor_bracket_move_frames: 1_200,
                 anchor_trusted: true,
-                ..GapPatchPlacement::default()
+                ..GapTagPlacementInput::default()
             },
         );
         assert!(tags.anchor_seam_used);

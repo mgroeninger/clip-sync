@@ -2340,8 +2340,8 @@ mod tests {
     fn unified_gap_report_shows_anchor_trusted_patch_detail() {
         use crate::domain::residual_gate::DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB;
         use crate::domain::{
-            derive_gap_tags_from_patch_outcome, FillMode, FillTierThresholds, GapPatchPlacement,
-            GapPatchTierInput, GapTagsPatchContext,
+            derive_gap_tags_from_patch_outcome, FillMode, FillTierThresholds, GapPatchTierInput,
+            GapTagPlacementInput, GapTagsPatchContext,
         };
 
         let report = minimal_report();
@@ -2375,11 +2375,11 @@ mod tests {
                 pre: 0.31,
                 post: 0.29,
                 confidence: crate::domain::FillConfidence::Marginal,
-                placement: GapPatchPlacement {
+                placement: GapTagPlacementInput {
                     anchor_seam_used: true,
                     anchor_bracket_move_frames: 48_000,
                     anchor_trusted: true,
-                    ..GapPatchPlacement::default()
+                    ..GapTagPlacementInput::default()
                 },
             },
             None,
@@ -2429,7 +2429,7 @@ mod tests {
         use crate::domain::residual_gate::DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB;
         use crate::domain::{
             derive_gap_tags_from_patch_outcome, gap_tags::DualFitRoute, FillMode,
-            FillTierThresholds, GapPatchPlacement, GapPatchTierInput, GapTagsPatchContext,
+            FillTierThresholds, GapPatchTierInput, GapTagPlacementInput, GapTagsPatchContext,
         };
 
         let report = minimal_report();
@@ -2463,10 +2463,10 @@ mod tests {
                 pre: 0.31,
                 post: 0.29,
                 confidence: crate::domain::FillConfidence::Marginal,
-                placement: GapPatchPlacement {
+                placement: GapTagPlacementInput {
                     dual_fit_route: Some(DualFitRoute::GateFail),
                     dual_fit_step_real: Some(true),
-                    ..GapPatchPlacement::default()
+                    ..GapTagPlacementInput::default()
                 },
             },
             None,
