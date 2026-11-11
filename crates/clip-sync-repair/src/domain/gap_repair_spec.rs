@@ -24,7 +24,7 @@ use crate::domain::gap_fill::GapFillSkipped;
 use crate::domain::gap_fill_fit::{FillConfidence, UnifiedFitBreakdown};
 use crate::domain::patch_result::GapPatchSkipReason;
 use crate::domain::policies::{
-    EdgeRefineFrames, FillAlignment, RefinedGapFrames, SeamResidualVerdict,
+    EdgeRefineFrames, EdgeSnapReport, FillAlignment, RefinedGapFrames, SeamResidualVerdict,
 };
 
 /// [gap-vocabulary.md] cell — a gap-type we **see and reconcile to an action** (patch OR a *reasoned* skip).
@@ -342,6 +342,10 @@ pub struct GapRepairSpec {
     /// `Patch` spec repair characterize builds; `None` on skips (nothing is written to report it
     /// on), fingerprint projections and fixtures. Report-only: the splice records it.
     pub edge_refine: Option<EdgeRefineFrames>,
+    /// What the edge snap did at each edge (`docs/dev/TEMP-soft-edge-census-plan.md` step 4). Set by
+    /// repair characterize on every spec it returns, patch or skip; `None` when the snap is off, and
+    /// on fingerprint projections and fixtures. Record-only.
+    pub edge_snap: Option<EdgeSnapReport>,
     pub b_extract: BExtractWindow,
     pub crossfade_secs: f64,
     pub verdict: GapRepairVerdict,
@@ -539,6 +543,8 @@ mod tests {
             clamped: false,
             edge_pinned: false,
             program_quiet: true,
+            snap_lead_frames: 0,
+            snap_trail_frames: 0,
         });
         let cases = [
             (
@@ -596,6 +602,7 @@ mod tests {
                 end_frame: 48_000,
             },
             edge_refine: None,
+            edge_snap: None,
             b_extract: BExtractWindow {
                 start_frame: 0,
                 end_frame: 96_000,

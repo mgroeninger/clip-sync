@@ -339,15 +339,17 @@ fn soften_lead_edge(path: &Path, sample_rate: u32, edge_secs: u32, band_ms: f64,
     writer.finalize().expect("finalize wav");
 }
 
-/// `--edge-snap-max-ms` must move the write onto a soft lead band, and nothing well before it.
+/// The edge snap (on by default) must move the write onto a soft lead band, and nothing well
+/// before it; `--edge-snap-max-ms 0` turns it off.
 ///
 /// Without the snap, the band between A's dropout onset and the silence floor is raw A beside the
-/// fill (`docs/dev/TEMP-soft-edge-census-plan.md` § 1). With it, the fill starts at the onset.
+/// fill (`docs/dev/TEMP-soft-edge-census-plan.md` § 1). With it, the fill starts at the onset, and
+/// the report's `edge_snap.lead.moved_frames` is exactly how far the write's start moved.
 #[test]
 fn edge_snap_writes_over_a_soft_lead_band() {
     const BAND_MS: f64 = 25.0;
     const RAMP_MS: f64 = 20.0;
-    fn run(dir: &Path, snap: bool) -> (Vec<i16>, Vec<i16>) {
+    fn run(dir: &Path, snap: bool) -> (Vec<i16>, Vec<i16>, serde_json::Value) {
         let (path_a, path_b) =
             write_offset_chirp_wav_pair(dir, SAMPLE_RATE, TOTAL_SECS, OFFSET_SECS);
         zero_wav_segment(&path_a, SAMPLE_RATE, SILENT_START_SECS, SILENT_END_SECS);
@@ -382,24 +384,55 @@ scan_both = false
             "--min-gap-ms",
             "25000",
             "--no-scan-both",
+            "--format",
+            "json",
         ]);
-        if snap {
-            cmd.args(["--edge-snap-max-ms", "40"]);
+        if !snap {
+            cmd.args(["--edge-snap-max-ms", "0"]);
         }
-        assert!(cmd.status().expect("run clip-sync-repair").success());
+        let output = cmd.output().expect("run clip-sync-repair");
+        assert!(
+            output.status.success(),
+            "repair should exit 0: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let doc: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("--format json emits a report");
         let patched = WavReader::open(&out_wav)
             .expect("open patched wav")
             .samples::<i16>()
             .map(|s| s.expect("read sample"))
             .collect();
-        (raw_a, patched)
+        (raw_a, patched, doc["patch"]["gaps"][0].clone())
     }
 
     let off_dir = tempfile::tempdir().expect("tempdir");
     let on_dir = tempfile::tempdir().expect("tempdir");
-    let (raw_a, off) = run(off_dir.path(), false);
-    let (_, on) = run(on_dir.path(), true);
+    let (raw_a, off, off_gap) = run(off_dir.path(), false);
+    let (_, on, on_gap) = run(on_dir.path(), true);
     assert_eq!(off.len(), on.len(), "splice is length-preserving");
+
+    // The record: absent with the snap off; with it on, the lead snapped and its move is the write's.
+    assert!(
+        off_gap.get("edge_snap").is_none(),
+        "no snap record when the snap is off: {off_gap:#?}"
+    );
+    let lead = &on_gap["edge_snap"]["lead"];
+    assert_eq!(lead["outcome"], "snapped", "{on_gap:#?}");
+    let moved = lead["moved_frames"].as_u64().expect("moved_frames") as i64;
+    assert!(moved > 0, "a snapped edge moves");
+    let write_start = |gap: &serde_json::Value| {
+        (gap["placement"]["write_start_secs"]
+            .as_f64()
+            .expect("placement.write_start_secs")
+            * f64::from(SAMPLE_RATE))
+        .round() as i64
+    };
+    assert_eq!(
+        write_start(&off_gap) - write_start(&on_gap),
+        moved,
+        "moved_frames must equal the written start shift"
+    );
 
     let rate = f64::from(SAMPLE_RATE);
     let edge = (SAMPLE_RATE * SILENT_START_SECS) as usize;
@@ -522,7 +555,11 @@ scan_both = false
         .expect("a patched gap from repair characterize records its refine move");
     assert_ne!(refine_start, 0, "the soft lead must move the start edge");
     let a_start = gaps[0]["a_start_secs"].as_f64().expect("a_start_secs");
-    let gap_start = a_start + refine_start as f64 / rate;
+    // The edge snap (on by default) then moves the start outward of the refined edge.
+    let snap_lead = gaps[0]["edge_snap"]["lead"]["moved_frames"]
+        .as_u64()
+        .unwrap_or(0);
+    let gap_start = a_start + (refine_start - snap_lead as i64) as f64 / rate;
     let fill_source = secs("fill_source_start_secs");
     let applied_ms = gaps[0]["status"]["patched"]["registration_applied_ms"]
         .as_f64()

@@ -9,7 +9,7 @@ use crate::domain::gap_anchor_seam::{
 use crate::domain::gap_energy::energy_bins;
 use crate::domain::gap_signature::{build_gap_signature, GapSignatureMode};
 use crate::domain::pcm::{interleaved_to_channels, interleaved_to_mono};
-use crate::domain::policies::{refine_and_snap_gap_frames, EdgeSnap, RefinedGapFrames};
+use crate::domain::policies::{refine_and_snap_gap_edges, EdgeSnap, RefinedGapFrames};
 
 use super::config::*;
 use super::constellation::measure_constellation;
@@ -55,7 +55,7 @@ pub fn build_gap_fingerprint(
     let noise_collar_frames = (cfg.noise_collar_secs * rate).round() as usize;
     let max_refine_frames = (cfg.max_refine_secs * rate).round() as usize;
 
-    let refined = refine_and_snap_gap_frames(
+    let edges = refine_and_snap_gap_edges(
         inputs.a_samples,
         ch,
         inputs.reported_start_frame.min(total_a),
@@ -65,6 +65,7 @@ pub fn build_gap_fingerprint(
         max_refine_frames,
         EdgeSnap::from_ms(cfg.edge_snap_max_ms, rate),
     );
+    let refined = edges.refined;
     let gap_frames = refined.end_frame.saturating_sub(refined.start_frame);
 
     let geometry = GapGeometry {
@@ -72,6 +73,8 @@ pub fn build_gap_fingerprint(
         a_end_secs: inputs.reported_end_frame as f64 / rate,
         a_refined_start_secs: refined.start_frame as f64 / rate,
         a_refined_end_secs: refined.end_frame as f64 / rate,
+        a_unsnapped_start_secs: Some(edges.unsnapped.start_frame as f64 / rate),
+        a_unsnapped_end_secs: Some(edges.unsnapped.end_frame as f64 / rate),
         duration_secs: gap_frames as f64 / rate,
         b_mapped_start_secs: inputs
             .b_haystack

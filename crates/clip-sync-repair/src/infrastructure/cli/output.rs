@@ -1146,6 +1146,7 @@ mod tests {
     use crate::domain::fill_mode::FillMode;
     use crate::domain::gap::{Gap, GapOffsetAgreement, GapReport};
     use crate::domain::gap_tags::FillTierThresholds;
+    use crate::domain::policies::{EdgeSnapEdge, EdgeSnapOutcome, EdgeSnapReport};
     use crate::domain::{
         CompatibilityVerdict, GapFillSkipReason, GapPatchOutcome, GapPatchSkipReason,
         GapPatchStatus, PatchSummary, TrackCompatibility,
@@ -1259,6 +1260,7 @@ mod tests {
             local_pair_collar_secs: Some(2.0),
             video_a: PathBuf::from("video_a.mkv"),
             video_b: PathBuf::from("video_b.mkv"),
+            // Codec and bit depth populated so the golden pins the recorded-not-assessed keys.
             track_compatibility: Some(TrackCompatibility {
                 a_channels: 2,
                 b_channels: 2,
@@ -1267,6 +1269,10 @@ mod tests {
                 channels_match: true,
                 rate_match: true,
                 verdict: CompatibilityVerdict::Identical,
+                a_codec: Some("aac".into()),
+                b_codec: Some("ac3".into()),
+                a_bit_depth: Some("f32".into()),
+                b_bit_depth: Some("f32".into()),
             }),
             alignment: scan_alignment_from_result(&alignment_detail),
             gaps: vec![
@@ -1498,15 +1504,42 @@ mod tests {
                 },
             )
             // Populated so the nested object and both optional refine keys are pinned. Refine
-            // retracted the lead 441 frames (10 ms) and left the trail; the 10 ms crossfades put
-            // the write 10 ms outside each refined edge, and the fill frame on the refined start
-            // (44.99 s) sits 3 s behind it in B plus the 20 ms `align_adjustment_secs`.
+            // retracted the lead 441 frames (10 ms) and left the trail; the edge snap then moved the
+            // trail 441 frames (10 ms) out to its onset. The 10 ms crossfades put the write 10 ms
+            // outside each snapped edge, and the fill frame on the refined start (44.99 s) sits 3 s
+            // behind it in B plus the 20 ms `align_adjustment_secs`.
             .with_placement(Some(crate::domain::PatchPlacement {
                 refine_start_frames: Some(-441),
                 refine_end_frames: Some(0),
                 write_start_secs: 44.98,
-                write_end_secs: 47.51,
+                write_end_secs: 47.52,
                 fill_source_start_secs: 48.01,
+            }))
+            // The lead had no fall to snap to (`hard`); the trail snapped. Pins a snapped edge's
+            // full key set and the onset-less shape.
+            .with_edge_snap(Some(EdgeSnapReport {
+                lead: EdgeSnapEdge {
+                    outcome: EdgeSnapOutcome::Hard,
+                    refine_frames: -441,
+                    onset_frames: None,
+                    moved_frames: 0,
+                    reaches_zero: None,
+                    onset_to_zero_frames: None,
+                    band_peak_dbfs: None,
+                    step_db: None,
+                    gap_floor_dbfs: None,
+                },
+                trail: EdgeSnapEdge {
+                    outcome: EdgeSnapOutcome::Snapped,
+                    refine_frames: 0,
+                    onset_frames: Some(441),
+                    moved_frames: 441,
+                    reaches_zero: Some(true),
+                    onset_to_zero_frames: Some(1024),
+                    band_peak_dbfs: Some(-48.5),
+                    step_db: Some(27.3),
+                    gap_floor_dbfs: None,
+                },
             })),
             gap_patch_outcome(
                 120.0,
@@ -1519,7 +1552,34 @@ mod tests {
                         best_attempt: None,
                     },
                 },
-            ),
+            )
+            // A skipped gap still carries its snap record: both refusals, so the golden pins the
+            // cap's onset-beyond-reach shape and `gap_floor_dbfs`, which only `refused_no_zero`
+            // writes.
+            .with_edge_snap(Some(EdgeSnapReport {
+                lead: EdgeSnapEdge {
+                    outcome: EdgeSnapOutcome::RefusedCap,
+                    refine_frames: -96,
+                    onset_frames: Some(4741),
+                    moved_frames: 0,
+                    reaches_zero: Some(true),
+                    onset_to_zero_frames: Some(2048),
+                    band_peak_dbfs: Some(-41.2),
+                    step_db: Some(22.8),
+                    gap_floor_dbfs: None,
+                },
+                trail: EdgeSnapEdge {
+                    outcome: EdgeSnapOutcome::RefusedNoZero,
+                    refine_frames: 48,
+                    onset_frames: Some(480),
+                    moved_frames: 0,
+                    reaches_zero: Some(false),
+                    onset_to_zero_frames: None,
+                    band_peak_dbfs: Some(-52.0),
+                    step_db: Some(18.4),
+                    gap_floor_dbfs: Some(-64.2),
+                },
+            })),
             // A rigid (trim-0) dual-fit rescue: the two shoulder locks agreed, so
             // `dual_fit_step_real: Some(false)` populates the field in the golden — the length-edit
             // gap above pins `dual_fit_used: false` / `dual_fit_step_real: None`; this pins the third
@@ -1575,6 +1635,31 @@ mod tests {
                 );
                 outcome.tags.dual_fit_route =
                     Some(crate::domain::gap_tags::DualFitRoute::RegistrationStep);
+                // Refine advanced the start, so the lead snap never ran; the trail had no fall.
+                outcome.edge_snap = Some(EdgeSnapReport {
+                    lead: EdgeSnapEdge {
+                        outcome: EdgeSnapOutcome::NotAttemptedAdvanced,
+                        refine_frames: 220,
+                        onset_frames: None,
+                        moved_frames: 0,
+                        reaches_zero: None,
+                        onset_to_zero_frames: None,
+                        band_peak_dbfs: None,
+                        step_db: None,
+                        gap_floor_dbfs: None,
+                    },
+                    trail: EdgeSnapEdge {
+                        outcome: EdgeSnapOutcome::Hard,
+                        refine_frames: 0,
+                        onset_frames: None,
+                        moved_frames: 0,
+                        reaches_zero: None,
+                        onset_to_zero_frames: None,
+                        band_peak_dbfs: None,
+                        step_db: None,
+                        gap_floor_dbfs: None,
+                    },
+                });
                 // A placement with no refine step pins the refine keys' absence.
                 outcome.placement = Some(crate::domain::PatchPlacement {
                     refine_start_frames: None,
@@ -1619,6 +1704,11 @@ mod tests {
             // half was off on the run this fixture describes.
             false,
         ))
+        // Stamped by every real patch run with the snap on (`patch_audio::edge_snap_for`), counted
+        // from the per-gap records above.
+        .with_edge_snap(Some(crate::domain::EdgeSnapRunReport::settings(
+            crate::domain::policies::EDGE_SNAP_DEFAULT_MAX_MS,
+        )))
     }
 
     fn minimal_alignment_detail() -> AlignmentResult {
@@ -1672,6 +1762,10 @@ mod tests {
                 channels_match: true,
                 rate_match: false,
                 verdict: CompatibilityVerdict::Compatible,
+                a_codec: None,
+                b_codec: None,
+                a_bit_depth: None,
+                b_bit_depth: None,
             }),
             alignment: scan_alignment_from_result(&alignment_detail),
             gaps: vec![Gap {
@@ -2267,6 +2361,10 @@ mod tests {
             channels_match: false,
             rate_match: true,
             verdict: CompatibilityVerdict::Mismatch,
+            a_codec: None,
+            b_codec: None,
+            a_bit_depth: None,
+            b_bit_depth: None,
         });
         report.gaps = vec![
             Gap {

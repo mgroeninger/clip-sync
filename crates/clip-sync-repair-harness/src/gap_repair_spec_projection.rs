@@ -230,6 +230,7 @@ mod tests {
                 end_frame: 259_200,
             },
             edge_refine: None,
+            edge_snap: None,
             b_extract: BExtractWindow {
                 start_frame: 0,
                 end_frame: 0,

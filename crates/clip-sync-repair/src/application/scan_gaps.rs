@@ -170,10 +170,14 @@ impl<'r, MR: MediaReader> ScanGaps<'r, MR> {
                 TrackDescriptor {
                     channels: track_a.channels,
                     sample_rate: track_a.sample_rate,
+                    codec: Some(track_a.codec.clone()),
+                    bit_depth: track_a.bit_depth,
                 },
                 TrackDescriptor {
                     channels: track_b.channels,
                     sample_rate: track_b.sample_rate,
+                    codec: Some(track_b.codec.clone()),
+                    bit_depth: track_b.bit_depth,
                 },
             )
         });

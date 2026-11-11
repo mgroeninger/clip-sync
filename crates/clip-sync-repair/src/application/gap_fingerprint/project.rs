@@ -189,6 +189,13 @@ pub fn spec_to_fingerprint_summary(
         post_seam_r: sl.post_seam_r,
         gap_frames,
         bridge_frames: gap_frames as i64 + sl.trim_frames,
+        // The snap moved each B seam inward by its edge's `moved_frames`; undo both (the B-start
+        // clamp is not re-applied — a projection has no B length to clamp against).
+        unsnapped_bridge_frames: spec.edge_snap.as_ref().map(|snap| {
+            gap_frames as i64 + sl.trim_frames
+                - snap.lead.moved_frames as i64
+                - snap.trail.moved_frames as i64
+        }),
         trim_frames: sl.trim_frames,
         gate_pass: sl.gate_pass,
         post_seam_global_r: sl.post_seam_global_r,
@@ -245,6 +252,16 @@ pub fn spec_to_fingerprint_summary(
                 a_end_secs: spec.a_end_secs,
                 a_refined_start_secs: refined_start_secs,
                 a_refined_end_secs: refined_end_secs,
+                a_unsnapped_start_secs: spec
+                    .edge_snap
+                    .as_ref()
+                    .map(|snap| (spec.refined.start_frame + snap.lead.moved_frames) as f64 / rate),
+                a_unsnapped_end_secs: spec.edge_snap.as_ref().map(|snap| {
+                    spec.refined
+                        .end_frame
+                        .saturating_sub(snap.trail.moved_frames) as f64
+                        / rate
+                }),
                 duration_secs: (refined_end_secs - refined_start_secs).max(0.0),
                 b_mapped_start_secs: Some(refined_start_secs + spec.gap_offset_secs),
                 b_mapped_end_secs: Some(refined_end_secs + spec.gap_offset_secs),
@@ -684,6 +701,7 @@ pub fn fingerprint_to_spec(fp: &GapFingerprint) -> crate::domain::gap_repair_spe
                 as usize,
         },
         edge_refine: None,
+        edge_snap: None,
         b_extract: BExtractWindow {
             start_frame: 0,
             end_frame: 0,
@@ -850,6 +868,7 @@ mod tests {
                 end_frame: 504_000,
             },
             edge_refine: None,
+            edge_snap: None,
             b_extract: BExtractWindow {
                 start_frame: 0,
                 end_frame: 0,
@@ -1050,6 +1069,7 @@ mod tests {
                 end_frame: 504_000,
             },
             edge_refine: None,
+            edge_snap: None,
             b_extract: BExtractWindow {
                 start_frame: 0,
                 end_frame: 0,
@@ -1244,6 +1264,7 @@ mod tests {
                 end_frame: 72_000,
             },
             edge_refine: None,
+            edge_snap: None,
             b_extract: BExtractWindow {
                 start_frame: 0,
                 end_frame: 0,

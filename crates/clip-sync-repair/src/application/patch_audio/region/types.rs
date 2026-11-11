@@ -196,9 +196,10 @@ pub(in crate::application::patch_audio) struct ReportStamps {
 
 /// Join per-gap sources into report order.
 ///
-/// `gaps` / `plan` / `region_results` / `not_applied` / `fill_level` are five differently-ordered
-/// sources this function exists to join. [`ReportStamps`] is the run-constant cluster stamped onto
-/// the result.
+/// `gaps` / `plan` / `region_results` / `not_applied` / `fill_level` / `placement` / `edge_snap` are
+/// differently-ordered sources this function exists to join. [`ReportStamps`] is the run-constant
+/// cluster stamped onto the result.
+#[allow(clippy::too_many_arguments)]
 pub(in crate::application::patch_audio) fn outcomes_in_report_order(
     gaps: &[Gap],
     plan: &GapFillPlan,
@@ -207,6 +208,7 @@ pub(in crate::application::patch_audio) fn outcomes_in_report_order(
     not_applied: &[(usize, GapPatchNotAppliedReason)],
     fill_level: &[(usize, crate::domain::FillLevelCheck)],
     placement: &[(usize, crate::domain::PatchPlacement)],
+    edge_snap: &[(usize, policies::EdgeSnapReport)],
 ) -> Vec<GapPatchOutcome> {
     let ReportStamps {
         fill_mode,
@@ -217,6 +219,8 @@ pub(in crate::application::patch_audio) fn outcomes_in_report_order(
         fill_level.iter().copied().collect();
     let mut placement_by_gap: HashMap<usize, crate::domain::PatchPlacement> =
         placement.iter().copied().collect();
+    let mut edge_snap_by_gap: HashMap<usize, policies::EdgeSnapReport> =
+        edge_snap.iter().copied().collect();
     let mut status_by_gap: HashMap<usize, GapPatchStatus> = HashMap::new();
     let mut tags_by_gap: HashMap<usize, GapTags> = HashMap::new();
     let mut residual_by_gap: HashMap<usize, policies::SeamResidualVerdict> = HashMap::new();
@@ -322,6 +326,7 @@ pub(in crate::application::patch_audio) fn outcomes_in_report_order(
                 .with_residual(residual_by_gap.remove(&key))
                 .with_fill_level(fill_level_by_gap.remove(&key))
                 .with_placement(placement_by_gap.remove(&key))
+                .with_edge_snap(edge_snap_by_gap.remove(&key))
         })
         .collect()
 }
@@ -494,6 +499,7 @@ pub(in crate::application::patch_audio::region) fn skip_region_spec(
         gap_offset_secs,
         refined,
         edge_refine: None,
+        edge_snap: None,
         b_extract,
         crossfade_secs: region.crossfade_secs,
         verdict: GapRepairVerdict::skip_with_cell(cell, reason),
@@ -672,6 +678,7 @@ mod tests {
                 end_frame: 96_000,
             },
             edge_refine: None,
+            edge_snap: None,
             b_extract: BExtractWindow {
                 start_frame: 48_000,
                 end_frame: 96_000,
@@ -811,6 +818,7 @@ mod tests {
             &[],
             &[],
             &[],
+            &[],
         );
 
         assert_eq!(outcomes.len(), gaps.len(), "one outcome per reported gap");
@@ -935,6 +943,7 @@ mod tests {
                 program_gain: 1.0,
             },
             &[(0, reason.clone())],
+            &[],
             &[],
             &[],
         );

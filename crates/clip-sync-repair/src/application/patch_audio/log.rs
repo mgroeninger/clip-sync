@@ -9,6 +9,7 @@ use crate::domain::patch_result::{
     format_gap_fill_marginal_verbose_line, format_gap_fill_marginal_warn_reason,
     format_gap_fill_skip_verbose_line, format_gap_patch_skip_warn_reason, GapPatchSkipReason,
 };
+use crate::domain::policies::{EdgeSnapEdge, EdgeSnapOutcome, EdgeSnapReport};
 
 fn fill_offset_mode_label(mode: FillOffsetMode) -> &'static str {
     match mode {
@@ -32,8 +33,12 @@ fn fill_offset_plan_label(mode: FillOffsetMode, stall_map_advance_secs: f64) -> 
 pub(crate) struct GapFillPlanLog<'a> {
     pub scan_a_start_secs: f64,
     pub scan_a_end_secs: f64,
+    /// The refined edges **before** the edge snap (the `A gap (refined)` line).
     pub refined_a_start_secs: f64,
     pub refined_a_end_secs: f64,
+    /// What the edge snap did at each edge (the snap lines); `None` when the snap is off.
+    pub edge_snap: Option<EdgeSnapReport>,
+    pub sample_rate: u32,
     pub gap_offset_secs: f64,
     pub fill_offset_mode: FillOffsetMode,
     /// Trusted Shoulder advance folded into `gap_offset_secs` under `recommended` (else 0).
@@ -78,6 +83,9 @@ pub(crate) fn format_gap_fill_plan_lines(plan: &GapFillPlanLog<'_>) -> Vec<Strin
             format_time_range_verbose(plan.refined_a_start_secs, plan.refined_a_end_secs)
         ));
     }
+    if let Some(snap) = plan.edge_snap {
+        lines.extend(format_edge_snap_lines(&snap, plan.sample_rate));
+    }
     lines.push(format!(
         "           B gap (mapped): {}",
         format_time_range_verbose(plan.mapped_b_start_secs, plan.mapped_b_end_secs)
@@ -91,6 +99,85 @@ pub(crate) fn format_gap_fill_plan_lines(plan: &GapFillPlanLog<'_>) -> Vec<Strin
         plan.signature_mode_label
     ));
     lines
+}
+
+/// The edge-snap lines under the refine line: one `A gap (snapped)` line naming every edge that moved,
+/// then one line per refused edge. Hard and not-attempted edges print nothing — the snap had nothing to
+/// do there. Signs are on A's timeline: the lead moves earlier (−), the trail later (+); `zero at` is
+/// from the new edge into the gap, so + on the lead and − on the trail.
+pub(crate) fn format_edge_snap_lines(snap: &EdgeSnapReport, sample_rate: u32) -> Vec<String> {
+    let ms = |frames: usize| frames as f64 * 1000.0 / f64::from(sample_rate.max(1));
+    let edges = [("lead", -1.0, &snap.lead), ("trail", 1.0, &snap.trail)];
+    let moved: Vec<String> = edges
+        .iter()
+        .filter(|(_, _, e)| e.outcome == EdgeSnapOutcome::Snapped)
+        .map(|(side, sign, e)| {
+            let zero = e
+                .onset_to_zero_frames
+                .map(|z| format!(" (zero at {:+.1} ms)", -sign * ms(z)))
+                .unwrap_or_default();
+            format!("{side} {:+.1} ms{zero}", sign * ms(e.moved_frames))
+        })
+        .collect();
+    let mut lines = Vec::new();
+    if !moved.is_empty() {
+        lines.push(format!("           A gap (snapped): {}", moved.join(", ")));
+    }
+    for (side, sign, e) in edges {
+        let refusal = |e: &EdgeSnapEdge| {
+            let onset = e.onset_frames.map(|o| sign * ms(o)).unwrap_or(0.0);
+            format!("{side} onset {onset:+.1} ms")
+        };
+        match e.outcome {
+            EdgeSnapOutcome::RefusedCap => {
+                lines.push(format!(
+                    "           edge snap refused (cap): {}",
+                    refusal(e)
+                ));
+            }
+            EdgeSnapOutcome::RefusedNoZero => {
+                let floor = e
+                    .gap_floor_dbfs
+                    .map(|f| format!(" (gap floor {f:.1} dBFS)"))
+                    .unwrap_or_default();
+                lines.push(format!(
+                    "           edge snap refused (no zero): {}{floor}",
+                    refusal(e)
+                ));
+            }
+            EdgeSnapOutcome::Snapped
+            | EdgeSnapOutcome::Hard
+            | EdgeSnapOutcome::NotAttemptedAdvanced => {}
+        }
+    }
+    lines
+}
+
+/// The run-summary edge-snap line: outcome counts per side, under `--verbose`.
+pub(crate) fn format_edge_snap_summary_line(r: &crate::domain::EdgeSnapRunReport) -> String {
+    let side = |c: &crate::domain::EdgeSnapCounts| {
+        format!(
+            "{} snapped, {} hard, {} refused (cap), {} refused (no zero)",
+            c.snapped, c.hard, c.refused_cap, c.refused_no_zero
+        )
+    };
+    format!(
+        "edge snap (cap {:.0} ms): lead {}, {} not attempted; trail {}",
+        r.max_ms,
+        side(&r.lead),
+        r.lead.not_attempted_advanced,
+        side(&r.trail)
+    )
+}
+
+/// Print the run's edge-snap outcome counts under `--verbose` (nothing when the snap is off).
+pub(super) fn log_edge_snap_summary_verbose(
+    progress: &dyn ProgressReporter,
+    summary: &crate::domain::PatchSummary,
+) {
+    if let Some(r) = &summary.edge_snap {
+        progress.phase_verbose(&format_edge_snap_summary_line(r));
+    }
 }
 
 pub(crate) fn format_gap_fill_result_line(result: &GapFillResultLog) -> String {
@@ -289,6 +376,80 @@ mod tests {
     use crate::domain::gap_fill_fit::FillConfidence;
     use crate::domain::patch_result::GapPatchSkipReason;
 
+    fn edge(
+        outcome: crate::domain::policies::EdgeSnapOutcome,
+    ) -> crate::domain::policies::EdgeSnapEdge {
+        crate::domain::policies::EdgeSnapEdge {
+            outcome,
+            refine_frames: 0,
+            onset_frames: None,
+            moved_frames: 0,
+            reaches_zero: None,
+            onset_to_zero_frames: None,
+            band_peak_dbfs: None,
+            step_db: None,
+            gap_floor_dbfs: None,
+        }
+    }
+
+    #[test]
+    fn edge_snap_lines_name_the_moves_and_each_refusal() {
+        use crate::domain::policies::{EdgeSnapOutcome as O, EdgeSnapReport};
+        let snapped = EdgeSnapReport {
+            lead: crate::domain::policies::EdgeSnapEdge {
+                onset_frames: Some(1046),
+                moved_frames: 1046,
+                reaches_zero: Some(true),
+                onset_to_zero_frames: Some(1301),
+                ..edge(O::Snapped)
+            },
+            trail: edge(O::Hard),
+        };
+        assert_eq!(
+            super::format_edge_snap_lines(&snapped, 48_000),
+            ["           A gap (snapped): lead -21.8 ms (zero at +27.1 ms)"]
+        );
+        let refused = EdgeSnapReport {
+            lead: crate::domain::policies::EdgeSnapEdge {
+                onset_frames: Some(2976),
+                reaches_zero: Some(true),
+                ..edge(O::RefusedCap)
+            },
+            trail: crate::domain::policies::EdgeSnapEdge {
+                onset_frames: Some(480),
+                reaches_zero: Some(false),
+                gap_floor_dbfs: Some(-64.24),
+                ..edge(O::RefusedNoZero)
+            },
+        };
+        assert_eq!(
+            super::format_edge_snap_lines(&refused, 48_000),
+            [
+                "           edge snap refused (cap): lead onset -62.0 ms",
+                "           edge snap refused (no zero): trail onset +10.0 ms (gap floor -64.2 dBFS)",
+            ]
+        );
+        let quiet = EdgeSnapReport {
+            lead: edge(O::NotAttemptedAdvanced),
+            trail: edge(O::Hard),
+        };
+        assert!(super::format_edge_snap_lines(&quiet, 48_000).is_empty());
+    }
+
+    #[test]
+    fn edge_snap_summary_line_counts_each_side() {
+        let mut r = crate::domain::EdgeSnapRunReport::settings(40.0);
+        r.lead.snapped = 3;
+        r.lead.hard = 5;
+        r.lead.not_attempted_advanced = 1;
+        r.trail.refused_cap = 1;
+        r.trail.hard = 8;
+        assert_eq!(
+            super::format_edge_snap_summary_line(&r),
+            "edge snap (cap 40 ms): lead 3 snapped, 5 hard, 0 refused (cap), 0 refused (no zero), 1 not attempted; trail 0 snapped, 8 hard, 1 refused (cap), 0 refused (no zero)"
+        );
+    }
+
     #[test]
     fn format_gap_fill_plan_lines_shows_mapped_and_search_windows() {
         let lines = format_gap_fill_plan_lines(&GapFillPlanLog {
@@ -296,6 +457,8 @@ mod tests {
             scan_a_end_secs: 3.0,
             refined_a_start_secs: 0.1,
             refined_a_end_secs: 2.9,
+            edge_snap: None,
+            sample_rate: 48_000,
             gap_offset_secs: 61.199,
             fill_offset_mode: FillOffsetMode::Interpolated,
             stall_map_advance_secs: 0.0,
@@ -322,6 +485,8 @@ mod tests {
             scan_a_end_secs: 101.0,
             refined_a_start_secs: 100.0,
             refined_a_end_secs: 101.0,
+            edge_snap: None,
+            sample_rate: 48_000,
             gap_offset_secs: 67.758,
             fill_offset_mode: FillOffsetMode::Recommended,
             stall_map_advance_secs: 65.7,

@@ -161,6 +161,10 @@ fn is_false(b: &bool) -> bool {
     !*b
 }
 
+fn is_zero(n: &usize) -> bool {
+    *n == 0
+}
+
 /// The lock geometry behind a [`GapPatchSkipReason::ShouldersAbut`] decision.
 ///
 /// A named struct rather than inline variant fields because the identical payload is republished at
@@ -196,6 +200,14 @@ pub struct ShouldersAbutLocks {
     /// B is quiet at the nominal mapping — the shared-pause lookalike.
     #[serde(default, skip_serializing_if = "is_false")]
     pub program_quiet: bool,
+    /// How far the edge snap moved the lead / trail edge outward (frames at A's rate; 0 when it did
+    /// not move or the snap is off, and then omitted). The verdict, `bridge_frames` and `gap_frames`
+    /// above are all read on the **unsnapped** edges, i.e. with these moves taken back out — the snap
+    /// adds no donor material, so it must not turn an abut into a bridge.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub snap_lead_frames: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub snap_trail_frames: usize,
 }
 
 /// One `shoulders_abut` refusal, carried from characterize through the splice loop and republished
@@ -394,6 +406,11 @@ pub struct GapPatchOutcome {
     /// actually spliced; absent on preview runs, which splice nothing.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub placement: Option<PatchPlacement>,
+    /// What the edge snap did at each edge, with the refine step before it (record-only). Present on
+    /// every gap that reached characterize, patched or skipped, while the snap is on; absent when it
+    /// is off and on `not_planned` gaps.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edge_snap: Option<crate::domain::policies::EdgeSnapReport>,
 }
 
 /// What one splice did to A, recorded by the splice itself rather than rebuilt from edges and
@@ -434,6 +451,7 @@ impl GapPatchOutcome {
             residual: None,
             fill_level: None,
             placement: None,
+            edge_snap: None,
         }
     }
 
@@ -452,6 +470,15 @@ impl GapPatchOutcome {
     /// Attach the splice's placement record; no-op when `None`.
     pub fn with_placement(mut self, placement: Option<PatchPlacement>) -> Self {
         self.placement = placement;
+        self
+    }
+
+    /// Attach the edge snap record; no-op when `None`.
+    pub fn with_edge_snap(
+        mut self,
+        edge_snap: Option<crate::domain::policies::EdgeSnapReport>,
+    ) -> Self {
+        self.edge_snap = edge_snap;
         self
     }
 
@@ -824,6 +851,87 @@ pub struct FillGeometryRecipe {
     pub residual_search_secs: f64,
 }
 
+/// The edge-snap settings this run used, and what the snap did across its gaps — stamped once on
+/// [`PatchSummary::edge_snap`], the [`FillGeometryRecipe`] pattern: a two-arm differential traces to
+/// the setting, not to the output directory. Present only when the snap is on (`max_ms > 0`), like the
+/// per-gap [`GapPatchOutcome::edge_snap`] it counts.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct EdgeSnapRunReport {
+    /// `--edge-snap-max-ms`: the cap on the move.
+    pub max_ms: f64,
+    /// Peak amplitude (linear, full scale = 1.0) at or under which a frame counts as digital zero.
+    pub zero_amp: f64,
+    /// How far into the gap the digital-zero run must start.
+    pub zero_search_ms: f64,
+    /// Shortest digital-zero run that counts as the dropout.
+    pub zero_run_ms: f64,
+    /// How far outward of the refined edge the onset search looks.
+    pub observe_ms: f64,
+    /// Outcome counts per side, over every gap that carries an `edge_snap` record (patched or
+    /// skipped; `not_planned` gaps never run the snap).
+    pub lead: EdgeSnapCounts,
+    pub trail: EdgeSnapCounts,
+    /// The largest `onset_frames` among `refused_cap` edges (either side) — how far past the cap the
+    /// longest refused band reached. Omitted when nothing was refused on the cap.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_refused_cap_onset_frames: Option<usize>,
+}
+
+/// One side's [`crate::domain::policies::EdgeSnapOutcome`] counts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct EdgeSnapCounts {
+    pub snapped: usize,
+    pub hard: usize,
+    pub refused_cap: usize,
+    pub refused_no_zero: usize,
+    /// Lead only: always 0 on the trail.
+    pub not_attempted_advanced: usize,
+}
+
+impl EdgeSnapCounts {
+    fn add(&mut self, outcome: crate::domain::policies::EdgeSnapOutcome) {
+        use crate::domain::policies::EdgeSnapOutcome as O;
+        *match outcome {
+            O::Snapped => &mut self.snapped,
+            O::Hard => &mut self.hard,
+            O::RefusedCap => &mut self.refused_cap,
+            O::RefusedNoZero => &mut self.refused_no_zero,
+            O::NotAttemptedAdvanced => &mut self.not_attempted_advanced,
+        } += 1;
+    }
+}
+
+impl EdgeSnapRunReport {
+    /// The settings echo with zero counts; [`PatchSummary::with_edge_snap`] fills the counts.
+    pub fn settings(max_ms: f64) -> Self {
+        use crate::domain::policies as p;
+        Self {
+            max_ms,
+            zero_amp: f64::from(p::EDGE_SNAP_ZERO_AMP),
+            zero_search_ms: p::EDGE_SNAP_ZERO_SEARCH_MS,
+            zero_run_ms: p::EDGE_SNAP_ZERO_RUN_MS,
+            observe_ms: p::EDGE_SNAP_OBSERVE_MS,
+            lead: EdgeSnapCounts::default(),
+            trail: EdgeSnapCounts::default(),
+            max_refused_cap_onset_frames: None,
+        }
+    }
+
+    fn count(&mut self, gaps: &[GapPatchOutcome]) {
+        use crate::domain::policies::EdgeSnapOutcome as O;
+        for r in gaps.iter().filter_map(|g| g.edge_snap.as_ref()) {
+            self.lead.add(r.lead.outcome);
+            self.trail.add(r.trail.outcome);
+            for edge in [&r.lead, &r.trail] {
+                if edge.outcome == O::RefusedCap {
+                    self.max_refused_cap_onset_frames =
+                        self.max_refused_cap_onset_frames.max(edge.onset_frames);
+                }
+            }
+        }
+    }
+}
+
 /// User-visible summary of a `PatchAudio` run (no PCM payload).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct PatchSummary {
@@ -846,6 +954,10 @@ pub struct PatchSummary {
     /// request in hand (domain tests), and absent from pre-2026-08-17 reports.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fill_geometry: Option<FillGeometryRecipe>,
+    /// Edge-snap settings and outcome counts — see [`EdgeSnapRunReport`]. `None` when the snap is off,
+    /// on summaries built without a request in hand, and on pre-step-4 reports.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edge_snap: Option<EdgeSnapRunReport>,
     /// What this run decided about whole-program fill gain, and the measurement it decided from —
     /// stamped **once**, not per gap. `None` on summaries built without a request in hand (domain
     /// tests), and absent from pre-2026-08-26 reports.
@@ -900,6 +1012,7 @@ impl PatchSummary {
             donor_relation,
             patch_anchors_used: None,
             fill_geometry: None,
+            edge_snap: None,
             program_gain: None,
             shoulders_abut: None,
             injected_time: None,
@@ -909,6 +1022,16 @@ impl PatchSummary {
     /// Stamp the border geometry this run used — see [`FillGeometryRecipe`].
     pub fn with_fill_geometry(mut self, geometry: FillGeometryRecipe) -> Self {
         self.fill_geometry = Some(geometry);
+        self
+    }
+
+    /// Stamp the edge-snap settings (`None` = snap off, stays omitted) and count the per-gap
+    /// outcomes already on [`Self::gaps`].
+    pub fn with_edge_snap(mut self, settings: Option<EdgeSnapRunReport>) -> Self {
+        self.edge_snap = settings.map(|mut r| {
+            r.count(&self.gaps);
+            r
+        });
         self
     }
 

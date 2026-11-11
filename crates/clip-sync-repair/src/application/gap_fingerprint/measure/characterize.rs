@@ -7,7 +7,7 @@ use crate::application::gap_fingerprint::schema::*;
 use crate::domain::gap_equivalence::{ChannelReduction, EquivalenceMeasurement, SpanKind};
 
 use crate::domain::patch_result::GapPatchSkipReason;
-use crate::domain::policies::{refine_and_snap_gap_frames, EdgeSnap, RefinedGapFrames};
+use crate::domain::policies::{refine_and_snap_gap_edges, EdgeSnap, RefinedGapFrames};
 
 use super::build::*;
 use super::config::*;
@@ -171,7 +171,7 @@ pub fn characterize_gaps_from_decode(
         let Some((b_start, b_end)) = gap.mapped_b_span() else {
             continue;
         };
-        let refined = refine_and_snap_gap_frames(
+        let edges = refine_and_snap_gap_edges(
             &a_pcm.samples,
             ch,
             (gap.video_a_start_secs * rate) as usize,
@@ -181,6 +181,7 @@ pub fn characterize_gaps_from_decode(
             max_refine_frames,
             edge_snap,
         );
+        let refined = edges.refined;
         let gap_frames = refined.end_frame.saturating_sub(refined.start_frame);
         if gap_frames == 0 {
             continue;
@@ -201,6 +202,7 @@ pub fn characterize_gaps_from_decode(
             b_extract_start_secs,
             gap_offset,
             refined,
+            unsnapped: edges.unsnapped,
             gap_frames,
             gate_settings: &request.settings,
             gate_derived,
@@ -265,6 +267,7 @@ pub fn characterize_gaps_from_decode(
                 end_frame: (fp.geometry.a_refined_end_secs * rate).round() as usize,
             },
             edge_refine: None,
+            edge_snap: None,
             b_extract: BExtractWindow {
                 start_frame: 0,
                 end_frame: 0,
@@ -2181,6 +2184,8 @@ mod tests {
                     a_end_secs: 834.0,
                     a_refined_start_secs: 832.3,
                     a_refined_end_secs: 834.1,
+                    a_unsnapped_start_secs: None,
+                    a_unsnapped_end_secs: None,
                     duration_secs: 1.8,
                     b_mapped_start_secs: None,
                     b_mapped_end_secs: None,

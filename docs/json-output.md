@@ -1,6 +1,6 @@
 # JSON output contract — v1
 
-Authoritative field-by-field contract for `--format json` output of both CLIs. **Frozen as v1 (2026-06-10).** Additive revisions: optional `end_clip_anchor` on analyzer/repair alignment reports (2026-06-17); optional `video_b_window_*` on clip entries when B differs from A; optional `audio_timeline_skew` on repair `GapReport` (2026-06-19); additive scan-recipe echo keys `min_gap_ms`, `silence_hold_ms` (effective), and `absolute_silence_rms` (normalized) on repair `GapReport` (2026-07-31); optional `fill_geometry` on repair `PatchSummary` (2026-08-17), with optional `residual_border_standoff_secs` inside it (2026-09-19); optional `program_levels` on repair `GapReport` (2026-08-26); optional per-gap `collar_level` on repair `Gap`, with `map_lag_ms` recording the map each collar was read through (2026-08-27); optional `local_pair_collar_secs` knob echo on repair `GapReport` (2026-08-27); new `shoulders_abut` skip reason and optional `shoulders_abut` list on repair `PatchSummary` (2026-08-28); `local_gain` and `local_gain_reason` on repair `GapPatchStatus::Patched` (2026-08-31); optional `injected_time` on repair `PatchSummary` (A4, 2026-09-08); optional `stall_min_secs` and `b_stalls` on repair `GapReport`, and optional per-gap `after_b_stall` on repair `Gap` (A5, 2026-09-14). Per-stall `shift_secs`, and optional `evidence`, `verdict_reason`, `pre_lag_secs`, `step_r`, `flat_r` on repair `BStall`, with `offset_used_secs` now accumulating each earlier stall's `shift_secs` (A5 shoulder confirmation, 2026-09-14). Optional per-gap `stall_map_advance_secs` when a confirmed (`evidence: shoulder`) stall remaps later holes (stall-segmented map, 2026-09-15). Optional `registration_residual_pre_ms`, `registration_residual_post_ms` and `registration_applied_ms` beside `registration_residual_ms` on repair `GapPatchStatus::Patched` (2026-09-22). Optional `zero_pad_frames` on repair `GapPatchStatus::Patched` and on `GapTags` (2026-09-23). Optional `registration_residual_{pre,post}_edge_pinned` and `registration_residual_{pre,post}_z` on repair `GapPatchStatus::Patched`, and required `residual_search_secs` inside `fill_geometry` (2026-09-25). Optional per-gap `placement` on repair `GapPatchOutcome` (2026-10-31).
+Authoritative field-by-field contract for `--format json` output of both CLIs. **Frozen as v1 (2026-06-10).** Additive revisions: optional `end_clip_anchor` on analyzer/repair alignment reports (2026-06-17); optional `video_b_window_*` on clip entries when B differs from A; optional `audio_timeline_skew` on repair `GapReport` (2026-06-19); additive scan-recipe echo keys `min_gap_ms`, `silence_hold_ms` (effective), and `absolute_silence_rms` (normalized) on repair `GapReport` (2026-07-31); optional `fill_geometry` on repair `PatchSummary` (2026-08-17), with optional `residual_border_standoff_secs` inside it (2026-09-19); optional `program_levels` on repair `GapReport` (2026-08-26); optional per-gap `collar_level` on repair `Gap`, with `map_lag_ms` recording the map each collar was read through (2026-08-27); optional `local_pair_collar_secs` knob echo on repair `GapReport` (2026-08-27); new `shoulders_abut` skip reason and optional `shoulders_abut` list on repair `PatchSummary` (2026-08-28); `local_gain` and `local_gain_reason` on repair `GapPatchStatus::Patched` (2026-08-31); optional `injected_time` on repair `PatchSummary` (A4, 2026-09-08); optional `stall_min_secs` and `b_stalls` on repair `GapReport`, and optional per-gap `after_b_stall` on repair `Gap` (A5, 2026-09-14). Per-stall `shift_secs`, and optional `evidence`, `verdict_reason`, `pre_lag_secs`, `step_r`, `flat_r` on repair `BStall`, with `offset_used_secs` now accumulating each earlier stall's `shift_secs` (A5 shoulder confirmation, 2026-09-14). Optional per-gap `stall_map_advance_secs` when a confirmed (`evidence: shoulder`) stall remaps later holes (stall-segmented map, 2026-09-15). Optional `registration_residual_pre_ms`, `registration_residual_post_ms` and `registration_applied_ms` beside `registration_residual_ms` on repair `GapPatchStatus::Patched` (2026-09-22). Optional `zero_pad_frames` on repair `GapPatchStatus::Patched` and on `GapTags` (2026-09-23). Optional `registration_residual_{pre,post}_edge_pinned` and `registration_residual_{pre,post}_z` on repair `GapPatchStatus::Patched`, and required `residual_search_secs` inside `fill_geometry` (2026-09-25). Optional per-gap `placement` on repair `GapPatchOutcome` (2026-10-31). Optional per-gap `edge_snap` on repair `GapPatchOutcome`, optional `edge_snap` settings echo and outcome counts on repair `PatchSummary`, optional `a_codec` / `b_codec` / `a_bit_depth` / `b_bit_depth` on repair `TrackCompatibility`, and optional `snap_lead_frames` / `snap_trail_frames` in the `shoulders_abut` payload (edge snap default-on, 2026-11-11).
 
 Any change to field names, types, optionality, or nesting is a contract revision: update this document, regenerate the golden fixtures, and call the revision out explicitly in the changelog/commit.
 
@@ -300,6 +300,8 @@ Gap positions in `gaps[]` use the **decoded-sample clock**. When `delta_secs` is
 | `a_sample_rate` / `b_sample_rate` | integer | always | Sample rates (Hz) |
 | `channels_match` / `rate_match` | bool | always | Per-property comparison |
 | `verdict` | `"identical"` \| `"compatible"` \| `"mismatch"` | always | Whether splice fill is allowed (`compatible` = resample B) |
+| `a_codec` / `b_codec` | string | since 2026-11-11, when the scan probed the track | Each track's decoder codec name. **Recorded, not assessed**: `verdict` does not read it. It exists so a run's edge-snap counts can be read against the codec ([PatchSummary](#patchsummary) `edge_snap`): the snap's zero test assumes dropouts decode to digital zero, which is measured on AAC only |
+| `a_bit_depth` / `b_bit_depth` | string | same | Decoded sample format: `s16` \| `s24` \| `s32` \| `f32` \| `other:<bits>`. Recorded, not assessed |
 
 ### Gap
 
@@ -358,6 +360,7 @@ Pair-offset check only (start-clip / `recommended_offset_secs`). Confirmed B-sta
 | `program_gain` | object | since 2026-08-26, when patched from a request | The run's whole-program fill gain and why it took the value it did — see [ProgramGainReport](#programgainreport) |
 | `shoulders_abut` | array of [ShouldersAbutSkip](#shouldersabutskip) | since 2026-08-28, when ≥1 gap was refused as `shoulders_abut` | Every gap this run refused because both A edges locked onto the same B instant, with the **frames** its silence occupies on A. Omitted when empty |
 | `injected_time` | object | since 2026-09-08, when the pre-pass flags | File-level injected-time finding (A4). `{ "runs": [ { "first_gap_index", "last_gap_index", "a_start_secs", "a_end_secs" } ] }`. `gap_index` is 0-based (`FillRegion::gap_index`); human copy adds one. `a_start_secs` / `a_end_secs` are the first gap's `video_a_start_secs` and the last gap's `video_a_end_secs` on the report — not refined frames. Omitted when the sequence pass does not flag (scan-only has no `patch` object). See [cli-output.md](cli-output.md) § Timeline / duration warnings |
+| `edge_snap` | object | since 2026-11-11, when the edge snap is on (`edge_snap_max_ms` > 0, the default) | The snap's **settings** and its per-side outcome counts — see [EdgeSnapRunReport](#edgesnaprunreport). Omitted when the snap is off |
 | `gaps` | array of [GapPatchOutcome](#gappatchoutcome) | always | Per-gap outcomes in scan order |
 
 > **`donor_relation` claims more than it measures.** It is derived purely from the fraction of gaps
@@ -367,6 +370,24 @@ Pair-offset check only (start-clip / `recommended_offset_secs`). Confirmed B-sta
 > (default 10 ms) probe radius, or when its gaps are silent enough that no floor reference window is
 > found. Read the three values as *mostly cancelled* / *partly* / *never*, and do not branch on them as
 > a provenance decision — the field gates nothing in the repair pipeline and is emitted as a diagnostic.
+
+### EdgeSnapRunReport
+
+The edge snap's settings echo, and how its outcomes fell across the run. The settings are there for
+the same reason as `fill_geometry`: so a two-arm differential traces to the setting that changed. The
+counts let a first run on a new codec be read without a census
+([TEMP-soft-edge-census-plan.md](dev/TEMP-soft-edge-census-plan.md) § step 4, *Reading a first run on
+another codec*).
+
+| Field | Type | Presence | Meaning |
+|-------|------|----------|---------|
+| `max_ms` | number | always | The cap: the longest soft band the snap may write over (`--edge-snap-max-ms`, default 40) |
+| `zero_amp` | number | always | Linear amplitude under which every channel counts as digital zero (2.5 LSB at 16 bits, about −82 dBFS) |
+| `zero_search_ms` | number | always | How far into the gap the digital-zero run must start |
+| `zero_run_ms` | number | always | Shortest digital-zero run that counts as the dropout |
+| `observe_ms` | number | always | How far outward of the refined edge the onset search looks. Wider than the cap, so a band past the cap still reads as `refused_cap`, not `hard` |
+| `lead` / `trail` | object | always | Per-side counts over every gap carrying an `edge_snap` record (patched or skipped): `snapped`, `hard`, `refused_cap`, `refused_no_zero`, `not_attempted_advanced` |
+| `max_refused_cap_onset_frames` | integer | when ≥1 edge was `refused_cap` | The farthest onset a cap refusal saw, in A frames. Clustered cap refusals mean the codec's window is longer than the cap |
 
 ### ProgramGainReport
 
@@ -396,6 +417,28 @@ offset is the signature of an undetected dynamics mismatch — a 2:1-compressed 
 | `residual` | object | when measured | Full [`SeamResidualVerdict`](#seamresidualverdict) (gate active or `measure_residual`) |
 | `fill_level` | object | spliced gaps, when `measure_fill_level` | [FillLevelCheck](#filllevelcheck) — how loud the written fill is against the A around it |
 | `placement` | object | spliced gaps (added 2026-10-31; contract stays v1) | [PatchPlacement](#patchplacement) — where the splice wrote in A and where its fill came from in B |
+| `edge_snap` | object | every gap that reached characterize, patched or skipped, while the snap is on (added 2026-11-11) | [EdgeSnap](#edgesnap) — what the edge snap did at each edge, with the refine step before it. Absent when the snap is off and on `not_planned` gaps |
+
+### EdgeSnap
+
+Record-only: the edge chain floor → refine → snap, per edge, in A frames. `{"lead": {…}, "trail": {…}}`.
+It is the only record of the snap's move. Every geometry field downstream of characterize
+(`gap_start_adjust_frames`, `anchor_bracket_move_frames`, `placement.write_*`) is measured from the
+**snapped** edge, so without it a snapped gap's write cannot be traced back to the refined edge.
+
+| Field | Type | Presence | Meaning |
+|-------|------|----------|---------|
+| `outcome` | string | always | `snapped` (the edge moved to the onset) \| `hard` (no sustained 15 dB fall within `observe_ms`: nothing to snap) \| `refused_cap` (an onset farther out than the cap) \| `refused_no_zero` (an onset within the cap, but the gap does not reach digital zero beside the edge) \| `not_attempted_advanced` (lead only: refinement advanced the start past the reported edge, so the snap never ran). Refusals follow the code's order: cap first, then the zero test |
+| `refine_frames` | integer | always | Signed refine step at this edge (refined − reported; negative on the lead = retracted earlier). The same value as `placement.refine_*_frames`, here so a **skipped** gap carries it too |
+| `onset_frames` | integer | when an onset was found | Onset distance outward of the refined (unsnapped) edge. Present on refusals too; absent on `hard` and `not_attempted_advanced` |
+| `moved_frames` | integer | always | How far the snap moved this edge outward; `0` unless `snapped`. On a patched gap it equals the move of the written range's edge |
+| `reaches_zero` | bool | every edge with an onset | Whether the gap reaches digital zero beside this edge |
+| `onset_to_zero_frames` | integer | when `reaches_zero` | Onset to the first frame of the digital-zero run. On AAC it is at most 2048 frames (the codec's window after a hard cut) |
+| `band_peak_dbfs` | number | every edge with an onset | Peak level (dBFS, loudest channel) of the band between the onset and the refined edge |
+| `step_db` | number | same | The fall at the onset: the programme reference (louder of the two 2 ms bins outward of it) minus `band_peak_dbfs` |
+| `gap_floor_dbfs` | number | `refused_no_zero` only | The quietest 2 ms bin (peak dBFS) inside the zero search. Well below quiet programme ⇒ the codec's dropouts do not decode to zero |
+
+### SeamResidualVerdict
 
 ### SeamResidualVerdict
 
@@ -565,7 +608,7 @@ Before this object, `registration_applied_ms` was the only field that carried th
 
 | Field | Type | Presence | Meaning |
 |-------|------|----------|---------|
-| `refine_start_frames` / `refine_end_frames` | integer | when the spec came from repair characterize | Signed move refinement made to the reported edge against A's PCM, in A frames (refined − reported: negative = earlier). Taken before the edge snap and any boundary extension. Absent on specs built elsewhere (test fixtures) |
+| `refine_start_frames` / `refine_end_frames` | integer | when the spec came from repair characterize | Signed move refinement made to the reported edge against A's PCM, in A frames (refined − reported: negative = earlier). Taken before the edge snap and any boundary extension: the snap's move is [`edge_snap`](#edgesnap)`.{lead,trail}.moved_frames`, so the written gap edge is reported + refine − lead `moved_frames` (start) and reported + refine + trail `moved_frames` (end). Absent on specs built elsewhere (test fixtures). Skipped gaps carry the refine step in `edge_snap.*.refine_frames` |
 | `write_start_secs` | number | always | First A frame the splice changes, crossfade included, in seconds on A's decoded PCM timeline |
 | `write_end_secs` | number | always | **Exclusive** end of the changed range (the first frame after the last one written), crossfade included. `[write_start_secs, write_end_secs)` is the planned extent: the splice rejects a short fill, so the range always spans the gap plus the crossfades. A WAV diff can see less of it — the crossfade's first frame weighs the fill at zero, so the first changed sample can sit up to one crossfade inside the range, and a zero-padded fill tail (`zero_pad_frames`) written over a hole that was already silent changes nothing there |
 | `fill_source_start_secs` | number | always | B time (seconds on B's decoded PCM timeline, resampled to A's rate) of the fill frame written at the gap's first frame, i.e. at the pre seam. Covers every path, dual-fit included. A plain splice's pre crossfade consumes the fill frames before it |
@@ -589,7 +632,7 @@ Orthogonal gap classification tags. `plan_skip_reason`, `fit_path`, and `signatu
 | `residual_band` | string | when residual measured | `cancels` \| `correlates_only` \| `no_floor` |
 | `residual_uninformative` | string | when the residual has no usable headroom reading | Why — `beyond_lag_reach` \| `no_reference_window` \| `probe_non_finite` \| `floor_above_ok_db`. Same values and combine rule as [`SeamResidualVerdict`](#seamresidualverdict)'s per-side fields; **read it with `residual_band`**, never alone |
 | `anchor_seam_used` | bool | when true | Editorial anchor bracket won (not scan-throat placement) |
-| `anchor_bracket_move_frames` | integer | when `anchor_seam_used` and > 0 | Total frame displacement from scan-refined baseline |
+| `anchor_bracket_move_frames` | integer | when `anchor_seam_used` and > 0 | Total frame displacement from the refined baseline — the **snapped** edges while the edge snap is on |
 | `zero_pad_frames` | integer | when > 0 (added 2026-09-23) | Tail frames of the gap **left unrepaired** because donor B ran out before the fill reached gap length. The patch destination is shortened by this much, so A keeps its own material across those frames — they are not overwritten with silence. Absence means the fill reached gap length, on every path that assembles one. Observed at ~7–10 ms on real gaps, small enough that `fill_level` and the residual bands do not register it |
 | `dual_fit_used` | bool | when true | A3 dual-fit (G6) rescued this gap after the bracket search exhausted, not ordinary bracket-search fitting |
 | `dual_fit_step_real` | bool | when `dual_fit_used` (added 2026-09-01) | `true` = the two shoulder locks disagreed by a real step, and the fill is an interior-trim bridge extract (length-edit); `false` = the locks agreed (rigid), and the fill is a trim-0 extract off the shared lock (seam-lock, docs/dev/archive/TEMP-seam-lock-rigid-fill-plan.md § 3.1). Absent when `dual_fit_used` is absent/false, and on runs predating the field — not recoverable from anything else on the record |
@@ -605,6 +648,8 @@ Orthogonal gap classification tags. `plan_skip_reason`, `fit_path`, and `signatu
 Externally tagged (serde default): exactly one of the following keys.
 
 - `{"patched": {"pre_correlation": number, "post_correlation": number, "align_adjustment_secs": number, "structure_trusted": bool, "confidence": "high"|"marginal", "gap_start_adjust_frames": number, "gap_end_adjust_frames": number, "residual_db": number, "floor_db": number, "headroom_db": number, "anchor_seam_used": bool, "anchor_bracket_move_frames": number, "zero_pad_frames": number, "dual_fit_used": bool, "dual_fit_step_real": bool, "dual_fit_post_window_ms": number, "normalize_gain": number, "program_gain": number, "local_gain": number, "local_gain_reason": string, "fit_terms": {"total": number, "structure_combined": number, "waveform_min": number, "late_start_penalty": number, "anchor_penalty": number, "repeat_penalty": number, "repeat_pre": number, "repeat_post": number}, "registration_residual_ms": number, "registration_residual_pre_ms": number, "registration_residual_post_ms": number, "registration_applied_ms": number, "registration_residual_pre_edge_pinned": bool, "registration_residual_post_edge_pinned": bool, "registration_residual_pre_z": number, "registration_residual_post_z": number, "registration_residual_pre_prominence": number, "registration_residual_post_prominence": number, "registration_residual_pre_rescued": bool, "registration_residual_post_rescued": bool}}`
+
+`gap_start_adjust_frames` / `gap_end_adjust_frames` are the A-boundary extension's move of each edge, in A frames, measured from the refined edge — the **snapped** edge while the edge snap is on (default since 2026-11-11). The snap's own move is not in them; it is [`edge_snap`](#edgesnap)`.*.moved_frames`.
 
 Optional `residual_db`, `floor_db`, `headroom_db` (worst-side scalars) are present when residual was measured; omitted otherwise. `anchor_seam_used` and `dual_fit_used` are **always serialized, including when `false`** (changed 2026-08-12; both were omitted-when-false before that). `false` on `dual_fit_used` means the A3 dual-fit path (G6) did not carry this gap — it ran and declined, or was never reached — and has never meant the path was disabled; the old absence was read that way at least once. `false` on `anchor_seam_used` means baseline-throat placement. When `dual_fit_used` is `true`, this gap was rescued by dual-fit after the bracket search exhausted — see [gap-fill-modes.md](gap-fill-modes.md) § Dual-fit rescue. Unlike `dual_fit_used`, `dual_fit_step_real` is `Option<bool>` and **omitted when absent** (not always-serialized): it is meaningless outside the dual-fit path, so `None` covers both "not a dual-fit gap" and "a run predating 2026-09-01" — the two are not distinguishable from the record alone. `dual_fit_post_window_ms` is likewise `Option<u32>` and omitted when absent — meaning either the gap is not a dual-fit rescue, or its post shoulder used the ordinary 250 ms lock. `anchor_bracket_move_frames` is still omitted when 0, as is `zero_pad_frames` (added 2026-09-23) — the latter counts tail frames the fill fell short of the gap by because donor B ran out, and the patch destination is shortened to match, so a non-zero value means that much of the gap was left unrepaired (A's own material, not silence and not donor audio). It appears on both the status and the [tags](#gaptags). Full per-side detail is in `GapPatchOutcome.residual`.
 
@@ -713,7 +758,9 @@ registration_residual_*_ms` recovers that shoulder's lag in the B-at-nominal fra
 scored (`seam_local::lag_is_edge_pinned`, the same test the fingerprint's `LagSummary` uses): the search was
 exhausted, so that residual is a **floor, not a measurement**, and a census must discard it rather than
 average it in. `registration_residual_pre_z` / `registration_residual_post_z` are the peak's whole-curve
-z-score, recorded for completeness. **Do not read `z` as separating a located seam from a flat curve** — on
+z-score, recorded for completeness. The shoulder templates exclude the soft band either way, but the z keys
+are measured on the template beside the **snapped** edge, so they can move when only the snap changed (the
+one difference on a 2026-10-31 re-run). **Do not read `z` as separating a located seam from a flat curve** — on
 50/g10 a post read carried z 5.61 at prominence 0.0049 ([settled.md](dev/settled.md) § A); and `z` is not
 comparable across radii, because the curve it normalizes over changes extent.
 `registration_residual_pre_prominence` / `registration_residual_post_prominence` are the peak's `r` minus the
@@ -772,13 +819,18 @@ The optional keys are lookalike tags, omitted when false, stamped rather than sp
 out of reach", which produces a flat curve that peaks mid-sweep; read `pre_z` / `post_z` for reach),
 `program_quiet` (B is quiet at the nominal mapping — the shared-pause lookalike), and
 `pre_envelope_rescued` / `post_envelope_rescued` (the coarse envelope relocated that shoulder before it
-locked; `false` covers both "never consulted" and "consulted and declined"). `pre_z` / `post_z` are the
+locked; `false` covers both "never consulted" and "consulted and declined"). `snap_lead_frames` /
+`snap_trail_frames` (since 2026-11-11, omitted when 0) are the edge snap's move at each edge: the verdict,
+`bridge_frames` and `gap_frames` are all read on the **unsnapped** edges, and these say how far the spliced
+geometry differs from them. `pre_z` / `post_z` are the
 whole-curve z-scores of each lock's peak — recorded, never gated on. The same payload is republished at
 run level on [`patch.shoulders_abut`](#shouldersabutskip) with the A frames added.
 
 **ShouldersAbutSkip** — `{"gap_index", "a_start_frame", "a_end_frame", …}` plus the `shoulders_abut`
 payload flattened in alongside them. The payload keys are exactly those of the per-gap `{"shoulders_abut": {…}}` skip reason above; the three
-extra keys are the gap's identity and its refined throat on **A's PCM timeline**, in frames. Frames rather
+extra keys are the gap's identity and its refined throat on **A's PCM timeline**, in frames. The throat is
+the **snapped** edges (`spec.refined`), band included, while the verdict was read on the unsnapped ones;
+`snap_lead_frames` / `snap_trail_frames` recover the unsnapped throat. Frames rather
 than seconds because this list exists for a consumer that cuts samples: `splice_into_a` is
 length-preserving, so these frames still name the same silence after every other gap in the run has been
 filled. A run-level list rather than a per-gap field because it is a work list, and because the per-gap

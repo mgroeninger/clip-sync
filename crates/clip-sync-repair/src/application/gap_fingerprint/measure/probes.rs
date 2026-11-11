@@ -240,6 +240,9 @@ pub(in crate::application::gap_fingerprint::measure) struct SpliceDualfitInput<'
     pub(in crate::application::gap_fingerprint::measure) a_samples: &'a [f32],
     pub(in crate::application::gap_fingerprint::measure) channels: usize,
     pub(in crate::application::gap_fingerprint::measure) refined: RefinedGapFrames,
+    /// `refined` before the edge snap; the abut verdict's bridge is read here. Pass `refined` again
+    /// when the snap is off.
+    pub(in crate::application::gap_fingerprint::measure) unsnapped: RefinedGapFrames,
     pub(in crate::application::gap_fingerprint::measure) b_mono: &'a [f64],
     /// Nominal geometry `b_mapped` gap-start frame (no lag adjustment).
     pub(in crate::application::gap_fingerprint::measure) b_mapped_start: usize,
@@ -288,6 +291,7 @@ pub(in crate::application::gap_fingerprint::measure) fn splice_dualfit_at(
         a_samples,
         channels,
         refined,
+        unsnapped,
         b_mono,
         b_mapped_start,
         cfg,
@@ -361,6 +365,12 @@ pub(in crate::application::gap_fingerprint::measure) fn splice_dualfit_at(
     // the gate is `SeamGateFloors::passes` — literally production's, not a restatement of it.
     let (b_pre_seam, b_post_seam) = (locks.b_pre_seam, locks.b_post_seam);
     let bridge_frames = locks.bridge_frames;
+    let unsnapped_bridge_frames = locks
+        .without_edge_snap(
+            unsnapped.start_frame.saturating_sub(refined.start_frame),
+            refined.end_frame.saturating_sub(unsnapped.end_frame),
+        )
+        .bridge_frames;
     let gate_pass = locks.gate_pass;
 
     // Validator 1 — is the step necessary? Post seam at the PRE shoulder's seam-local lag (step forced 0):
@@ -451,6 +461,7 @@ pub(in crate::application::gap_fingerprint::measure) fn splice_dualfit_at(
         post_seam_r,
         gap_frames,
         bridge_frames,
+        unsnapped_bridge_frames: Some(unsnapped_bridge_frames),
         trim_frames: bridge_frames - gap_frames as i64,
         gate_pass,
         post_seam_global_r,
@@ -1057,6 +1068,7 @@ mod tests {
                 a_samples: &a,
                 channels: 1,
                 refined,
+                unsnapped: refined,
                 b_mono: &b_mono,
                 b_mapped_start: gap_start,
                 cfg,

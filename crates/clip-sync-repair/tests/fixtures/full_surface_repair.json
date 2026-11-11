@@ -9,7 +9,11 @@
       "b_sample_rate": 48000,
       "channels_match": true,
       "rate_match": true,
-      "verdict": "identical"
+      "verdict": "identical",
+      "a_codec": "aac",
+      "b_codec": "ac3",
+      "a_bit_depth": "f32",
+      "b_bit_depth": "f32"
     },
     "overlap": {
       "video_a_start_secs": 10.956,
@@ -276,8 +280,25 @@
           "refine_start_frames": -441,
           "refine_end_frames": 0,
           "write_start_secs": 44.98,
-          "write_end_secs": 47.51,
+          "write_end_secs": 47.52,
           "fill_source_start_secs": 48.01
+        },
+        "edge_snap": {
+          "lead": {
+            "outcome": "hard",
+            "refine_frames": -441,
+            "moved_frames": 0
+          },
+          "trail": {
+            "outcome": "snapped",
+            "refine_frames": 0,
+            "onset_frames": 441,
+            "moved_frames": 441,
+            "reaches_zero": true,
+            "onset_to_zero_frames": 1024,
+            "band_peak_dbfs": -48.5,
+            "step_db": 27.3
+          }
         }
       },
       {
@@ -302,6 +323,28 @@
           "signature_mode": "bool",
           "anchor_seam_used": false,
           "dual_fit_used": false
+        },
+        "edge_snap": {
+          "lead": {
+            "outcome": "refused_cap",
+            "refine_frames": -96,
+            "onset_frames": 4741,
+            "moved_frames": 0,
+            "reaches_zero": true,
+            "onset_to_zero_frames": 2048,
+            "band_peak_dbfs": -41.2,
+            "step_db": 22.8
+          },
+          "trail": {
+            "outcome": "refused_no_zero",
+            "refine_frames": 48,
+            "onset_frames": 480,
+            "moved_frames": 0,
+            "reaches_zero": false,
+            "band_peak_dbfs": -52.0,
+            "step_db": 18.4,
+            "gap_floor_dbfs": -64.2
+          }
         }
       },
       {
@@ -343,6 +386,18 @@
           "write_start_secs": 159.99,
           "write_end_secs": 160.41,
           "fill_source_start_secs": 163.0
+        },
+        "edge_snap": {
+          "lead": {
+            "outcome": "not_attempted_advanced",
+            "refine_frames": 220,
+            "moved_frames": 0
+          },
+          "trail": {
+            "outcome": "hard",
+            "refine_frames": 0,
+            "moved_frames": 0
+          }
         }
       },
       {
@@ -370,6 +425,28 @@
       "fill_seam_search_secs": 0.25,
       "normalize_window_secs": 5.0,
       "residual_search_secs": 0.25
+    },
+    "edge_snap": {
+      "max_ms": 40.0,
+      "zero_amp": 0.0000762939453125,
+      "zero_search_ms": 85.0,
+      "zero_run_ms": 5.0,
+      "observe_ms": 200.0,
+      "lead": {
+        "snapped": 0,
+        "hard": 1,
+        "refused_cap": 1,
+        "refused_no_zero": 0,
+        "not_attempted_advanced": 1
+      },
+      "trail": {
+        "snapped": 1,
+        "hard": 1,
+        "refused_cap": 0,
+        "refused_no_zero": 1,
+        "not_attempted_advanced": 0
+      },
+      "max_refused_cap_onset_frames": 4741
     },
     "program_gain": {
       "gain": 0.76647854,

@@ -628,7 +628,7 @@ mod cli_override_tests {
             "0.25",
             "--no-seam-extend-fill",
             "--edge-snap-max-ms",
-            "40",
+            "25",
             "--dual-fit-registration-bound-ms",
             "75",
             "--dual-fit-registration-common-bound-ms",
@@ -661,8 +661,8 @@ mod cli_override_tests {
             "--no-seam-extend-fill must reach the config; default is on"
         );
         assert_eq!(
-            config.repair.edge_snap_max_ms, 40.0,
-            "--edge-snap-max-ms must reach the config"
+            config.repair.edge_snap_max_ms, 25.0,
+            "--edge-snap-max-ms must reach the config (default is 40)"
         );
         assert_eq!(
             config.repair.dual_fit_registration_bound_ms,

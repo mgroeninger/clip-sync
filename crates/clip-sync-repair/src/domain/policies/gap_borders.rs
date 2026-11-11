@@ -172,12 +172,19 @@ const EDGE_SNAP_REF_BINS: usize = 2;
 const EDGE_SNAP_ZERO_DB: f64 = -140.0;
 /// "Digital zero" for the snap's dropout test: every channel within 2.5 LSB at 16 bits (about
 /// −82 dBFS). AAC dropouts decode to ±1 LSB at 16 bits; quiet programme sits far above this.
-const EDGE_SNAP_ZERO_AMP: f32 = 2.5 / 32768.0;
+pub const EDGE_SNAP_ZERO_AMP: f32 = 2.5 / 32768.0;
 /// The digital-zero run must start within this far into the gap. On the corpus the soft band's
 /// codec tail reaches zero at most 29 ms past the refined edge.
-const EDGE_SNAP_ZERO_SEARCH_MS: f64 = 85.0;
+pub const EDGE_SNAP_ZERO_SEARCH_MS: f64 = 85.0;
 /// Shortest run of digital-zero frames that counts as the dropout.
-const EDGE_SNAP_ZERO_RUN_MS: f64 = 5.0;
+pub const EDGE_SNAP_ZERO_RUN_MS: f64 = 5.0;
+/// How far outward of the refined edge the onset search looks (the census window). Wider than any
+/// cap, so a band longer than the cap still shows its onset and reads as a cap refusal, not as a
+/// hard edge. The cap limits only the move.
+pub const EDGE_SNAP_OBSERVE_MS: f64 = 200.0;
+/// Default edge snap cap (ms). On since 2026-11-11 (blind listen: 7 snapped better / 0 current /
+/// 11 same). The cap is load-bearing: 58/g2's 107.5 ms trail band must stay a cap refusal.
+pub const EDGE_SNAP_DEFAULT_MAX_MS: f64 = 40.0;
 
 /// How far [`snap_gap_edges_to_onset`] may move an edge past the silence floor, and the
 /// digital-zero test it applies first.
@@ -191,6 +198,8 @@ pub struct EdgeSnap {
     pub bin_frames: usize,
     pub zero_search_frames: usize,
     pub zero_run_frames: usize,
+    /// Onset search window outward of the refined edge ([`EDGE_SNAP_OBSERVE_MS`]).
+    pub observe_frames: usize,
 }
 
 impl EdgeSnap {
@@ -199,6 +208,7 @@ impl EdgeSnap {
         bin_frames: 0,
         zero_search_frames: 0,
         zero_run_frames: 0,
+        observe_frames: 0,
     };
 
     /// `max_ms <= 0` is [`EdgeSnap::OFF`].
@@ -207,12 +217,13 @@ impl EdgeSnap {
         if max_ms.is_nan() || max_ms <= 0.0 {
             return Self::OFF;
         }
+        let frames = |ms: f64| (ms / 1000.0 * sample_rate).round() as usize;
         Self {
-            max_frames: (max_ms / 1000.0 * sample_rate).round() as usize,
-            bin_frames: ((EDGE_SNAP_BIN_MS / 1000.0 * sample_rate).round() as usize).max(1),
-            zero_search_frames: (EDGE_SNAP_ZERO_SEARCH_MS / 1000.0 * sample_rate).round() as usize,
-            zero_run_frames: ((EDGE_SNAP_ZERO_RUN_MS / 1000.0 * sample_rate).round() as usize)
-                .max(1),
+            max_frames: frames(max_ms),
+            bin_frames: frames(EDGE_SNAP_BIN_MS).max(1),
+            zero_search_frames: frames(EDGE_SNAP_ZERO_SEARCH_MS),
+            zero_run_frames: frames(EDGE_SNAP_ZERO_RUN_MS).max(1),
+            observe_frames: frames(EDGE_SNAP_OBSERVE_MS),
         }
     }
 
@@ -220,12 +231,133 @@ impl EdgeSnap {
     pub fn is_off(self) -> bool {
         self.max_frames == 0
     }
+
+    /// Frames the onset search spans outward of the edge: the observation window, or the cap plus
+    /// the reference bins when a cap is set wider than the window.
+    fn search_frames(self) -> usize {
+        self.observe_frames
+            .max(self.max_frames + EDGE_SNAP_REF_BINS * self.bin_frames.max(1))
+    }
+}
+
+/// What the edge snap did at one edge (`docs/dev/TEMP-soft-edge-census-plan.md` step 4). The
+/// refusals follow the code's order: cap first, then the zero test.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EdgeSnapOutcome {
+    /// The edge moved to the onset.
+    Snapped,
+    /// No sustained 15 dB fall within the observation window: nothing to snap.
+    Hard,
+    /// An onset was found farther out than the cap.
+    RefusedCap,
+    /// An onset within the cap, but the gap does not reach digital zero beside the edge.
+    RefusedNoZero,
+    /// Lead only: refinement advanced the start past the reported edge, so the snap never ran.
+    NotAttemptedAdvanced,
+}
+
+impl EdgeSnapOutcome {
+    /// Every outcome, in report order.
+    pub const ALL: [Self; 5] = [
+        Self::Snapped,
+        Self::Hard,
+        Self::RefusedCap,
+        Self::RefusedNoZero,
+        Self::NotAttemptedAdvanced,
+    ];
+
+    /// Stable label for human output; matches the serde representation.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Snapped => "snapped",
+            Self::Hard => "hard",
+            Self::RefusedCap => "refused_cap",
+            Self::RefusedNoZero => "refused_no_zero",
+            Self::NotAttemptedAdvanced => "not_attempted_advanced",
+        }
+    }
+}
+
+/// The edge chain floor → refine → snap at one edge, in A frames. Record-only.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+pub struct EdgeSnapEdge {
+    pub outcome: EdgeSnapOutcome,
+    /// The signed refine step at this edge (refined − reported; negative on the lead = retracted
+    /// earlier). The same value as `PatchPlacement::refine_*_frames`, carried here so a skipped gap
+    /// records it too.
+    pub refine_frames: i64,
+    /// Onset distance outward of the refined (unsnapped) edge. Also on refusals; absent on `hard`
+    /// and `not_attempted_advanced`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub onset_frames: Option<usize>,
+    /// How far the snap moved this edge outward; 0 unless `snapped`.
+    pub moved_frames: usize,
+    /// Whether the gap reaches digital zero beside this edge; present on every edge with an onset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reaches_zero: Option<bool>,
+    /// Onset to the first frame of the digital-zero run; present when `reaches_zero`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub onset_to_zero_frames: Option<usize>,
+    /// Peak level (dBFS, loudest channel) of the band between the onset and the refined edge.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub band_peak_dbfs: Option<f64>,
+    /// The fall at the onset: the programme reference (loudest of the two 2 ms bins outward of it)
+    /// minus `band_peak_dbfs`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub step_db: Option<f64>,
+    /// Only on `refused_no_zero`: the quietest 2 ms bin (peak dBFS) inside the zero search.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gap_floor_dbfs: Option<f64>,
+}
+
+impl EdgeSnapEdge {
+    fn without_onset(outcome: EdgeSnapOutcome, refine_frames: i64) -> Self {
+        Self {
+            outcome,
+            refine_frames,
+            onset_frames: None,
+            moved_frames: 0,
+            reaches_zero: None,
+            onset_to_zero_frames: None,
+            band_peak_dbfs: None,
+            step_db: None,
+            gap_floor_dbfs: None,
+        }
+    }
+}
+
+/// Both edges' snap records for one gap ([`edge_snap_report`]).
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+pub struct EdgeSnapReport {
+    pub lead: EdgeSnapEdge,
+    pub trail: EdgeSnapEdge,
+}
+
+impl EdgeSnapReport {
+    /// `refined` with each edge moved by its `moved_frames`.
+    #[must_use]
+    pub fn apply(&self, refined: RefinedGapFrames) -> RefinedGapFrames {
+        RefinedGapFrames {
+            start_frame: refined.start_frame - self.lead.moved_frames,
+            end_frame: refined.end_frame + self.trail.moved_frames,
+        }
+    }
 }
 
 fn frame_peak(samples: &[f32], channels: usize, frame: usize) -> f64 {
     samples[frame * channels..(frame + 1) * channels]
         .iter()
         .fold(0.0f64, |m, &s| m.max(f64::from(s.abs())))
+}
+
+fn range_peak_db(samples: &[f32], channels: usize, lo: usize, hi: usize) -> f64 {
+    level_db(
+        (lo..hi)
+            .map(|f| frame_peak(samples, channels, f))
+            .fold(0.0, f64::max),
+    )
 }
 
 fn level_db(peak: f64) -> f64 {
@@ -236,17 +368,18 @@ fn level_db(peak: f64) -> f64 {
     }
 }
 
-/// Whether the gap `[start, end)` reaches digital zero beside the edge being snapped: a run of
-/// `snap.zero_run_frames` frames, every channel within [`EDGE_SNAP_ZERO_AMP`], starting within
-/// `snap.zero_search_frames` of `start` (`lead`) or of `end` (trail), walking into the gap.
-fn gap_reaches_zero(
+/// Frames into the gap `[start, end)` from the edge being snapped (`start` for the lead, `end` for
+/// the trail) to the first frame of a run of `snap.zero_run_frames` digital-zero frames (every
+/// channel within [`EDGE_SNAP_ZERO_AMP`]) that starts within `snap.zero_search_frames`. `None` when
+/// there is no such run: the gap does not reach digital zero beside this edge.
+fn zero_run_offset(
     samples: &[f32],
     channels: usize,
     (start, end): (usize, usize),
     lead: bool,
     snap: EdgeSnap,
-) -> bool {
-    let reach = (snap.zero_search_frames + snap.zero_run_frames).min(end - start);
+) -> Option<usize> {
+    let reach = zero_search_reach((start, end), snap);
     let mut run = 0;
     for k in 0..reach {
         let f = if lead { start + k } else { end - 1 - k };
@@ -256,13 +389,41 @@ fn gap_reaches_zero(
         {
             run += 1;
             if run >= snap.zero_run_frames {
-                return true;
+                return Some(k + 1 - run);
             }
         } else {
             run = 0;
         }
     }
-    false
+    None
+}
+
+fn zero_search_reach((start, end): (usize, usize), snap: EdgeSnap) -> usize {
+    (snap.zero_search_frames + snap.zero_run_frames).min(end - start)
+}
+
+/// The quietest 2 ms bin (peak dBFS) the zero search walked, from the edge into the gap.
+fn zero_search_floor_db(
+    samples: &[f32],
+    channels: usize,
+    (start, end): (usize, usize),
+    lead: bool,
+    snap: EdgeSnap,
+) -> f64 {
+    let reach = zero_search_reach((start, end), snap);
+    let bin = snap.bin_frames.max(1).min(reach.max(1));
+    (0..reach.div_ceil(bin))
+        .map(|k| {
+            let near = k * bin;
+            let far = (near + bin).min(reach);
+            if lead {
+                range_peak_db(samples, channels, start + near, start + far)
+            } else {
+                range_peak_db(samples, channels, end - far, end - near)
+            }
+        })
+        .fold(f64::INFINITY, f64::min)
+        .min(0.0)
 }
 
 /// Per-bin peak dBFS (max across channels), `nbins` chronological bins of `bin` frames from `lo`.
@@ -276,42 +437,45 @@ fn snap_bin_levels(
     (0..nbins)
         .map(|k| {
             let s = lo + k * bin;
-            level_db(
-                (s..s + bin)
-                    .map(|f| frame_peak(samples, channels, f))
-                    .fold(0.0, f64::max),
-            )
+            range_peak_db(samples, channels, s, s + bin)
         })
         .collect()
 }
 
-/// Collapse onsets (outward distances, frames) closer than `merge` into one, represented by its
-/// outermost member — two bins of one decay can both clear the fall by a fraction of a dB. Returns
-/// distances ascending, nearest first.
-fn merge_onsets(mut outward: Vec<usize>, merge: usize) -> Vec<usize> {
-    outward.sort_unstable();
-    let mut out: Vec<usize> = Vec::new();
-    for d in outward {
+/// A candidate onset: its distance outward of the edge, and the programme reference level the fall
+/// was measured from.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Onset {
+    frames: usize,
+    reference_db: f64,
+}
+
+/// Collapse onsets closer than `merge` frames into one, represented by its outermost member — two
+/// bins of one decay can both clear the fall by a fraction of a dB. Returns them ascending, nearest
+/// first.
+fn merge_onsets(mut outward: Vec<Onset>, merge: usize) -> Vec<Onset> {
+    outward.sort_unstable_by_key(|o| o.frames);
+    let mut out: Vec<Onset> = Vec::new();
+    for o in outward {
         match out.last_mut() {
-            Some(last) if d - *last <= merge => *last = d,
-            _ => out.push(d),
+            Some(last) if o.frames - last.frames <= merge => *last = o,
+            _ => out.push(o),
         }
     }
     out
 }
 
-/// The nearest merged onset, as frames outward of the edge.
-fn nearest_onset(outward: Vec<usize>, bin: usize) -> Option<usize> {
+/// The nearest merged onset.
+fn nearest_onset(outward: Vec<Onset>, bin: usize) -> Option<Onset> {
     merge_onsets(outward, EDGE_SNAP_REF_BINS * bin)
         .into_iter()
         .next()
 }
 
-/// Lead onset: frames back from `edge` to where the sustained fall into the dropout begins.
-fn lead_onset(samples: &[f32], channels: usize, edge: usize, snap: EdgeSnap) -> Option<usize> {
+/// Lead onset: back from `edge` to where the sustained fall into the dropout begins.
+fn lead_onset(samples: &[f32], channels: usize, edge: usize, snap: EdgeSnap) -> Option<Onset> {
     let bin = snap.bin_frames.max(1);
-    let want = snap.max_frames + EDGE_SNAP_REF_BINS * bin;
-    let nbins = want.div_ceil(bin).min(edge / bin);
+    let nbins = snap.search_frames().div_ceil(bin).min(edge / bin);
     let lo = edge - nbins * bin;
     let l = snap_bin_levels(samples, channels, lo, nbins, bin);
     let mut suffix_max = vec![f64::NEG_INFINITY; nbins + 1];
@@ -335,18 +499,20 @@ fn lead_onset(samples: &[f32], channels: usize, edge: usize, snap: EdgeSnap) -> 
                 .rev()
                 .find(|&f| frame_peak(samples, channels, f) > thr)
                 .map_or(s, |f| f + 1);
-            Some(edge - f)
+            Some(Onset {
+                frames: edge - f,
+                reference_db: reference,
+            })
         })
         .collect();
     nearest_onset(onsets, bin)
 }
 
-/// Trail onset: frames forward from `edge` to where programme rises out of the dropout.
-fn trail_onset(samples: &[f32], channels: usize, edge: usize, snap: EdgeSnap) -> Option<usize> {
+/// Trail onset: forward from `edge` to where programme rises out of the dropout.
+fn trail_onset(samples: &[f32], channels: usize, edge: usize, snap: EdgeSnap) -> Option<Onset> {
     let bin = snap.bin_frames.max(1);
     let total = samples.len() / channels;
-    let want = snap.max_frames + EDGE_SNAP_REF_BINS * bin;
-    let nbins = want.div_ceil(bin).min((total - edge) / bin);
+    let nbins = snap.search_frames().div_ceil(bin).min((total - edge) / bin);
     let l = snap_bin_levels(samples, channels, edge, nbins, bin);
     let mut prefix_max = f64::NEG_INFINITY;
     let mut onsets = Vec::new();
@@ -361,36 +527,118 @@ fn trail_onset(samples: &[f32], channels: usize, edge: usize, snap: EdgeSnap) ->
             let f = (s..edge + (j + EDGE_SNAP_REF_BINS).min(nbins) * bin)
                 .find(|&f| frame_peak(samples, channels, f) > thr)
                 .unwrap_or(s);
-            onsets.push(f - edge);
+            onsets.push(Onset {
+                frames: f - edge,
+                reference_db: level,
+            });
         }
         prefix_max = prefix_max.max(l[j]);
     }
     nearest_onset(onsets, bin)
 }
 
-/// Move refined gap edges outward from the silence floor to A's dropout onset.
+/// Read one edge: find its onset, then apply the cap and the zero test in that order.
+fn snap_edge(
+    samples: &[f32],
+    channels: usize,
+    gap: (usize, usize),
+    lead: bool,
+    snap: EdgeSnap,
+    refine_frames: i64,
+) -> EdgeSnapEdge {
+    let edge = if lead { gap.0 } else { gap.1 };
+    let onset = if lead {
+        lead_onset(samples, channels, edge, snap)
+    } else {
+        trail_onset(samples, channels, edge, snap)
+    };
+    let Some(onset) = onset.filter(|o| o.frames > 0) else {
+        return EdgeSnapEdge::without_onset(EdgeSnapOutcome::Hard, refine_frames);
+    };
+    let zero = zero_run_offset(samples, channels, gap, lead, snap);
+    let band_peak = if lead {
+        range_peak_db(samples, channels, edge - onset.frames, edge)
+    } else {
+        range_peak_db(samples, channels, edge, edge + onset.frames)
+    };
+    let outcome = if onset.frames > snap.max_frames {
+        EdgeSnapOutcome::RefusedCap
+    } else if zero.is_none() {
+        EdgeSnapOutcome::RefusedNoZero
+    } else {
+        EdgeSnapOutcome::Snapped
+    };
+    EdgeSnapEdge {
+        outcome,
+        refine_frames,
+        onset_frames: Some(onset.frames),
+        moved_frames: if outcome == EdgeSnapOutcome::Snapped {
+            onset.frames
+        } else {
+            0
+        },
+        reaches_zero: Some(zero.is_some()),
+        onset_to_zero_frames: zero.map(|z| onset.frames + z),
+        band_peak_dbfs: Some(band_peak),
+        step_db: Some(onset.reference_db - band_peak),
+        gap_floor_dbfs: (outcome == EdgeSnapOutcome::RefusedNoZero)
+            .then(|| zero_search_floor_db(samples, channels, gap, lead, snap)),
+    }
+}
+
+/// Read both edges of a refined gap for the edge snap, and say what the snap does at each.
+/// `None` when the snap is off or the refined gap is empty or out of range.
 ///
 /// A dropout can decay through a soft band above the silence floor before it reaches it (50/g7:
 /// −22 → −30 → −45 dBFS over 26 ms). [`refine_gap_frames`] stops at the floor, so the band stays raw
 /// A beside the fill. This continues the walk: in 2 ms peak bins, the **nearest** fall of at least
 /// 15 dB below the loudest of the two bins before it, sustained into the gap, refined to the sample
 /// (the trail edge mirrors it). The bins end at the edge, as the census instrument's end at the scan
-/// boundary, so a band that ends in a hard step to silence still snaps.
+/// boundary, so a band that ends in a hard step to silence still snaps. The search spans a fixed
+/// observation window ([`EDGE_SNAP_OBSERVE_MS`]), so a band longer than the cap still reports its
+/// onset (as a cap refusal).
 ///
 /// Two guards, and the edge stays where refinement left it unless both pass:
-/// - **The gap reaches digital zero** beside the edge ([`gap_reaches_zero`]). The band is then
-///   codec noise smeared after a hard cut, and the onset is the cut (frame-grid census,
-///   `docs/dev/TEMP-soft-edge-census-plan.md` § 5). A gap whose interior is quiet programme rather
-///   than a dropout never snaps.
 /// - **The onset is within `snap.max_frames`.** The zero test cannot tell quiet programme that runs
 ///   up to the cut (58/g2 trail: 107 ms flat at −57 dBFS, then zero) from a soft band, so the cap
 ///   still guards it. The step test cannot either: room tone after a word starts with a step too.
+/// - **The gap reaches digital zero** beside the edge ([`zero_run_offset`]). The band is then
+///   codec noise smeared after a hard cut, and the onset is the cut (frame-grid census,
+///   `docs/dev/TEMP-soft-edge-census-plan.md` § 5). A gap whose interior is quiet programme rather
+///   than a dropout never snaps.
 ///
 /// The lead edge is not snapped when refinement *advanced* it past `reported_start_frame`: the
 /// scanner opened that run early, so the frames before it are programme, not a dropout's decay.
 ///
 /// Its own rule, not the scanner's silence predicate — the census instrument (`edge-onset`) holds
 /// the reference reading and shares no code with this.
+#[must_use]
+pub fn edge_snap_report(
+    samples: &[f32],
+    channels: usize,
+    (reported_start_frame, reported_end_frame): (usize, usize),
+    refined: RefinedGapFrames,
+    snap: EdgeSnap,
+) -> Option<EdgeSnapReport> {
+    let channels = channels.max(1);
+    let total_frames = samples.len() / channels;
+    if snap.is_off() || refined.start_frame >= refined.end_frame || refined.end_frame > total_frames
+    {
+        return None;
+    }
+    let refine = EdgeRefineFrames::between(reported_start_frame, reported_end_frame, refined);
+    let gap = (refined.start_frame, refined.end_frame);
+    let lead = if refined.start_frame <= reported_start_frame {
+        snap_edge(samples, channels, gap, true, snap, refine.start_frames)
+    } else {
+        EdgeSnapEdge::without_onset(EdgeSnapOutcome::NotAttemptedAdvanced, refine.start_frames)
+    };
+    let trail = snap_edge(samples, channels, gap, false, snap, refine.end_frames);
+    Some(EdgeSnapReport { lead, trail })
+}
+
+/// Move refined gap edges outward from the silence floor to A's dropout onset: [`edge_snap_report`]
+/// applied. `refined` unchanged when the snap is off.
 #[must_use]
 pub fn snap_gap_edges_to_onset(
     samples: &[f32],
@@ -399,28 +647,15 @@ pub fn snap_gap_edges_to_onset(
     refined: RefinedGapFrames,
     snap: EdgeSnap,
 ) -> RefinedGapFrames {
-    let channels = channels.max(1);
-    let total_frames = samples.len() / channels;
-    if snap.is_off() || refined.start_frame >= refined.end_frame || refined.end_frame > total_frames
-    {
-        return refined;
-    }
-    let mut out = refined;
-    let gap = (refined.start_frame, refined.end_frame);
-    if refined.start_frame <= reported_start_frame {
-        if let Some(d) = lead_onset(samples, channels, refined.start_frame, snap) {
-            if d > 0 && d <= snap.max_frames && gap_reaches_zero(samples, channels, gap, true, snap)
-            {
-                out.start_frame = refined.start_frame - d;
-            }
-        }
-    }
-    if let Some(d) = trail_onset(samples, channels, refined.end_frame, snap) {
-        if d > 0 && d <= snap.max_frames && gap_reaches_zero(samples, channels, gap, false, snap) {
-            out.end_frame = refined.end_frame + d;
-        }
-    }
-    out
+    // The trail record's refine step is not read here, so the reported end is immaterial.
+    edge_snap_report(
+        samples,
+        channels,
+        (reported_start_frame, refined.end_frame),
+        refined,
+        snap,
+    )
+    .map_or(refined, |report| report.apply(refined))
 }
 
 /// [`refine_gap_frames`], then [`snap_gap_edges_to_onset`]: the one edge walk every production caller
@@ -438,7 +673,57 @@ pub fn refine_and_snap_gap_frames(
     max_refine_frames: usize,
     snap: EdgeSnap,
 ) -> RefinedGapFrames {
-    let refined = refine_gap_frames(
+    refine_and_snap_gap_edges(
+        samples,
+        channels,
+        start_frame,
+        end_frame,
+        silence_peak_fraction,
+        absolute_rms_floor,
+        max_refine_frames,
+        snap,
+    )
+    .refined
+}
+
+/// Both ends of [`refine_and_snap_gap_frames`]'s walk: the refined edges before the snap, and after.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GapEdgeChain {
+    /// [`refine_gap_frames`] alone — where the abut verdict is read.
+    pub unsnapped: RefinedGapFrames,
+    /// After the edge snap — what every placement step measures from. Equal to `unsnapped` when the
+    /// snap is off or moved nothing.
+    pub refined: RefinedGapFrames,
+}
+
+impl GapEdgeChain {
+    /// How far the snap moved the lead (earlier) and the trail (later), in frames.
+    pub fn snap_moves(&self) -> (usize, usize) {
+        (
+            self.unsnapped
+                .start_frame
+                .saturating_sub(self.refined.start_frame),
+            self.refined
+                .end_frame
+                .saturating_sub(self.unsnapped.end_frame),
+        )
+    }
+}
+
+/// [`refine_and_snap_gap_frames`], keeping the unsnapped edges too.
+#[allow(clippy::too_many_arguments)]
+#[must_use]
+pub fn refine_and_snap_gap_edges(
+    samples: &[f32],
+    channels: usize,
+    start_frame: usize,
+    end_frame: usize,
+    silence_peak_fraction: f32,
+    absolute_rms_floor: f32,
+    max_refine_frames: usize,
+    snap: EdgeSnap,
+) -> GapEdgeChain {
+    let unsnapped = refine_gap_frames(
         samples,
         channels,
         start_frame,
@@ -447,7 +732,10 @@ pub fn refine_and_snap_gap_frames(
         absolute_rms_floor,
         max_refine_frames,
     );
-    snap_gap_edges_to_onset(samples, channels, start_frame, refined, snap)
+    GapEdgeChain {
+        unsnapped,
+        refined: snap_gap_edges_to_onset(samples, channels, start_frame, unsnapped, snap),
+    }
 }
 
 struct GapBorderFrameRange {
@@ -897,6 +1185,155 @@ mod tests {
         assert_eq!(snapped.start_frame, refined.start_frame);
     }
 
+    fn snap_report(samples: &[f32], start: usize, end: usize, snap: EdgeSnap) -> EdgeSnapReport {
+        let max_refine = (GAP_EDGE_REFINE_SECS * SNAP_RATE).round() as usize;
+        let refined = refine_gap_frames(samples, 2, start, end, 0.01, SNAP_FLOOR, max_refine);
+        edge_snap_report(samples, 2, (start, end), refined, snap).expect("snap on, gap non-empty")
+    }
+
+    /// The window the onset search had before step 4: the cap plus the reference bins.
+    fn cap_window_only(snap: EdgeSnap) -> EdgeSnap {
+        EdgeSnap {
+            observe_frames: 0,
+            ..snap
+        }
+    }
+
+    #[test]
+    fn edge_snap_report_snapped_records_the_band() {
+        let (s, band_start, band_end, rs, re) = soft_edged(20.0);
+        let refined = refine_only(&s, rs, re);
+        let r = snap_report(&s, rs, re, snap_40());
+        for (edge, onset) in [
+            (r.lead, refined.start_frame - band_start),
+            (r.trail, band_end - refined.end_frame),
+        ] {
+            assert_eq!(edge.outcome, EdgeSnapOutcome::Snapped);
+            assert_eq!(edge.onset_frames, Some(onset));
+            assert_eq!(edge.moved_frames, onset);
+            assert_eq!(edge.reaches_zero, Some(true));
+            // The zero run starts where the ramp ends: past the band and the rest of the ramp.
+            let to_zero = edge.onset_to_zero_frames.expect("reaches zero");
+            assert!(to_zero > onset && to_zero <= onset + ms_frames(20.0) + 1);
+            let peak = edge.band_peak_dbfs.expect("band");
+            assert!((peak + 35.0).abs() < 0.1, "band peak {peak}");
+            let step = edge.step_db.expect("step");
+            assert!((step - 25.0).abs() < 0.1, "step {step}");
+            assert_eq!(edge.gap_floor_dbfs, None);
+        }
+        assert_eq!(r.lead.refine_frames, refined.start_frame as i64 - rs as i64);
+        assert_eq!(r.trail.refine_frames, refined.end_frame as i64 - re as i64);
+        assert_eq!(r.apply(refined), refine_snap(&s, rs, re, snap_40()));
+    }
+
+    #[test]
+    fn edge_snap_report_hard_edge_has_no_onset() {
+        let mut s = Vec::new();
+        level(&mut s, -10.0, 300.0);
+        let start = s.len() / 2;
+        silence(&mut s, 500.0);
+        let end = s.len() / 2;
+        level(&mut s, -10.0, 300.0);
+        let r = snap_report(&s, start + ms_frames(30.0), end, snap_40());
+        for edge in [r.lead, r.trail] {
+            assert_eq!(edge.outcome, EdgeSnapOutcome::Hard);
+            assert_eq!(edge.onset_frames, None);
+            assert_eq!(edge.moved_frames, 0);
+            assert_eq!(edge.reaches_zero, None);
+            assert_eq!(edge.band_peak_dbfs, None);
+        }
+        assert_eq!(r.lead.refine_frames, -(ms_frames(30.0) as i64));
+        assert_eq!(r.trail.refine_frames, 0);
+    }
+
+    #[test]
+    fn edge_snap_report_refuses_a_band_beyond_its_cap_with_its_onset() {
+        let (s, band_start, band_end, rs, re) = soft_edged(60.0);
+        let refined = refine_only(&s, rs, re);
+        let r = snap_report(&s, rs, re, snap_40());
+        for (edge, onset) in [
+            (r.lead, refined.start_frame - band_start),
+            (r.trail, band_end - refined.end_frame),
+        ] {
+            assert!(onset > snap_40().max_frames);
+            assert_eq!(edge.outcome, EdgeSnapOutcome::RefusedCap);
+            assert_eq!(edge.onset_frames, Some(onset));
+            assert_eq!(edge.moved_frames, 0);
+            // Cap first: the zero test still reads, and passes, beside a digital-zero gap.
+            assert_eq!(edge.reaches_zero, Some(true));
+            assert_eq!(edge.gap_floor_dbfs, None);
+        }
+        // Before the observation window, the search ended at the cap and saw no fall: hard.
+        let old = snap_report(&s, rs, re, cap_window_only(snap_40()));
+        assert_eq!(old.lead.outcome, EdgeSnapOutcome::Hard);
+        assert_eq!(old.trail.outcome, EdgeSnapOutcome::Hard);
+    }
+
+    #[test]
+    fn edge_snap_report_refuses_a_band_beside_quiet_programme_with_its_floor() {
+        let (mut s, _, _, rs, re) = soft_edged(20.0);
+        let quiet = dbfs(-70.0);
+        for x in &mut s {
+            if x.abs() < quiet {
+                *x = quiet;
+            }
+        }
+        let r = snap_report(&s, rs, re, snap_40());
+        for edge in [r.lead, r.trail] {
+            assert_eq!(edge.outcome, EdgeSnapOutcome::RefusedNoZero);
+            assert!(edge.onset_frames.is_some());
+            assert_eq!(edge.moved_frames, 0);
+            assert_eq!(edge.reaches_zero, Some(false));
+            assert_eq!(edge.onset_to_zero_frames, None);
+            let floor = edge.gap_floor_dbfs.expect("floor on refused_no_zero");
+            assert!((floor + 70.0).abs() < 0.1, "floor {floor}");
+        }
+    }
+
+    #[test]
+    fn edge_snap_report_does_not_attempt_a_lead_the_refinement_advanced() {
+        let (s, band_start, _, _, re) = soft_edged(20.0);
+        let early = band_start - ms_frames(100.0);
+        let r = snap_report(&s, early, re, snap_40());
+        assert_eq!(r.lead.outcome, EdgeSnapOutcome::NotAttemptedAdvanced);
+        assert_eq!(r.lead.onset_frames, None);
+        assert_eq!(r.lead.moved_frames, 0);
+        assert!(r.lead.refine_frames > 0, "refinement advanced the start");
+        assert_eq!(r.trail.outcome, EdgeSnapOutcome::Snapped);
+    }
+
+    #[test]
+    fn edge_snap_report_is_absent_when_the_snap_is_off() {
+        let (s, _, _, rs, re) = soft_edged(20.0);
+        let refined = refine_only(&s, rs, re);
+        assert_eq!(
+            edge_snap_report(&s, 2, (rs, re), refined, EdgeSnap::OFF),
+            None
+        );
+    }
+
+    #[test]
+    fn edge_snap_wider_window_keeps_the_nearest_onset() {
+        // Two falls into the lead: programme at 0 dBFS steps to −20 dBFS 100 ms out, then to a −40
+        // dBFS band 20 ms out. Only the observation window sees the far one; it is 80 ms from the
+        // near one, far outside the merge chain, so the move is unchanged.
+        let mut s = Vec::new();
+        level(&mut s, 0.0, 300.0);
+        level(&mut s, -20.0, 80.0);
+        let band_start = s.len() / 2;
+        level(&mut s, -40.0, 20.0);
+        let start = s.len() / 2;
+        silence(&mut s, 500.0);
+        let end = s.len() / 2;
+        level(&mut s, -10.0, 300.0);
+        let late = start + ms_frames(30.0);
+        let wide = snap_report(&s, late, end, snap_40());
+        let narrow = snap_report(&s, late, end, cap_window_only(snap_40()));
+        assert_eq!(wide.lead.outcome, EdgeSnapOutcome::Snapped);
+        assert_eq!(wide.lead.moved_frames, start - band_start);
+        assert_eq!(wide, narrow);
+    }
+
     #[test]
     fn edge_snap_off_is_refine_alone() {
         let (s, _, _, rs, re) = soft_edged(20.0);
@@ -907,6 +1344,55 @@ mod tests {
         );
         assert!(EdgeSnap::from_ms(0.0, SNAP_RATE).is_off());
         assert!(EdgeSnap::from_ms(f64::NAN, SNAP_RATE).is_off());
+    }
+
+    #[test]
+    fn edge_chain_records_a_long_refine_retraction_then_a_short_snap() {
+        // 83/g7's shape: the scanner started the run 90.5 ms late, so refinement retracts the lead
+        // through that silence to the floor edge, and the snap then moves only the 2.3 ms soft
+        // band beyond it. The record must carry both steps, and the written edge must be
+        // reported + refine - moved, the onset.
+        const RETRACT_MS: f64 = 90.5;
+        const BAND_MS: f64 = 2.3;
+        let mut s = Vec::new();
+        level(&mut s, -10.0, 300.0);
+        let onset = s.len() / 2;
+        level(&mut s, -35.0, BAND_MS);
+        let floor_edge = s.len() / 2;
+        silence(&mut s, 600.0);
+        let end = s.len() / 2;
+        level(&mut s, -10.0, 300.0);
+        let reported_start = floor_edge + ms_frames(RETRACT_MS);
+
+        let max_refine = (GAP_EDGE_REFINE_SECS * SNAP_RATE).round() as usize;
+        let chain = refine_and_snap_gap_edges(
+            &s,
+            2,
+            reported_start,
+            end,
+            0.01,
+            SNAP_FLOOR,
+            max_refine,
+            snap_40(),
+        );
+        assert_eq!(
+            chain.unsnapped.start_frame, floor_edge,
+            "refine stops at the floor edge"
+        );
+        assert_eq!(
+            chain.refined.start_frame, onset,
+            "the snap reaches the onset"
+        );
+        assert_eq!(chain.snap_moves().0, floor_edge - onset);
+
+        let r = snap_report(&s, reported_start, end, snap_40());
+        assert_eq!(r.lead.outcome, EdgeSnapOutcome::Snapped);
+        assert_eq!(r.lead.refine_frames, -(ms_frames(RETRACT_MS) as i64));
+        assert_eq!(r.lead.moved_frames, floor_edge - onset);
+        assert_eq!(r.lead.onset_frames, Some(floor_edge - onset));
+        let written = reported_start as i64 + r.lead.refine_frames - r.lead.moved_frames as i64;
+        assert_eq!(written, onset as i64);
+        assert_eq!(r.apply(chain.unsnapped), chain.refined);
     }
 
     #[test]

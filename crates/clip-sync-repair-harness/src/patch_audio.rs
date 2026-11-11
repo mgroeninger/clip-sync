@@ -198,6 +198,10 @@ pub fn stereo_identical_compat(sample_rate: u32) -> TrackCompatibility {
         channels_match: true,
         rate_match: true,
         verdict: CompatibilityVerdict::Identical,
+        a_codec: None,
+        b_codec: None,
+        a_bit_depth: None,
+        b_bit_depth: None,
     }
 }
 

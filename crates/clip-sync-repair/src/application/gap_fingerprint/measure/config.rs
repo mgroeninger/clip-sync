@@ -84,7 +84,8 @@ pub struct FingerprintConfig {
     pub min_fill_correlation: f32,
     pub fill_absolute_floor: f32,
     pub max_refine_secs: f64,
-    /// Edge snap cap (ms) after refinement; `0` = off. Must match the patch's
+    /// Edge snap cap (ms) after refinement; default
+    /// [`crate::domain::policies::EDGE_SNAP_DEFAULT_MAX_MS`], `0` = off. Must match the patch's
     /// (`PatchAudioRequest::edge_snap_max_ms`) or the fingerprint geometry drifts from the patch.
     pub edge_snap_max_ms: f64,
     pub lag_max_lag_ms: u32,
@@ -137,7 +138,7 @@ impl Default for FingerprintConfig {
             min_fill_correlation: 0.35,
             fill_absolute_floor: 0.12,
             max_refine_secs: GAP_EDGE_REFINE_SECS,
-            edge_snap_max_ms: 0.0,
+            edge_snap_max_ms: crate::domain::policies::EDGE_SNAP_DEFAULT_MAX_MS,
             lag_max_lag_ms: LAG_DECISION_MAX_LAG_MS,
             lag_envelope_max_lag_ms: DEFAULT_LAG_ENVELOPE_MAX_LAG_MS,
             border_capture: BorderCapture::Narrow,

@@ -144,9 +144,9 @@ pub struct RepairConfig {
     #[serde(default = "default_true")]
     pub seam_extend_fill: bool,
     /// Edge snap cap (ms): move each gap edge past the silence floor to A's dropout onset when the
-    /// soft band between them is no longer than this. `0` = off (default). Opt-in prototype,
-    /// `docs/dev/TEMP-soft-edge-census-plan.md` § 4 Phase 4.
-    #[serde(default)]
+    /// soft band between them is no longer than this. Default 40 (on since 2026-11-11,
+    /// `docs/dev/TEMP-soft-edge-census-plan.md` § 4); `0` = off.
+    #[serde(default = "default_edge_snap_max_ms")]
     pub edge_snap_max_ms: f64,
     /// Gaps at or below this length use mean(pre, post) correlation for the fill gate.
     #[serde(default = "default_short_gap_mean_correlation_secs")]
@@ -520,6 +520,9 @@ pub fn absolute_silence_rms_i16_units(normalized: f32) -> f32 {
 fn default_true() -> bool {
     true
 }
+fn default_edge_snap_max_ms() -> f64 {
+    crate::domain::policies::EDGE_SNAP_DEFAULT_MAX_MS
+}
 fn default_lag_envelope_max_lag_ms() -> u32 {
     2000
 }
@@ -723,7 +726,7 @@ impl Default for RepairConfig {
             residual_border_standoff_secs: None,
             residual_search_secs: default_residual_search_secs(),
             seam_extend_fill: true,
-            edge_snap_max_ms: 0.0,
+            edge_snap_max_ms: default_edge_snap_max_ms(),
             short_gap_mean_correlation_secs: default_short_gap_mean_correlation_secs(),
             fill_length_slack_secs: default_fill_length_slack_secs(),
             fill_extract_tail_slack_secs: default_fill_extract_tail_slack_secs(),
@@ -1772,13 +1775,15 @@ dry_run = true
     }
 
     #[test]
-    fn edge_snap_is_off_by_default_and_toml_can_set_it() {
+    fn edge_snap_is_on_by_default_and_toml_can_turn_it_off() {
         assert_eq!(
             RepairConfig::default().patch_settings().edge_snap_max_ms,
-            0.0
+            40.0
         );
-        let on: RepairConfig = toml::from_str("edge_snap_max_ms = 40.0").expect("parse");
-        assert_eq!(on.patch_settings().edge_snap_max_ms, 40.0);
+        let omitted: RepairConfig = toml::from_str("").expect("parse");
+        assert_eq!(omitted.patch_settings().edge_snap_max_ms, 40.0);
+        let off: RepairConfig = toml::from_str("edge_snap_max_ms = 0.0").expect("parse");
+        assert_eq!(off.patch_settings().edge_snap_max_ms, 0.0);
     }
 
     #[test]

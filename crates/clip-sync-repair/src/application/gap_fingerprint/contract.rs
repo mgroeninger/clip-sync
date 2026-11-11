@@ -266,7 +266,7 @@ contracts! {
     /// Contract for `source.alignment` — pair-level chromaprint scan map, not a gap shoulder.
     /// Contract for `geometry` — the gap's edges, and the join key every census must use.
     GEOMETRY_CONTRACT for "geometry" {
-        measures: "gap edges: a_start/a_end as scanned, a_refined_* as spliced, duration_secs = the REFINED span",
+        measures: "gap edges: a_start/a_end scanned, a_refined_* spliced, a_unsnapped_* pre-snap; duration_secs = REFINED span",
         placement: "a_* on A's timeline; b_mapped_* = the refined edges + fill_offset_secs, nominal map, no lag",
         window: "a_start_secs rounded to 1ms is this gap's join key; the gap index is 0-based and joins nothing",
         not: "alignment, the pair-level map fill_offset_secs came from; b_mapped_* carry no per-shoulder lag",
@@ -620,6 +620,8 @@ mod tests {
             a_end_secs: 10.5,
             a_refined_start_secs: 10.01,
             a_refined_end_secs: 10.49,
+            a_unsnapped_start_secs: Some(10.02),
+            a_unsnapped_end_secs: Some(10.49),
             duration_secs: 0.48,
             b_mapped_start_secs: Some(4.0),
             b_mapped_end_secs: Some(4.48),
@@ -629,6 +631,7 @@ mod tests {
         for key in [
             "a_start_secs",
             "a_refined_start_secs",
+            "a_unsnapped_start_secs",
             "duration_secs",
             "b_mapped_start_secs",
             "fill_offset_secs",

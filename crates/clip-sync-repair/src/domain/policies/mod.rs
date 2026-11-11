@@ -11,9 +11,12 @@ mod silence;
 pub(crate) use gap_borders::{adaptive_seam_window_frames, border_active_extent_frames};
 pub use gap_borders::{
     border_edge_displacement_frames, border_templates_for_gap,
-    border_templates_per_channel_for_gap, loudest_seam_channel, refine_and_snap_gap_frames,
-    refine_gap_frames, selected_seam_channels, snap_gap_edges_to_onset, EdgeRefineFrames, EdgeSnap,
-    FillAlignment, GapBorderSpec, RefinedGapFrames, GAP_EDGE_REFINE_SECS,
+    border_templates_per_channel_for_gap, edge_snap_report, loudest_seam_channel,
+    refine_and_snap_gap_edges, refine_and_snap_gap_frames, refine_gap_frames,
+    selected_seam_channels, snap_gap_edges_to_onset, EdgeRefineFrames, EdgeSnap, EdgeSnapEdge,
+    EdgeSnapOutcome, EdgeSnapReport, FillAlignment, GapBorderSpec, GapEdgeChain, RefinedGapFrames,
+    EDGE_SNAP_DEFAULT_MAX_MS, EDGE_SNAP_OBSERVE_MS, EDGE_SNAP_ZERO_AMP, EDGE_SNAP_ZERO_RUN_MS,
+    EDGE_SNAP_ZERO_SEARCH_MS, GAP_EDGE_REFINE_SECS,
 };
 pub use seam_residual::{
     floor_probe_informative, residual_verdict_informative, seam_chosen_and_floor,

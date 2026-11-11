@@ -522,14 +522,7 @@ pub fn source_id(samples: &[f32], sample_rate: u32, channels: u16) -> String {
 /// (`BitDepth` derives no serde, and adding it to an upstream `clip-sync` domain type for a
 /// diagnostic artifact is not worth it — hence a local `match`.)
 pub(crate) fn bit_depth_str(depth: clip_sync::BitDepth) -> String {
-    use clip_sync::BitDepth;
-    match depth {
-        BitDepth::Int16 => "s16".into(),
-        BitDepth::Int24 => "s24".into(),
-        BitDepth::Int32 => "s32".into(),
-        BitDepth::Float32 => "f32".into(),
-        BitDepth::Other(bits) => format!("other:{bits}"),
-    }
+    crate::domain::track_match::bit_depth_label(depth)
 }
 
 /// Build one side's [`FileSource`]. `sample_rate` / `channels` are the **decoded/analysis** values
@@ -836,13 +829,24 @@ impl GapFingerprint {
     }
 }
 
-/// Gap edges on A (reported + refined) and the mapped B fill window (when B is present).
+/// Gap edges on A and the mapped B fill window (when B is present).
+///
+/// Three edge pairs: `a_start/end_secs` as scanned (the floor edge); `a_unsnapped_*` after
+/// `refine_gap_frames`; `a_refined_*` after the edge snap too — the edges the gap is spliced and
+/// measured on. With the snap off, or where it moved nothing, the last two are equal.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GapGeometry {
     pub a_start_secs: f64,
     pub a_end_secs: f64,
+    /// Refined **and snapped** (the splice's edges). Before the edge snap existed, refined only.
     pub a_refined_start_secs: f64,
     pub a_refined_end_secs: f64,
+    /// Refined, **before** the edge snap — where the abut verdict is read. `None` on dumps written
+    /// before 2026-11-11 (read `a_refined_*`; the snap was off by default then).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub a_unsnapped_start_secs: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub a_unsnapped_end_secs: Option<f64>,
     pub duration_secs: f64,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub b_mapped_start_secs: Option<f64>,
@@ -1180,7 +1184,8 @@ pub fn dual_fit_counterfactual(input: &DualFitRescueInput<'_>) -> Option<DualFit
     let program_quiet_silence_frac = crate::domain::donor::PROGRAM_QUIET_SILENCE_FRAC;
     let brackets_eligible = brackets_dual_fit_eligible(input.brackets);
     let gate_pass = df.gate_pass;
-    let shoulders_ordered = df.bridge_frames > 0;
+    // On the unsnapped bridge, as production's abut verdict is (`SpliceDualfit::unsnapped_bridge_frames`).
+    let shoulders_ordered = df.unsnapped_bridge_frames.unwrap_or(df.bridge_frames) > 0;
     let post_seam_global_finite = df.post_seam_global_r.is_finite();
     let donor_bridges = aligned.continuous;
     let program_quiet = nominal.silence_fraction >= program_quiet_silence_frac;
@@ -1219,7 +1224,8 @@ pub struct DualFitCounterfactual {
     pub brackets_eligible: bool,
     /// Both shoulders clear the seam floors (`SeamGateFloors::passes`).
     pub gate_pass: bool,
-    /// Shoulders do not cross: `bridge_frames > 0`.
+    /// Shoulders do not cross on the unsnapped geometry: `unsnapped_bridge_frames > 0` (falls back to
+    /// `bridge_frames` on dumps without it).
     pub shoulders_ordered: bool,
     /// `post_seam_global_r` is finite — unmeasured is a hard decline, not "a constant shift suffices".
     pub post_seam_global_finite: bool,
@@ -1531,6 +1537,12 @@ pub struct SpliceDualfit {
     pub post_seam_r: f64,
     pub gap_frames: usize,
     pub bridge_frames: i64,
+    /// `bridge_frames` with the edge snap's moves taken back out (`SeamLocks::without_edge_snap`): the
+    /// bridge the abut verdict reads, and so the one `shoulders_ordered` reads. The snap adds no donor
+    /// material, so it must not turn a crossing into a bridge (11/g9, 31/g7). Equal to `bridge_frames`
+    /// where the snap moved nothing. `None` on dumps written before 2026-11-11 — read `bridge_frames`.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub unsnapped_bridge_frames: Option<i64>,
     /// `bridge − gap`: >0 ⇒ trim, <0 ⇒ pad. Equals the registration step in frames.
     pub trim_frames: i64,
     /// Does `min(pre, post)` clear both floors? Computed with production's `smin < floor` form so a
@@ -1980,6 +1992,7 @@ mod tests {
             post_seam_r: 0.9,
             gap_frames: 1000,
             bridge_frames: 1000,
+            unsnapped_bridge_frames: None,
             trim_frames: 0,
             gate_pass,
             // 0.9 − 0.1 = 0.8 ≥ DUALFIT_STEP_REAL_MARGIN ⇒ the step is real.
@@ -2269,6 +2282,8 @@ mod tests {
                     a_end_secs: 834.0,
                     a_refined_start_secs: 832.304,
                     a_refined_end_secs: 834.133,
+                    a_unsnapped_start_secs: None,
+                    a_unsnapped_end_secs: None,
                     duration_secs: 1.829,
                     b_mapped_start_secs: Some(826.752),
                     b_mapped_end_secs: Some(828.581),

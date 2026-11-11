@@ -537,6 +537,9 @@ struct DumpJoin {
     a_end_secs: Option<f64>,
     a_refined_start_secs: Option<f64>,
     a_refined_end_secs: Option<f64>,
+    /// The refined edges before the edge snap, on dumps that record them.
+    a_unsnapped_start_secs: Option<f64>,
+    a_unsnapped_end_secs: Option<f64>,
     codec: Option<String>,
 }
 
@@ -550,6 +553,8 @@ fn read_dump(path: &Path) -> Option<DumpJoin> {
         a_end_secs: Some(gap.geometry.a_end_secs),
         a_refined_start_secs: Some(gap.geometry.a_refined_start_secs),
         a_refined_end_secs: Some(gap.geometry.a_refined_end_secs),
+        a_unsnapped_start_secs: gap.geometry.a_unsnapped_start_secs,
+        a_unsnapped_end_secs: gap.geometry.a_unsnapped_end_secs,
         codec: corpus.source.a_source.codec.clone(),
     })
 }
@@ -750,7 +755,8 @@ struct Row {
     /// `true` when the far and near onsets are different falls — the § 3 room-tone shape, flagged,
     /// not resolved.
     onsets_disagree: bool,
-    /// Production's refined edge from the dump, outward from the scan edge. A cross-check only.
+    /// Production's refined edge from the dump (before the edge snap, when the dump records it),
+    /// outward from the scan edge. A cross-check only.
     dump_refined_ms: Option<f64>,
     /// `floor_ms − dump_refined_ms`: ~0 when this bin's floor edge is production's refined edge.
     floor_vs_refined_ms: Option<f64>,
@@ -773,8 +779,12 @@ struct Row {
     /// Media mode, patched edges: the write's move **outward** from the refined edge, from the
     /// report's adjust field (`−gap_start_adjust_frames` lead, `+gap_end_adjust_frames` trail).
     gap_adjust_ms: Option<f64>,
-    /// Media mode: `onset_near_to_floor_ms − cf − gap_adjust_ms`, the § 4 estimate. Patched,
-    /// non-anchor-seam edges with an onset only — an anchor-seam write's side is not on the record.
+    /// Media mode: the edge snap's outward move from the report's `edge_snap.*.moved_frames`. Present
+    /// on every edge of a report that carries a snap record (0 when the edge did not snap).
+    snap_moved_ms: Option<f64>,
+    /// Media mode: `onset_near_to_floor_ms − cf − gap_adjust_ms − snap_moved_ms`, the § 4 estimate
+    /// less the band the snap already wrote over. Patched, non-anchor-seam edges with an onset
+    /// only — an anchor-seam write's side is not on the record.
     exposure_est_ms: Option<f64>,
 }
 
@@ -800,14 +810,16 @@ fn assemble_row(
     write: WriteReading,
     crossfade_ms: f64,
 ) -> Row {
+    // This bin's floor edge is the refine's edge, so compare it with the edge BEFORE the snap: a
+    // snapped dump's `a_refined_*` already sits at the onset.
     let dump_refined_ms = match edge {
         Edge::Lead => dump
             .a_start_secs
-            .zip(dump.a_refined_start_secs)
+            .zip(dump.a_unsnapped_start_secs.or(dump.a_refined_start_secs))
             .map(|(s, r)| (s - r) * 1000.0),
         Edge::Trail => dump
             .a_end_secs
-            .zip(dump.a_refined_end_secs)
+            .zip(dump.a_unsnapped_end_secs.or(dump.a_refined_end_secs))
             .map(|(e, r)| (r - e) * 1000.0),
     };
     let exposure_hi = onset.onset_near_ms.zip(write.write_ms).map(|(o, w)| o - w);
@@ -835,6 +847,7 @@ fn assemble_row(
         exposure_lo_hard_ms: exposure_hi.map(|h| h - crossfade_ms),
         exposure_far_hi_ms: onset.onset_far_ms.zip(write.write_ms).map(|(o, w)| o - w),
         gap_adjust_ms: None,
+        snap_moved_ms: None,
         exposure_est_ms: None,
         onset,
         write,
@@ -862,6 +875,7 @@ fn round_row(mut r: Row) -> Row {
         &mut r.exposure_lo_hard_ms,
         &mut r.exposure_far_hi_ms,
         &mut r.gap_adjust_ms,
+        &mut r.snap_moved_ms,
         &mut r.exposure_est_ms,
     ] {
         *v = v.map(r2);
@@ -899,6 +913,7 @@ const CSV_FIELDS: &[&str] = &[
     "exposure_lo_hard_ms",
     "exposure_far_hi_ms",
     "gap_adjust_ms",
+    "snap_moved_ms",
     "exposure_est_ms",
     "context_secs",
     "tree",
@@ -947,6 +962,7 @@ fn census_csv(rows: &[Row]) -> String {
             num(r.exposure_lo_hard_ms),
             num(r.exposure_far_hi_ms),
             num(r.gap_adjust_ms),
+            num(r.snap_moved_ms),
             num(r.exposure_est_ms),
             format!("{:.3}", r.context_secs),
             r.tree.clone(),
@@ -1404,6 +1420,10 @@ struct PatchGapJson {
     a_end_secs: f64,
     /// Externally tagged `GapPatchStatus`, read as a value: only four fields of one arm are needed.
     status: serde_json::Value,
+    /// The per-gap snap record, read as a value: only each edge's `moved_frames` is needed. Absent
+    /// on reports from before the snap, or with it off.
+    #[serde(default)]
+    edge_snap: Option<serde_json::Value>,
 }
 
 /// One gap's patch outcome, from its status.
@@ -1415,6 +1435,19 @@ struct Outcome {
     fill_path: &'static str,
     start_adjust_frames: i64,
     end_adjust_frames: i64,
+    /// The snap's outward move per edge (`edge_snap.{lead,trail}.moved_frames`); `None` when the
+    /// report carries no snap record for this gap.
+    snap_lead_frames: Option<usize>,
+    snap_trail_frames: Option<usize>,
+}
+
+/// One edge's `moved_frames` from a gap's `edge_snap` record.
+fn snap_moved(edge_snap: Option<&serde_json::Value>, side: &str) -> Option<usize> {
+    edge_snap?
+        .get(side)?
+        .get("moved_frames")?
+        .as_u64()
+        .map(|v| v as usize)
 }
 
 fn outcome_from_status(status: &serde_json::Value) -> Result<Outcome, String> {
@@ -1436,6 +1469,8 @@ fn outcome_from_status(status: &serde_json::Value) -> Result<Outcome, String> {
         fill_path,
         start_adjust_frames: frames("gap_start_adjust_frames"),
         end_adjust_frames: frames("gap_end_adjust_frames"),
+        snap_lead_frames: None,
+        snap_trail_frames: None,
     })
 }
 
@@ -1475,11 +1510,15 @@ fn media_gaps(report: &PatchReportJson, rate: u32) -> Result<Vec<MediaGap>, Stri
             {
                 return Err(format!("gap {index}: scan and patch bounds differ"));
             }
+            let mut outcome =
+                outcome_from_status(&p.status).map_err(|e| format!("gap {index}: {e}"))?;
+            outcome.snap_lead_frames = snap_moved(p.edge_snap.as_ref(), "lead");
+            outcome.snap_trail_frames = snap_moved(p.edge_snap.as_ref(), "trail");
             Ok(MediaGap {
                 index,
                 lead: (s.video_a_start_secs * r) as usize,
                 trail: (s.video_a_end_secs * r) as usize,
-                outcome: outcome_from_status(&p.status).map_err(|e| format!("gap {index}: {e}"))?,
+                outcome,
             })
         })
         .collect()
@@ -1544,27 +1583,50 @@ impl WindowSink {
     }
 }
 
-/// Per-edge `(gap_adjust_ms, exposure_est_ms)` — see the [`Row`] fields. `(None, None)` unless
-/// patched.
+/// One edge's reading from the report: the write's adjust move, the snap's move and the § 4
+/// exposure estimate — see the [`Row`] fields.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+struct MediaExposure {
+    gap_adjust_ms: Option<f64>,
+    snap_moved_ms: Option<f64>,
+    exposure_est_ms: Option<f64>,
+}
+
+/// Per-edge [`MediaExposure`]. The snap move is read on every gap that carries the record; the
+/// adjust and the estimate only on patched gaps. The adjust is measured from the SNAPPED edge, and
+/// this bin's floor edge is the unsnapped one, so the estimate takes the snap move off as well.
 fn media_exposure(
     onset_near_to_floor_ms: Option<f64>,
     outcome: &Outcome,
     edge: Edge,
     rate: u32,
     crossfade_ms: f64,
-) -> (Option<f64>, Option<f64>) {
+) -> MediaExposure {
+    let ms = |frames: f64| frames / f64::from(rate) * 1000.0;
+    let snap_frames = match edge {
+        Edge::Lead => outcome.snap_lead_frames,
+        Edge::Trail => outcome.snap_trail_frames,
+    };
+    let snap_moved_ms = snap_frames.map(|f| ms(f as f64));
     if outcome.disposition != "patched" {
-        return (None, None);
+        return MediaExposure {
+            snap_moved_ms,
+            ..MediaExposure::default()
+        };
     }
     let outward_frames = match edge {
         Edge::Lead => -outcome.start_adjust_frames,
         Edge::Trail => outcome.end_adjust_frames,
     };
-    let outward = outward_frames as f64 / f64::from(rate) * 1000.0;
+    let outward = ms(outward_frames as f64);
     let est = onset_near_to_floor_ms
         .filter(|_| outcome.fill_path != "anchor_seam")
-        .map(|d| d - crossfade_ms - outward);
-    (Some(outward), est)
+        .map(|d| d - crossfade_ms - outward - snap_moved_ms.unwrap_or(0.0));
+    MediaExposure {
+        gap_adjust_ms: Some(outward),
+        snap_moved_ms,
+        exposure_est_ms: est,
+    }
 }
 
 /// Every occurrence of the A path (as given, and its file name) replaced by `<A>`.
@@ -1648,15 +1710,16 @@ fn media_rows(
                 WriteReading::default(),
                 crossfade_ms,
             );
-            let (adjust, est) = media_exposure(
+            let exposure = media_exposure(
                 row.onset_near_to_floor_ms,
                 &g.outcome,
                 edge,
                 w.rate,
                 crossfade_ms,
             );
-            row.gap_adjust_ms = adjust.map(r2);
-            row.exposure_est_ms = est.map(r2);
+            row.gap_adjust_ms = exposure.gap_adjust_ms.map(r2);
+            row.snap_moved_ms = exposure.snap_moved_ms.map(r2);
+            row.exposure_est_ms = exposure.exposure_est_ms.map(r2);
             rows.push(row);
         }
     }
@@ -2107,7 +2170,8 @@ fn run_media(args: &Args) -> Result<(), String> {
         "decode": format!("A only, the scanner's sequential bucket decode; ±{MEDIA_HALF_MS} ms kept per scan edge at trunc(video_a_*_secs · rate)"),
         "write": "not measured in media mode (write_*, b_level_*, exposure_hi/lo/far columns are empty)",
         "gap_adjust_ms": "patched edges: the write's outward move from the refined edge (-gap_start_adjust_frames lead, +gap_end_adjust_frames trail)",
-        "exposure_est_ms": format!("onset_near_to_floor_ms - cf - gap_adjust_ms with cf = --crossfade-ms {}; patched, non-anchor-seam edges with an onset only", args.crossfade_ms),
+        "snap_moved_ms": "the edge snap's outward move (edge_snap.lead/trail.moved_frames); every edge of a report with a snap record, 0 when that edge did not snap",
+        "exposure_est_ms": format!("onset_near_to_floor_ms - cf - gap_adjust_ms - snap_moved_ms with cf = --crossfade-ms {}; patched, non-anchor-seam edges with an onset only. gap_adjust is measured from the snapped edge, the floor edge here is the unsnapped one", args.crossfade_ms),
         "anchor_seam": "no estimate: the anchor seam writes 0-2.2 s past the prediction and the report does not say which side moved",
         "denominator": "every scan gap of each report's pair — a base rate for these pairs, split patched vs not",
     });
@@ -2644,6 +2708,8 @@ mod tests {
                 fill_path: "dual_fit",
                 start_adjust_frames: -96,
                 end_adjust_frames: 48,
+                snap_lead_frames: None,
+                snap_trail_frames: None,
             }
         );
         let anchor = outcome(serde_json::json!({"patched": {"anchor_seam_used": true}}));
@@ -2678,6 +2744,7 @@ mod tests {
                         a_start_secs: s,
                         a_end_secs: e,
                         status: serde_json::json!({"not_planned": {}}),
+                        edge_snap: None,
                     })
                     .collect(),
             }),
@@ -2694,6 +2761,7 @@ mod tests {
             (1, 480_000, 516_000)
         );
         assert_eq!(gaps[1].outcome.disposition, "not_planned");
+        assert_eq!(gaps[1].outcome.snap_lead_frames, None);
         assert!(media_gaps(&report(&bounds, None), SR)
             .unwrap_err()
             .contains("--patch-only"));
@@ -2738,34 +2806,82 @@ mod tests {
             fill_path,
             start_adjust_frames: start,
             end_adjust_frames: end,
+            snap_lead_frames: None,
+            snap_trail_frames: None,
         };
+        let pair = |e: MediaExposure| (e.gap_adjust_ms, e.exposure_est_ms);
         // Lead moved 5 ms outward (start adjust −240 frames); trail moved 2 ms inward.
         let o = patched("single_lag", -240, -96);
-        let (adj, est) = media_exposure(Some(25.0), &o, Edge::Lead, SR, 10.0);
+        let (adj, est) = pair(media_exposure(Some(25.0), &o, Edge::Lead, SR, 10.0));
         assert_eq!(adj, Some(5.0));
         assert!((est.unwrap() - 10.0).abs() < 1e-9);
-        let (adj, est) = media_exposure(Some(25.0), &o, Edge::Trail, SR, 10.0);
+        let (adj, est) = pair(media_exposure(Some(25.0), &o, Edge::Trail, SR, 10.0));
         assert_eq!(adj, Some(-2.0));
         assert!((est.unwrap() - 17.0).abs() < 1e-9);
         // Anchor seam: the move is reported, the estimate is not.
-        let (adj, est) = media_exposure(
+        let (adj, est) = pair(media_exposure(
             Some(25.0),
             &patched("anchor_seam", -48, 0),
             Edge::Lead,
             SR,
             10.0,
-        );
+        ));
         assert_eq!((adj, est), (Some(1.0), None));
         // No onset: no estimate. Not patched: nothing.
-        assert_eq!(media_exposure(None, &o, Edge::Lead, SR, 10.0).1, None);
+        assert_eq!(
+            media_exposure(None, &o, Edge::Lead, SR, 10.0).exposure_est_ms,
+            None
+        );
         let skipped = Outcome {
             disposition: "skipped".into(),
             ..patched("not_patched", -240, 0)
         };
         assert_eq!(
             media_exposure(Some(25.0), &skipped, Edge::Lead, SR, 10.0),
-            (None, None)
+            MediaExposure::default()
         );
+    }
+
+    #[test]
+    fn a_snapped_edge_takes_its_move_off_the_exposure_estimate() {
+        // Lead snapped 12 ms (576 frames) to its onset 25 ms out; the write then adjusted 3 ms
+        // outward of the SNAPPED edge. Exposure = 25 − 10 − 3 − 12 = 0.
+        let o = Outcome {
+            disposition: "patched".into(),
+            fill_path: "single_lag",
+            start_adjust_frames: -144,
+            end_adjust_frames: 0,
+            snap_lead_frames: Some(576),
+            snap_trail_frames: Some(0),
+        };
+        let lead = media_exposure(Some(25.0), &o, Edge::Lead, SR, 10.0);
+        assert_eq!(lead.snap_moved_ms, Some(12.0));
+        assert!(lead.exposure_est_ms.unwrap().abs() < 1e-9);
+        let trail = media_exposure(Some(25.0), &o, Edge::Trail, SR, 10.0);
+        assert_eq!(trail.snap_moved_ms, Some(0.0));
+        assert!((trail.exposure_est_ms.unwrap() - 15.0).abs() < 1e-9);
+        // A skipped gap still reports its snap move, with no adjust or estimate.
+        let skipped = Outcome {
+            disposition: "skipped".into(),
+            fill_path: "not_patched",
+            ..o
+        };
+        assert_eq!(
+            media_exposure(Some(25.0), &skipped, Edge::Lead, SR, 10.0),
+            MediaExposure {
+                snap_moved_ms: Some(12.0),
+                ..MediaExposure::default()
+            }
+        );
+    }
+
+    #[test]
+    fn snap_moves_are_read_per_edge_from_the_record() {
+        let rec = serde_json::json!({"lead": {"outcome": "snapped", "moved_frames": 576},
+            "trail": {"outcome": "hard", "moved_frames": 0}});
+        assert_eq!(snap_moved(Some(&rec), "lead"), Some(576));
+        assert_eq!(snap_moved(Some(&rec), "trail"), Some(0));
+        assert_eq!(snap_moved(None, "lead"), None);
     }
 
     #[test]

@@ -151,7 +151,7 @@ The withdrawn Q4 test is settled the same way: 15/g6 and 2/g6 do **not** keep th
 | Step | What |
 |------|------|
 | **Offset map** | `resolve_gap_offset_secs` (recommended / interpolated / anchored-retry pass 2), plus `segmented_fill_offset_secs` under `recommended` |
-| **A edge refine** | `refine_gap_frames` |
+| **A edge refine** | `refine_gap_frames`, then the edge snap (`snap_gap_edges_to_onset`, default cap 40 ms): each edge moves outward past the silence floor to A's dropout onset when the soft band is within the cap and the gap reaches digital zero beside it. Everything downstream (signature context, shoulders, seam gate, write) reads the snapped edges, except the `shoulders_abut` verdict, which reads the **unsnapped** ones. Recorded per gap in `edge_snap` |
 | **B haystack** | Slice from full decoded B (context + border search + margin + slack) |
 | **Seam gate** | `evaluate_seam_gate` — **fit** (default) or **gate** (legacy); see below |
 | **Extract fill** | Winning B segment + optional normalize gain (program × hole-local, either direction — see below) |

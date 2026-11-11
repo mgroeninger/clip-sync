@@ -55,6 +55,10 @@ pub fn gap_report_from_energy_fixture(temp: &Path, fixture: &EnergySignatureFixt
             channels_match: true,
             rate_match: true,
             verdict: clip_sync_repair::domain::CompatibilityVerdict::Compatible,
+            a_codec: None,
+            b_codec: None,
+            a_bit_depth: None,
+            b_bit_depth: None,
         }),
         alignment: scan_alignment_from_result(&oracle_injected_alignment(total_secs)),
         gaps: vec![Gap {
@@ -119,6 +123,10 @@ pub fn gap_report_from_floor_oracle(
             channels_match: true,
             rate_match: true,
             verdict: clip_sync_repair::domain::CompatibilityVerdict::Compatible,
+            a_codec: None,
+            b_codec: None,
+            a_bit_depth: None,
+            b_bit_depth: None,
         }),
         alignment: scan_alignment_from_result(&oracle_injected_alignment(total_secs)),
         gaps: vec![Gap {

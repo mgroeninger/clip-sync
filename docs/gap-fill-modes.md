@@ -129,6 +129,7 @@ CLI flags are accepted in both modes unless noted. **Effect** differs by mode.
 | `--gap-end-extend-max-ms`, `--gap-end-extend-step-ms` | Grid span / step on A (fit) | Retry span / step (gate) |
 | `--crossfade-ms`, `--no-normalize` | **Active** | **Active** |
 | `--seam-extend-fill` / `--no-seam-extend-fill` / `seam_extend_fill` | **Active** — bracket **and** dual-fit fills; default **on** | **Active** — same |
+| `--edge-snap-max-ms` / `edge_snap_max_ms` | **Active** — snaps each refined A edge out to the dropout onset when the soft band is ≤ this (ms); default **40** since 2026-11-11, `0` = off | **Active** — same |
 | `fill_fit_structure_weight`, `fill_fit_waveform_weight` | Unified scorer weights (config; CLI optional) | Ignored |
 | `fill_marginal_margin`, `fill_absolute_floor` | Warn tier / hard skip (config-only) | Ignored |
 | `anchor_seam_mode`, `max_anchor_bracket_secs`, `max_anchors_per_side`, `anchor_seam_min_*` | **Active** — editorial anchor bracket search when triggered | **No effect** (fit only) |
@@ -524,7 +525,7 @@ See [Signature context and contour geometry](#signature-context-and-contour-geom
 
 ### Signature context and contour geometry
 
-Fit-mode structure matching, `gap_signature_mode = auto` resolution, and editorial anchor seam (`anchor_seam_mode = auto|force`) all use the **same context halves** on A — built from the **refined** gap edges (`refine_gap_frames`), not the raw scan timestamps. Code: `build_gap_energy_signature` / `build_gap_context_signature` in `domain/gap_energy.rs` and `domain/gap_structure.rs`; anchor candidates reuse the same frame ranges (`list_anchor_candidates_a` in `domain/gap_anchor_seam.rs`).
+Fit-mode structure matching, `gap_signature_mode = auto` resolution, and editorial anchor seam (`anchor_seam_mode = auto|force`) all use the **same context halves** on A — built from the **refined** gap edges (`refine_gap_frames`, then the edge snap when `edge_snap_max_ms` > 0, the default), not the raw scan timestamps. Code: `build_gap_energy_signature` / `build_gap_context_signature` in `domain/gap_energy.rs` and `domain/gap_structure.rs`; anchor candidates reuse the same frame ranges (`list_anchor_candidates_a` in `domain/gap_anchor_seam.rs`).
 
 #### Where on the timeline
 

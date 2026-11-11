@@ -4,6 +4,21 @@ use serde::Serialize;
 pub struct TrackDescriptor {
     pub channels: u16,
     pub sample_rate: u32,
+    /// The probe's codec name and source bit depth — recorded, never assessed.
+    pub codec: Option<String>,
+    pub bit_depth: Option<clip_sync::BitDepth>,
+}
+
+/// The report label for a source bit depth (`s16`, `s24`, `s32`, `f32`, `other:<bits>`).
+pub fn bit_depth_label(depth: clip_sync::BitDepth) -> String {
+    use clip_sync::BitDepth;
+    match depth {
+        BitDepth::Int16 => "s16".into(),
+        BitDepth::Int24 => "s24".into(),
+        BitDepth::Int32 => "s32".into(),
+        BitDepth::Float32 => "f32".into(),
+        BitDepth::Other(bits) => format!("other:{bits}"),
+    }
 }
 
 /// How compatible video B's audio track is with video A's, for patching purposes.
@@ -28,6 +43,18 @@ pub struct TrackCompatibility {
     pub channels_match: bool,
     pub rate_match: bool,
     pub verdict: CompatibilityVerdict,
+    /// Each side's codec as the probe names it (e.g. `aac`). Observations for reading a run on a
+    /// new codec (the edge snap's guard is validated on AAC-LC only); nothing gates on them. The
+    /// rates above are already each track's native rate. Omitted when not probed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub a_codec: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub b_codec: Option<String>,
+    /// Source bit depth when the container reports one (lossy codecs usually do not).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub a_bit_depth: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub b_bit_depth: Option<String>,
 }
 
 /// Compare A's and B's tracks. Channel-count mismatch is the only hard blocker for fill in v1;
@@ -52,6 +79,10 @@ pub fn assess_track_compatibility(a: TrackDescriptor, b: TrackDescriptor) -> Tra
         channels_match,
         rate_match,
         verdict,
+        a_codec: a.codec,
+        b_codec: b.codec,
+        a_bit_depth: a.bit_depth.map(bit_depth_label),
+        b_bit_depth: b.bit_depth.map(bit_depth_label),
     }
 }
 
@@ -63,6 +94,8 @@ mod tests {
         TrackDescriptor {
             channels,
             sample_rate,
+            codec: None,
+            bit_depth: None,
         }
     }
 
@@ -97,5 +130,24 @@ mod tests {
         let compat = assess_track_compatibility(descriptor(1, 48_000), descriptor(2, 48_000));
         assert_eq!(compat.verdict, CompatibilityVerdict::Mismatch);
         assert!(compat.rate_match);
+    }
+
+    #[test]
+    fn codec_and_bit_depth_are_recorded_not_assessed() {
+        let a = TrackDescriptor {
+            codec: Some("aac".into()),
+            ..descriptor(2, 48_000)
+        };
+        let b = TrackDescriptor {
+            codec: Some("pcm_s24le".into()),
+            bit_depth: Some(clip_sync::BitDepth::Int24),
+            ..descriptor(2, 48_000)
+        };
+        let compat = assess_track_compatibility(a, b);
+        assert_eq!(compat.verdict, CompatibilityVerdict::Identical);
+        assert_eq!(compat.a_codec.as_deref(), Some("aac"));
+        assert_eq!(compat.b_codec.as_deref(), Some("pcm_s24le"));
+        assert_eq!(compat.a_bit_depth, None);
+        assert_eq!(compat.b_bit_depth.as_deref(), Some("s24"));
     }
 }

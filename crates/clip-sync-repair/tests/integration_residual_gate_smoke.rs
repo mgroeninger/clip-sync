@@ -88,11 +88,13 @@ fn gap_outcome_gating_core(outcome: &GapPatchOutcome) -> GapPatchOutcome {
         residual: None,
         fill_level: None,
         placement: None,
+        edge_snap: None,
     }
 }
 
 /// Compare patch/skip decisions and user-visible tier tags — not diagnostic-only fields
 /// (`GapPatchOutcome::residual`, `GapPatchOutcome::fill_level`, `GapPatchOutcome::placement`,
+/// `GapPatchOutcome::edge_snap`,
 /// `tags.residual_band`,
 /// `tags.residual_uninformative`,
 /// `summary.donor_relation`).

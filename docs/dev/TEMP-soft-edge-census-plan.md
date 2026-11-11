@@ -1074,6 +1074,39 @@ Two candidates failed their checks, and the walk replaced both as specified. Fin
   snap predictions (the render's `Get-SnapMs`, the strata's `lead ≤ 40`) are wrong wherever refinement
   moves an edge. This predates the snap: the write start was never recoverable from the report.
 
+### Step 3 — result (scored 2026-11-11): DEFAULT-ON
+
+Scored blind in one sitting. The key was opened only after every verdict was in.
+- **Noise:** both controls (69/g6, 32/g9) were *same*. The two repeats agreed: 50/g8 snapped better
+  twice, 76/g3 *same* twice. So `k = 0` and `w = 0`.
+- **The 18 gaps:** *snapped better* 7, *current better* 0, *same* 11. The default-on branch
+  (*current better* ≤ `w`) holds.
+
+| stratum | snapped better | current better | same |
+|---|---|---|---|
+| named | 2 (32/g10, 69/g9) | 0 | 0 |
+| anchor flip | 2 (48/g3, 50/g8) | 0 | 1 (48/g5) |
+| dual flip | 2 (68/g3, 17/g34) | 0 | 1 (43/g7) |
+| tier change | 1 (45/g1) | 0 | 2 (39/g7, 69/g5) |
+| moved only | 0 | 0 | 3 (76/g3, 13/g31, 71/g12) |
+| clean trail | 0 | 0 | 4 (85/g88, 51/g1, 12/g1, 11/g4) |
+
+- **What was heard.** Every non-*same* verdict, including 50/g8's repeat, fell on the snapped arm,
+  with the same note as Phase 3: a blip in the other clip, which was the current arm every time.
+  69/g9's note says "not a blip, exactly, but something like a smear".
+- **Not a re-placement effect.** No re-placed gap sounded worse, in any stratum. The wins are the
+  Phase 3 effect again: all 7 have a census lead onset of 16–29 ms. The *same* gaps have lead onsets
+  of 2–22 ms or none. Those lead values are census-based, so they are wrong wherever refinement moved
+  the edge (step 3 observation, 83/g7). They are indicative only.
+- **Trail-only snaps** were never heard (4/4 *same*). 11/g4's note leaned toward the current arm
+  ("I might say b is better, but I don't know why", b = current), but the verdict was *same*, and it
+  counts as *same*.
+- **Still unheard:** the ~62 `registration_applied_ms`-only re-placements (step 3 observation). The
+  pre-registered rule does not require them. The `placement` fields (step 4) make them countable on
+  the flip's corpus run.
+- **Next, per the rule:** build the rest of step 4 (the snap-specific reporting), then flip the default
+  and close per § 7.
+
 ### Step 4 — snap reporting (planned 2026-10-31; split the same day: placement built now, snap record after the listen)
 
 **Why.** Default-on moves the write on 311 gaps, and no report says so.
@@ -1105,6 +1138,11 @@ needs a full-corpus run to clear. The flip needs that run anyway, so both share 
   frames. A verdict that blocks default-on would leave those fields describing an opt-in feature.
 - **Corpus runs for both arms wait for the verdict.** The placement fields get their corpus read in
   the verification run below, not before.
+- **Snap half built and default flipped (2026-11-11, uncommitted):** the `edge_snap` record and run
+  counts/settings echo, the verbose lines, the 200 ms observation window, the abut-row snap frames,
+  the TrackCompatibility codec/bit-depth keys, the fingerprint `a_unsnapped_*` pair and the
+  `edge-onset` `snap_moved_ms` column. `EDGE_SNAP_DEFAULT_MAX_MS` = 40 is the default; golden
+  regenerated; PR tier green. **Open:** the corpus verification run below.
 
 **Prerequisite: the onset search must reach past the cap.** `lead_onset` / `trail_onset` search only
 `max_frames` plus two bins. A band longer than that has no 15 dB fall inside the window, so it returns

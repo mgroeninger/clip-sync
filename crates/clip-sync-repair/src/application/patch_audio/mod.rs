@@ -32,7 +32,10 @@ pub(crate) use decode::{decode_ab, DecodedAb};
 pub use decode::{AbSources, SourceDescriptor};
 use geometry::repair_patch_config_view;
 use injected_time::detect_injected_time;
-use log::{format_patch_characterize_verbose_line, log_gap_tags_verbose, new_patch_gap_span};
+use log::{
+    format_patch_characterize_verbose_line, log_edge_snap_summary_verbose, log_gap_tags_verbose,
+    new_patch_gap_span,
+};
 use region::{
     characterize_region, execute_region_spec, outcome_from_spec, outcomes_in_report_order,
     record_patch_gap_span, region_outcome_gap_tags, skip_outcome_from_fields, splice_into_a,
@@ -189,6 +192,12 @@ fn fill_geometry_for(
     }
 }
 
+/// Echo the edge-snap settings, or `None` when the snap is off (`edge_snap_max_ms` ≤ 0).
+fn edge_snap_for(request: &PatchAudioRequest) -> Option<crate::domain::EdgeSnapRunReport> {
+    (request.edge_snap_max_ms > 0.0)
+        .then(|| crate::domain::EdgeSnapRunReport::settings(request.edge_snap_max_ms))
+}
+
 fn empty_plan_result(
     request: &PatchAudioRequest,
     plan: &crate::domain::gap_fill::GapFillPlan,
@@ -210,8 +219,10 @@ fn empty_plan_result(
         &[],
         &[],
         &[],
+        &[],
     ))
     .with_fill_geometry(fill_geometry_for(request))
+    .with_edge_snap(edge_snap_for(request))
     .with_program_gain(program_gain_report(request));
     PatchAudioResult {
         pcm: None,
@@ -434,9 +445,11 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             let mut region_results: Vec<(usize, RegionPatchOutcome, GapTags)> =
                 Vec::with_capacity(plan.regions.len());
             let mut shoulders_abut: Vec<ShouldersAbutSkip> = Vec::new();
+            let mut edge_snap: Vec<(usize, crate::domain::policies::EdgeSnapReport)> = Vec::new();
             for ((spec, tag_ctx), region) in characterizations.into_iter().zip(plan.regions.iter())
             {
                 shoulders_abut.extend(shoulders_abut_row(&spec));
+                edge_snap.extend(spec.edge_snap.map(|r| (spec.gap_index, r)));
                 let outcome = outcome_from_spec(&spec, region_ctx.sample_rate);
                 let tags = region_outcome_gap_tags(&outcome, tag_ctx);
                 log_gap_tags_verbose(self.progress, &tags);
@@ -456,13 +469,16 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
                 &[],
                 &[],
                 &[],
+                &edge_snap,
             ))
             .with_fill_geometry(fill_geometry_for(&request))
+            .with_edge_snap(edge_snap_for(&request))
             .with_program_gain(program_gain_report(&request))
             // Preview stamps the list and runs no visit: nothing was spliced, so there is no
             // post-splice A to visit (plan §3).
             .with_shoulders_abut(shoulders_abut)
             .with_injected_time(injected_time);
+            log_edge_snap_summary_verbose(self.progress, &summary);
             return Ok(PatchAudioResult {
                 pcm: None,
                 summary,
@@ -479,6 +495,8 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
         let mut patch_slot_by_region: Vec<Option<usize>> = Vec::new();
         let mut region_results: Vec<(usize, RegionPatchOutcome, GapTags)> = Vec::new();
         let mut shoulders_abut: Vec<ShouldersAbutSkip> = Vec::new();
+        // Pass 1's record: the anchored retry re-characterizes on the same A, so the edges match.
+        let mut edge_snap: Vec<(usize, crate::domain::policies::EdgeSnapReport)> = Vec::new();
         for ((spec, tag_ctx), (index, region)) in characterizations
             .into_iter()
             .zip(plan.regions.iter().enumerate())
@@ -491,6 +509,7 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             let _gap_enter = gap_span.enter();
 
             shoulders_abut.extend(shoulders_abut_row(&spec));
+            edge_snap.extend(spec.edge_snap.map(|r| (spec.gap_index, r)));
 
             let media = RegionPatchMedia {
                 b_samples_full: &b_samples_full,
@@ -685,11 +704,14 @@ impl<'r, MR: MediaReader> PatchAudio<'r, MR> {
             &not_applied,
             &fill_level,
             &placement,
+            &edge_snap,
         ))
         .with_fill_geometry(fill_geometry_for(&request))
+        .with_edge_snap(edge_snap_for(&request))
         .with_program_gain(program_gain_report(&request))
         .with_shoulders_abut(shoulders_abut)
         .with_injected_time(injected_time);
+        log_edge_snap_summary_verbose(self.progress, &summary);
         if let Some(anchors) = patch_anchors_used {
             summary = summary.with_patch_anchors(anchors);
         }

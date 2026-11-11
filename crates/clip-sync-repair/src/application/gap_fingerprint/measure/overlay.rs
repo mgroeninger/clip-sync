@@ -165,6 +165,8 @@ pub(in crate::application::gap_fingerprint::measure) struct RegionMeasureInput<'
     pub(in crate::application::gap_fingerprint::measure) b_extract_start_secs: f64,
     pub(in crate::application::gap_fingerprint::measure) gap_offset: f64,
     pub(in crate::application::gap_fingerprint::measure) refined: RefinedGapFrames,
+    /// `refined` before the edge snap — the abut verdict's geometry (`SpliceDualfit::unsnapped_bridge_frames`).
+    pub(in crate::application::gap_fingerprint::measure) unsnapped: RefinedGapFrames,
     pub(in crate::application::gap_fingerprint::measure) gap_frames: usize,
     pub(in crate::application::gap_fingerprint::measure) gate_settings:
         &'a crate::application::PatchRequestSettings,
@@ -200,6 +202,7 @@ pub(in crate::application::gap_fingerprint::measure) fn compute_region_measureme
         b_extract_start_secs,
         gap_offset,
         refined,
+        unsnapped,
         gap_frames,
         gate_settings,
         gate_derived,
@@ -370,6 +373,7 @@ pub(in crate::application::gap_fingerprint::measure) fn compute_region_measureme
         a_samples: &a_pcm.samples,
         channels: ch,
         refined,
+        unsnapped,
         b_mono: &b_mono,
         b_mapped_start,
         cfg,
@@ -717,6 +721,7 @@ mod tests {
                 post_seam_r: 0.95,
                 gap_frames: 24_000,
                 bridge_frames: 24_480,
+                unsnapped_bridge_frames: None,
                 trim_frames: 480,
                 gate_pass: true,
                 post_seam_global_r: 0.40,

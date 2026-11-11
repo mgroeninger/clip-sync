@@ -102,6 +102,70 @@ pub(in crate::application::patch_audio) fn characterize_region(
     ctx: &RegionPatchContext,
     opts: RegionPatchOpts<'_>,
 ) -> (GapRepairSpec, GapTagsPatchContext) {
+    let edges = region_edges(media.a_pcm, region, request, ctx);
+    let (mut spec, tag_ctx) =
+        characterize_region_on_edges(progress, media, region, request, ctx, opts, &edges);
+    // Record-only, on every spec this returns (patch or skip): one place, so no exit path drops it.
+    spec.edge_snap = edges.snap;
+    (spec, tag_ctx)
+}
+
+/// The edge chain reported → refined (floor) → snapped for one region, on A's PCM timeline. The
+/// refine and the snap are read separately (not `refine_and_snap_gap_frames`) so the abut verdict
+/// can be read on the unsnapped edges and the snap can report what it did at each edge.
+#[derive(Debug, Clone, Copy)]
+struct RegionEdges {
+    reported_start_frame: usize,
+    reported_end_frame: usize,
+    unsnapped: RefinedGapFrames,
+    refined: RefinedGapFrames,
+    /// `None` when the snap is off (or the refined gap is empty).
+    snap: Option<policies::EdgeSnapReport>,
+}
+
+fn region_edges(
+    a_pcm: &clip_sync::MultiChannelPcm,
+    region: &FillRegion,
+    request: &PatchAudioRequest,
+    ctx: &RegionPatchContext,
+) -> RegionEdges {
+    let rate = f64::from(ctx.sample_rate);
+    let reported_start_frame = (region.a_start_secs * rate) as usize;
+    let reported_end_frame = (region.a_end_secs * rate) as usize;
+    let unsnapped = policies::refine_gap_frames(
+        &a_pcm.samples,
+        ctx.channels,
+        reported_start_frame,
+        reported_end_frame,
+        ctx.silence_peak_fraction,
+        request.absolute_silence_rms,
+        ctx.max_refine_frames,
+    );
+    let snap = policies::edge_snap_report(
+        &a_pcm.samples,
+        ctx.channels,
+        (reported_start_frame, reported_end_frame),
+        unsnapped,
+        policies::EdgeSnap::from_ms(request.edge_snap_max_ms, rate),
+    );
+    RegionEdges {
+        reported_start_frame,
+        reported_end_frame,
+        unsnapped,
+        refined: snap.map_or(unsnapped, |r| r.apply(unsnapped)),
+        snap,
+    }
+}
+
+fn characterize_region_on_edges(
+    progress: &dyn ProgressReporter,
+    media: &RegionPatchMedia<'_>,
+    region: &FillRegion,
+    request: &PatchAudioRequest,
+    ctx: &RegionPatchContext,
+    opts: RegionPatchOpts<'_>,
+    edges: &RegionEdges,
+) -> (GapRepairSpec, GapTagsPatchContext) {
     let RegionPatchMedia {
         b_samples_full,
         a_pcm,
@@ -113,7 +177,7 @@ pub(in crate::application::patch_audio) fn characterize_region(
     let &RegionPatchContext {
         channels,
         sample_rate,
-        max_refine_frames,
+        max_refine_frames: _,
         silence_peak_fraction,
     } = ctx;
 
@@ -178,26 +242,14 @@ pub(in crate::application::patch_audio) fn characterize_region(
         }
     }
 
-    let reported_start_frame = (region.a_start_secs * sample_rate as f64) as usize;
-    let reported_end_frame = (region.a_end_secs * sample_rate as f64) as usize;
-    // Refine and snap split (not `refine_and_snap_gap_frames`) so the abut verdict below can be read
-    // on the unsnapped edges.
-    let unsnapped = policies::refine_gap_frames(
-        &a_pcm.samples,
-        channels,
+    let RegionEdges {
         reported_start_frame,
         reported_end_frame,
-        silence_peak_fraction,
-        absolute_silence_rms,
-        max_refine_frames,
-    );
-    let mut refined: RefinedGapFrames = policies::snap_gap_edges_to_onset(
-        &a_pcm.samples,
-        channels,
-        reported_start_frame,
         unsnapped,
-        policies::EdgeSnap::from_ms(request.edge_snap_max_ms, f64::from(sample_rate)),
-    );
+        refined,
+        ..
+    } = *edges;
+    let mut refined: RefinedGapFrames = refined;
     let snap_lead_frames = unsnapped.start_frame.saturating_sub(refined.start_frame);
     let snap_trail_frames = refined.end_frame.saturating_sub(unsnapped.end_frame);
     let edge_refine = Some(policies::EdgeRefineFrames::between(
@@ -284,8 +336,10 @@ pub(in crate::application::patch_audio) fn characterize_region(
         &GapFillPlanLog {
             scan_a_start_secs: region.a_start_secs,
             scan_a_end_secs: region.a_end_secs,
-            refined_a_start_secs,
-            refined_a_end_secs,
+            refined_a_start_secs: unsnapped.start_frame as f64 / f64::from(sample_rate),
+            refined_a_end_secs: unsnapped.end_frame as f64 / f64::from(sample_rate),
+            edge_snap: edges.snap,
+            sample_rate,
             gap_offset_secs,
             fill_offset_mode,
             stall_map_advance_secs,
@@ -511,6 +565,8 @@ pub(in crate::application::patch_audio) fn characterize_region(
                     df.params.a_gap_floor_db,
                     sample_rate,
                 ),
+                snap_lead_frames,
+                snap_trail_frames,
             });
             log_skip_gap_fill(progress, region, &reason);
             return (
@@ -1124,6 +1180,7 @@ pub(in crate::application::patch_audio) fn characterize_region(
         gap_offset_secs,
         refined,
         edge_refine,
+        edge_snap: None,
         b_extract: bracket_b_extract,
         crossfade_secs: region.crossfade_secs,
         verdict: GapRepairVerdict::Patch(GapRepairStrategy::Bracket {

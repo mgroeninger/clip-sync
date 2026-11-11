@@ -757,6 +757,7 @@ pub(in crate::application::patch_audio::region) fn finalize_dual_fit(
                 gap_offset_secs,
                 refined,
                 edge_refine,
+                edge_snap: None,
                 b_extract,
                 crossfade_secs,
                 verdict: GapRepairVerdict::Patch(strategy),

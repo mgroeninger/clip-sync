@@ -373,6 +373,8 @@ mod tests {
             clamped: false,
             edge_pinned: false,
             program_quiet: true,
+            snap_lead_frames: 0,
+            snap_trail_frames: 0,
         });
         assert!(!is_retryable_patch_skip(&abut));
         // …and the lookalike tag it carries does not drag it back onto the retry path.
