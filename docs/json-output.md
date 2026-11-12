@@ -301,7 +301,7 @@ Gap positions in `gaps[]` use the **decoded-sample clock**. When `delta_secs` is
 | `channels_match` / `rate_match` | bool | always | Per-property comparison |
 | `verdict` | `"identical"` \| `"compatible"` \| `"mismatch"` | always | Whether splice fill is allowed (`compatible` = resample B) |
 | `a_codec` / `b_codec` | string | since 2026-11-11, when the scan probed the track | Each track's decoder codec name. **Recorded, not assessed**: `verdict` does not read it. It exists so a run's edge-snap counts can be read against the codec ([PatchSummary](#patchsummary) `edge_snap`): the snap's zero test assumes dropouts decode to digital zero, which is measured on AAC only |
-| `a_bit_depth` / `b_bit_depth` | string | same | Decoded sample format: `s16` \| `s24` \| `s32` \| `f32` \| `other:<bits>`. Recorded, not assessed |
+| `a_bit_depth` / `b_bit_depth` | string | since 2026-11-11, when the track's codec parameters declare a sample format or bits per sample — **absent on lossy codecs** such as AAC, which declare neither | The source's declared sample format, not the decoder's output format: `s16` \| `s24` \| `s32` \| `f32` \| `other:<bits>`. Recorded, not assessed |
 
 ### Gap
 

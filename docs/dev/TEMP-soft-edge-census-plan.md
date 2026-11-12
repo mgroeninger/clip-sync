@@ -1336,7 +1336,10 @@ from the unsnapped to the snapped edge, or a default that changes.
   - § ShouldersAbutSkip: `a_start_frame` / `a_end_frame` are "its refined throat".
     - They come from `spec.refined`, which is snapped, while the verdict was read on the unsnapped
       edges. Say which edge they hold.
-    - Decide whether the collapse consumer (settled § C) wants the band included.
+    - Decide whether the collapse consumer (settled § C) wants the band included. **Decided
+      2026-11-12 (user): keep the snapped throat** (band included, the snap frames recover the
+      unsnapped one). Deferred check, written into the collapse plan § 2 step 1: concat-confirm
+      31/g7 on both throats when that Change is picked up.
     - Add the lead and trail snap frames to the `shoulders_abut` payload (*Abut skip record* above).
   - § PatchPlacement: the refine keys say "before the edge snap". Add the snap step beside them, or
     point to the `edge_snap` record. Drop "patched only" once skips carry the refine step.
@@ -1371,6 +1374,33 @@ measurement.
 - The 1024-frame grid lock. It is a census diagnostic, read per pair, and stays in `edge-onset`.
 - Codec labels or per-codec verdicts ([settled.md](settled.md) § A). The report carries signal
   values beside the codec, and the reader groups them.
+
+### Step 4 — verification run (2026-11-12): passes, re-placement recount open
+
+`measure-patch-outcomes.ps1` at defaults (snap on, 40 ms), all 85 pairs, output
+`gap-files/2026-11-11-edge-snap-default/`. Compared with the 2026-10-30 guard reports (11 and 31 from
+`2026-10-31-abut-fix/`), ignoring the new keys (`edge_snap`, `placement`, `snap_*_frames`).
+- **Fields that already existed: 0 of 1775 gaps differ**, and no run-level or scan field differs (the
+  new codec/bit-depth keys aside). The 200 ms window changed no behaviour.
+- **`moved_frames` > 0 on 313 gaps, exactly the 313 the guarded churn changed** (311 patched + 11/g9
+  and 31/g7, which snap but stay `shoulders_abut` skips after the abut fix). No other gap moved.
+- **Outcomes** (593 gaps carry a record; the other 1182 are `not_planned`): lead 278 snapped / 275
+  hard / 40 not attempted; trail 96 snapped / 492 hard / 3 refused_cap / 2 refused_no_zero.
+- **58/g2** trail `refused_cap`, onset 107.46 ms. Two more cap refusals the old window read as `hard`,
+  both skipped gaps, so nothing changed: 40/g45 trail (139.65 ms) and 84/g14 trail (41.40 ms, just
+  past the cap).
+- **10/g11, 14/g10** trails `refused_no_zero`, as required, but `gap_floor_dbfs` reads −72.2 and
+  −80.8, not the predicted −62 … −66. The prediction was the census's level description; the field is
+  the quietest 2 ms peak, so lower is expected. 14/g10 sits only ~1.5 dB above the zero amplitude
+  (−82.3 dBFS): a looser zero threshold would snap it.
+- **`onset_to_zero_frames` ≤ 2048** on every snapped edge.
+- **83/g7**: refine −90.52 ms, lead snapped 2.29 ms, `write_start_secs` − `a_start_secs` = −702.81 ms
+  (predicted −600 − 102.77 = −702.77; anchor seam).
+- **Bit depth** is absent on every pair: the probe reads the declared sample format, which AAC does not
+  declare (json-output.md corrected).
+- **Open: the re-placement recount.** `diff-patch-outcomes.ps1` needs `placement` on both arms, and no
+  snap-off run carries it (the 10-26 baseline predates the field). It needs one snap-off run of this
+  build (`-RepairArgs "--edge-snap-max-ms 0"`).
 
 ## 6. Non-goals
 

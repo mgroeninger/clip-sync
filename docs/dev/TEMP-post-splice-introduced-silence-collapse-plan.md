@@ -172,6 +172,18 @@ On each visit, with A already containing every keep:
    `[start, end)` frames. Do not call `seam_local_peak` again. The skip-gate’s
    in-range confirm stays; a destination that has become out of range is a
    no-op (same as record-only today).
+
+   **Which edges (added 2026-11-12).** Since the edge snap went default-on
+   (2026-11-11), the capture's `a_start_frame` / `a_end_frame` are the
+   **snapped** edges, soft band included, while the abut verdict,
+   `bridge_frames` and `gap_frames` were read on the **unsnapped** ones.
+   `snap_lead_frames` / `snap_trail_frames` on the row recover the unsnapped
+   throat exactly. Both corpus rows carry a lead snap: 11/g9 5.60 ms, 31/g7
+   7.27 ms. Snapped is the expected answer (the band is AAC noise after a
+   hard cut, not programme; `TEMP-soft-edge-census-plan.md` § *What the soft
+   lead band is*), but it is unverified for a cut: when this Change is picked
+   up, concat-confirm 31/g7 on both throats and keep the one whose join
+   scores higher against B.
 2. **Exact lookalike** (`clamped` ∨ `edge_pinned` ∨ `program_quiet`) → leave
    the skip, stamp `collapse_declined` to that tag, **no warning, no drain**.
    Do not concat. These are not Hole 2.
