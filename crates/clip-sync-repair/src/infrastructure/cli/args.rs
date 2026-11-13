@@ -266,9 +266,17 @@ pub struct Args {
     pub no_structure_trust: bool,
 
     /// Override: minimum Pearson correlation at gap seams when the waveform gate runs
-    /// [default: 0.35].
+    /// [default: 0.35]. In fit mode this is the High-tier floor; a patch is still accepted (as
+    /// Marginal) down to `min_fill_correlation - fill_marginal_margin`.
     #[arg(long, value_name = "N")]
     pub min_fill_correlation: Option<f32>,
+
+    /// Override: width of the Marginal band below `--min-fill-correlation` [default: 0.08].
+    /// Fit mode accepts a patch when `min(pre, post) >= min_fill_correlation - fill_marginal_margin`;
+    /// the same floor also decides when `anchor_seam_mode = auto` runs. Must be >= 0.
+    /// [fill-mode: fit only]
+    #[arg(long, value_name = "N")]
+    pub fill_marginal_margin: Option<f32>,
 
     /// Override: B slide radius for unified gap-fill search (seconds) [default: 10].
     /// Primary performance lever; also sizes part of the per-gap B extract window.
@@ -693,6 +701,7 @@ mod tests {
                 .round() as u32
             ),
             &format!("[default: {}]", defaults.repair.min_fill_correlation),
+            &format!("[default: {}]", defaults.repair.fill_marginal_margin),
             &format!("[default: {}]", defaults.repair.fill_border_search_secs),
             &format!("[default: {}]", defaults.repair.fill_align_margin_secs),
             &format!("[default: {}]", defaults.repair.gap_signature_context_secs),

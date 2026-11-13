@@ -112,7 +112,8 @@ CLI flags are accepted in both modes unless noted. **Effect** differs by mode.
 | Flag / config | `fit` | `gate` |
 |---------------|-------|--------|
 | `--fill-mode` | Default **`fit`** | Legacy pipeline |
-| `--min-fill-correlation` | Floor on `min(pre, post)` at winning candidate; drives High vs Marginal | Waveform gate threshold (with trust/shortcuts) |
+| `--min-fill-correlation` | **High**-tier floor on `min(pre, post)` at the winning candidate. Not the accept floor: a candidate is patched as **Marginal** down to `min_fill_correlation − fill_marginal_margin` (default 0.27), and skipped below it; the hard-skip floor is `min(fill_absolute_floor, min_fill_correlation)`, and below the Marginal floor but above the hard floor is the dead zone (rescuable only under `residual_gate = veto_rescue`) | Waveform gate threshold (with trust/shortcuts) |
+| `--fill-marginal-margin` | Width of the Marginal band: **accept = `min_fill_correlation − fill_marginal_margin`**. The same floor gates `anchor_seam_mode = auto` (anchor search runs below it), so widening the margin also starts fewer anchor searches. Must be ≥ 0; `0` removes the Marginal tier | Ignored |
 | `--no-structure-trust` | **No extra effect** (fit never skips waveform) | Always run waveform; disable soften + short-gap shortcuts |
 | `--no-short-gap-one-strong-seam` | **No effect** | Disable one-strong-seam fallback |
 | `strong_structure_trust`, `partial_structure_waveform_soften` | **No effect on waveform** | Structure-trust skip / soften |
@@ -131,7 +132,7 @@ CLI flags are accepted in both modes unless noted. **Effect** differs by mode.
 | `--seam-extend-fill` / `--no-seam-extend-fill` / `seam_extend_fill` | **Active** — bracket **and** dual-fit fills; default **on** | **Active** — same |
 | `--edge-snap-max-ms` / `edge_snap_max_ms` | **Active** — snaps each refined A edge out to the dropout onset when the soft band is ≤ this (ms); default **40** since 2026-11-11, `0` = off | **Active** — same |
 | `fill_fit_structure_weight`, `fill_fit_waveform_weight` | Unified scorer weights (config; CLI optional) | Ignored |
-| `fill_marginal_margin`, `fill_absolute_floor` | Warn tier / hard skip (config-only) | Ignored |
+| `fill_absolute_floor` | Hard skip (config-only) | Ignored |
 | `anchor_seam_mode`, `max_anchor_bracket_secs`, `max_anchors_per_side`, `anchor_seam_min_*` | **Active** — editorial anchor bracket search when triggered | **No effect** (fit only) |
 | `dual_fit` / `--no-dual-fit` | **Active** — G6 rescue after scored gate skip (except structure alignment failed) | **Active** — same G6 rescue after scored gate skip (after any gate extension retries) |
 
@@ -689,7 +690,7 @@ Most keys below drive **fit** placement. `dual_fit` is shared: G6 rescue runs af
 | `fill_fit_early_start_penalty_scale` | `0.0` | — | Penalize starts before nominal (0 = off) |
 | `fill_fit_waveform_weight` | `0.65` | `--fill-fit-waveform-weight` | Unified scorer |
 | `fill_fit_energy_nominal_bias_scale` | `0.25` | — | Distance-from-nominal penalty for energy-resolved gaps (< base `1.0`; energy self-corrects drifted nominal) |
-| `fill_marginal_margin` | `0.08` | — | Warn band below `min_fill_correlation` |
+| `fill_marginal_margin` | `0.08` | `--fill-marginal-margin` | Warn band below `min_fill_correlation`; accept floor = `min_fill_correlation − fill_marginal_margin` |
 | `fill_absolute_floor` | `0.12` | — | Hard skip floor |
 | `gap_end_extend_max_ms` | `500` | `--gap-end-extend-max-ms` | A-boundary grid / gate retries |
 | `gap_end_extend_step_ms` | `20` | `--gap-end-extend-step-ms` | Grid/retry step |

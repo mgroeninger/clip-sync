@@ -284,7 +284,8 @@ All flags are accepted with `fit`; none are rejected. Gate-only options have no 
 | `--no-structure-trust` | **No extra effect** — `fit` already disables structure-trust waveform skip and soften. Use with `--fill-mode gate` only. |
 | `--no-short-gap-one-strong-seam` | **No effect** — one-strong-seam is a `gate` shortcut only (`--fill-mode gate`). |
 | `strong_structure_trust`, `partial_structure_waveform_soften` (config) | **No effect on waveform** — structure match still runs; waveform is never skipped for trust. |
-| `--min-fill-correlation` | **Active** — `min(pre, post)` floor; **High** vs **Marginal** tier (`fill_marginal_margin`). |
+| `--min-fill-correlation` | **Active** — **High**-tier floor on `min(pre, post)`; patches are accepted as **Marginal** down to `min_fill_correlation − fill_marginal_margin`. |
+| `--fill-marginal-margin` | **Active** — Marginal band width (default 0.08); accept floor = `min_fill_correlation − fill_marginal_margin`, which also gates `anchor_seam_mode = auto`. |
 | `--fill-border-search-secs` | **Active** — B slide radius and part of per-gap extract window. |
 | `--fill-align-margin-secs`, `--gap-signature-context-secs`, `--fill-length-slack-secs` | **Active** — B haystack extract padding. |
 | `--fill-offset interpolated` | **Active** — per-gap B map before local search. |
@@ -405,6 +406,7 @@ clip-sync-repair recording_with_gaps.mkv reference.mkv `
 |----------|------------|
 | `--no-structure-trust` | `disable_structure_trust = true` (gate only) |
 | `--min-fill-correlation` | `min_fill_correlation` |
+| `--fill-marginal-margin` | `fill_marginal_margin` |
 | `--border-standoff-secs` | `border_standoff_secs` |
 | `--residual-border-standoff-secs` | `residual_border_standoff_secs` |
 | `--fill-border-search-secs` | `fill_border_search_secs` |
@@ -422,7 +424,7 @@ clip-sync-repair recording_with_gaps.mkv reference.mkv `
 | `--no-short-gap-one-strong-seam` | `short_gap_one_strong_seam_fallback = false` (gate only) |
 | `--gap-end-extend-max-ms` / `--gap-end-extend-step-ms` | `gap_end_extend_max_ms` / `gap_end_extend_step_ms` |
 
-Config-only (no CLI): `short_gap_mean_correlation_secs`, `fill_seam_search_secs`, `gap_signature_bin_ms`, `min_structure_match_score`, `min_border_discovery_secs`, `fill_marginal_margin`, `fill_absolute_floor`, normalization settings — see repair config example below. Config-only **gate** knobs (ignored when `fill_mode = "fit"`): `strong_structure_trust`, `partial_structure_waveform_soften`, `short_gap_one_strong_seam_fallback`.
+Config-only (no CLI): `short_gap_mean_correlation_secs`, `fill_seam_search_secs`, `gap_signature_bin_ms`, `min_structure_match_score`, `min_border_discovery_secs`, `fill_absolute_floor`, normalization settings — see repair config example below. Config-only **gate** knobs (ignored when `fill_mode = "fit"`): `strong_structure_trust`, `partial_structure_waveform_soften`, `short_gap_one_strong_seam_fallback`.
 
 ---
 

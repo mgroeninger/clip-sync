@@ -155,10 +155,10 @@ Tags and tier on a skip row describe the **throat (first) failure**. Use `best` 
 | Knob | Default | What it changes |
 |------|---------|-----------------|
 | `min_fill_correlation` | 0.35 | High tier floor; marginal band top (`min_fill_correlation − fill_marginal_margin` = **0.27**); also caps the effective hard floor |
-| `fill_marginal_margin` | 0.08 | Marginal band width (default **0.27–0.35**) |
+| `fill_marginal_margin` | 0.08 | Marginal band width (default **0.27–0.35**); `--fill-marginal-margin`. Accept floor = `min_fill_correlation − fill_marginal_margin` |
 | `fill_absolute_floor` | 0.12 | Hard skip below this `min(pre, post)` |
 
-Lowering `--min-fill-correlation` only helps skips whose **`best min(pre, post)`** falls in the dead zone or marginal band (e.g. `best` at 0.22 → try ~0.30 to marginal-patch). **Hard skips** (`best` &lt; 0.12) need `--fill-absolute-floor`, better placement (`--full`, anchor seam), or alignment — not `min_fill_correlation` alone.
+Lowering `--min-fill-correlation` (or widening `--fill-marginal-margin`, which moves only the accept floor and leaves the High tier where it is) only helps skips whose **`best min(pre, post)`** falls in the dead zone or marginal band (e.g. `best` at 0.22 → try ~0.30 to marginal-patch). **Hard skips** (`best` &lt; 0.12) need a lower `fill_absolute_floor` (config-only), better placement (`--full`, anchor seam), or alignment — not `min_fill_correlation` alone.
 
 For per-bracket fall-through detail without re-running repair, use `--gap-fingerprints` (see [gap-fingerprint.md](dev/gap-fingerprint.md)).
 

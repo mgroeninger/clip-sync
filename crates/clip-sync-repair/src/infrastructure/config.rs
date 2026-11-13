@@ -1110,6 +1110,14 @@ impl RepairConfig {
                 reason: "must be between -1.0 and 1.0 inclusive".into(),
             });
         }
+        // Negative would lift the Marginal floor above `min_fill_correlation`, making the tier
+        // unreachable. NaN is already rejected by the finite-value sweep above.
+        if self.fill_marginal_margin < 0.0 {
+            return Err(ConfigError::InvalidValue {
+                field: "fill_marginal_margin".into(),
+                reason: "must be greater than or equal to zero".into(),
+            });
+        }
         if self.normalize_window_secs <= 0.0 {
             return Err(ConfigError::InvalidValue {
                 field: "normalize_window_secs".into(),
@@ -1721,6 +1729,30 @@ dry_run = true
             ..RepairConfig::default()
         };
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_negative_fill_marginal_margin() {
+        let config = RepairConfig {
+            fill_marginal_margin: -0.01,
+            ..RepairConfig::default()
+        };
+        let err = config.validate().expect_err("negative margin");
+        assert!(
+            format!("{err:?}").contains("fill_marginal_margin"),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn allows_zero_fill_marginal_margin() {
+        let config = RepairConfig {
+            fill_marginal_margin: 0.0,
+            ..RepairConfig::default()
+        };
+        config
+            .validate()
+            .expect("zero margin (no Marginal tier) should be valid");
     }
 
     #[test]

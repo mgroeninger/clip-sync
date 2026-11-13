@@ -136,6 +136,9 @@ pub fn apply_cli_overrides(config: &mut RepairAppConfig, args: &Args) {
     if let Some(corr) = args.min_fill_correlation {
         config.repair.min_fill_correlation = corr;
     }
+    if let Some(margin) = args.fill_marginal_margin {
+        config.repair.fill_marginal_margin = margin;
+    }
     if let Some(secs) = args.fill_border_search_secs {
         config.repair.fill_border_search_secs = secs;
         config.repair.profile_field_mask.fill_border_search_secs = true;
@@ -606,6 +609,8 @@ mod cli_override_tests {
             "25",
             "--min-fill-correlation",
             "0.45",
+            "--fill-marginal-margin",
+            "0.05",
             "--border-standoff-secs",
             "0.5",
             "--residual-border-standoff-secs",
@@ -650,6 +655,7 @@ mod cli_override_tests {
             config.repair.absolute_silence_rms
         );
         assert!((config.repair.min_fill_correlation - 0.45).abs() < f32::EPSILON);
+        assert!((config.repair.fill_marginal_margin - 0.05).abs() < f32::EPSILON);
         assert!((config.repair.fill_border_search_secs - 5.0).abs() < f64::EPSILON);
         assert!((config.repair.fill_align_margin_secs - 0.5).abs() < f64::EPSILON);
         assert!((config.repair.gap_signature_context_secs - 2.0).abs() < f64::EPSILON);
