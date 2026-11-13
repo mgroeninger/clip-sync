@@ -41,10 +41,16 @@
 #   patch_anchors_used  step 7's anchored-retry population, the one thing arm B cannot neutralize.
 #   fill_geometry       the recipe the arm ran. If the arms differ here, a gap-level difference is
 #                       not attributable to the flag under test, and the script says so.
-# They are split by whether they FOLLOW from the per-gap verdicts. The four counts and the
-# run-level `shoulders_abut` republish move mechanically whenever a gap flips, so they are reported
-# as DERIVED and excluded from the verdict — counting them would guarantee noise on a Change that
-# worked. Everything else is INDEPENDENT and is a finding.
+#   edge_snap           the edge snap's settings echo (`max_ms`, `zero_amp`, ...): like fill_geometry,
+#                       a difference there means the arms ran different snaps, and the script warns.
+# They are split by whether they FOLLOW from the per-gap records. The four counts, the run-level
+# `shoulders_abut` republish, `donor_relation` (a fraction over the gaps' residual floors) and the
+# `edge_snap` outcome counts (`lead` / `trail` / `max_refused_cap_onset_frames`, tallied from the
+# per-gap `edge_snap` records) move mechanically
+# whenever a gap changes, so they are reported as DERIVED and excluded from the verdict — counting
+# them would guarantee noise on a Change that worked. Everything else is INDEPENDENT and is a finding
+# unless it matches -ExpectPaths, which applies to run-level paths as well as gap paths (so
+# `-ExpectPaths 'edge_snap.*'` covers a snap-off -> snap-on diff at both levels).
 #
 # CHANGED PATHS: a run-wide table over the field_change gaps — each field path with array indices
 # folded to `[]`, how many gaps it moved on, and for numbers the median / max |delta| and how many
@@ -54,14 +60,30 @@
 #
 # RE-PLACEMENT: a cross-tab over joined gaps patched in both arms, by the rule in
 # docs/json-output.md § PatchPlacement — a gap is RE-PLACED when `placement.fill_source_start_secs`
-# or the write extent (`write_start_secs` / `write_end_secs`) moved. It is set against the old
-# signal, `status.patched.registration_applied_ms`, so the gaps the old strata missed (re-placed,
-# registration unchanged) are named. `odd:` (registration moved, placement did not) is listed to be
-# read, not a bug by itself: registration is measured from the nominal map, so a gap whose B offset
-# moved between arms (anchored retry, `fill_offset_mode`) can shift it with the fill held still.
-# Dual-fit gaps are counted apart: their registration reads 0.0, so they had no old signal at all.
-# A gap without `placement` on either side (a report from before 2026-10-31) reads UNKNOWN, never
-# "not re-placed". Report-only: it does not enter the VERDICT, which still judges every field.
+# or the write extent (`write_start_secs` / `write_end_secs`) moved, in A frames. Each class is
+# prefixed with the gap's ROUTE (`bracket` / `dual_fit`, `+anchor` when `anchor_seam_used`), written
+# `base->cand` when the arms routed it differently. Classes, first match wins:
+#   not_replaced                       placement and registration both held.
+#   odd:registration_moved_placement_did_not
+#                                      listed to be read, not a bug by itself: registration is
+#                                      measured from the nominal map, so a gap whose B offset moved
+#                                      (anchored retry, `fill_offset_mode`) can shift it with the
+#                                      fill held still.
+#   replaced:route_flip                the route itself differs: a different search.
+#   snap_shift                         the edge snap's move changed (`edge_snap.*.moved_frames`,
+#                                      absent = 0) and the placement moved by exactly that: write
+#                                      start by -dlead, write end by +dtrail, fill source by -dlead
+#                                      within 2 frames (B-side rounding). The same fill, widened; no
+#                                      re-search. `:registration_moved` is appended when
+#                                      registration moved too.
+#   replaced:registration_moved        a re-search the old signal saw.
+#   replaced:registration_unchanged    a re-search the old signal MISSED. Bracket ones are listed
+#                                      with their snap and placement deltas.
+# `registration_applied_ms` absent on both sides is equal; absent on one side only is a move. Dual-
+# fit gaps read 0.0 there, so their re-searches land in registration_unchanged by construction —
+# read them by the route prefix. A gap without `placement` on either side (a report from before
+# 2026-10-31) reads UNKNOWN, never "not re-placed". Report-only: it does not enter the VERDICT,
+# which still judges every field.
 #
 # VERDICT: changed gaps split into EXPECTED and UNEXPLAINED. A gap is EXPECTED when
 #   - it flipped status or changed reason, and the candidate's reason (or its status, when it has no
@@ -71,7 +93,11 @@
 # no expectation declared nothing is expected, so the bar is "bit-identical" — the right one for a
 # refactor or a default-off flag checked against its own baseline. The bar is UNEXPLAINED = 0 AND
 # run-level INDEPENDENT = 0; the script exits 1 when either is non-zero so a run can be gated on it.
-# -NoFailOnUnexplained keeps the exit code at 0 for exploratory diffs.
+# -NoFailOnUnexplained keeps the exit code at 0 for exploratory diffs. The unexplained count is
+# split once more: ADDED-ONLY gaps differ only by keys the baseline lacks — a report field newer than
+# the baseline run, or a `skip_serializing_if` bool that turned true. They are still unexplained
+# (see CLASSIFICATION), but a large added-only count against an older baseline usually means a
+# missing -ExpectPaths for the new field, not a behaviour change.
 #
 # PATTERNS (-IgnorePaths, -ExpectPaths, -ExpectReasons): `*` matches any run of characters, `?`
 # one; everything else is literal, `[` and `]` included, so 'tags[*].name' matches 'tags[3].name'
@@ -87,6 +113,7 @@
 #   ... -ExcludePairs 75              # shared media (75 reuses 31's B file; see the manifest)
 #   ... -CsvOut gap-files/diff.csv
 #   ... -IgnorePaths 'tags.*','residual.placement_slide_frames'
+#   ... -ExpectPaths 'edge_snap.*'    # snap-off baseline vs snap-on candidate (gap AND run level)
 #
 # Layout: `<arm>/<pair>.json` — a `--patch-only --format json` report per pair, as written by
 # measure-patch-outcomes.ps1.
@@ -207,31 +234,57 @@ function Get-ReasonName([object]$Status) {
     return Get-VariantName $payload.reason
 }
 
-# RE-PLACEMENT class for one joined row (see the header). '' when the row is not patched in both
-# arms. Placement times are frame / rate, so equal frames give bit-equal doubles; 1e-7 s (well under
-# one frame at 48 kHz) only absorbs JSON round-tripping.
+function Get-Route([object]$Patched) {
+    $r = $(if ([bool]$Patched.dual_fit_used) { 'dual_fit' } else { 'bracket' })
+    if ([bool]$Patched.anchor_seam_used) { $r += '+anchor' }
+    return $r
+}
+
+# The edge snap's move at one edge, in A frames; 0 when the gap carries no record (snap off, or a
+# report from before 2026-11-11).
+function Get-SnapMoved([object]$Gap, [string]$Side) {
+    $e = $Gap.edge_snap
+    if ($null -eq $e -or $null -eq $e.$Side) { return [long]0 }
+    return [long]$e.$Side.moved_frames
+}
+
+# RE-PLACEMENT class for one joined row (see the header): .Class ('' when the row is not patched in
+# both arms) and .Note (snap and placement deltas, printed for the listed classes). Placement times
+# are frame / rate, so rounding a delta to whole A frames is exact.
 function Get-ReplacementClass([object]$Row) {
-    if ($Row.StatusBase -ne 'patched' -or $Row.StatusCand -ne 'patched') { return '' }
+    $none = [pscustomobject]@{ Class = ''; Note = '' }
+    if ($Row.StatusBase -ne 'patched' -or $Row.StatusCand -ne 'patched') { return $none }
     $pb = $Row.GapBase.status.patched
     $pc = $Row.GapCand.status.patched
-    $dual = [bool]$pb.dual_fit_used -or [bool]$pc.dual_fit_used
-    $prefix = $(if ($dual) { 'dual_fit:' } else { '' })
+    $routeB = Get-Route $pb
+    $routeC = Get-Route $pc
+    $route = $(if ($routeB -eq $routeC) { $routeB } else { "$routeB->$routeC" })
     $lb = $Row.GapBase.placement
     $lc = $Row.GapCand.placement
-    if ($null -eq $lb -or $null -eq $lc) { return "${prefix}unknown_no_placement" }
-    $moved = $false
-    foreach ($k in 'fill_source_start_secs', 'write_start_secs', 'write_end_secs') {
-        if ([math]::Abs([double]$lc.$k - [double]$lb.$k) -gt 1e-7) { $moved = $true }
+    if ($null -eq $lb -or $null -eq $lc) {
+        return [pscustomobject]@{ Class = "${route}:unknown_no_placement"; Note = '' }
     }
+    $rate = [double]$Row.Rate
+    $dws = [long][math]::Round(([double]$lc.write_start_secs - [double]$lb.write_start_secs) * $rate)
+    $dwe = [long][math]::Round(([double]$lc.write_end_secs - [double]$lb.write_end_secs) * $rate)
+    $dfs = [long][math]::Round(([double]$lc.fill_source_start_secs - [double]$lb.fill_source_start_secs) * $rate)
+    $dLead = (Get-SnapMoved $Row.GapCand 'lead') - (Get-SnapMoved $Row.GapBase 'lead')
+    $dTrail = (Get-SnapMoved $Row.GapCand 'trail') - (Get-SnapMoved $Row.GapBase 'trail')
+    $note = "snap d lead $dLead / trail $dTrail; d write_start $dws, write_end $dwe, fill_source $dfs (frames)"
+    $moved = ($dws -ne 0 -or $dwe -ne 0 -or $dfs -ne 0)
     $rb = $pb.registration_applied_ms
     $rc = $pc.registration_applied_ms
     $regMoved = $(if ($null -eq $rb -and $null -eq $rc) { $false }
         elseif ($null -eq $rb -or $null -eq $rc) { $true }
         else { [math]::Abs([double]$rc - [double]$rb) -gt 1e-6 })
-    if ($moved -and $regMoved) { return "${prefix}replaced:registration_moved" }
-    if ($moved) { return "${prefix}replaced:registration_unchanged" }
-    if ($regMoved) { return "${prefix}odd:registration_moved_placement_did_not" }
-    return "${prefix}not_replaced"
+    $snapShift = ($dLead -ne 0 -or $dTrail -ne 0) -and $dws -eq -$dLead -and $dwe -eq $dTrail -and
+        [math]::Abs($dfs + $dLead) -le 2
+    $cls = $(if (-not $moved) { $(if ($regMoved) { 'odd:registration_moved_placement_did_not' } else { 'not_replaced' }) }
+        elseif ($routeB -ne $routeC) { 'replaced:route_flip' }
+        elseif ($snapShift) { $(if ($regMoved) { 'snap_shift:registration_moved' } else { 'snap_shift' }) }
+        elseif ($regMoved) { 'replaced:registration_moved' }
+        else { 'replaced:registration_unchanged' })
+    return [pscustomobject]@{ Class = "${route}:$cls"; Note = $note }
 }
 
 function Test-IsNumber([object]$V) {
@@ -394,9 +447,11 @@ function Get-ArmIndex {
     # .Runs   label -> the `patch` object MINUS `gaps` (run-level summary fields)
     # .Files  count of <pair>.json read
     # .Dupes  gaps colliding on the 1 ms join key
+    # .Rates  label -> A's sample rate (RE-PLACEMENT reads placement deltas in A frames)
     param([string]$Dir)
     $out = @{}
     $runs = @{}
+    $rates = @{}
     $files = 0
     $dupes = [System.Collections.Generic.List[string]]::new()
     Get-ChildItem -LiteralPath $Dir -File -Filter '*.json' -ErrorAction SilentlyContinue |
@@ -426,6 +481,7 @@ function Get-ArmIndex {
                 $run | Add-Member -NotePropertyName $p.Name -NotePropertyValue $p.Value
             }
             $runs[$label] = $run
+            $rates[$label] = $root.scan.track_compatibility.a_sample_rate
 
             $byStart = @{}
             $i = 0
@@ -445,7 +501,7 @@ function Get-ArmIndex {
             }
             $out[$label] = $byStart
         }
-    return [pscustomobject]@{ Pairs = $out; Runs = $runs; Files = $files; Dupes = $dupes }
+    return [pscustomobject]@{ Pairs = $out; Runs = $runs; Files = $files; Dupes = $dupes; Rates = $rates }
 }
 
 # --- load arms -------------------------------------------------------------
@@ -490,12 +546,18 @@ if ($labels.Count -eq 0) { throw 'no pair label is present in both arms after -P
 
 # --- join and classify -----------------------------------------------------
 
-# Run-level fields that move mechanically with the per-gap verdicts. `shoulders_abut` is the
-# run-level republish of the per-gap abut skips; the counts are recomputed from the gap
-# list by PatchSummary::from_outcomes. Anything NOT here is independent and counts as a finding.
-$script:DerivedRunFields = @(
+# Run-level fields that move mechanically with the per-gap records. `shoulders_abut` is the
+# run-level republish of the per-gap abut skips; the counts are recomputed from the gap list by
+# PatchSummary::from_outcomes, and the `edge_snap` outcome counts are tallied from the per-gap
+# `edge_snap` records; `donor_relation` is inferred from the fraction of gaps whose residual floor
+# is informative (docs/json-output.md § PatchSummary). Whole-path patterns (see PATTERNS). `edge_snap`'s SETTINGS keys are
+# deliberately absent: they are the recipe, and a difference there is a finding. Anything NOT
+# matched is independent and counts as a finding.
+$script:DerivedRunPatterns = @(
     'patched_count', 'patched_marginal_count', 'skipped_count', 'not_planned_count',
-    'not_applied_count', 'shoulders_abut'
+    'not_applied_count', 'shoulders_abut', 'shoulders_abut.*', 'shoulders_abut[*',
+    'edge_snap.lead', 'edge_snap.lead.*', 'edge_snap.trail', 'edge_snap.trail.*',
+    'edge_snap.max_refused_cap_onset_frames', 'donor_relation'
 )
 
 $rows = [System.Collections.Generic.List[object]]::new()
@@ -602,13 +664,14 @@ foreach ($label in $labels) {
                 NearMissMs = $nearMissMs
                 GapBase    = $gb
                 GapCand    = $gc
+                Rate       = $candIx.Rates[$label]
             })
     }
 
-    # Run-level fields, per pair. Split by whether the field FOLLOWS from the per-gap verdicts:
-    # the four counts and the run-level `shoulders_abut` republish move mechanically when a gap
-    # flips, so counting them as findings would guarantee noise on a successful Change. Everything
-    # else is independent of the gap list and any movement there is a real, separate finding.
+    # Run-level fields, per pair. Split by whether the field FOLLOWS from the per-gap records (see
+    # DerivedRunPatterns): counting those as findings would guarantee noise on a successful Change.
+    # Everything else is independent of the gap list, and any movement there is a real, separate
+    # finding unless -ExpectPaths names it.
     $runDiffs = [System.Collections.Generic.List[object]]::new()
     Compare-Node -A $baseIx.Runs[$label] -B $candIx.Runs[$label] -Path '' -Out $runDiffs
     foreach ($d in $runDiffs) {
@@ -616,14 +679,14 @@ foreach ($label in $labels) {
             if ($ignoredHits.ContainsKey($d.Path)) { $ignoredHits[$d.Path]++ } else { $ignoredHits[$d.Path] = 1 }
             continue
         }
-        $root = ($d.Path -split '[.\[]')[0]
-        $derived = $root -in $script:DerivedRunFields
+        $derived = Test-PathMatch $d.Path $script:DerivedRunPatterns
         $runRows.Add([pscustomobject]@{
-                Pair    = $label
-                Path    = $d.Path
-                Base    = $(if ($d.Kind -eq 'added') { '<absent>' } else { $d.Base })
-                Cand    = $(if ($d.Kind -eq 'removed') { '<absent>' } else { $d.Cand })
-                Derived = $derived
+                Pair     = $label
+                Path     = $d.Path
+                Base     = $(if ($d.Kind -eq 'added') { '<absent>' } else { $d.Base })
+                Cand     = $(if ($d.Kind -eq 'removed') { '<absent>' } else { $d.Cand })
+                Derived  = $derived
+                Expected = (-not $derived) -and (Test-PathMatch $d.Path $ExpectPaths)
             })
     }
 
@@ -665,7 +728,13 @@ foreach ($r in $rows) {
 $changed = @($rows | Where-Object { $_.Class -ne 'unchanged' })
 $expected = @($changed | Where-Object { $_.Expected })
 $unexplained = @($changed | Where-Object { -not $_.Expected })
-$runIndependent = @($runRows | Where-Object { -not $_.Derived })
+# Every changed path is a key the baseline lacks (see VERDICT in the header).
+$addedOnly = @($unexplained | Where-Object {
+        $_.Class -like 'field_change:*' -and $_.Diffs.Count -gt 0 -and
+        @($_.Diffs | Where-Object { $_.Kind -ne 'added' }).Count -eq 0
+    })
+$runIndependent = @($runRows | Where-Object { -not $_.Derived -and -not $_.Expected })
+$runExpected = @($runRows | Where-Object { $_.Expected })
 $runDerived = @($runRows | Where-Object { $_.Derived })
 
 Write-Host ''
@@ -821,6 +890,10 @@ if ($nearMiss.Count -gt 0) {
 }
 
 Show-RunRows 'RUN-LEVEL, INDEPENDENT OF THE GAP LIST' $runIndependent
+if ($runExpected.Count -gt 0) {
+    Write-Host ("run-level fields inside -ExpectPaths moved on {0} row(s) - -CsvOut to list them" -f $runExpected.Count)
+    Write-Host ''
+}
 if ($Detail) { Show-RunRows 'RUN-LEVEL, DERIVED FROM THE GAP VERDICTS (not findings)' $runDerived }
 elseif ($runDerived.Count -gt 0) {
     Write-Host ("run-level derived fields moved on {0} row(s) (counts / shoulders_abut republish) - -Detail to list" -f $runDerived.Count)
@@ -832,11 +905,19 @@ $geo = @($runIndependent | Where-Object { $_.Path -like 'fill_geometry*' })
 if ($geo.Count -gt 0) {
     Write-Warning ("the arms ran DIFFERENT fill geometry ({0} field(s)); a gap-level difference is not attributable to the flag under test alone." -f $geo.Count)
 }
+# Same for the edge snap's settings echo, whether or not -ExpectPaths covers it: an expected
+# difference is still a recipe difference, and the reader should not have to infer it.
+$snapSettings = @($runRows | Where-Object { $_.Path -like 'edge_snap*' -and -not $_.Derived })
+if ($snapSettings.Count -gt 0) {
+    $pairsHit = @($snapSettings | ForEach-Object { $_.Pair } | Sort-Object -Unique).Count
+    Write-Warning ("the arms ran DIFFERENT edge-snap settings on {0} pair(s) ({1} field(s)); gap geometry downstream of characterize moves with the snap." -f $pairsHit, $snapSettings.Count)
+}
 
 foreach ($r in $rows) {
-    $rc = ''
+    $rc = [pscustomobject]@{ Class = ''; Note = '' }
     if ($null -ne $r.PSObject.Properties['GapBase']) { $rc = Get-ReplacementClass $r }
-    $r | Add-Member -NotePropertyName Replacement -NotePropertyValue $rc -Force
+    $r | Add-Member -NotePropertyName Replacement -NotePropertyValue $rc.Class -Force
+    $r | Add-Member -NotePropertyName ReplacementNote -NotePropertyValue $rc.Note -Force
 }
 $placedRows = @($rows | Where-Object { $_.Replacement })
 if ($placedRows.Count -gt 0) {
@@ -844,9 +925,15 @@ if ($placedRows.Count -gt 0) {
     foreach ($grp in ($placedRows | Group-Object Replacement | Sort-Object Name)) {
         Write-Host ('  {0,-60} {1,5}' -f $grp.Name, $grp.Count)
     }
-    $flagged = @($placedRows | Where-Object { $_.Replacement -like '*registration_unchanged' -or $_.Replacement -like '*odd:*' })
+    # Dual-fit registration_unchanged is that route's normal case (it reads 0.0), so only bracket
+    # gaps are listed under it.
+    $flagged = @($placedRows | Where-Object {
+            $_.Replacement -like 'bracket*:replaced:registration_unchanged' -or $_.Replacement -like '*:odd:*'
+        })
+    if ($flagged.Count -gt 0) { Write-Host '  listed - bracket re-placements the old signal missed, and odd:' }
     foreach ($r in ($flagged | Select-Object -First $Show)) {
-        Write-Host ('    pair {0} gap {1} @ {2}s  {3}' -f $r.Pair, $r.BaseIdx, $r.Start, $r.Replacement)
+        Write-Host ('    pair {0} g{1} @ {2}s  {3}' -f $r.Pair, $r.BaseIdx, $r.Start, $r.Replacement)
+        Write-Host ('      {0}' -f $r.ReplacementNote)
     }
     if ($flagged.Count -gt $Show) { Write-Host ("    ... {0} more (raise -Show, or use -CsvOut)" -f ($flagged.Count - $Show)) }
     Write-Host ''
@@ -881,12 +968,14 @@ if ($CsvOut) {
                 ignored_count = $r.Ignored
                 near_miss_ms  = $r.NearMissMs
                 replacement   = $r.Replacement
+                replacement_note = $r.ReplacementNote
                 changed_paths = $paths
             })
     }
     foreach ($r in $runRows) {
         $cls = 'run_level:independent'
         if ($r.Derived) { $cls = 'run_level:derived' }
+        elseif ($r.Expected) { $cls = 'run_level:expected' }
         $csv.Add([pscustomobject]@{
                 pair          = $r.Pair
                 scope         = 'run'
@@ -894,7 +983,7 @@ if ($CsvOut) {
                 gap_cand      = $null
                 a_start_secs  = ''
                 class         = $cls
-                expected      = $r.Derived
+                expected      = ($r.Derived -or $r.Expected)
                 status_base   = ''
                 status_cand   = ''
                 reason_base   = ''
@@ -903,10 +992,11 @@ if ($CsvOut) {
                 ignored_count = 0
                 near_miss_ms  = $null
                 replacement   = ''
+                replacement_note = ''
                 changed_paths = "$($r.Path)=$($r.Base)->$($r.Cand)"
             })
     }
-    $csv | Export-Csv -LiteralPath $CsvOut -NoTypeInformation -Encoding utf8
+    $csv | Export-Csv -LiteralPath $CsvOut -Encoding utf8
     Write-Host "wrote $CsvOut"
     Write-Host ''
 }
@@ -922,7 +1012,10 @@ else {
     Write-Host ('  expected          {0,5}  ({1})' -f $expected.Count, ($why -join '; '))
 }
 Write-Host ('  unexplained gaps  {0,5}' -f $unexplained.Count)
-Write-Host ('  run-level         {0,5}  (independent of the gap list)' -f $runIndependent.Count)
+if ($addedOnly.Count -gt 0) {
+    Write-Host ('    of which added-only {0,5}  (only keys the baseline lacks - a newer report field? see CHANGED PATHS "added")' -f $addedOnly.Count)
+}
+Write-Host ('  run-level         {0,5}  (independent of the gap list, outside -ExpectPaths)' -f $runIndependent.Count)
 Write-Host '                          bar: both zero'
 Write-Host ''
 

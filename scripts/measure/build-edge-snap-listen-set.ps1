@@ -1,6 +1,6 @@
 #!/usr/bin/env pwsh
 #Requires -Version 7.0
-# Blind A/B listen set for the soft-edge ear check (docs/dev/TEMP-soft-edge-census-plan.md § 5,
+# Blind A/B listen set for the soft-edge ear check (docs/dev/archive/TEMP-soft-edge-census-plan.md § 5,
 # "Phase 3 — ear check protocol").
 #
 # Renders each selected gap twice from REAL repair output: *current* (defaults) and *snapped*
@@ -69,7 +69,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
-# ---- design (must match TEMP-soft-edge-census-plan.md § 5, Phase 3) ------------------------------
+# ---- design (must match archive/TEMP-soft-edge-census-plan.md § 5, Phase 3) ------------------------------
 $Candidates = @(
     '64/14', '36/5', '38/2', '76/9', '66/7', '64/2', '39/5', '58/7', '3/6', '30/43', '3/10', '74/26',
     '64/15', '3/4', '79/1', '34/6', '50/7', '11/6', '83/5', '9/4', '3/12', '83/3', '64/47', '68/3'
@@ -384,9 +384,9 @@ for ($i = 0; $i -lt $order.Count; $i++) {
 } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $KeyDir 'key.json') -Encoding utf8
 
 $key | ForEach-Object { [pscustomobject]@{ trial = $_.trial; verdict = ''; location = ''; note = '' } } |
-    Export-Csv -LiteralPath (Join-Path $BlindDir 'labels.csv') -NoTypeInformation -Encoding utf8
+    Export-Csv -LiteralPath (Join-Path $BlindDir 'labels.csv') -Encoding utf8
 Set-Content -LiteralPath (Join-Path $BlindDir 'README.txt') -Encoding utf8 -Value @"
-Blind A/B ear check: soft gap edges (TEMP-soft-edge-census-plan.md § 5, Phase 3).
+Blind A/B ear check: soft gap edges (archive/TEMP-soft-edge-census-plan.md § 5, Phase 3).
 
 $($order.Count) trials, tNN_a.wav and tNN_b.wav. Each clip runs from $ContextSecs s before a repaired gap
 to $ContextSecs s after it, so the gap starts $ContextSecs s in. The two files of a trial differ, if at all, only

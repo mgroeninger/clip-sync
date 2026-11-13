@@ -191,7 +191,7 @@ pub const EDGE_SNAP_DEFAULT_MAX_MS: f64 = 40.0;
 ///
 /// `max_frames == 0` is off. The cap keeps quiet programme that runs up to a dropout (room tone
 /// after a word) from being handed to B. The zero test cannot catch that case. See
-/// `docs/dev/TEMP-soft-edge-census-plan.md` § 4 Phase 4 and § 5.
+/// `docs/dev/archive/TEMP-soft-edge-census-plan.md` § 4 Phase 4 and § 5.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct EdgeSnap {
     pub max_frames: usize,
@@ -240,7 +240,7 @@ impl EdgeSnap {
     }
 }
 
-/// What the edge snap did at one edge (`docs/dev/TEMP-soft-edge-census-plan.md` step 4). The
+/// What the edge snap did at one edge (`docs/dev/archive/TEMP-soft-edge-census-plan.md` step 4). The
 /// refusals follow the code's order: cap first, then the zero test.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -604,7 +604,7 @@ fn snap_edge(
 ///   still guards it. The step test cannot either: room tone after a word starts with a step too.
 /// - **The gap reaches digital zero** beside the edge ([`zero_run_offset`]). The band is then
 ///   codec noise smeared after a hard cut, and the onset is the cut (frame-grid census,
-///   `docs/dev/TEMP-soft-edge-census-plan.md` § 5). A gap whose interior is quiet programme rather
+///   `docs/dev/archive/TEMP-soft-edge-census-plan.md` § 5). A gap whose interior is quiet programme rather
 ///   than a dropout never snaps.
 ///
 /// The lead edge is not snapped when refinement *advanced* it past `reported_start_frame`: the

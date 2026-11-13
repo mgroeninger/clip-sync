@@ -343,7 +343,7 @@ fn soften_lead_edge(path: &Path, sample_rate: u32, edge_secs: u32, band_ms: f64,
 /// before it; `--edge-snap-max-ms 0` turns it off.
 ///
 /// Without the snap, the band between A's dropout onset and the silence floor is raw A beside the
-/// fill (`docs/dev/TEMP-soft-edge-census-plan.md` § 1). With it, the fill starts at the onset, and
+/// fill (`docs/dev/archive/TEMP-soft-edge-census-plan.md` § 1). With it, the fill starts at the onset, and
 /// the report's `edge_snap.lead.moved_frames` is exactly how far the write's start moved.
 #[test]
 fn edge_snap_writes_over_a_soft_lead_band() {

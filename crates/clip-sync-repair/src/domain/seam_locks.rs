@@ -180,7 +180,7 @@ impl SeamLocks {
     ///
     /// The abut verdict must be read here. The snap only strips a codec tail off A's edges; it adds
     /// no donor material, yet it lengthens the nominal bridge by exactly the snap and so lifts a
-    /// few-ms crossing above zero (11/g9, 31/g7 — `TEMP-soft-edge-census-plan.md` § 5 chain audit).
+    /// few-ms crossing above zero (11/g9, 31/g7 — `archive/TEMP-soft-edge-census-plan.md` § 5 chain audit).
     pub fn without_edge_snap(&self, lead_frames: usize, trail_frames: usize) -> SeamLocks {
         let b_pre_seam_unclamped = self.b_pre_seam_unclamped + lead_frames as i64;
         let b_post_seam_unclamped = self.b_post_seam_unclamped - trail_frames as i64;

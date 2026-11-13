@@ -361,7 +361,7 @@ if ($CsvOut -ne '') {
         New-Item -ItemType Directory -Force -Path $csvDir | Out-Null
     }
     $rows | Sort-Object { [string]$_.pair }, { [int]$_.gap_index }, bucket |
-        Export-Csv -LiteralPath $CsvOut -NoTypeInformation -Encoding utf8
+        Export-Csv -LiteralPath $CsvOut -Encoding utf8
     Write-Host ''
     Write-Host "CSV: $CsvOut ($($rows.Count) ProbeNonFinite-bearing gap(s))" -ForegroundColor DarkGray
 }

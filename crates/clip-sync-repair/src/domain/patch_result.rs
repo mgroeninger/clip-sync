@@ -414,7 +414,7 @@ pub struct GapPatchOutcome {
 }
 
 /// What one splice did to A, recorded by the splice itself rather than rebuilt from edges and
-/// adjust fields (`docs/dev/TEMP-soft-edge-census-plan.md` step 4). A reader rebuilding the write from
+/// adjust fields (`docs/dev/archive/TEMP-soft-edge-census-plan.md` step 4). A reader rebuilding the write from
 /// `a_start_secs` and `gap_start_adjust_frames` misses refine moves (83/g7: 90 ms) and Fit's
 /// trim-head move.
 ///

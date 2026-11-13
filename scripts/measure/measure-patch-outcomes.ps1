@@ -314,7 +314,7 @@ function Write-FillLevelRollup {
     HeadBinDb, TailBinDb, ReferenceDb, RefAtFloor, PreShoulderDb, PostShoulderDb,
     PeakDeltaDb, PeakBinDb, PeakBinIndex, Bins, BinMs,
     NormalizeGain, DualFitUsed, Report |
-        Export-Csv -LiteralPath $csv -NoTypeInformation -Encoding utf8
+        Export-Csv -LiteralPath $csv -Encoding utf8
     # Ranking keeps every row in the CSV but drops floored references from the listen candidates:
     # sorted by delta they would otherwise occupy the whole top of the table with an artifact.
     $ranked = @($sorted | Where-Object { -not $_.RefAtFloor })
@@ -373,7 +373,7 @@ function Write-PlacementRollup {
         }
     }
     $csv = Join-Path $Directory 'placement-rollup.csv'
-    $all | Export-Csv -LiteralPath $csv -NoTypeInformation -Encoding utf8
+    $all | Export-Csv -LiteralPath $csv -Encoding utf8
     return [pscustomobject]@{ Path = $csv; Count = $all.Count }
 }
 

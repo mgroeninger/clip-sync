@@ -180,7 +180,7 @@ On each visit, with A already containing every keep:
    `snap_lead_frames` / `snap_trail_frames` on the row recover the unsnapped
    throat exactly. Both corpus rows carry a lead snap: 11/g9 5.60 ms, 31/g7
    7.27 ms. Snapped is the expected answer (the band is AAC noise after a
-   hard cut, not programme; `TEMP-soft-edge-census-plan.md` § *What the soft
+   hard cut, not programme; `archive/TEMP-soft-edge-census-plan.md` § *What the soft
    lead band is*), but it is unverified for a cut: when this Change is picked
    up, concat-confirm 31/g7 on both throats and keep the one whose join
    scores higher against B.

@@ -6,24 +6,28 @@ earliest-fall false positives, cross-check caveat). **Phase 1 done (2026-10-26):
 `edge-onset` bin is built, and the pilot refined its onset rule three times (§ 5). **Phase 2 done
 (2026-10-27): the early exit fails.** 91 of 581 patched gaps over 85 pairs carry more than 5 ms of
 estimated exposure, nearly all on the lead edge (§ 5). The Phase 4 opt-in snap prototype is
-built, and the Phase 3 ear check is pre-registered in § 5 (2026-10-28). Rendering is next.
+built, and the Phase 3 ear check is pre-registered in § 5 (2026-10-28). Phase 3 adopted the snap;
+the step 3 default-on listen passed (2026-11-11); step 4's reporting is built and the default is
+**on at 40 ms**. The verification run passes, re-placement recount included (§ 5, *Step 4 —
+verification run*, 2026-11-13). **Closed 2026-11-13** (§ 7): snap adopted, default on.
 
-**Tracked as:** [BACKLOG.md](../../BACKLOG.md) § *Fill placement*, *Gap start lands after A's
-dropout begins* row.
+**Tracked as:** [settled.md](../settled.md) § C, *Edge snap on a codec other than AAC-LC* (the
+reopen trigger). The BACKLOG row (*Fill placement*, *Gap start lands after A's dropout begins*) was
+deleted on close.
 
 **Companions:**
-- Found in [archive/TEMP-dualfit-interior-edit-plan.md](archive/TEMP-dualfit-interior-edit-plan.md)
+- Found in [archive/TEMP-dualfit-interior-edit-plan.md](TEMP-dualfit-interior-edit-plan.md)
   § 4, *The 50/g7 blip is in A, not in any edit*.
 - Scanner contract: the `SilenceRunScanner::feed` doc and `is_silent_interleaved` in
   `domain/policies/silence.rs`.
 - Patch-time edge walk: `refine_gap_frames` and `GAP_EDGE_REFINE_SECS` in
   `domain/policies/gap_borders.rs`.
 - Listen-clip framing: step 5 of `application/gap_listen/mod.rs`.
-- The independent-instrument pattern this plan's bin follows: [shoulder-sweep.md](shoulder-sweep.md).
+- The independent-instrument pattern this plan's bin follows: [shoulder-sweep.md](../shoulder-sweep.md).
 
 **Media hygiene:** pair index + gap index only. Listen-run directories are named by date and label;
 clip stems are never quoted here. `<pair>/g<n>` means dump `index` n, the
-[shoulder-sweep.md](shoulder-sweep.md) § 3 convention.
+[shoulder-sweep.md](../shoulder-sweep.md) § 3 convention.
 
 ---
 
@@ -127,7 +131,7 @@ calibration,he-aac`. The WAV-only pilot and the PR tests need `calibration` alon
 
 **Boundary placement.** The bin recovers the clip context from clip length and dump geometry, and
 falls back to `--context-secs` (default 3.0) only when no dump JSON exists. This is the
-[shoulder-sweep.md](shoulder-sweep.md) § 2.1 rule. The scan boundary is therefore *usually* at
+[shoulder-sweep.md](../shoulder-sweep.md) § 2.1 rule. The scan boundary is therefore *usually* at
 3.000 s, but `frame_range` clamps at media edges, so the bin does not assume it.
 
 **Per edge**, in 2 ms bins, recording per-channel peak dBFS and the maximum across channels (`L`):
@@ -788,7 +792,7 @@ timeline, mod 1024, and the envelope of the 3 hops beside it. Output:
   in place of the empirical 40 ms. It does not change the churn question: placement should
   still not move with the edge.
 - **Superseded by a signal guard (2026-10-30).** A per-codec window bound needs a codec table,
-  which is rejected ([settled.md](settled.md) § A). Proposed instead, to be tested offline on
+  which is rejected ([settled.md](../settled.md) § A). Proposed instead, to be tested offline on
   `frame-grid.csv` before any code changes: snap only when the band opens with a step down and its
   tail ends in digital zero. That is the codec-smear signature. It also rejects § 3's programme-decay
   shape, which fades from programme level and doesn't step. The ms cap stays as a loose,
@@ -1105,7 +1109,7 @@ Scored blind in one sitting. The key was opened only after every verdict was in.
   pre-registered rule does not require them. The `placement` fields (step 4) make them countable on
   the flip's corpus run.
 - **Next, per the rule:** build the rest of step 4 (the snap-specific reporting), then flip the default
-  and close per § 7.
+  and close per § 7. *(Built and flipped 2026-11-11; see Step 4 below.)*
 
 ### Step 4 — snap reporting (planned 2026-10-31; split the same day: placement built now, snap record after the listen)
 
@@ -1142,7 +1146,8 @@ needs a full-corpus run to clear. The flip needs that run anyway, so both share 
   counts/settings echo, the verbose lines, the 200 ms observation window, the abut-row snap frames,
   the TrackCompatibility codec/bit-depth keys, the fingerprint `a_unsnapped_*` pair and the
   `edge-onset` `snap_moved_ms` column. `EDGE_SNAP_DEFAULT_MAX_MS` = 40 is the default; golden
-  regenerated; PR tier green. **Open:** the corpus verification run below.
+  regenerated; PR tier green. Corpus verification run and re-placement recount done 2026-11-12/13
+  (*Step 4 — verification run* below): both pass.
 
 **Prerequisite: the onset search must reach past the cap.** `lead_onset` / `trail_onset` search only
 `max_frames` plus two bins. A band longer than that has no 15 dB fall inside the window, so it returns
@@ -1170,7 +1175,7 @@ snap is off. Frames are at A's rate, as for the adjust fields.
 
 **Write extent and fill source (every patched gap, snap on or off). BUILT 2026-10-31** as the
 optional per-gap `placement` object on `GapPatchOutcome` (`domain::PatchPlacement`, documented in
-[json-output.md](../json-output.md) § PatchPlacement). The splice already knows both, so this records
+[json-output.md](../../json-output.md) § PatchPlacement). The splice already knows both, so this records
 them rather than having a reader rebuild them from edges and adjust fields. It is present only on gaps
 whose fill was spliced, like `fill_level`: write runs and `--patch-only`, never `--repair-preview`.
 - `refine_start_frames` / `refine_end_frames` (was `refined_frames` in the `edge_snap` table): the
@@ -1179,7 +1184,8 @@ whose fill was spliced, like `fill_level`: write runs and `--patch-only`, never 
   census measures from the floor edge (83/g7: census 92.81 ms = refine 90.5 + snap 2.3).
   - **Patched gaps only, for now.** It lives on the placement record, so a skipped gap's refine move
     is still unrecorded. The `edge_snap` record at the flip should carry it for skips too (*Snap as
-    the base* below).
+    the base* below). *(Done 2026-11-11: `edge_snap.{lead,trail}.refine_frames` on every gap with a
+    snap record, skips included.)*
   - Computed in repair characterize (`EdgeRefineFrames::between`) and carried on
     `GapRepairSpec.edge_refine`. Fingerprint projections and fixtures leave it absent.
 - `write_start_secs` / `write_end_secs`: the A range the splice changes, crossfades included,
@@ -1209,6 +1215,10 @@ whose fill was spliced, like `fill_level`: write runs and `--patch-only`, never 
 - `TrackCompatibility` gets `a_codec` / `b_codec`, with the native sample rate and bit depth when
   the probe has them. Check on one HE-AAC file whether these separate HE-AAC from LC. If they
   don't, also record the profile.
+  - *Built 2026-11-11.* Bit depth is absent on all 85 corpus pairs: the probe reads the container's
+    declared sample format, which AAC does not declare. **The HE-AAC check is not done**; the corpus
+    is all `aac`/`aac`, so it waits for the first HE-AAC file (or the `write_he_aac_sweep_mp4`
+    fixture).
 
 **Human output** (`docs/cli-output.md`). The default output does not change.
 - Under `--verbose`, split the `A gap (refined)` line into a refine line and a snap line, for example
@@ -1227,7 +1237,7 @@ whose fill was spliced, like `fill_level`: write runs and `--patch-only`, never 
   shows it was read on the unsnapped geometry.
 
 **Contract.** Every field is optional and additive, so the contract stays v1. Follow the
-[json-output.md](../json-output.md) revision procedure. Populate every new field in the
+[json-output.md](../../json-output.md) revision procedure. Populate every new field in the
 `full_surface_repair.json` golden, including one refusal with `gap_floor_dbfs`. Then regenerate it
 with `write_full_surface_repair_golden`.
 
@@ -1238,6 +1248,14 @@ with `write_full_surface_repair_golden`.
 - Domain: a merge-chain case where the wider window must not change the move.
 - CLI: extend `edge_snap_writes_over_a_soft_lead_band` to check that `moved_frames` equals the
   shift of the written start.
+- **Built 2026-11-11** (`gap_borders.rs` unless noted): `edge_snap_report_snapped_records_the_band`,
+  `_hard_edge_has_no_onset`, `_refuses_a_band_beyond_its_cap_with_its_onset`,
+  `_refuses_a_band_beside_quiet_programme_with_its_floor`,
+  `_does_not_attempt_a_lead_the_refinement_advanced`, `_is_absent_when_the_snap_is_off`;
+  `edge_snap_wider_window_keeps_the_nearest_onset` (merge chain);
+  `edge_chain_records_a_long_refine_retraction_then_a_short_snap` (83/g7's shape: 90.5 ms refine
+  retraction, then a 2.3 ms snap). The CLI test now runs the default (snap on) against
+  `--edge-snap-max-ms 0`, and `moved_frames` equals the written start shift to the frame.
 - **Built 2026-10-31:**
   - Unit: `splice_write_reports_the_range_and_the_fill_frame_at_the_gap_start` (`region/pcm.rs`)
     checks both seam paths: every changed frame lies inside the range, and the gap start carries
@@ -1276,11 +1294,12 @@ with `write_full_surface_repair_golden`.
     cover.
   - A true refine-retraction fixture (leading silence before the reported start, 83/g7's shape).
     The soft lead only moves the edge a few ms. Deferred to the flip, with the verbose lines and
-    the skipped-gap refine move.
+    the skipped-gap refine move. *(Done 2026-11-11, as a domain test: a CLI fixture cannot make the
+    scanner report late. Verbose lines and skipped-gap refine also done.)*
 
 **Verification: one full-corpus run, at the flip.** Build the reporting, the window and the default
 flip together, including the fingerprint to-do. Run `measure-patch-outcomes.ps1` at defaults over all
-85 pairs. It passes when:
+85 pairs. It passes when *(result: § Step 4 — verification run, below)*:
 - Every field that existed before is identical to the listened build's snapped arm. That means the
   2026-10-30 guard reports, with 11/g9 and 31/g7 taken from `2026-10-31-abut-fix/`. Any difference
   comes from the window change and must be explained before the flip.
@@ -1301,7 +1320,7 @@ flip together, including the fingerprint to-do. Run `measure-patch-outcomes.ps1`
 
 That run is the first report that records the snap. It is also the baseline for any later codec.
 
-**Snap as the base measurement (decided 2026-10-31; lands at the flip, with the `edge_snap` record).**
+**Snap as the base measurement (decided 2026-10-31; landed 2026-11-11 with the `edge_snap` record).**
 Once the snap is on by default, the snapped edge is the gap every downstream step measures from. The
 report should say so: take the snapped edge as the base, and record the chain floor → refine → snap
 as signed steps.
@@ -1321,9 +1340,9 @@ as signed steps.
   absolute times, and the refine step runs floor → unsnapped. Re-basing adds the snap step beside
   them and changes none of them.
 
-**Doc entries to update at the flip** (audited 2026-10-31). Each names a quantity whose base moves
-from the unsnapped to the snapped edge, or a default that changes.
-- [json-output.md](../json-output.md):
+**Doc entries to update at the flip** (audited 2026-10-31; **all done 2026-11-11**). Each names a
+quantity whose base moves from the unsnapped to the snapped edge, or a default that changes.
+- [json-output.md](../../json-output.md):
   - Revision header: add the `edge_snap` record, the `PatchSummary` echo and counts, and the
     `TrackCompatibility` codecs.
   - § GapPatchStatus: `gap_start_adjust_frames` / `gap_end_adjust_frames` appear only in the shape
@@ -1344,11 +1363,11 @@ from the unsnapped to the snapped edge, or a default that changes.
   - § PatchPlacement: the refine keys say "before the edge snap". Add the snap step beside them, or
     point to the `edge_snap` record. Drop "patched only" once skips carry the refine step.
   - New sections: the `edge_snap` object, and the `PatchSummary.edge_snap` echo and counts.
-- [cli-output.md](../cli-output.md): under `--verbose`, the per-gap `A gap (refined)` line splits
+- [cli-output.md](../../cli-output.md): under `--verbose`, the per-gap `A gap (refined)` line splits
   into a refine line and a snap line. The run summary gains the outcome-count line.
-- [pipeline.md](../pipeline.md) step table: the row "A edge refine | `refine_gap_frames`" gains the
+- [pipeline.md](../../pipeline.md) step table: the row "A edge refine | `refine_gap_frames`" gains the
   snap step (`snap_gap_edges_to_onset`) and the note that the abut verdict reads the unsnapped edges.
-- [gap-fill-modes.md](../gap-fill-modes.md):
+- [gap-fill-modes.md](../../gap-fill-modes.md):
   - The flag table (line ~131, beside `--seam-extend-fill`) gains `--edge-snap-max-ms` /
     `edge_snap_max_ms` with the new 40 ms default.
   - § Signature context and contour geometry says the context halves are built from the refined
@@ -1358,7 +1377,7 @@ from the unsnapped to the snapped edge, or a default that changes.
     edge at the flip.
   - Add `a_unsnapped_start_secs` / `a_unsnapped_end_secs` (*Other records* above), and say in the
     comment which edge each pair holds.
-  - [gap-fingerprint.md](gap-fingerprint.md) has no `a_refined_*` entry today, so nothing there
+  - [gap-fingerprint.md](../gap-fingerprint.md) has no `a_refined_*` entry today, so nothing there
     changes.
 - Code: `RepairConfig::default` (`edge_snap_max_ms: 0.0`), the `--edge-snap-max-ms` help text, and
   any test that pins the 0 default.
@@ -1372,10 +1391,10 @@ measurement.
 
 **Not added.**
 - The 1024-frame grid lock. It is a census diagnostic, read per pair, and stays in `edge-onset`.
-- Codec labels or per-codec verdicts ([settled.md](settled.md) § A). The report carries signal
+- Codec labels or per-codec verdicts ([settled.md](../settled.md) § A). The report carries signal
   values beside the codec, and the reader groups them.
 
-### Step 4 — verification run (2026-11-12): passes, re-placement recount open
+### Step 4 — verification run (2026-11-12/13): passes
 
 `measure-patch-outcomes.ps1` at defaults (snap on, 40 ms), all 85 pairs, output
 `gap-files/2026-11-11-edge-snap-default/`. Compared with the 2026-10-30 guard reports (11 and 31 from
@@ -1398,9 +1417,29 @@ measurement.
   (predicted −600 − 102.77 = −702.77; anchor seam).
 - **Bit depth** is absent on every pair: the probe reads the declared sample format, which AAC does not
   declare (json-output.md corrected).
-- **Open: the re-placement recount.** `diff-patch-outcomes.ps1` needs `placement` on both arms, and no
-  snap-off run carries it (the 10-26 baseline predates the field). It needs one snap-off run of this
-  build (`-RepairArgs "--edge-snap-max-ms 0"`).
+- **Re-placement recount (2026-11-13): passes.** `diff-patch-outcomes.ps1` needs `placement` on both
+  arms and the 10-26 baseline predates it, so a snap-off run of this build was added
+  (`-RepairArgs "--edge-snap-max-ms 0"`, `gap-files/2026-11-12-edge-snap-off/`; diff CSV
+  `2026-11-11-edge-snap-default/diff-vs-11-12-off.csv`). The script's VERDICT reads 593 unexplained
+  only because no `-ExpectPaths` was declared and `edge_snap` is added on every recorded gap; the
+  reads below come from the reports.
+  - **Snap-off arm = the 10-26 baseline:** 0 of 1775 gaps differ on the old fields (85 pairs). The
+    build changes nothing with the snap off.
+  - **Nothing moves without a snap move:** 0 gaps change any old field, and 0 patched gaps re-place
+    (`fill_source_start_secs` or write extent), unless `moved_frames` > 0. No status flips between
+    the arms; 11/g9 and 31/g7 snap and stay `shoulders_abut` skips in both.
+  - **Every snapped patched gap re-places: 311 of 311** (200 bracket, 111 dual-fit). No gap shows a
+    registration move without a placement move (no `odd:` rows).
+  - **Pure snap shift** (write edges move by exactly `moved_frames`, the fill source by the lead
+    move ± 2 frames): 132 of 311. The other 179 are re-searched placements.
+    - **Registration missed 5** (unchanged `registration_applied_ms`, not a pure shift). Each shows in
+      a route field: 17/g34 and 50/g14 dual-fit → single, 68/g3 single → dual-fit, 9/g2 anchor seam
+      dropped, 9/g5 anchor bracket +4800 frames (100 ms). Only 17/g34 also keeps
+      `align_adjustment_secs`, so the route flag is its only old-field signal.
+  - **Dual-fit, read for the first time:** 111 of 222 dual-fit patched gaps re-place, 98 as a pure
+    snap shift. Their `registration_applied_ms` reads 0.0, so the old strata had no reading for any.
+  - **Route flips over the snapped set** (all already in the listened snapped arm, whose old fields
+    this run reproduces exactly): dual-fit 17 off / 13 on, anchor seam 17 off / 20 on.
 
 ## 6. Non-goals
 
@@ -1412,6 +1451,13 @@ measurement.
 
 ## 7. Close
 
-The three-step move: archive this plan, add a [settled.md](settled.md) row (snap adopted, or band
+The three-step move: archive this plan, add a [settled.md](../settled.md) row (snap adopted, or band
 shown inaudible with the worst cases named), and delete the BACKLOG row. If the instrument outlives
 the plan, give `edge-onset` a live doc the way `shoulder-sweep` has one.
+
+**Closed 2026-11-13.** Archived; [settled.md](../settled.md) § C row *Edge snap on a codec other than
+AAC-LC* holds the verdict and the reopen trigger; BACKLOG row deleted. **No live doc for
+`edge-onset`:** the reopen trigger is read from the snap's own report
+([json-output.md](../../json-output.md) § EdgeSnapRunReport, built for exactly that so a first run on
+a new codec needs no census), not from the bin. The bin stays in tree, and § 3 here is still its
+contract; write a live doc if a census on new media ever needs it again.

@@ -342,7 +342,7 @@ pub struct GapRepairSpec {
     /// `Patch` spec repair characterize builds; `None` on skips (nothing is written to report it
     /// on), fingerprint projections and fixtures. Report-only: the splice records it.
     pub edge_refine: Option<EdgeRefineFrames>,
-    /// What the edge snap did at each edge (`docs/dev/TEMP-soft-edge-census-plan.md` step 4). Set by
+    /// What the edge snap did at each edge (`docs/dev/archive/TEMP-soft-edge-census-plan.md` step 4). Set by
     /// repair characterize on every spec it returns, patch or skip; `None` when the snap is off, and
     /// on fingerprint projections and fixtures. Record-only.
     pub edge_snap: Option<EdgeSnapReport>,

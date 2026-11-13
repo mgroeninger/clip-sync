@@ -16,7 +16,7 @@
 //! recorded because the rule has a known false-positive shape (programme decay into quiet programme,
 //! then the dropout) and the reader, not this bin, decides which one a row means.
 //!
-//! **Specification.** `docs/dev/TEMP-soft-edge-census-plan.md` § 3 is this bin's contract — the
+//! **Specification.** `docs/dev/archive/TEMP-soft-edge-census-plan.md` § 3 is this bin's contract — the
 //! onset rule, the floor edge, the write-start interval and its bias estimate, and the columns. Read
 //! it before changing any number here.
 //!
@@ -1080,7 +1080,7 @@ fn run_listen(args: &Args, corpus: &Path) -> Result<(), String> {
     print_table(&rows);
 
     let contract = serde_json::json!({
-            "instrument": "edge-onset listen mode (docs/dev/TEMP-soft-edge-census-plan.md § 3)",
+            "instrument": "edge-onset listen mode (docs/dev/archive/TEMP-soft-edge-census-plan.md § 3)",
             "distances": "milliseconds OUTWARD from the scan boundary into programme: before it on `lead`, after it on `trail`",
             "onset": format!("{BIN_MS} ms peak bins over {WINDOW_MS} ms; a >= {FALL_DB} dB fall (lead) / rise (trail) sustained to the boundary; refined to the sample"),
             "onset_far_vs_near": format!("far = earliest lead fall / latest trail rise; near = closest to the boundary; onsets within {REF_BINS} bins merge to the outermost. They disagree on the room-tone shape; flagged, not resolved"),
@@ -2161,7 +2161,7 @@ fn run_media(args: &Args) -> Result<(), String> {
     print_media_table(&rows);
 
     let contract = serde_json::json!({
-        "instrument": "edge-onset media mode (docs/dev/TEMP-soft-edge-census-plan.md § 3, § 4 Phase 2)",
+        "instrument": "edge-onset media mode (docs/dev/archive/TEMP-soft-edge-census-plan.md § 3, § 4 Phase 2)",
         "distances": "milliseconds OUTWARD from the scan boundary into programme: before it on `lead`, after it on `trail`",
         "onset": format!("{BIN_MS} ms peak bins over {WINDOW_MS} ms; a >= {FALL_DB} dB fall (lead) / rise (trail) sustained to the boundary; refined to the sample"),
         "onset_far_vs_near": format!("far = earliest lead fall / latest trail rise; near = closest to the boundary; onsets within {REF_BINS} bins merge to the outermost. They disagree on the room-tone shape; flagged, not resolved"),

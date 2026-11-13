@@ -145,7 +145,7 @@ pub struct RepairConfig {
     pub seam_extend_fill: bool,
     /// Edge snap cap (ms): move each gap edge past the silence floor to A's dropout onset when the
     /// soft band between them is no longer than this. Default 40 (on since 2026-11-11,
-    /// `docs/dev/TEMP-soft-edge-census-plan.md` § 4); `0` = off.
+    /// `docs/dev/archive/TEMP-soft-edge-census-plan.md` § 4); `0` = off.
     #[serde(default = "default_edge_snap_max_ms")]
     pub edge_snap_max_ms: f64,
     /// Gaps at or below this length use mean(pre, post) correlation for the fill gate.

@@ -407,7 +407,7 @@ if ($CsvOut) {
             @{ n = 'max_seam_err_ms'; e = { if ($null -ne $_.pre_ms -and $null -ne $_.post_ms) { [math]::Max([math]::Abs($_.pre_ms), [math]::Abs($_.post_ms)) } else { $null } } },
             @{ n = 'step_ms'; e = { if ($null -ne $_.pre_ms -and $null -ne $_.post_ms) { $_.pre_ms - $_.post_ms } else { $null } } },
             @{ n = 'kind'; e = { if ($null -eq $_.pre_ms -or $null -eq $_.post_ms) { $null } elseif ([math]::Abs($_.pre_ms - $_.post_ms) -gt $StepKindMs) { 'step' } else { 'common' } } } |
-        Export-Csv -LiteralPath $CsvOut -NoTypeInformation -Encoding utf8
+        Export-Csv -LiteralPath $CsvOut -Encoding utf8
     Write-Host ""
     Write-Host "wrote $CsvOut"
 }

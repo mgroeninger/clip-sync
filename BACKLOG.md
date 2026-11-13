@@ -4,7 +4,7 @@ Open follow-up work for `clip-sync`. Architecture: [PLAN.md](PLAN.md). Repair pi
 [docs/pipeline.md](docs/pipeline.md). Test corpus: [docs/dev/corpus-validation.md](docs/dev/corpus-validation.md).
 Error handling: [docs/error-mapping.md](docs/error-mapping.md).
 
-Last updated: 2026-10-26.
+Last updated: 2026-11-13.
 
 **How this doc works**
 
@@ -50,9 +50,8 @@ gap that sits in the end-clip window). Hole 1 was n=1 until 2026-09-21 (13/g16);
 3. Agree + audible → join, not search.
 4. We skipped → donor fail at the true when, or A-side never offered a candidate.
 
-| Item | Next action | Done when |
-|------|-------------|-----------|
-| **Gap start lands after A's dropout begins (soft leading edge left in the output)** | 50/g7: ~16 ms of partial dropout plays before the pre seam, ear-confirmed in three blind sittings. Plan: [TEMP-soft-edge-census-plan.md](docs/dev/TEMP-soft-edge-census-plan.md). Next: Phase 1, an `edge-onset` bin piloted on existing listen clips, with go/no-go on reproducing 50/g7 | The per-edge onset-to-boundary distribution over the corpus is known. Either boundaries snap to the dropout onset (with a test on a soft-edged fixture), or the residual is shown inaudible by ear on the worst cases |
+No open rows. The last one (soft leading edge, 50/g7) closed 2026-11-13: the edge snap shipped
+default-on, and its reopen trigger is in [settled.md](docs/dev/settled.md) § C.
 
 ## Fill normalize boosts against a non-local reference
 

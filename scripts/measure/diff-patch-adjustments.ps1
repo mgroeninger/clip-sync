@@ -454,7 +454,7 @@ if ($CsvOut -ne '') {
         $out.Add([pscustomobject]$rec)
     }
     $out | Sort-Object pair, gap_index |
-        Export-Csv -LiteralPath $CsvOut -NoTypeInformation -Encoding utf8
+        Export-Csv -LiteralPath $CsvOut -Encoding utf8
     Write-Host ''
     Write-Host "CSV: $CsvOut ($($out.Count) row(s))" -ForegroundColor DarkGray
 }

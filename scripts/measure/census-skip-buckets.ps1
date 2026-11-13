@@ -291,7 +291,7 @@ if ($CsvOut -ne '') {
     if ($csvDir -ne '' -and -not (Test-Path -LiteralPath $csvDir)) {
         New-Item -ItemType Directory -Path $csvDir | Out-Null
     }
-    $sorted | Export-Csv -LiteralPath $CsvOut -NoTypeInformation -Encoding utf8
+    $sorted | Export-Csv -LiteralPath $CsvOut -Encoding utf8
     Write-Host ""
     Write-Host "CSV: $CsvOut ($($sorted.Count) skipped gap(s))" -ForegroundColor DarkGray
 }

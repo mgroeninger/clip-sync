@@ -401,7 +401,7 @@ if ($CsvOut) {
             new_map_lag_ms   = $j.n.map_lag_ms
         }
     }
-    $out | Export-Csv -LiteralPath $CsvOut -NoTypeInformation
+    $out | Export-Csv -LiteralPath $CsvOut
     Write-Host ''
     Write-Host "joined per-gap CSV -> $CsvOut"
 }

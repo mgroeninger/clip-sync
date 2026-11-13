@@ -358,9 +358,9 @@ for ($i = 0; $i -lt $arr.Count; $i++) {
         step_pre_db = [math]::Round($it.step_pre_db, 1); step_post_db = [math]::Round($it.step_post_db, 1)
     })
 }
-$key | Export-Csv -LiteralPath (Join-Path $OutDir 'key.csv') -NoTypeInformation -Encoding utf8
+$key | Export-Csv -LiteralPath (Join-Path $OutDir 'key.csv') -Encoding utf8
 $key | ForEach-Object { [pscustomobject]@{ clip = $_.clip; label = ''; note = '' } } |
-    Export-Csv -LiteralPath (Join-Path $clipDir 'labels.csv') -NoTypeInformation -Encoding utf8
+    Export-Csv -LiteralPath (Join-Path $clipDir 'labels.csv') -Encoding utf8
 
 Write-Host ""
 Write-Host ("wrote {0} clips to {1}" -f $key.Count, $clipDir)

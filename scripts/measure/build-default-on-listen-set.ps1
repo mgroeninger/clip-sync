@@ -1,6 +1,6 @@
 #!/usr/bin/env pwsh
 #Requires -Version 7.0
-# Blind A/B listen set for the edge-snap default-on check (docs/dev/TEMP-soft-edge-census-plan.md
+# Blind A/B listen set for the edge-snap default-on check (docs/dev/archive/TEMP-soft-edge-census-plan.md
 # § 5, "Step 3 — listen protocol"). Sibling of build-edge-snap-listen-set.ps1, which stays the
 # executable record of Phase 3.
 #
@@ -79,7 +79,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
-# ---- design (must match TEMP-soft-edge-census-plan.md § 5, Step 3) -------------------------------
+# ---- design (must match archive/TEMP-soft-edge-census-plan.md § 5, Step 3) -------------------------------
 $Strata = [ordered]@{
     named  = @{ Quota = 2; Walk = @('69/9', '32/10') }
     anchor = @{ Quota = 3; Walk = @('48/3', '48/5', '83/7', '50/8', '49/34', '85/85', '7/4', '86/12') }
@@ -477,9 +477,9 @@ for ($i = 0; $i -lt $order.Count; $i++) {
 } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $KeyDir 'key.json') -Encoding utf8
 
 $key | ForEach-Object { [pscustomobject]@{ trial = $_.trial; verdict = ''; location = ''; note = '' } } |
-    Export-Csv -LiteralPath (Join-Path $BlindDir 'labels.csv') -NoTypeInformation -Encoding utf8
+    Export-Csv -LiteralPath (Join-Path $BlindDir 'labels.csv') -Encoding utf8
 Set-Content -LiteralPath (Join-Path $BlindDir 'README.txt') -Encoding utf8 -Value @"
-Blind A/B ear check: edge snap default-on (TEMP-soft-edge-census-plan.md § 5, Step 3).
+Blind A/B ear check: edge snap default-on (archive/TEMP-soft-edge-census-plan.md § 5, Step 3).
 
 $($order.Count) trials, tNN_a.wav and tNN_b.wav. Each clip runs from $ContextSecs s before a repair to
 $ContextSecs s after it, so the repaired stretch starts about $ContextSecs s in. Some repairs are several

@@ -640,7 +640,7 @@ if ($withLag.Count -eq 0) {
 }
 
 if ($CsvOut) {
-    $rows | Export-Csv -LiteralPath $CsvOut -NoTypeInformation
+    $rows | Export-Csv -LiteralPath $CsvOut
     Write-Host ''
     Write-Host "per-gap CSV -> $CsvOut"
 }

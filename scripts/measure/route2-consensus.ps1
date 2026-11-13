@@ -666,7 +666,7 @@ if ($CsvOut -ne '') {
         }
     }
     $out | Sort-Object gate, pair, gap_index |
-        Export-Csv -LiteralPath $CsvOut -NoTypeInformation -Encoding utf8
+        Export-Csv -LiteralPath $CsvOut -Encoding utf8
     Write-Host ''
     Write-Host "CSV: $CsvOut ($($out.Count) row(s))" -ForegroundColor DarkGray
 }

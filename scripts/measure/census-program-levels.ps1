@@ -335,12 +335,12 @@ if ($gainRows.Count -gt 0) {
 }
 
 if ($CsvOut) {
-    $rows | Export-Csv -LiteralPath $CsvOut -NoTypeInformation
+    $rows | Export-Csv -LiteralPath $CsvOut
     Write-Host ''
     Write-Host "per-pair CSV -> $CsvOut"
 }
 if ($GainCsvOut) {
-    $gainRows | Export-Csv -LiteralPath $GainCsvOut -NoTypeInformation
+    $gainRows | Export-Csv -LiteralPath $GainCsvOut
     Write-Host "gain-join CSV -> $GainCsvOut"
 }
 Write-Host ''

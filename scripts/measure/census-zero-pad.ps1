@@ -238,7 +238,7 @@ if ($CsvOut -ne '') {
         New-Item -ItemType Directory -Path $csvDir | Out-Null
     }
     $rows | Sort-Object @{ Expression = { ($_.pair -as [int]) ?? [int]::MaxValue } }, gap_index |
-        Export-Csv -LiteralPath $CsvOut -NoTypeInformation -Encoding utf8
+        Export-Csv -LiteralPath $CsvOut -Encoding utf8
     Write-Host ""
     Write-Host "CSV: $CsvOut ($($rows.Count) bracket-eligible gap(s))" -ForegroundColor DarkGray
 }

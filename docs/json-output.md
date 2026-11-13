@@ -376,7 +376,7 @@ Pair-offset check only (start-clip / `recommended_offset_secs`). Confirmed B-sta
 The edge snap's settings echo, and how its outcomes fell across the run. The settings are there for
 the same reason as `fill_geometry`: so a two-arm differential traces to the setting that changed. The
 counts let a first run on a new codec be read without a census
-([TEMP-soft-edge-census-plan.md](dev/TEMP-soft-edge-census-plan.md) § step 4, *Reading a first run on
+([archive/TEMP-soft-edge-census-plan.md](dev/archive/TEMP-soft-edge-census-plan.md) § step 4, *Reading a first run on
 another codec*).
 
 | Field | Type | Presence | Meaning |
