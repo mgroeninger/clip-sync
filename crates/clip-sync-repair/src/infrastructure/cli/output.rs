@@ -1171,6 +1171,80 @@ mod tests {
         )
     }
 
+    /// Golden-only: a gap whose tags come from [`gap_patch_outcome`]'s status derivation. That path
+    /// is the production one for every status except `Patched`, where it is lossy (no boundary grid,
+    /// anchor trust, residual or dual-fit route) — so the golden refuses it here and builds patched
+    /// gaps with [`golden_patched_outcome`].
+    fn golden_unpatched_outcome(
+        a_start: f64,
+        a_end: f64,
+        status: GapPatchStatus,
+    ) -> GapPatchOutcome {
+        assert!(
+            !matches!(status, GapPatchStatus::Patched { .. }),
+            "golden patched gaps must use golden_patched_outcome (the real tag derivation)"
+        );
+        gap_patch_outcome(a_start, a_end, status)
+    }
+
+    /// Golden-only: a patched gap whose tags come from `derive_gap_tags_from_patch_outcome`, the
+    /// function production's `region_outcome_gap_tags` calls. `placement` supplies the facts the
+    /// status does not carry (boundary grid, anchor trust, dual-fit route).
+    ///
+    /// Production fills the status and the tags from one `RegionPatchOutcome`, so the facts both
+    /// carry must agree; a fixture writes them twice, so this asserts they do.
+    fn golden_patched_outcome(
+        a_start: f64,
+        a_end: f64,
+        status: GapPatchStatus,
+        placement: crate::domain::gap_tags::GapTagPlacementInput,
+    ) -> GapPatchOutcome {
+        use crate::domain::gap_tags::{
+            derive_gap_tags_from_patch_outcome, GapPatchTierInput, GapTagsPatchContext,
+        };
+        let GapPatchStatus::Patched {
+            pre_correlation,
+            post_correlation,
+            confidence,
+            anchor_seam_used,
+            anchor_bracket_move_frames,
+            zero_pad_frames,
+            dual_fit_used,
+            dual_fit_step_real,
+            dual_fit_post_window_ms,
+            ..
+        } = &status
+        else {
+            panic!("golden_patched_outcome takes a Patched status");
+        };
+        assert_eq!(placement.anchor_seam_used, *anchor_seam_used);
+        assert_eq!(
+            placement.anchor_bracket_move_frames,
+            *anchor_bracket_move_frames
+        );
+        assert_eq!(placement.zero_pad_frames, *zero_pad_frames);
+        assert_eq!(placement.dual_fit_route.is_some(), *dual_fit_used);
+        assert_eq!(placement.dual_fit_step_real, *dual_fit_step_real);
+        assert_eq!(placement.dual_fit_post_window_ms, *dual_fit_post_window_ms);
+        let tags = derive_gap_tags_from_patch_outcome(
+            &GapPatchTierInput::Patched {
+                pre: *pre_correlation,
+                post: *post_correlation,
+                confidence: *confidence,
+                placement,
+            },
+            None,
+            GapTagsPatchContext {
+                fill_mode: FillMode::Fit,
+                thresholds: FillTierThresholds::DEFAULT,
+                signature_mode_label: "bool",
+                residual_headroom_margin_db:
+                    crate::domain::residual_gate::DEFAULT_RESIDUAL_HEADROOM_MARGIN_DB,
+            },
+        );
+        GapPatchOutcome::new(a_start, a_end, status, tags)
+    }
+
     fn full_surface_alignment_detail() -> AlignmentResult {
         let overlap = TimelineOverlap {
             video_a_start_secs: 10.956,
@@ -1437,7 +1511,7 @@ mod tests {
 
     fn full_surface_patch_summary() -> PatchSummary {
         PatchSummary::from_outcomes(vec![
-            gap_patch_outcome(
+            golden_patched_outcome(
                 45.0,
                 47.5,
                 GapPatchStatus::Patched {
@@ -1502,6 +1576,11 @@ mod tests {
                         },
                     )),
                 },
+                // A plain single-lag bracket fill on the baseline throat; only the shortfall is set.
+                crate::domain::gap_tags::GapTagPlacementInput {
+                    zero_pad_frames: 441,
+                    ..Default::default()
+                },
             )
             // Populated so the nested object and both optional refine keys are pinned. Refine
             // retracted the lead 441 frames (10 ms) and left the trail; the edge snap then moved the
@@ -1541,7 +1620,7 @@ mod tests {
                     gap_floor_dbfs: None,
                 },
             })),
-            gap_patch_outcome(
+            golden_unpatched_outcome(
                 120.0,
                 125.0,
                 GapPatchStatus::Skipped {
@@ -1584,93 +1663,93 @@ mod tests {
             // `dual_fit_step_real: Some(false)` populates the field in the golden — the length-edit
             // gap above pins `dual_fit_used: false` / `dual_fit_step_real: None`; this pins the third
             // state (docs/dev/archive/TEMP-seam-lock-rigid-fill-plan.md § 3.4).
-            {
+            golden_patched_outcome(
+                160.0,
+                160.4,
+                GapPatchStatus::Patched {
+                    zero_pad_frames: 0,
+                    pre_correlation: 0.94,
+                    post_correlation: 0.93,
+                    align_adjustment_secs: 0.0,
+                    structure_trusted: false,
+                    confidence: crate::domain::FillConfidence::High,
+                    gap_start_adjust_frames: 0,
+                    gap_end_adjust_frames: 0,
+                    residual_db: None,
+                    floor_db: None,
+                    headroom_db: None,
+                    anchor_seam_used: false,
+                    anchor_bracket_move_frames: 0,
+                    dual_fit_used: true,
+                    dual_fit_step_real: Some(false),
+                    dual_fit_post_window_ms: None,
+                    normalize_gain: 0.766_478_54,
+                    program_gain: 0.766_478_54,
+                    local_gain: 1.0,
+                    local_gain_reason: crate::domain::LocalGainReason::FlagOff,
+                    // Dual-fit placement does not come from the unified objective — omitted, per
+                    // json-output.md's `fit_terms` note.
+                    fit_terms: None,
+                    // Pins the other per-seam state: an unlicensed post shoulder leaves its key
+                    // absent, and dual-fit's applied placement is 0.0 (its `align_adjustment_secs`).
+                    registration_residual: Some(Box::new(
+                        crate::domain::patch_result::RegistrationResidual {
+                            registration_residual_ms: -3.0,
+                            registration_residual_pre_ms: Some(-3.0),
+                            registration_residual_post_ms: None,
+                            registration_residual_pre_edge_pinned: None,
+                            registration_residual_post_edge_pinned: None,
+                            registration_residual_pre_z: None,
+                            registration_residual_post_z: None,
+                            registration_residual_pre_prominence: None,
+                            registration_residual_post_prominence: None,
+                            registration_residual_pre_rescued: None,
+                            registration_residual_post_rescued: None,
+                            registration_applied_ms: 0.0,
+                        },
+                    )),
+                },
                 // Routed by registration (step-kind), so the golden pins `dual_fit_route` populated.
-                let mut outcome = gap_patch_outcome(
-                    160.0,
-                    160.4,
-                    GapPatchStatus::Patched {
-                        zero_pad_frames: 0,
-                        pre_correlation: 0.94,
-                        post_correlation: 0.93,
-                        align_adjustment_secs: 0.0,
-                        structure_trusted: false,
-                        confidence: crate::domain::FillConfidence::High,
-                        gap_start_adjust_frames: 0,
-                        gap_end_adjust_frames: 0,
-                        residual_db: None,
-                        floor_db: None,
-                        headroom_db: None,
-                        anchor_seam_used: false,
-                        anchor_bracket_move_frames: 0,
-                        dual_fit_used: true,
-                        dual_fit_step_real: Some(false),
-                        dual_fit_post_window_ms: None,
-                        normalize_gain: 0.766_478_54,
-                        program_gain: 0.766_478_54,
-                        local_gain: 1.0,
-                        local_gain_reason: crate::domain::LocalGainReason::FlagOff,
-                        // Dual-fit placement does not come from the unified objective — omitted, per
-                        // json-output.md's `fit_terms` note.
-                        fit_terms: None,
-                        // Pins the other per-seam state: an unlicensed post shoulder leaves its key
-                        // absent, and dual-fit's applied placement is 0.0 (its `align_adjustment_secs`).
-                        registration_residual: Some(Box::new(
-                            crate::domain::patch_result::RegistrationResidual {
-                                registration_residual_ms: -3.0,
-                                registration_residual_pre_ms: Some(-3.0),
-                                registration_residual_post_ms: None,
-                                registration_residual_pre_edge_pinned: None,
-                                registration_residual_post_edge_pinned: None,
-                                registration_residual_pre_z: None,
-                                registration_residual_post_z: None,
-                                registration_residual_pre_prominence: None,
-                                registration_residual_post_prominence: None,
-                                registration_residual_pre_rescued: None,
-                                registration_residual_post_rescued: None,
-                                registration_applied_ms: 0.0,
-                            },
-                        )),
-                    },
-                );
-                outcome.tags.dual_fit_route =
-                    Some(crate::domain::gap_tags::DualFitRoute::RegistrationStep);
-                // Refine advanced the start, so the lead snap never ran; the trail had no fall.
-                outcome.edge_snap = Some(EdgeSnapReport {
-                    lead: EdgeSnapEdge {
-                        outcome: EdgeSnapOutcome::NotAttemptedAdvanced,
-                        refine_frames: 220,
-                        onset_frames: None,
-                        moved_frames: 0,
-                        reaches_zero: None,
-                        onset_to_zero_frames: None,
-                        band_peak_dbfs: None,
-                        step_db: None,
-                        gap_floor_dbfs: None,
-                    },
-                    trail: EdgeSnapEdge {
-                        outcome: EdgeSnapOutcome::Hard,
-                        refine_frames: 0,
-                        onset_frames: None,
-                        moved_frames: 0,
-                        reaches_zero: None,
-                        onset_to_zero_frames: None,
-                        band_peak_dbfs: None,
-                        step_db: None,
-                        gap_floor_dbfs: None,
-                    },
-                });
-                // A placement with no refine step pins the refine keys' absence.
-                outcome.placement = Some(crate::domain::PatchPlacement {
-                    refine_start_frames: None,
-                    refine_end_frames: None,
-                    write_start_secs: 159.99,
-                    write_end_secs: 160.41,
-                    fill_source_start_secs: 163.0,
-                });
-                outcome
-            },
-            gap_patch_outcome(
+                crate::domain::gap_tags::GapTagPlacementInput {
+                    dual_fit_route: Some(crate::domain::gap_tags::DualFitRoute::RegistrationStep),
+                    dual_fit_step_real: Some(false),
+                    ..Default::default()
+                },
+            )
+            // Refine advanced the start, so the lead snap never ran; the trail had no fall.
+            .with_edge_snap(Some(EdgeSnapReport {
+                lead: EdgeSnapEdge {
+                    outcome: EdgeSnapOutcome::NotAttemptedAdvanced,
+                    refine_frames: 220,
+                    onset_frames: None,
+                    moved_frames: 0,
+                    reaches_zero: None,
+                    onset_to_zero_frames: None,
+                    band_peak_dbfs: None,
+                    step_db: None,
+                    gap_floor_dbfs: None,
+                },
+                trail: EdgeSnapEdge {
+                    outcome: EdgeSnapOutcome::Hard,
+                    refine_frames: 0,
+                    onset_frames: None,
+                    moved_frames: 0,
+                    reaches_zero: None,
+                    onset_to_zero_frames: None,
+                    band_peak_dbfs: None,
+                    step_db: None,
+                    gap_floor_dbfs: None,
+                },
+            }))
+            // A placement with no refine step pins the refine keys' absence.
+            .with_placement(Some(crate::domain::PatchPlacement {
+                refine_start_frames: None,
+                refine_end_frames: None,
+                write_start_secs: 159.99,
+                write_end_secs: 160.41,
+                fill_source_start_secs: 163.0,
+            })),
+            golden_unpatched_outcome(
                 200.0,
                 205.0,
                 GapPatchStatus::NotPlanned {
