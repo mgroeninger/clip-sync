@@ -156,9 +156,9 @@ Tags and tier on a skip row describe the **throat (first) failure**. Use `best` 
 |------|---------|-----------------|
 | `min_fill_correlation` | 0.35 | High tier floor; marginal band top (`min_fill_correlation − fill_marginal_margin` = **0.27**); also caps the effective hard floor |
 | `fill_marginal_margin` | 0.08 | Marginal band width (default **0.27–0.35**); `--fill-marginal-margin`. Accept floor = `min_fill_correlation − fill_marginal_margin` |
-| `fill_absolute_floor` | 0.12 | Hard skip below this `min(pre, post)` |
+| `fill_absolute_floor` | 0.12 | Hard skip below this `min(pre, post)`; `--fill-absolute-floor` |
 
-Lowering `--min-fill-correlation` (or widening `--fill-marginal-margin`, which moves only the accept floor and leaves the High tier where it is) only helps skips whose **`best min(pre, post)`** falls in the dead zone or marginal band (e.g. `best` at 0.22 → try ~0.30 to marginal-patch). **Hard skips** (`best` &lt; 0.12) need a lower `fill_absolute_floor` (config-only), better placement (`--full`, anchor seam), or alignment — not `min_fill_correlation` alone.
+Lowering `--min-fill-correlation` (or widening `--fill-marginal-margin`, which moves only the accept floor and leaves the High tier where it is) only helps skips whose **`best min(pre, post)`** falls in the dead zone or marginal band (e.g. `best` at 0.22 → try ~0.30 to marginal-patch). **Hard skips** (`best` &lt; 0.12) need a lower `--fill-absolute-floor`, better placement (`--full`, anchor seam), or alignment — not `min_fill_correlation` alone.
 
 For per-bracket fall-through detail without re-running repair, use `--gap-fingerprints` (see [gap-fingerprint.md](dev/gap-fingerprint.md)).
 
@@ -533,7 +533,7 @@ Use only when the recommendation matrix is insufficient. Lower floors accept wea
 |------|---------|--------|
 | `min_fill_correlation` | 0.35 | High tier floor; also caps effective absolute floor |
 | `fill_marginal_margin` | 0.08 | Width of marginal band (default 0.27–0.35) |
-| `fill_absolute_floor` | 0.12 | Hard skip below this `min(pre, post)` |
+| `fill_absolute_floor` | 0.12 | Hard skip below this `min(pre, post)`; `--fill-absolute-floor` |
 | `fill_repeat_penalty_weight` | 0.4 | Down-rank repeat-at-border when seams weak (fit). Scales the penalty only — the correlation thresholds that decide whether it fires are hard-coded, and it is `0.0` on every winner in the oriented 2026-08-13 run, so raising it may change nothing. The winner's `repeat_pre` / `repeat_post` now ship on `fit_terms`. `0` disables the penalty but **not** the short-bracket extension stop, which vetoes on the same hard-coded threshold. See [gap-fill-modes.md](gap-fill-modes.md) § Fit unified search |
 | `fill_border_search_secs` | 10 | B slide radius — larger = more CPU, helps edge-clamped matches |
 | `gap_signature_context_secs` | 3.0 | Structure context; raise for ambiguous long gaps |

@@ -1118,6 +1118,13 @@ impl RepairConfig {
                 reason: "must be greater than or equal to zero".into(),
             });
         }
+        // A Pearson floor: outside [-1, 1] it is either unreachable or always passes.
+        if self.fill_absolute_floor < -1.0 || self.fill_absolute_floor > 1.0 {
+            return Err(ConfigError::InvalidValue {
+                field: "fill_absolute_floor".into(),
+                reason: "must be between -1.0 and 1.0 inclusive".into(),
+            });
+        }
         if self.normalize_window_secs <= 0.0 {
             return Err(ConfigError::InvalidValue {
                 field: "normalize_window_secs".into(),
@@ -1742,6 +1749,21 @@ dry_run = true
             format!("{err:?}").contains("fill_marginal_margin"),
             "{err:?}"
         );
+    }
+
+    #[test]
+    fn rejects_fill_absolute_floor_out_of_range() {
+        for floor in [-1.5_f32, 1.5] {
+            let config = RepairConfig {
+                fill_absolute_floor: floor,
+                ..RepairConfig::default()
+            };
+            let err = config.validate().expect_err("out-of-range floor");
+            assert!(
+                format!("{err:?}").contains("fill_absolute_floor"),
+                "{floor}: {err:?}"
+            );
+        }
     }
 
     #[test]

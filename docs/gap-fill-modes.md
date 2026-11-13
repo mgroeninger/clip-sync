@@ -132,7 +132,7 @@ CLI flags are accepted in both modes unless noted. **Effect** differs by mode.
 | `--seam-extend-fill` / `--no-seam-extend-fill` / `seam_extend_fill` | **Active** — bracket **and** dual-fit fills; default **on** | **Active** — same |
 | `--edge-snap-max-ms` / `edge_snap_max_ms` | **Active** — snaps each refined A edge out to the dropout onset when the soft band is ≤ this (ms); default **40** since 2026-11-11, `0` = off | **Active** — same |
 | `fill_fit_structure_weight`, `fill_fit_waveform_weight` | Unified scorer weights (config; CLI optional) | Ignored |
-| `fill_absolute_floor` | Hard skip (config-only) | Ignored |
+| `--fill-absolute-floor` | Hard-skip floor; effective floor is `min(fill_absolute_floor, min_fill_correlation)`. Between it and the Marginal floor is the dead zone (skipped unless `residual_gate = veto_rescue` rescues it). Range −1.0…1.0 | Ignored |
 | `anchor_seam_mode`, `max_anchor_bracket_secs`, `max_anchors_per_side`, `anchor_seam_min_*` | **Active** — editorial anchor bracket search when triggered | **No effect** (fit only) |
 | `dual_fit` / `--no-dual-fit` | **Active** — G6 rescue after scored gate skip (except structure alignment failed) | **Active** — same G6 rescue after scored gate skip (after any gate extension retries) |
 
@@ -691,7 +691,7 @@ Most keys below drive **fit** placement. `dual_fit` is shared: G6 rescue runs af
 | `fill_fit_waveform_weight` | `0.65` | `--fill-fit-waveform-weight` | Unified scorer |
 | `fill_fit_energy_nominal_bias_scale` | `0.25` | — | Distance-from-nominal penalty for energy-resolved gaps (< base `1.0`; energy self-corrects drifted nominal) |
 | `fill_marginal_margin` | `0.08` | `--fill-marginal-margin` | Warn band below `min_fill_correlation`; accept floor = `min_fill_correlation − fill_marginal_margin` |
-| `fill_absolute_floor` | `0.12` | — | Hard skip floor |
+| `fill_absolute_floor` | `0.12` | `--fill-absolute-floor` | Hard skip floor (effective: `min(fill_absolute_floor, min_fill_correlation)`) |
 | `gap_end_extend_max_ms` | `500` | `--gap-end-extend-max-ms` | A-boundary grid / gate retries |
 | `gap_end_extend_step_ms` | `20` | `--gap-end-extend-step-ms` | Grid/retry step |
 | `anchor_seam_mode` | `auto` | `--anchor-seam-mode` | Editorial anchor search: `off` \| `auto` \| `force` |

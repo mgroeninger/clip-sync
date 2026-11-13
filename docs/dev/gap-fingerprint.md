@@ -167,8 +167,8 @@ invented fill would be worse than a missing file, and the skip reason is printed
 > `_a_patched.wav` into a wider run's `_a_surround.wav`** (raw A, which the fill does not affect).
 > Prove the offset first: the narrow raw clip must be a byte-identical slice of the wide one. Also
 > compare the patched span against the `--patch-only` report before listening. An earlier 10 ms
-> listen-vs-production disagreement on 47/g14 is recorded in the header of
-> `scripts/measure/build-standoff-listen-set.ps1`.
+> listen-vs-production disagreement on 47/g14 (+224.3 vs +214.3 ms) is recorded in
+> [archive/TEMP-border-standoff-plan.md](archive/TEMP-border-standoff-plan.md) § 7.
 
 **Selector and run modes.** `--only-gaps` / `--skip-gaps` are rejected (one selector must drive both
 the corpus and the fill plan, or they cover different sets). `--wav`, `--mux` and `--repair-preview`

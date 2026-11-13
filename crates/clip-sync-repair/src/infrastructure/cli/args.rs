@@ -278,6 +278,13 @@ pub struct Args {
     #[arg(long, value_name = "N")]
     pub fill_marginal_margin: Option<f32>,
 
+    /// Override: hard-skip floor on `min(pre, post)` [default: 0.12]. The effective floor is
+    /// `min(fill_absolute_floor, min_fill_correlation)`; scores between it and the Marginal floor
+    /// are the dead zone (rescuable only under `residual_gate = veto_rescue`). Range -1.0..=1.0.
+    /// [fill-mode: fit only]
+    #[arg(long, value_name = "N")]
+    pub fill_absolute_floor: Option<f32>,
+
     /// Override: B slide radius for unified gap-fill search (seconds) [default: 10].
     /// Primary performance lever; also sizes part of the per-gap B extract window.
     #[arg(long, value_name = "SECS")]
@@ -702,6 +709,7 @@ mod tests {
             ),
             &format!("[default: {}]", defaults.repair.min_fill_correlation),
             &format!("[default: {}]", defaults.repair.fill_marginal_margin),
+            &format!("[default: {}]", defaults.repair.fill_absolute_floor),
             &format!("[default: {}]", defaults.repair.fill_border_search_secs),
             &format!("[default: {}]", defaults.repair.fill_align_margin_secs),
             &format!("[default: {}]", defaults.repair.gap_signature_context_secs),
