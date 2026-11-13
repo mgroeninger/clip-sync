@@ -44,7 +44,7 @@
 #   ./scripts/measure/dualfit-coverage-census.ps1 -DumpDir gap-files/<date>-complete-corpus
 #   ./scripts/measure/dualfit-coverage-census.ps1 -DumpDir gap-files/<date>-complete-corpus -CsvOut gap-files/dualfit-coverage.csv
 #
-# Accepted layout: same as census-skip-buckets.ps1 — `<DumpDir>/<pair>/corpus.json` preferred,
+# Accepted layout: `<DumpDir>/<pair>/corpus.json` preferred,
 # per-gap `*_full.json` fallback when no corpus.json exists for that pair. `manifest.json` /
 # `listen.json` are always skipped.
 #

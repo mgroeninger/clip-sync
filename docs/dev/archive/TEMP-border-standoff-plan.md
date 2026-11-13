@@ -164,9 +164,9 @@ clip was rendered or heard. Results go in § 8, and nothing here may be edited a
 the protocol (one-pass labels, repeats as a consistency control, a stop rule fixed first, unblind and
 record), the blinding (seeded shuffle, neutral clip names, key in a file that is never printed) and
 the seam-step readout (`max |dx|` within ±1 ms of each join, relative to the 100 ms post-seam RMS).
-That study's blinding script was never committed and its key is gone. This one is
-`scripts/measure/build-standoff-listen-set.ps1`, which carries the seed and the gap list, so the set can
-be rebuilt exactly.
+That study's blinding script was never committed and its key is gone. This listen's builder
+was removed after the listen closed. The seed is 20260919 (§ 8) and the gap list is in
+§ *Selection* below.
 
 **Not reused:** the clips. They came from `--gap-listen`, whose placement disagreed with production by
 10 ms on 47/g14 (+224.3 vs +214.3 ms). That is too much error for a test of 40–140 ms placement

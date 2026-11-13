@@ -87,7 +87,7 @@ param(
     [double]$ListAboveMs = 75.0,
 
     # Optional gap-fingerprint dump joined to -DumpDir for the per-shoulder dual-fit delta.
-    # Layout is census-skip-buckets.ps1's: <dir>/<pair>/corpus.json, per-gap *_full.json otherwise.
+    # Layout: <dir>/<pair>/corpus.json, per-gap *_full.json otherwise.
     [string]$FingerprintDir = ''
 )
 

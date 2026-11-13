@@ -9,8 +9,8 @@
 # is now a parameter (-ExpectReasons / -ExpectPaths), so any flag-off vs flag-on or old-vs-new pair
 # of arms can be judged against what it is meant to change.
 #
-# Unlike diff-patch-adjustments.ps1 this compares the WHOLE gap object field by field rather than
-# one metric, so a field this script has never heard of still shows up. New fields are a first-
+# It compares the WHOLE gap object field by field rather than one metric, so a field this script
+# has never heard of still shows up. New fields are a first-
 # class result here: a Change that adds a key is not "unchanged", and a diff that silently ignored
 # unknown keys would report a clean run for a corpus it never really compared.
 #
