@@ -17,7 +17,7 @@ use crate::domain::{
         BExtractWindow, GapRepairSpec, GapRepairStrategy, GapRepairTags, GapRepairVerdict,
     },
     gap_tags::{
-        derive_gap_tags_from_patch_outcome, derive_gap_tags_from_status, DualFitRoute,
+        derive_gap_tags_from_patch_outcome, derive_gap_tags_from_status, DualFitPlacement,
         FillTierThresholds, GapPatchTierInput, GapTagPlacementInput, GapTags, GapTagsPatchContext,
     },
     patch_anchor::PatchAnchorTable,
@@ -80,18 +80,10 @@ pub(in crate::application::patch_audio) enum RegionPatchOutcome {
         /// the patch destination is shortened by this much, so A keeps its own material there. `0` on
         /// a fill that reached gap length.
         zero_pad_frames: usize,
-        /// Why dual-fit placed this fill (`GapRepairStrategy::SilenceSplice::route`); `Some` exactly
-        /// on a dual-fit patch, so it is also the outcome's `dual_fit_used`.
-        dual_fit_route: Option<DualFitRoute>,
-        /// `Some(step_real)` on a dual-fit patch: `true` = real length edit (interior-trim bridge),
-        /// `false` = rigid single-lag map (trim-0 extract, docs/dev/archive/TEMP-seam-lock-rigid-fill-plan.md
-        /// §3.1). `None` on every non-dual-fit path (`dual_fit_route == None`).
-        dual_fit_step_real: Option<bool>,
-        /// On a dual-fit patch: the post seam's window width (ms) when a 250 ms post lock below
-        /// the admit line was re-locked at a wider rung
-        /// (`docs/dev/archive/TEMP-dual-fit-grow-post-plan.md` §3.2/§3.3). `None` when the post lock stayed
-        /// at the 250 ms `fill_seam_search_secs` window, and on every non-dual-fit path.
-        dual_fit_post_window_ms: Option<u32>,
+        /// How dual-fit placed this fill (`GapRepairStrategy::SilenceSplice`: route, step kind, grown
+        /// post window); `Some` exactly on a dual-fit patch, so it is also the outcome's
+        /// `dual_fit_used`. A non-dual-fit outcome has no step or post-window fact to carry.
+        dual_fit: Option<DualFitPlacement>,
         /// The gain actually applied to this fill — whole-program × hole-local. Carried to the
         /// patch record so `fill_level`'s `gained_fill`-based fields can be read across gain-policy
         /// changes.
@@ -249,9 +241,7 @@ pub(in crate::application::patch_audio) fn outcomes_in_report_order(
                 anchor_seam_used,
                 anchor_bracket_move_frames,
                 zero_pad_frames,
-                dual_fit_route,
-                dual_fit_step_real,
-                dual_fit_post_window_ms,
+                dual_fit,
                 normalize_gain,
                 local_gain,
                 fit_terms,
@@ -281,9 +271,9 @@ pub(in crate::application::patch_audio) fn outcomes_in_report_order(
                     anchor_seam_used: *anchor_seam_used,
                     anchor_bracket_move_frames: *anchor_bracket_move_frames,
                     zero_pad_frames: *zero_pad_frames,
-                    dual_fit_used: dual_fit_route.is_some(),
-                    dual_fit_step_real: *dual_fit_step_real,
-                    dual_fit_post_window_ms: *dual_fit_post_window_ms,
+                    dual_fit_used: dual_fit.is_some(),
+                    dual_fit_step_real: dual_fit.map(|d| d.step_real),
+                    dual_fit_post_window_ms: dual_fit.and_then(|d| d.post_window_ms),
                     fit_terms: *fit_terms,
                     registration_residual: registration_residual.clone(),
                 }
@@ -378,9 +368,7 @@ pub(in crate::application::patch_audio) fn region_outcome_gap_tags(
             anchor_bracket_move_frames,
             anchor_trusted,
             zero_pad_frames,
-            dual_fit_route,
-            dual_fit_step_real,
-            dual_fit_post_window_ms,
+            dual_fit,
             residual,
             ..
         } => (
@@ -393,9 +381,7 @@ pub(in crate::application::patch_audio) fn region_outcome_gap_tags(
                     anchor_seam_used: *anchor_seam_used,
                     anchor_bracket_move_frames: *anchor_bracket_move_frames,
                     anchor_trusted: *anchor_trusted,
-                    dual_fit_route: *dual_fit_route,
-                    dual_fit_step_real: *dual_fit_step_real,
-                    dual_fit_post_window_ms: *dual_fit_post_window_ms,
+                    dual_fit: *dual_fit,
                     zero_pad_frames: *zero_pad_frames,
                 },
             },
@@ -566,9 +552,7 @@ pub(in crate::application::patch_audio) fn outcome_from_spec(
                 // Decision-only: no fill is assembled on this path, so the count is characterize's —
                 // the same assembly the executor repeats.
                 zero_pad_frames: *zero_pad_frames,
-                dual_fit_route: None,
-                dual_fit_step_real: None,
-                dual_fit_post_window_ms: None,
+                dual_fit: None,
                 fit_terms: *fit_terms,
                 normalize_gain: *normalize_gain,
                 local_gain: *local_gain,
@@ -603,9 +587,11 @@ pub(in crate::application::patch_audio) fn outcome_from_spec(
             anchor_seam_used: false,
             anchor_bracket_move_frames: 0,
             anchor_trusted: false,
-            dual_fit_route: Some(*route),
-            dual_fit_step_real: Some(*step_real),
-            dual_fit_post_window_ms: *dual_fit_post_window_ms,
+            dual_fit: Some(DualFitPlacement {
+                route: *route,
+                step_real: *step_real,
+                post_window_ms: *dual_fit_post_window_ms,
+            }),
             // Dual-fit does not run the unified objective at all — there is no placement search to report.
             fit_terms: None,
             // Dual-fit takes both halves since 2026-08-31; the strategy carries them so this
@@ -623,6 +609,7 @@ pub(in crate::application::patch_audio) fn outcome_from_spec(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::gap_tags::DualFitRoute;
 
     /// Production skip specs copy `FillRegion.gap_index`. A leftover `0` here is the 6b stub that
     /// made capture take the index as a second argument from the loop.
@@ -784,9 +771,7 @@ mod tests {
             anchor_seam_used: false,
             anchor_bracket_move_frames: 0,
             anchor_trusted: false,
-            dual_fit_route: None,
-            dual_fit_step_real: None,
-            dual_fit_post_window_ms: None,
+            dual_fit: None,
             normalize_gain: 1.0,
             local_gain: crate::domain::LocalGainDecision::OFF,
             fit_terms: None,
@@ -913,9 +898,7 @@ mod tests {
             anchor_seam_used: false,
             anchor_bracket_move_frames: 0,
             anchor_trusted: false,
-            dual_fit_route: None,
-            dual_fit_step_real: None,
-            dual_fit_post_window_ms: None,
+            dual_fit: None,
             normalize_gain: 1.0,
             local_gain: crate::domain::LocalGainDecision::OFF,
             fit_terms: None,
@@ -985,9 +968,11 @@ mod tests {
             anchor_bracket_move_frames: if facts { 480 } else { 0 },
             anchor_trusted: facts,
             zero_pad_frames: if facts { 7 } else { 0 },
-            dual_fit_route,
-            dual_fit_step_real: dual_fit_route.map(|_| true),
-            dual_fit_post_window_ms: dual_fit_route.map(|_| 500),
+            dual_fit: dual_fit_route.map(|route| DualFitPlacement {
+                route,
+                step_real: true,
+                post_window_ms: Some(500),
+            }),
             normalize_gain: 1.0,
             local_gain: crate::domain::LocalGainDecision::OFF,
             fit_terms: None,
@@ -1106,12 +1091,12 @@ mod tests {
             RegionPatchOutcome::Patched {
                 zero_pad_frames,
                 anchor_trusted,
-                dual_fit_route,
+                dual_fit,
                 ..
             } => {
                 assert_eq!(zero_pad_frames, 7);
                 assert!(anchor_trusted);
-                assert_eq!(dual_fit_route, None);
+                assert_eq!(dual_fit, None);
             }
             other => panic!("expected a Patched preview, got {other:?}"),
         }

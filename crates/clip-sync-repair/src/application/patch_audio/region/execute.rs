@@ -5,6 +5,7 @@
 //! layer characterize sits on top of, see the plan's cycle guards.
 
 use crate::domain::gap_repair_spec::{GapRepairSpec, GapRepairStrategy, GapRepairVerdict};
+use crate::domain::gap_tags::DualFitPlacement;
 
 use super::super::{FillWindowFrames, PatchAudioRequest};
 
@@ -219,9 +220,11 @@ pub(in crate::application::patch_audio) fn execute_region_spec(
                 anchor_seam_used: false,
                 anchor_bracket_move_frames: 0,
                 anchor_trusted: false,
-                dual_fit_route: Some(route),
-                dual_fit_step_real: Some(step_real),
-                dual_fit_post_window_ms,
+                dual_fit: Some(DualFitPlacement {
+                    route,
+                    step_real,
+                    post_window_ms: dual_fit_post_window_ms,
+                }),
                 // No unified search on this path — see the preview arm.
                 fit_terms: None,
                 // The product, matching the `gain` on the patch just above. Both halves ride the

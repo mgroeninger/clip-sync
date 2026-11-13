@@ -376,12 +376,26 @@ pub struct GapTagPlacementInput {
     pub anchor_seam_used: bool,
     pub anchor_bracket_move_frames: usize,
     pub anchor_trusted: bool,
-    /// `Some` exactly when dual-fit carried the gap; [`GapTags::dual_fit_used`] is derived from it.
-    pub dual_fit_route: Option<DualFitRoute>,
-    pub dual_fit_step_real: Option<bool>,
-    pub dual_fit_post_window_ms: Option<u32>,
+    /// `Some` exactly when dual-fit carried the gap; [`GapTags::dual_fit_used`] is derived from it,
+    /// and a non-dual-fit placement has no step or post-window fact to carry.
+    pub dual_fit: Option<DualFitPlacement>,
     /// See [`GapTags::zero_pad_frames`].
     pub zero_pad_frames: usize,
+}
+
+/// How dual-fit placed a fill — the facts that exist only on a dual-fit patch. Built from
+/// `GapRepairStrategy::SilenceSplice` and flattened into the wire fields at the status/tag join
+/// ([`GapTags::dual_fit_route`], [`GapTags::dual_fit_step_real`], [`GapTags::dual_fit_post_window_ms`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DualFitPlacement {
+    /// Why dual-fit placed this fill.
+    pub route: DualFitRoute,
+    /// `true` = real length edit (interior-trim bridge), `false` = rigid single-lag map (trim-0
+    /// extract, docs/dev/archive/TEMP-seam-lock-rigid-fill-plan.md §3.1).
+    pub step_real: bool,
+    /// The post seam's window width (ms) when a 250 ms post lock below the admit line was re-locked
+    /// at a wider rung; `None` when the post lock stayed at the 250 ms window.
+    pub post_window_ms: Option<u32>,
 }
 
 /// Classify seam shape from pre/post scores (guide heuristics).
@@ -524,10 +538,10 @@ pub fn derive_gap_tags_from_patch_outcome(
         } else {
             0
         },
-        dual_fit_used: placement.dual_fit_route.is_some(),
-        dual_fit_step_real: placement.dual_fit_step_real,
-        dual_fit_post_window_ms: placement.dual_fit_post_window_ms,
-        dual_fit_route: placement.dual_fit_route,
+        dual_fit_used: placement.dual_fit.is_some(),
+        dual_fit_step_real: placement.dual_fit.map(|d| d.step_real),
+        dual_fit_post_window_ms: placement.dual_fit.and_then(|d| d.post_window_ms),
+        dual_fit_route: placement.dual_fit.map(|d| d.route),
         zero_pad_frames: placement.zero_pad_frames,
     }
 }
@@ -591,9 +605,12 @@ pub fn derive_gap_tags_from_status(
                 placement: GapTagPlacementInput {
                     anchor_seam_used: *anchor_seam_used,
                     anchor_bracket_move_frames: *anchor_bracket_move_frames,
-                    dual_fit_route: dual_fit_used.then_some(DualFitRoute::GateFail),
-                    dual_fit_step_real: *dual_fit_step_real,
-                    dual_fit_post_window_ms: *dual_fit_post_window_ms,
+                    // A record predating `dual_fit_step_real` carries no step fact; it reads rigid.
+                    dual_fit: dual_fit_used.then(|| DualFitPlacement {
+                        route: DualFitRoute::GateFail,
+                        step_real: dual_fit_step_real.unwrap_or(false),
+                        post_window_ms: *dual_fit_post_window_ms,
+                    }),
                     zero_pad_frames: *zero_pad_frames,
                     ..GapTagPlacementInput::default()
                 },

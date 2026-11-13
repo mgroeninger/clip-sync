@@ -41,15 +41,16 @@ pub(crate) struct RepairFileOutput {
 }
 
 impl RepairFileOutput {
+    // Split on the feature: one body becomes `if is_some() { return true } false` when
+    // `ffmpeg-mux` is off, and clippy rejects that as `needless_bool`.
+    #[cfg(not(feature = "ffmpeg-mux"))]
     fn wants_file_output(&self) -> bool {
-        if self.wav_path.is_some() {
-            return true;
-        }
-        #[cfg(feature = "ffmpeg-mux")]
-        if self.video_path.is_some() {
-            return true;
-        }
-        false
+        self.wav_path.is_some()
+    }
+
+    #[cfg(feature = "ffmpeg-mux")]
+    fn wants_file_output(&self) -> bool {
+        self.wav_path.is_some() || self.video_path.is_some()
     }
 }
 

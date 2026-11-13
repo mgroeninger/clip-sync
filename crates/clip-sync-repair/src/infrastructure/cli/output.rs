@@ -1223,9 +1223,12 @@ mod tests {
             *anchor_bracket_move_frames
         );
         assert_eq!(placement.zero_pad_frames, *zero_pad_frames);
-        assert_eq!(placement.dual_fit_route.is_some(), *dual_fit_used);
-        assert_eq!(placement.dual_fit_step_real, *dual_fit_step_real);
-        assert_eq!(placement.dual_fit_post_window_ms, *dual_fit_post_window_ms);
+        assert_eq!(placement.dual_fit.is_some(), *dual_fit_used);
+        assert_eq!(placement.dual_fit.map(|d| d.step_real), *dual_fit_step_real);
+        assert_eq!(
+            placement.dual_fit.and_then(|d| d.post_window_ms),
+            *dual_fit_post_window_ms
+        );
         let tags = derive_gap_tags_from_patch_outcome(
             &GapPatchTierInput::Patched {
                 pre: *pre_correlation,
@@ -1711,8 +1714,11 @@ mod tests {
                 },
                 // Routed by registration (step-kind), so the golden pins `dual_fit_route` populated.
                 crate::domain::gap_tags::GapTagPlacementInput {
-                    dual_fit_route: Some(crate::domain::gap_tags::DualFitRoute::RegistrationStep),
-                    dual_fit_step_real: Some(false),
+                    dual_fit: Some(crate::domain::gap_tags::DualFitPlacement {
+                        route: crate::domain::gap_tags::DualFitRoute::RegistrationStep,
+                        step_real: false,
+                        post_window_ms: None,
+                    }),
                     ..Default::default()
                 },
             )
@@ -2641,8 +2647,11 @@ mod tests {
                 post: 0.29,
                 confidence: crate::domain::FillConfidence::Marginal,
                 placement: GapTagPlacementInput {
-                    dual_fit_route: Some(DualFitRoute::GateFail),
-                    dual_fit_step_real: Some(true),
+                    dual_fit: Some(crate::domain::gap_tags::DualFitPlacement {
+                        route: DualFitRoute::GateFail,
+                        step_real: true,
+                        post_window_ms: None,
+                    }),
                     ..GapTagPlacementInput::default()
                 },
             },
